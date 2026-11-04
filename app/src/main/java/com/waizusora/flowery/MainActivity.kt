@@ -155,7 +155,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         restoreFolders()
         setContent {
-            FloweryApp(
+            FloweryNavigation(
+                context = this,
                 folders = folders,
                 tracks = tracks,
                 status = status,
@@ -166,15 +167,20 @@ class MainActivity : ComponentActivity() {
                 currentTag = currentTag,
                 lyrics = lyrics,
                 volume = volume,
-                playbackPositionMs = playbackPositionMs,
-                playbackDurationMs = playbackDurationMs,
+                positionMs = playbackPositionMs,
+                durationMs = playbackDurationMs,
                 equalizerGains = equalizerGains,
-                onBandGain = { index, gain -> equalizerGains[index] = gain; sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) { putExtra(PlaybackService.EXTRA_GAINS, equalizerGains.toFloatArray()) } },
+                onBandGain = { index, gain ->
+                    equalizerGains[index] = gain
+                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
+                        putExtra(PlaybackService.EXTRA_GAINS, equalizerGains.toFloatArray())
+                    }
+                },
                 onAddFolder = { folderPicker.launch(null) },
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
                 onScan = ::scanLibrary,
-                onPlay = ::playTrack,
+                onPlay = { track, folderTracks -> playTrack(track, folderTracks) },
                 onInspect = ::inspectTrack,
                 onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
                 onTogglePlayback = {
@@ -187,6 +193,13 @@ class MainActivity : ComponentActivity() {
                 onShuffle = { sendPlaybackCommand(PlaybackService.ACTION_SHUFFLE) },
                 onRepeat = { sendPlaybackCommand(PlaybackService.ACTION_REPEAT) },
                 onSeek = { position -> sendPlaybackCommand(PlaybackService.ACTION_SEEK) { putExtra(PlaybackService.EXTRA_POSITION, position) } },
+                onBatterySettings = {
+                    startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:$packageName")))
+                },
+                onCheckUpdate = {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Waizusora/Flowery/releases")))
+                }
             )
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
@@ -297,7 +310,7 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun playTrack(track: AudioTrackItem) {
+    private fun playTrack(track: AudioTrackItem, folderTracks: List<AudioTrackItem> = tracks.toList()) {
         selectedTrack = track
         currentTag = null
         lyrics = emptyList()
@@ -312,15 +325,15 @@ class MainActivity : ComponentActivity() {
                     currentTag = tag
                     lyrics = parsedLyrics
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
-                    val queueUris = ArrayList(tracks.map { it.uri.toString() })
-                    val queueTitles = ArrayList(tracks.map { item ->
+                    val queueUris = ArrayList(folderTracks.map { it.uri.toString() })
+                    val queueTitles = ArrayList(folderTracks.map { item ->
                         if (item.uri == track.uri) tag?.title?.ifBlank { item.title } ?: item.title else item.title
                     })
-                    val queueArtists = ArrayList(tracks.map { item ->
+                    val queueArtists = ArrayList(folderTracks.map { item ->
                         if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         else "Local music"
                     })
-                    val queueIndex = tracks.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
+                    val queueIndex = folderTracks.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
                     val command = Intent(this, PlaybackService::class.java)
                         .setAction(PlaybackService.ACTION_PLAY)
                         .putStringArrayListExtra(PlaybackService.EXTRA_QUEUE, queueUris)
