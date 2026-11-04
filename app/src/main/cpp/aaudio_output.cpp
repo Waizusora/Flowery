@@ -17,6 +17,7 @@ struct OutputState {
     std::atomic<float> volume{1.0f};
     std::atomic<bool> active{false};
     std::atomic<bool> eof{false};
+    std::atomic<uint64_t> flushEpoch{0};
     int32_t channels = 2;
 };
 
@@ -27,6 +28,7 @@ std::unique_ptr<OutputState> g_output;
 aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* audioData, int32_t frames) {
     auto* state = static_cast<OutputState*>(userData);
     auto* output = static_cast<float*>(audioData);
+    const uint64_t epoch = state->flushEpoch.load(std::memory_order_acquire);
     const uint64_t read = state->readFrame.load(std::memory_order_relaxed);
     const uint64_t write = state->writeFrame.load(std::memory_order_acquire);
     const uint64_t available = write - read;
@@ -46,7 +48,9 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
         std::fill(output + count * state->channels,
                   output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
     }
-    state->readFrame.store(read + count, std::memory_order_release);
+    if (state->flushEpoch.load(std::memory_order_acquire) == epoch) {
+        state->readFrame.store(read + count, std::memory_order_release);
+    }
 
     if (remaining > 0 && state->eof.load(std::memory_order_acquire) &&
         state->writeFrame.load(std::memory_order_acquire) == read + count) {
@@ -164,6 +168,16 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
     }
     g_output->writeFrame.store(write + count, std::memory_order_release);
     return static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject, jlong positionFrames) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_output || positionFrames < 0) return;
+    g_output->flushEpoch.fetch_add(1, std::memory_order_acq_rel);
+    g_output->readFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
+    g_output->writeFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
+    g_output->eof.store(false, std::memory_order_release);
 }
 
 extern "C" JNIEXPORT void JNICALL
