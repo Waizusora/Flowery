@@ -94,11 +94,13 @@ class MainActivity : ComponentActivity() {
             intent ?: return
             intent.getStringExtra(PlaybackService.EXTRA_STATUS)?.let { status = it }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
-            playbackDurationMs = intent.getLongExtra(PlaybackService.EXTRA_DURATION, playbackDurationMs)
+            val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
+            if (reportedDuration > 0L) playbackDurationMs = reportedDuration
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
             val nextTrack = tracks.firstOrNull { it.uri.toString() == currentUri }
             if (nextTrack != null && selectedTrack?.uri != nextTrack.uri) {
                 selectedTrack = nextTrack
+                playbackDurationMs = 0L
                 currentTag = null
                 lyrics = emptyList()
                 io.execute {
@@ -270,10 +272,17 @@ class MainActivity : ComponentActivity() {
                     lyrics = parsedLyrics
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
                     val queueUris = ArrayList(tracks.map { it.uri.toString() })
+                    val queueTitles = ArrayList(tracks.map { it.title })
+                    val queueArtists = ArrayList(tracks.map { item ->
+                        if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
+                        else "Local music"
+                    })
                     val queueIndex = tracks.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
                     val command = Intent(this, PlaybackService::class.java)
                         .setAction(PlaybackService.ACTION_PLAY)
                         .putStringArrayListExtra(PlaybackService.EXTRA_QUEUE, queueUris)
+                        .putStringArrayListExtra(PlaybackService.EXTRA_TITLES, queueTitles)
+                        .putStringArrayListExtra(PlaybackService.EXTRA_ARTISTS, queueArtists)
                         .putExtra(PlaybackService.EXTRA_INDEX, queueIndex)
                     androidx.core.content.ContextCompat.startForegroundService(this, command)
                 }
