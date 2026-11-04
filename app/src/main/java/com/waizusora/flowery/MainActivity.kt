@@ -116,7 +116,7 @@ class MainActivity : ComponentActivity() {
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
-                granted -> "USB access granted for ${device.productName ?: "USB DAC"}. The current Flowery audio engine does not yet provide a native USB Audio Class bit-perfect transport. Playback remains on the regular Android audio route."
+                granted -> "USB access granted for ${usbDacController.describeDevice(device)}. The current Flowery audio engine does not yet provide a native USB Audio Class bit-perfect transport. Playback remains on the regular Android audio route."
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
         }
@@ -253,12 +253,18 @@ class MainActivity : ComponentActivity() {
             devices.isEmpty() -> usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
             devices.size > 1 -> usbDacMessage = "More than one USB Audio Class device is connected. Disconnect other USB audio devices and retry so Flowery can request permission for the intended DAC."
             else -> {
-                val device = devices.single().usbDevice
+                val detected = devices.single()
+                val device = detected.usbDevice
+                val referenceNote = if (detected.isReferenceKtmicro) {
+                    " The connected device matches the configured KT Micro KT-384/32 reference VID/PID."
+                } else {
+                    ""
+                }
                 if (usbDacController.hasPermission(device)) {
-                    usbDacMessage = "Android USB access is already granted. Native USB Audio Class streaming, format negotiation, and verified bit-perfect output are not implemented yet, so Flowery will not claim exclusive bit-perfect mode."
+                    usbDacMessage = "Android USB access is already granted for ${detected.displayName}.$referenceNote Native USB Audio Class streaming, format negotiation, and verified bit-perfect output are not implemented yet, so Flowery will not claim exclusive bit-perfect mode."
                 } else {
                     usbDacController.requestPermission(device)
-                    usbDacMessage = "Android will ask whether Flowery may access ${devices.single().displayName}. Granting USB access alone does not enable bit-perfect playback."
+                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote Granting USB access alone does not enable bit-perfect playback."
                 }
             }
         }
