@@ -16,7 +16,7 @@ Flowery is an Android music player project built with Kotlin, Jetpack Compose, M
 - Add, remove, enable, disable, and recursively scan selected folders.
 - Audio-file discovery without MediaStore.
 - Native Symphonia decoding for the codecs and containers enabled by the `all` feature set.
-- Native three-band bass, midrange, and treble equalization.
+- Native 31-band ISO one-third-octave graphic equalizer with independent ±12 dB band controls.
 - Native AAudio PCM-float output for mono and stereo playback, requesting exclusive low-latency mode and falling back to shared mode when unavailable.
 - Sidecar LRC discovery and timestamp parsing.
 - Basic playback controls and software volume.
@@ -38,7 +38,7 @@ AUX, built-in speakers, and Bluetooth use Android's managed media output route a
 
 AAudio requests exclusive, low-latency sharing mode and falls back to shared mode if the device or Android audio service cannot provide it. This is not equivalent to guaranteed USB-exclusive access. USB Audio Class transport, DAC hardware-volume reporting/control, device-specific sample-rate negotiation, and verified bit-perfect output are not implemented. Those features require USB device handling, capability negotiation, and hardware validation. Bit-perfect mode must bypass equalization, software gain, resampling, and any sample conversion that changes the source PCM.
 
-The current equalizer is a native three-band biquad processor. Enabling it changes PCM samples and is therefore incompatible with bit-perfect output.
+The current equalizer is a native 31-band peaking-EQ filter bank using ISO one-third-octave center frequencies from 20 Hz to 20 kHz. Enabling it changes PCM samples and is therefore incompatible with bit-perfect output.
 
 ## Library and lyrics
 
