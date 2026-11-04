@@ -116,11 +116,11 @@ impl StreamDecoder {
         self.input_pending.clear();
         self.output_pending.clear();
         self.eof = false;
-        self.source_frames_decoded = 0;
         self.produced_frames = (requested_ms as u128 * self.output_rate as u128 / 1000) as u64;
         let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
         let actual_ms = actual_time.map(|t| (t.seconds as f64 + t.frac) * 1000.0).unwrap_or(requested_ms as f64);
         let actual_frames = (actual_ms.max(0.0) as u128 * self.source_rate as u128 / 1000) as u64;
+        self.source_frames_decoded = actual_frames;
         let requested_frames = (requested_ms as u128 * self.source_rate as u128 / 1000) as u64;
         self.discard_source_frames = requested_frames.saturating_sub(actual_frames);
         let rate = self.output_rate;
