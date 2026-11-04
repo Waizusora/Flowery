@@ -7,9 +7,11 @@ class FloweryPlayer(private val onState: (String) -> Unit) {
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
-    @Volatile var bassDb = 0f
-    @Volatile var midDb = 0f
-    @Volatile var trebleDb = 0f
+    @Volatile private var bandGainsDb = FloatArray(31)
+    fun setEqualizerGains(gains: FloatArray) {
+        require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
+        bandGainsDb = gains.copyOf()
+    }
     fun setVolume(value: Float) {
         softwareVolume = value.coerceIn(0f, 1f)
         NativeAudio.nativeSetOutputVolume(softwareVolume)
@@ -23,7 +25,7 @@ class FloweryPlayer(private val onState: (String) -> Unit) {
                 onState("Decoding audio with Rust / Symphonia…")
                 val pcm = NativeAudio.decode(encodedAudio)
                 require(pcm.channels in 1..2) { "The current AAudio output path supports mono and stereo PCM" }
-                val processed = NativeAudio.nativeApplyEqualizer(pcm.samples, pcm.sampleRate, pcm.channels, bassDb, midDb, trebleDb)
+                val processed = NativeAudio.nativeApplyEqualizer(pcm.samples, pcm.sampleRate, pcm.channels, bandGainsDb)
                 val result = NativeAudio.nativeStartOutput(processed, pcm.sampleRate, pcm.channels, softwareVolume)
                 check(result == 0) { "AAudio could not open or start the output stream (error $result)" }
                 onState("Playing · ${pcm.sampleRate} Hz · ${pcm.channels} ch · AAudio")
