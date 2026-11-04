@@ -46,6 +46,10 @@ jobs:
         with:
           targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
 
+      - name: Generate native dependency lockfile
+        working-directory: native
+        run: cargo generate-lockfile
+
       - name: Run native unit tests
         working-directory: native
         run: cargo test --locked
