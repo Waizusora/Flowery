@@ -22,6 +22,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var bandGainsDb = FloatArray(31)
+    @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
@@ -29,6 +30,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
         bandGainsDb = gains.copyOf()
+        equalizerRevision++
     }
 
     fun setVolume(value: Float) {
@@ -88,7 +90,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
 
                 var reachedEnd = false
+                var appliedEqualizerRevision = equalizerRevision
                 while (!stopped.get() && !reachedEnd) {
+                    if (appliedEqualizerRevision != equalizerRevision) {
+                        check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) { "Unable to update streaming equalizer" }
+                        appliedEqualizerRevision = equalizerRevision
+                    }
                     val chunk = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
                     if (chunk.isEmpty()) {
                         NativeAudio.nativeSetStreamEof()
