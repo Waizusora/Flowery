@@ -12,3 +12,5 @@ symphonia = { version = "0.5.4", features = ["all"] }
 lofty = "0.25.5"
 rubato = "5.0.1"
 audioadapter-buffers = "5.1"
+serde_json = "1"
+base64 = "0.22"
