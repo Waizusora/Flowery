@@ -40,6 +40,8 @@ class PlaybackService : Service() {
         const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
+        const val EXTRA_TITLES = "queue_titles"
+        const val EXTRA_ARTISTS = "queue_artists"
         const val EXTRA_INDEX = "queue_index"
         const val EXTRA_VALUE = "value"
         const val EXTRA_GAINS = "gains"
@@ -61,6 +63,8 @@ class PlaybackService : Service() {
     private var resumeAfterFocus = false
     private val io = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
+    private val queueTitles = mutableListOf<String>()
+    private val queueArtists = mutableListOf<String>()
     private var queueIndex = -1
     private var repeatMode = 0 // 0 off, 1 all, 2 one
     private var shuffle = false
@@ -115,6 +119,10 @@ class PlaybackService : Service() {
                 if (!uris.isNullOrEmpty()) {
                     queue.clear()
                     queue.addAll(uris)
+                    queueTitles.clear()
+                    queueTitles.addAll(intent.getStringArrayListExtra(EXTRA_TITLES).orEmpty())
+                    queueArtists.clear()
+                    queueArtists.addAll(intent.getStringArrayListExtra(EXTRA_ARTISTS).orEmpty())
                     queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(queue.indices)
                 } else {
                     val uri = intent.getStringExtra(EXTRA_URI)
@@ -211,8 +219,10 @@ class PlaybackService : Service() {
             return
         }
         val uri = Uri.parse(uriText)
-        currentTitle = Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
-        currentArtist = "Local music"
+        currentTitle = queueTitles.getOrNull(queueIndex)
+            ?.takeIf { it.isNotBlank() }
+            ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
+        currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() } ?: "Local music"
         session.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
