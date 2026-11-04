@@ -2,6 +2,17 @@ package com.waizusora.flowery
 object NativeAudio {
     init { System.loadLibrary("flowery_audio"); System.loadLibrary("flowery_aaudio") }
     external fun nativeEngineVersion(): String
+    external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
+    external fun nativeGetStreamInfo(handle: Long): Long
+    external fun nativeGetStreamDurationMs(handle: Long): Long
+    external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
+    external fun nativeReadStreamChunk(handle: Long, maxFrames: Int): FloatArray
+    external fun nativeCloseStreamDecoder(handle: Long)
+    external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, capacityFrames: Int): Int
+    external fun nativeWriteStreamFrames(samples: FloatArray, sourceFrameOffset: Int, frameCount: Int): Int
+    external fun nativeSetStreamEof()
+    external fun nativeGetStreamBufferedFrames(): Int
+
     external fun nativeDecode(encodedAudio: ByteArray): ByteArray
     external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int): Int
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
