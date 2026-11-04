@@ -36,6 +36,10 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
     auto* state = static_cast<OutputState*>(userData);
     auto* output = static_cast<float*>(audioData);
     const uint64_t epoch = state->flushEpoch.load(std::memory_order_acquire);
+    if ((epoch & 1U) != 0) {
+        std::fill(output, output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
+    }
     const uint64_t read = state->readFrame.load(std::memory_order_relaxed);
     const uint64_t write = state->writeFrame.load(std::memory_order_acquire);
     const uint64_t available = write - read;
@@ -188,6 +192,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     g_output->readFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->writeFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->eof.store(false, std::memory_order_release);
+    g_output->flushEpoch.fetch_add(1, std::memory_order_release);
     g_output->active.store(true, std::memory_order_release);
     auto state = AAudioStream_getState(g_stream);
     if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
