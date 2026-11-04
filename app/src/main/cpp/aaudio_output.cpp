@@ -89,7 +89,11 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     if (result != AAUDIO_OK) return result;
 
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+#if __ANDROID_API__ >= 28
     if (deviceId > 0) AAudioStreamBuilder_setDeviceId(builder, deviceId);
+#else
+    (void)deviceId;
+#endif
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
     AAudioStreamBuilder_setSampleRate(builder, rate);
     AAudioStreamBuilder_setChannelCount(builder, channels);
