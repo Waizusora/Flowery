@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::os::fd::FromRawFd;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use jni::objects::{JClass, JFloatArray, JString};
@@ -57,6 +56,7 @@ struct StreamDecoder {
     eq_state: Vec<[BiquadState;31]>,
     produced_frames: u64,
     source_frames_decoded: u64,
+    resampler_delay_frames: usize,
 }
 
 impl StreamDecoder {
@@ -83,7 +83,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, resampler_flushed: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, resampler_delay_frames: 0,
         })
     }
 
@@ -97,6 +97,7 @@ impl StreamDecoder {
             Some(Fft::<f32>::new(self.source_rate, output_rate, 1024, self.channels, FixedSync::Both)
                 .map_err(|e| format!("Rubato initialization failed: {e}"))?)
         } else { None };
+        self.resampler_delay_frames = self.resampler.as_ref().map(|r| r.output_delay()).unwrap_or(0);
         Ok(())
     }
 
@@ -148,8 +149,7 @@ impl StreamDecoder {
             self.decode_packet()?;
         }
         let available = self.input_pending.len() / self.channels;
-        if available == 0 { return Ok(false); }
-        if available < input_frames && self.eof && self.resampler_flushed { return Ok(false); }
+        if available == 0 && (!self.eof || self.resampler_flushed) { return Ok(false); }
         let mut input = vec![0.0_f32; input_frames * self.channels];
         let take_frames = available.min(input_frames);
         let take_samples = take_frames * self.channels;
@@ -168,8 +168,19 @@ impl StreamDecoder {
         let (_, written) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, None)
             .map_err(|e| format!("Rubato streaming resample failed: {e}"))?;
         output.truncate(written * self.channels);
+        let delay_samples = self.resampler_delay_frames.min(written) * self.channels;
+        if delay_samples > 0 {
+            output.drain(..delay_samples);
+            self.resampler_delay_frames -= delay_samples / self.channels;
+        }
+        if self.eof && self.input_pending.is_empty() {
+            let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
+                / self.source_rate as u128) as u64;
+            let remaining_frames = expected_frames.saturating_sub(self.produced_frames) as usize;
+            output.truncate(output.len().min(remaining_frames * self.channels));
+        }
         self.apply_eq(&mut output);
-        self.produced_frames += written as u64;
+        self.produced_frames += (output.len() / self.channels) as u64;
         self.output_pending.extend(output);
         Ok(!self.output_pending.is_empty())
     }
