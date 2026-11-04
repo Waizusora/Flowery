@@ -15,7 +15,7 @@ use symphonia::core::probe::Hint;
 
 fn decode_audio(data: &[u8]) -> Result<(u32, usize, Vec<f32>), String> {
     let source = MediaSourceStream::new(Box::new(Cursor::new(data.to_vec())), Default::default());
-    let mut hint = Hint::new();
+    let hint = Hint::new();
     let mut probed = symphonia::default::get_probe()
         .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
         .map_err(|e| format!("Unable to read audio container: {e}"))?;
@@ -61,7 +61,7 @@ fn decode_audio(data: &[u8]) -> Result<(u32, usize, Vec<f32>), String> {
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersion(
-    mut env: JNIEnv,
+    env: JNIEnv,
     _class: JClass,
 ) -> jni::sys::jstring {
     let version = env.new_string(format!("Flowery Rust audio engine {}", env!("CARGO_PKG_VERSION")))
