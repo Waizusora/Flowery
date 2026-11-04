@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoreFolders()
-        player = FloweryPlayer { message -> runOnUiThread { status = message } }
+        player = FloweryPlayer(this) { message -> runOnUiThread { status = message } }
         setContent {
             FloweryApp(
                 folders = folders,
