@@ -10,7 +10,7 @@ The library uses Storage Access Framework and `DocumentFile`; it does not use Me
 
 ## USB DAC access
 
-`UsbDacController` discovers attached USB Audio Class streaming interfaces and requests Android USB host permission. The permission result is shown to the user. This is only device access authorization; no USB isochronous audio transport is implemented, and the existing AAudio float output remains the playback path. The application does not claim bit-perfect playback or physical DAC button-volume control.
+`UsbDacController` discovers attached USB Audio Class streaming interfaces and requests Android USB host permission. It recognizes the KT Micro KT-384/32 HIFI reference device using VID `0x31B2` and PID `0x0111`; this is identification only and does not imply that direct USB streaming or bit-perfect output is active. The permission result is shown to the user. This is only device access authorization; no USB isochronous audio transport is implemented, and the existing AAudio float output remains the playback path. The application does not claim bit-perfect playback or physical DAC button-volume control.
 
 ## Navigation and settings UI
 
