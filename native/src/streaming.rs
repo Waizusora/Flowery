@@ -149,7 +149,12 @@ impl StreamDecoder {
             self.decode_packet()?;
         }
         let available = self.input_pending.len() / self.channels;
-        if available == 0 && (!self.eof || self.resampler_flushed) { return Ok(false); }
+        if available == 0 {
+            if !self.eof { return Ok(false); }
+            let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
+                / self.source_rate as u128) as u64;
+            if self.produced_frames >= expected_frames { return Ok(false); }
+        }
         let mut input = vec![0.0_f32; input_frames * self.channels];
         let take_frames = available.min(input_frames);
         let take_samples = take_frames * self.channels;
@@ -196,7 +201,9 @@ impl StreamDecoder {
             }
             if self.eof && self.input_pending.is_empty() {
                 if self.resampler.is_none() { break; }
-                if self.resampler_flushed { break; }
+                let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
+                    / self.source_rate as u128) as u64;
+                if self.produced_frames >= expected_frames { break; }
             }
             if let Some(resampler) = self.resampler.as_ref() {
                 let _ = resampler;
