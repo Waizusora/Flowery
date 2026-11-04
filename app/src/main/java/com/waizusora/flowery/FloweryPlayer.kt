@@ -25,10 +25,12 @@ class FloweryPlayer(private val onState: (String) -> Unit) {
                 onState("Decoding audio with Rust / Symphonia…")
                 val pcm = NativeAudio.decode(encodedAudio)
                 require(pcm.channels in 1..2) { "The current AAudio output path supports mono and stereo PCM" }
-                val processed = NativeAudio.nativeApplyEqualizer(pcm.samples, pcm.sampleRate, pcm.channels, bandGainsDb)
-                val result = NativeAudio.nativeStartOutput(processed, pcm.sampleRate, pcm.channels, softwareVolume)
+                val targetRate = 48000
+                val resampled = NativeAudio.nativeResample(pcm.samples, pcm.sampleRate, targetRate, pcm.channels)
+                val processed = NativeAudio.nativeApplyEqualizer(resampled, targetRate, pcm.channels, bandGainsDb)
+                val result = NativeAudio.nativeStartOutput(processed, targetRate, pcm.channels, softwareVolume)
                 check(result == 0) { "AAudio could not open or start the output stream (error $result)" }
-                onState("Playing · ${pcm.sampleRate} Hz · ${pcm.channels} ch · AAudio")
+                onState("Playing · ${targetRate} Hz · ${pcm.channels} ch · AAudio · Rubato sinc/FFT")
                 while (!stopped.get() && NativeAudio.nativeIsOutputActive()) Thread.sleep(50)
                 if (!stopped.get()) onState("Playback finished")
             } catch (error: InterruptedException) {
