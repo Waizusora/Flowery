@@ -1,9 +1,11 @@
 package com.waizusora.flowery
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 class FloweryPlayer(private val onState: (String) -> Unit) {
     private var worker: Thread? = null
     private val stopped = AtomicBoolean(false)
+    private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile var bassDb = 0f
     @Volatile var midDb = 0f
@@ -15,6 +17,7 @@ class FloweryPlayer(private val onState: (String) -> Unit) {
     fun play(encodedAudio: ByteArray) {
         stop()
         stopped.set(false)
+        val generation = playbackGeneration.incrementAndGet()
         worker = thread(name = "FloweryAAudio") {
             try {
                 onState("Decoding audio with Rust / Symphonia…")
@@ -31,13 +34,14 @@ class FloweryPlayer(private val onState: (String) -> Unit) {
             } catch (error: Throwable) {
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
-                NativeAudio.nativeStopOutput()
+                if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
             }
         }
     }
     fun pause() { if (NativeAudio.nativePauseOutput() == 0) onState("Paused") }
     fun resume() { if (NativeAudio.nativeResumeOutput() == 0) onState("Playing · AAudio") }
     fun stop() {
+        playbackGeneration.incrementAndGet()
         stopped.set(true)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
