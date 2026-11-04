@@ -7,3 +7,9 @@ The streaming audio path opens a SAF document descriptor, decodes packets increm
 The streaming decoder supports mono and stereo. The equalizer requires 31 gains and constrains each band to -12 dB through +12 dB. Resampler and per-channel EQ history persist between chunks. Seeking flushes queued output, performs a format-level seek, resets decoder/DSP state, and discards preroll before playback resumes.
 
 The library uses Storage Access Framework and `DocumentFile`; it does not use MediaStore. The foreground service maintains `MediaSessionCompat`, handles notification/media-button actions and audio focus, and responds to noisy-route events.
+
+## Navigation and settings UI
+
+`FloweryNavigation.kt` provides the four-icon navigation surface: Folders, Lyrics, DSP, and Settings. The Folders destination shows configured SAF roots and opens a folder-scoped track list. Playback requests from that list construct the queue from the selected folder's scanned tracks. Removing selected roots removes their app configuration and releases persisted URI permissions; it does not delete source documents.
+
+Lyrics toggles the sidecar LRC presentation in the artwork area. DSP exposes software volume and the 31-band equalizer. Settings groups audio information, library guidance, appearance, and other application options. Auto appearance follows Android's system dark-mode setting. Language and credits pages are placeholders until localization and contributor records are available.
