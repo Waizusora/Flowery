@@ -31,11 +31,11 @@ The editor stages the selected file in the app-private cache directory, asks Lof
 
 ## Audio engine
 
-- Symphonia decodes the supported compressed audio formats into floating-point PCM.
-- Rubato 5 performs high-quality fixed-ratio sample-rate conversion using its synchronous FFT resampler and Blackman-Harris 2 anti-aliasing window.
+- Symphonia opens the SAF document file descriptor and decodes compressed audio incrementally in bounded packets/chunks; the compressed file and complete decoded PCM are not copied into a whole-track byte array.
+- Rubato 5 performs fixed-ratio streaming sample-rate conversion with one persistent synchronous FFT resampler per track. Resampler history is retained between chunks.
 - Flowery enumerates connected USB output devices through Android AudioManager, prefers a USB DAC with reported sample rates, selects the source rate when supported, and binds the AAudio stream to that device ID. If the DAC does not report a rate list, AAudio is probed directly. If the requested rate cannot be opened, Flowery uses the device default stream rate; if the USB route cannot be opened, it falls back to the system output route.
 - If the source and selected output rates match, the resampler returns the original PCM samples without conversion.
-- The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls.
+- The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls. Per-channel biquad delay state is retained across decoded chunks, and gain changes are applied without resetting filter history.
 - AAudio requests exclusive, low-latency output and falls back to shared mode if exclusive mode is unavailable.
 
 The Android-reported USB sample-rate list is used as the preferred capability hint, then AAudio validates that the selected device and rate can actually open. In shared mode, Android may still mix or resample internally. This is not proof of the physical DAC's native clock or bit-perfect transport; device firmware and Android audio policy can still affect the signal path. Guaranteed USB-exclusive output, USB Audio Class capability enumeration, hardware-volume control, and hardware-validated bit-perfect output are not implemented.
@@ -51,7 +51,7 @@ Bit-perfect playback is incompatible with active EQ, software volume scaling, or
 
 ## Architecture and exclusions
 
-The Android layer owns the UI, SAF permissions, and library traversal. Rust owns compressed-audio decoding, metadata operations through Lofty, resampling through Rubato, and the 31-band equalizer. C++ streams PCM through AAudio.
+The Android layer owns the UI, SAF permissions, and library traversal. Rust owns compressed-audio decoding, metadata operations through Lofty, resampling through Rubato, and the 31-band equalizer. C++ streams PCM through AAudio. A dedicated producer thread feeds a fixed-capacity single-producer/single-consumer ring buffer; the AAudio callback only copies available frames, applies output gain, fills underruns with silence, and checks end-of-stream state. It performs no file I/O, decoding, resampling, allocation, or locking.
 
 The project does not use ExoPlayer, AndroidX Media3, Firebase, MediaStore, or Google app services.
 
@@ -72,7 +72,7 @@ Without signing secrets, CI builds an unsigned release APK. Never commit keystor
 
 ## Development status
 
-The current player decodes selected files into memory. Large files can require substantial memory; streaming decode, seeking, gapless playback, queue management, background playback, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
+The player now uses incremental decode and bounded PCM buffering. Format-level seeking and gapless transitions are not yet integrated with the streaming decoder. Multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
 
 ## Open-source licenses
 
