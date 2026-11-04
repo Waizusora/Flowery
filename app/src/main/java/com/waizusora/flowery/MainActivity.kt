@@ -54,6 +54,7 @@ class MainActivity : ComponentActivity() {
     private val tracks = mutableStateListOf<AudioTrackItem>()
     private var status by mutableStateOf("Choose a music folder to begin")
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
+    private var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
     private var volume by mutableStateOf(1f)
     private var bass by mutableStateOf(0f)
     private var mid by mutableStateOf(0f)
@@ -71,6 +72,7 @@ class MainActivity : ComponentActivity() {
                 tracks = tracks,
                 status = status,
                 selectedTrack = selectedTrack,
+                lyrics = lyrics,
                 volume = volume,
                 bass = bass,
                 mid = mid,
@@ -142,11 +144,16 @@ class MainActivity : ComponentActivity() {
 
     private fun playTrack(track: AudioTrackItem) {
         selectedTrack = track
+        lyrics = emptyList()
         status = "Reading ${track.title}…"
         io.execute {
             try {
                 val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
                     ?: throw IllegalStateException("Unable to open selected audio file")
+                val parsedLyrics = track.sidecarLyricsUri?.let { lyricUri ->
+                    contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) }
+                }.orEmpty()
+                runOnUiThread { lyrics = parsedLyrics }
                 player.play(bytes)
             } catch (error: Throwable) {
                 runOnUiThread { status = "Unable to play file: ${error.message}" }
@@ -185,6 +192,7 @@ private fun FloweryApp(
     tracks: List<AudioTrackItem>,
     status: String,
     selectedTrack: AudioTrackItem?,
+    lyrics: List<LyricLine>,
     volume: Float,
     bass: Float,
     mid: Float,
@@ -257,6 +265,10 @@ private fun FloweryApp(
                     }
                 }
                 Text(selectedTrack?.title ?: "Nothing playing", style = MaterialTheme.typography.titleMedium)
+                if (lyrics.isNotEmpty()) {
+                    Text("Lyrics · LRC", style = MaterialTheme.typography.labelLarge)
+                    lyrics.take(3).forEach { line -> Text(line.text, style = MaterialTheme.typography.bodySmall) }
+                }
                 Text(status, style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IconButton(onClick = onResume) { Icon(Icons.Default.PlayArrow, contentDescription = "Play") }
