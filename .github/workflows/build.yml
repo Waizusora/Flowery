@@ -39,11 +39,21 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
 
       - name: Install Android NDK and SDK packages
-        run: sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          for attempt in 1 2 3; do
+            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "Android SDK package installation failed; retrying ($attempt/3)."
+              sleep 15
+            fi
+          done
+          exit 1
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
