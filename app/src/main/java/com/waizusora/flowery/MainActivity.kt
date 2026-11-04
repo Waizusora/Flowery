@@ -178,7 +178,7 @@ class MainActivity : ComponentActivity() {
     private fun readTag(track: AudioTrackItem): AudioTag {
         val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
             ?: throw IllegalStateException("Unable to open selected audio file")
-        val json = JSONObject(NativeAudio.nativeReadTags(bytes, extensionOf(track)))
+        val json = JSONObject(NativeAudio.nativeReadTags(bytes, extensionOf(track), cacheDir.absolutePath))
         return AudioTag(
             uri = track.uri,
             fileName = Uri.decode(track.uri.lastPathSegment.orEmpty()),
@@ -251,7 +251,7 @@ class MainActivity : ComponentActivity() {
                     ?: throw IllegalStateException("Unable to read original audio file")
                 val extension = extensionOf(tracks.firstOrNull { it.uri == tag.uri } ?: AudioTrackItem(tag.uri, tag.fileName, "", null))
                 val edited = NativeAudio.nativeWriteTags(
-                    bytes, extension, tag.title, tag.artist, tag.album, tag.albumArtist,
+                    bytes, extension, cacheDir.absolutePath, tag.title, tag.artist, tag.album, tag.albumArtist,
                     tag.genre, tag.year, tag.track, tag.disc, tag.comment, tag.composer, tag.lyrics
                 )
                 contentResolver.openOutputStream(tag.uri, "wt")?.use { output ->
