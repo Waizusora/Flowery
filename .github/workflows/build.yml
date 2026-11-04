@@ -39,11 +39,13 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android NDK and SDK packages
         shell: bash
         run: |
-          yes | sdkmanager --licenses >/dev/null
+          yes | sdkmanager --licenses >/dev/null || true
           for attempt in 1 2 3; do
             if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"; then
               exit 0
