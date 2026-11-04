@@ -38,12 +38,15 @@ class PlaybackService : Service() {
         const val ACTION_SHUFFLE = "com.waizusora.flowery.SHUFFLE"
         const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
         const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
+        const val ACTION_UPDATE_METADATA = "com.waizusora.flowery.UPDATE_METADATA"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_TITLES = "queue_titles"
         const val EXTRA_ARTISTS = "queue_artists"
         const val EXTRA_INDEX = "queue_index"
         const val EXTRA_VALUE = "value"
+        const val EXTRA_TITLE = "media_title"
+        const val EXTRA_ARTIST = "media_artist"
         const val EXTRA_GAINS = "gains"
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
@@ -149,6 +152,16 @@ class PlaybackService : Service() {
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = (repeatMode + 1) % 3; publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
             ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
+            ACTION_UPDATE_METADATA -> {
+                currentTitle = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: currentTitle
+                currentArtist = intent.getStringExtra(EXTRA_ARTIST)?.takeIf { it.isNotBlank() } ?: currentArtist
+                session.setMetadata(MediaMetadataCompat.Builder()
+                    .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                    .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+                    .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
+                    .build())
+                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+            }
         }
         return START_NOT_STICKY
     }
