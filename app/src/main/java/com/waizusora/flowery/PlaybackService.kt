@@ -292,6 +292,9 @@ class PlaybackService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
             .setOngoing(playbackState == PlaybackStateCompat.STATE_PLAYING)
+            .setStyle(androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(session.sessionToken)
+                .setShowActionsInCompactView(0, 1, 2))
             .addAction(android.R.drawable.ic_media_previous, "Previous", servicePending(ACTION_PREVIOUS, 1))
             .addAction(
                 if (playbackState == PlaybackStateCompat.STATE_PLAYING) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
