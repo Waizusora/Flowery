@@ -97,6 +97,8 @@ class MainActivity : ComponentActivity() {
     private val tracks = mutableStateListOf<AudioTrackItem>()
     private var status by mutableStateOf("Choose a music folder to begin")
     private var isPlaying by mutableStateOf(false)
+    private var shuffleEnabled by mutableStateOf(false)
+    private var repeatMode by mutableStateOf(0)
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
     private var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
     private var currentTag by mutableStateOf<AudioTag?>(null)
@@ -113,6 +115,12 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra(PlaybackService.EXTRA_STATUS)?.let { status = it }
             if (intent.hasExtra(PlaybackService.EXTRA_IS_PLAYING)) {
                 isPlaying = intent.getBooleanExtra(PlaybackService.EXTRA_IS_PLAYING, false)
+            }
+            if (intent.hasExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED)) {
+                shuffleEnabled = intent.getBooleanExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED, false)
+            }
+            if (intent.hasExtra(PlaybackService.EXTRA_REPEAT_MODE)) {
+                repeatMode = intent.getIntExtra(PlaybackService.EXTRA_REPEAT_MODE, 0).coerceIn(0, 2)
             }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
@@ -151,6 +159,8 @@ class MainActivity : ComponentActivity() {
                 tracks = tracks,
                 status = status,
                 isPlaying = isPlaying,
+                shuffleEnabled = shuffleEnabled,
+                repeatMode = repeatMode,
                 selectedTrack = selectedTrack,
                 currentTag = currentTag,
                 lyrics = lyrics,
@@ -422,6 +432,8 @@ private fun FloweryApp(
     tracks: List<AudioTrackItem>,
     status: String,
     isPlaying: Boolean,
+    shuffleEnabled: Boolean,
+    repeatMode: Int,
     selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?,
     lyrics: List<LyricLine>,
@@ -461,7 +473,7 @@ private fun FloweryApp(
                 ) {
                     Column {
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(300.dp)
+                            modifier = Modifier.fillMaxWidth().aspectRatio(1f)
                                 .combinedClickable(onClick = {}, onLongClick = { selectedTrack?.let(onInspect) }),
                             contentAlignment = Alignment.Center
                         ) {
@@ -509,7 +521,12 @@ private fun FloweryApp(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(onClick = onShuffle) {
-                        Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = Color.White, modifier = Modifier.size(25.dp))
+                        Icon(
+                            Icons.Default.Shuffle,
+                            contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
+                            tint = if (shuffleEnabled) Color(0xFF1E90FF) else Color.White,
+                            modifier = Modifier.size(25.dp)
+                        )
                     }
                     IconButton(onClick = onPrevious) {
                         Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(30.dp))
@@ -529,7 +546,12 @@ private fun FloweryApp(
                         Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(30.dp))
                     }
                     IconButton(onClick = onRepeat) {
-                        Icon(Icons.Default.Repeat, contentDescription = "Repeat mode", tint = Color.White, modifier = Modifier.size(25.dp))
+                        Icon(
+                            if (repeatMode == 2) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                            contentDescription = when (repeatMode) { 1 -> "Repeat all"; 2 -> "Repeat one"; else -> "Repeat off" },
+                            tint = if (repeatMode == 0) Color.White else Color(0xFF1E90FF),
+                            modifier = Modifier.size(25.dp)
+                        )
                     }
                 }
                 Column(
@@ -553,20 +575,12 @@ private fun FloweryApp(
                             textAlign = TextAlign.Center
                         )
                     }
-                    Text(
-                        status,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodySmall,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
-                    )
                     currentTag?.let { tag ->
                         val playbackDetails = listOfNotNull(
                             tag.bitDepth.takeIf { it > 0 }?.let { "Bit depth: $it-bit" },
                             tag.sampleRate.takeIf { it > 0 }?.let { "Sample rate: ${"%.1f".format(java.util.Locale.ROOT, it / 1000.0)} kHz" },
                             tag.bitrateKbps.takeIf { it > 0 }?.let { "Bit rate: $it kbps" },
-                            tag.channels.takeIf { it > 0 }?.let { "$it ch" },
-                            tag.fileType.takeIf { it.isNotBlank() }?.uppercase()
+                            tag.channels.takeIf { it > 0 }?.let { "Channel: $it ch" }
                         )
                         if (playbackDetails.isNotEmpty()) {
                             Text(
