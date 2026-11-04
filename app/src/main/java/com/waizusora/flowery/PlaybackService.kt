@@ -57,6 +57,8 @@ class PlaybackService : Service() {
     private lateinit var audioManager: AudioManager
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
+    private var hasAudioFocus = false
+    private var resumeAfterFocus = false
     private val io = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
     private var queueIndex = -1
@@ -144,16 +146,45 @@ class PlaybackService : Service() {
     }
 
     private fun requestFocus(): Boolean {
+        if (hasAudioFocus) return true
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let(audioManager::abandonAudioFocusRequest)
+        } else {
+            abandonLegacyAudioFocus()
+        }
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
             .build()
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
             when (change) {
-                AudioManager.AUDIOFOCUS_LOSS -> pausePlayback()
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> pausePlayback()
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player.setVolume(0.25f)
-                AudioManager.AUDIOFOCUS_GAIN -> player.setVolume(1f)
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    hasAudioFocus = false
+                    resumeAfterFocus = false
+                    pausePlayback()
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    hasAudioFocus = false
+                    if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
+                        resumeAfterFocus = true
+                        player.pause()
+                        playbackState = PlaybackStateCompat.STATE_PAUSED
+                        publishSessionState()
+                        publishState("Paused")
+                    }
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player.setDucked(true)
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    hasAudioFocus = true
+                    player.setDucked(false)
+                    if (resumeAfterFocus) {
+                        resumeAfterFocus = false
+                        player.resume()
+                        playbackState = PlaybackStateCompat.STATE_PLAYING
+                        publishSessionState()
+                        publishState("Playing")
+                    }
+                }
             }
         }
         focusListener = listener
@@ -161,7 +192,7 @@ class PlaybackService : Service() {
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attributes)
                 .setOnAudioFocusChangeListener(listener)
-                .setWillPauseWhenDucked(true)
+                .setWillPauseWhenDucked(false)
                 .build()
             focusRequest = request
             audioManager.requestAudioFocus(request)
@@ -169,7 +200,8 @@ class PlaybackService : Service() {
             @Suppress("DEPRECATION")
             audioManager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
         }
-        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        return hasAudioFocus
     }
 
     private fun playCurrent() {
@@ -199,6 +231,7 @@ class PlaybackService : Service() {
     }
 
     private fun pausePlayback() {
+        resumeAfterFocus = false
         player.pause()
         playbackState = PlaybackStateCompat.STATE_PAUSED
         publishSessionState()
@@ -207,6 +240,7 @@ class PlaybackService : Service() {
 
     private fun resumePlayback() {
         if (queue.isEmpty()) return
+        resumeAfterFocus = false
         if (playbackState == PlaybackStateCompat.STATE_STOPPED) playCurrent()
         else {
             if (requestFocus()) player.resume()
@@ -217,8 +251,12 @@ class PlaybackService : Service() {
 
     private fun stopPlayback() {
         player.stop()
+        resumeAfterFocus = false
+        hasAudioFocus = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
+        focusRequest = null
+        focusListener = null
         playbackState = PlaybackStateCompat.STATE_STOPPED
         publishSessionState()
         publishState("Stopped")
@@ -327,9 +365,14 @@ class PlaybackService : Service() {
 
     override fun onDestroy() {
         player.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
+        else abandonLegacyAudioFocus()
+        hasAudioFocus = false
+        focusRequest = null
+        focusListener = null
+        runCatching { unregisterReceiver(noisyReceiver) }
         session.isActive = false
         session.release()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         io.shutdownNow()
         super.onDestroy()
     }
