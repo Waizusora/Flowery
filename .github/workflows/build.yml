@@ -1,0 +1,65 @@
+name: Build Flowery
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_HOME: ${{ runner.temp }}/android-sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK and CMake
+        run: sdkmanager "ndk;27.2.12479018" "cmake;3.22.1" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build native libraries
+        working-directory: native
+        run: |
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Prepare release signing
+        if: ${{ secrets.KEYSTORE_BASE64 != '' }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/flowery-release.jks"
+
+      - name: Build release APK
+        run: ./gradlew assembleRelease
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowery-apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
