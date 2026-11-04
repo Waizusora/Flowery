@@ -101,7 +101,7 @@ impl StreamDecoder {
         let source = MediaSourceStream::new(Box::new(file), Default::default());
         let mut hint = Hint::new();
         if !extension.is_empty() { hint.with_extension(extension.trim_start_matches('.')); }
-        let mut probed = symphonia::default::get_probe().format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+        let probed = symphonia::default::get_probe().format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
             .map_err(|e| format!("Unable to open audio stream: {e}"))?;
         let format = probed.format;
         let track = format.default_track().ok_or("No default audio track found")?;
