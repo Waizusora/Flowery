@@ -30,7 +30,7 @@ Application ID: `com.waizusora.flowery`
 
 ### Navigation and settings
 
-- A transparent four-icon navigation bar provides Folders, Lyrics, DSP, and Settings destinations.
+- A transparent navigation bar provides Folders, Lyrics, USB DAC access, DSP, and Settings destinations. USB DAC access requests Android USB host permission for a detected USB Audio Class device; it does not enable bit-perfect output.
 - The Folders destination lists configured SAF roots, supports multi-select removal from Flowery's list, per-folder scan enablement, scanning, and folder-specific track browsing. Removing a folder releases its persisted access grant and removes it from the app's configured list; it does not delete the user's original files.
 - Selecting a track from a folder starts playback with that folder's tracks as the playback queue, keeping the user in the selected folder view.
 - The Lyrics icon toggles synchronized sidecar LRC lyrics in the album-artwork area; toggling it again restores the artwork.
