@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.util.Base64
 import androidx.activity.ComponentActivity
@@ -106,6 +107,20 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
+    private var usbDacMessage by mutableStateOf<String?>(null)
+    private val usbDacController by lazy { UsbDacController(this) }
+    private val usbPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action != UsbDacController.ACTION_USB_PERMISSION) return
+            val device = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(UsbManager.EXTRA_DEVICE)
+            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+            usbDacMessage = when {
+                device == null -> "Android did not return the USB audio device."
+                granted -> "USB access granted for ${device.productName ?: "USB DAC"}. The current Flowery audio engine does not yet provide a native USB Audio Class bit-perfect transport. Playback remains on the regular Android audio route."
+                else -> "USB access was not granted. The DAC remains on the regular Android audio route."
+            }
+        }
+    }
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
     private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
@@ -161,6 +176,7 @@ class MainActivity : ComponentActivity() {
                 folders = folders,
                 tracks = tracks,
                 status = status,
+                onUsbDacClick = ::requestUsbDacAccess,
                 isPlaying = isPlaying,
                 shuffleEnabled = shuffleEnabled,
                 repeatMode = repeatMode,
@@ -202,6 +218,12 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Waizusora/Flowery/releases")))
                 }
             )
+            usbDacMessage?.let { message ->
+                AlertDialog(onDismissRequest = { usbDacMessage = null },
+                    title = { Text("USB DAC") },
+                    text = { Text(message) },
+                    confirmButton = { TextButton(onClick = { usbDacMessage = null }) { Text("Close") } })
+            }
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
                 MaterialTheme { TagEditorDialog(
@@ -216,11 +238,30 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        androidx.core.content.ContextCompat.registerReceiver(this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
     override fun onStop() {
         unregisterReceiver(playbackReceiver)
+        unregisterReceiver(usbPermissionReceiver)
         super.onStop()
+    }
+
+    private fun requestUsbDacAccess() {
+        val devices = usbDacController.audioDevices()
+        when {
+            devices.isEmpty() -> usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
+            devices.size > 1 -> usbDacMessage = "More than one USB Audio Class device is connected. Disconnect other USB audio devices and retry so Flowery can request permission for the intended DAC."
+            else -> {
+                val device = devices.single().usbDevice
+                if (usbDacController.hasPermission(device)) {
+                    usbDacMessage = "Android USB access is already granted. Native USB Audio Class streaming, format negotiation, and verified bit-perfect output are not implemented yet, so Flowery will not claim exclusive bit-perfect mode."
+                } else {
+                    usbDacController.requestPermission(device)
+                    usbDacMessage = "Android will ask whether Flowery may access ${devices.single().displayName}. Granting USB access alone does not enable bit-perfect playback."
+                }
+            }
+        }
     }
 
     private fun sendPlaybackCommand(action: String, configure: Intent.() -> Unit = {}) {
