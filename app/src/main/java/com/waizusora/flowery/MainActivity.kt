@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material3.AlertDialog
@@ -54,7 +54,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -135,10 +134,10 @@ class MainActivity : ComponentActivity() {
                 onScan = ::scanLibrary,
                 onPlay = ::playTrack,
                 onInspect = ::inspectTrack,
-                onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
-                onPause = { sendPlaybackCommand(PlaybackService.ACTION_PAUSE) },
-                onResume = { sendPlaybackCommand(PlaybackService.ACTION_RESUME) },
-                onStop = { sendPlaybackCommand(PlaybackService.ACTION_STOP); status = "Stopped" },
+                onTogglePlayback = {
+                    if (status.startsWith("Playing")) sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
+                    else sendPlaybackCommand(PlaybackService.ACTION_RESUME)
+                },
                 onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
                 onPrevious = { sendPlaybackCommand(PlaybackService.ACTION_PREVIOUS) },
                 onNext = { sendPlaybackCommand(PlaybackService.ACTION_NEXT) },
@@ -371,8 +370,8 @@ data class AudioTag(
 )
 
 private val ISO_BANDS = listOf("20", "25", "31.5", "40", "50", "63", "80", "100", "125", "160", "200", "250", "315", "400", "500", "630", "800", "1k", "1.25k", "1.6k", "2k", "2.5k", "3.15k", "4k", "5k", "6.3k", "8k", "10k", "12.5k", "16k", "20k")
-private val Gold = Color(0xFFFFC400)
-private val DeepGold = Color(0xFFB98A00)
+private val Gold = Color(0xFFE0E0E0)
+private val DeepGold = Color(0xFF777B82)
 private val Ink = Color(0xFF29251B)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -395,10 +394,7 @@ private fun FloweryApp(
     onScan: () -> Unit,
     onPlay: (AudioTrackItem) -> Unit,
     onInspect: (AudioTrackItem) -> Unit,
-    onEdit: () -> Unit,
-    onPause: () -> Unit,
-    onResume: () -> Unit,
-    onStop: () -> Unit,
+    onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -407,35 +403,22 @@ private fun FloweryApp(
     onSeek: (Long) -> Unit,
 ) {
     MaterialTheme {
-        Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("FLOWERY", fontWeight = FontWeight.Black, letterSpacing = 3.sp)
-                            Text("NOVEL INTO MUSIC", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp)
-                        }
-                    }
-                )
-            }
-        ) { padding ->
+        Scaffold(containerColor = Color.Transparent) { padding ->
             Column(
                 modifier = Modifier.fillMaxSize()
-                    .background(Brush.verticalGradient(listOf(Color(0xFFFFD33D), Color(0xFFB68C13), Color(0xFF777982))))
+                    .background(Brush.verticalGradient(listOf(Color(0xFF42454B), Color(0xFF777B82), Color(0xFFB0B2B6))))
                     .verticalScroll(rememberScrollState())
-                    .padding(padding).padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(top = 12.dp, bottom = 10.dp).padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(26.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFF5F2E9))
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent)
                 ) {
                     Column {
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(300.dp)
-                                .combinedClickable(onClick = {}, onLongClick = { selectedTrack?.let(onInspect) }),
+                            modifier = Modifier.fillMaxWidth().height(300.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             val art = remember(currentTag?.pictureBase64) {
@@ -447,41 +430,53 @@ private fun FloweryApp(
                             if (art != null) {
                                 androidx.compose.foundation.Image(bitmap = art, contentDescription = "Embedded album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
                             } else {
-                                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFFFFDF5), Color(0xFFFFE9A1)))), contentAlignment = Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("FLOWERY", color = DeepGold, fontWeight = FontWeight.Black, letterSpacing = 8.sp)
-                                        Text("✦", color = Gold, style = MaterialTheme.typography.displayLarge)
-                                        Text(currentTag?.album?.ifBlank { "NOVEL INTO MUSIC" } ?: "NOVEL INTO MUSIC", color = DeepGold, style = MaterialTheme.typography.labelLarge, letterSpacing = 3.sp)
-                                    }
+                                Box(Modifier.fillMaxSize().background(Color(0xFF686C73)), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Default.MusicNote, contentDescription = "No artwork", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(72.dp))
                                 }
-                            }
-                            Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x55000000)).padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("HOLD ARTWORK · FILE DETAILS", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                                Text(currentTag?.fileType ?: "AUDIO", color = Color.White, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
                 }
                 Column(
-                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onEdit).padding(horizontal = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold, color = Color.White, textAlign = TextAlign.Center)
-                    Text(currentTag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist", style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.92f))
-                    Text("HOLD TITLE OR ARTIST TO EDIT TAGS", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f))
+                    Text(
+                        currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing",
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
+                    Text(
+                        currentTag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist",
+                        modifier = Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.92f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
+                    )
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White) }
-                    IconButton(onClick = onPause, modifier = Modifier.background(DeepGold.copy(alpha = 0.55f), RoundedCornerShape(30.dp))) { Icon(Icons.Default.Pause, "Pause", tint = Color.White) }
-                    IconButton(onClick = onResume, modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))) { Icon(Icons.Default.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(46.dp)) }
-                    IconButton(onClick = onStop, modifier = Modifier.background(DeepGold.copy(alpha = 0.55f), RoundedCornerShape(30.dp))) { Icon(Icons.Default.Stop, "Stop", tint = Color.White) }
-                    IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
+                    IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(30.dp)) }
+                    IconButton(onClick = onTogglePlayback, modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))) {
+                        Icon(
+                            if (status.startsWith("Playing")) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (status.startsWith("Playing")) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(46.dp)
+                        )
+                    }
+                    IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(30.dp)) }
                 }
                 if (playbackDurationMs > 0L) {
+                    val safeDuration = playbackDurationMs.coerceAtLeast(1L)
                     Slider(
-                        value = playbackPositionMs.coerceIn(0L, playbackDurationMs).toFloat(),
+                        value = playbackPositionMs.coerceIn(0L, safeDuration).toFloat(),
                         onValueChange = { onSeek(it.toLong()) },
-                        valueRange = 0f..playbackDurationMs.toFloat(),
+                        valueRange = 0f..safeDuration.toFloat(),
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("${formatPlaybackTime(playbackPositionMs)} / ${formatPlaybackTime(playbackDurationMs)}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
