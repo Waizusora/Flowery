@@ -19,6 +19,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     private var worker: Thread? = null
+    private val volumeController = OutputVolumeController(context)
+    @Volatile private var activeUsbDeviceKey: String? = null
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
@@ -38,8 +40,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setVolume(value: Float) {
-        softwareVolume = value.coerceIn(0f, 1f)
-        applyOutputVolume()
+        val normalized = value.coerceIn(0f, 1f)
+        val usbKey = activeUsbDeviceKey
+        if (usbKey == null) {
+            // Speaker, wired AUX/headsets, and Bluetooth follow Android's media stream.
+            volumeController.setSystemVolume(normalized)
+            softwareVolume = 1f
+        } else {
+            softwareVolume = normalized
+            volumeController.setUsbVolume(usbKey, normalized)
+            applyOutputVolume()
+        }
     }
 
     fun setDucked(ducked: Boolean) {
@@ -85,6 +96,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     null
                 }
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
+                val usbKey = selectedDevice?.let {
+                    "${it.productName}|${it.id}|${it.type}"
+                }
+                activeUsbDeviceKey = usbKey
+                if (usbKey == null) {
+                    softwareVolume = 1f
+                } else {
+                    // A DAC without an exposed hardware-volume interface starts at 20%.
+                    softwareVolume = volumeController.usbVolume(usbKey)
+                }
                 val preferredRate = if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { abs(it - sourceRate) } ?: sourceRate
                 var deviceId = selectedDevice?.id ?: 0
@@ -182,6 +203,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     NativeAudio.nativeCloseStreamDecoder(handle)
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
+                if (playbackGeneration.get() == generation) activeUsbDeviceKey = null
                 descriptor?.close()
             }
         }
@@ -232,5 +254,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputSampleRate = 0
         pendingSeekMs.set(null)
         paused = false
+        activeUsbDeviceKey = null
     }
 }
