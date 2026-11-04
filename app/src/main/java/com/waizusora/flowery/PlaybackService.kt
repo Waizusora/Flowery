@@ -52,6 +52,7 @@ class PlaybackService : Service() {
         const val EXTRA_CURRENT_URI = "current_uri"
         const val BROADCAST_STATE = "com.waizusora.flowery.PLAYBACK_STATE"
         const val EXTRA_STATUS = "status"
+        const val EXTRA_IS_PLAYING = "is_playing"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -84,7 +85,8 @@ class PlaybackService : Service() {
             if (::player.isInitialized) {
                 sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
                     .putExtra(EXTRA_POSITION, player.positionMs())
-                    .putExtra(EXTRA_DURATION, player.durationMs()))
+                    .putExtra(EXTRA_DURATION, player.durationMs())
+                    .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING))
             }
             mainHandler.postDelayed(this, 500L)
         }
@@ -318,17 +320,18 @@ class PlaybackService : Service() {
     }
 
     private fun publishState(message: String) {
+        playbackState = when {
+            message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
+            message == "Paused" -> PlaybackStateCompat.STATE_PAUSED
+            message == "Stopped" || message == "Playback finished" -> PlaybackStateCompat.STATE_STOPPED
+            else -> playbackState
+        }
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
             .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
+            .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
         sendBroadcast(intent)
         if (::session.isInitialized) {
-            playbackState = when {
-                message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
-                message == "Paused" -> PlaybackStateCompat.STATE_PAUSED
-                message == "Stopped" || message == "Playback finished" -> PlaybackStateCompat.STATE_STOPPED
-                else -> playbackState
-            }
             publishSessionState()
             getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
         }
