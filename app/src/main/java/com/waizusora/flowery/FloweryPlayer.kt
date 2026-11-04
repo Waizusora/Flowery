@@ -32,7 +32,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 require(pcm.channels in 1..2) { "The current AAudio output path supports mono and stereo PCM" }
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 val usbDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
-                    it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                    (it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET) && it.sampleRates?.isNotEmpty() == true
                 }
                 val selectedDevice = usbDevices.firstOrNull { it.sampleRates.isNotEmpty() } ?: usbDevices.firstOrNull()
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
