@@ -18,7 +18,6 @@ struct OutputState {
     std::atomic<bool> active{false};
     std::atomic<bool> eof{false};
     std::atomic<int32_t> errorCode{0};
-    std::atomic<int32_t> errorCode{0};
     std::atomic<uint64_t> flushEpoch{0};
     int32_t channels = 2;
 };
@@ -26,12 +25,6 @@ struct OutputState {
 std::mutex g_mutex;
 AAudioStream* g_stream = nullptr;
 std::unique_ptr<OutputState> g_output;
-
-void errorCallback(AAudioStream*, void* userData, aaudio_result_t error) {
-    auto* state = static_cast<OutputState*>(userData);
-    state->errorCode.store(error, std::memory_order_release);
-    state->active.store(false, std::memory_order_release);
-}
 
 void errorCallback(AAudioStream*, void* userData, aaudio_result_t error) {
     auto* state = static_cast<OutputState*>(userData);
@@ -101,7 +94,6 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
     AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
     AAudioStreamBuilder_setDataCallback(builder, dataCallback, state);
-    AAudioStreamBuilder_setErrorCallback(builder, errorCallback, state);
     AAudioStreamBuilder_setErrorCallback(builder, errorCallback, state);
     result = AAudioStreamBuilder_openStream(builder, &g_stream);
     AAudioStreamBuilder_delete(builder);
@@ -188,7 +180,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
     return static_cast<jint>(count);
 }
 
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject, jlong positionFrames) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_output || !g_stream || positionFrames < 0) return AAUDIO_ERROR_INVALID_STATE;
@@ -254,12 +246,6 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_output && g_output->active.load(std::memory_order_acquire) ? JNI_TRUE : JNI_FALSE;
-}
-
-extern "C" JNIEXPORT jint JNICALL
-Java_com_waizusora_flowery_NativeAudio_nativeGetOutputError(JNIEnv*, jobject) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    return g_output ? g_output->errorCode.load(std::memory_order_acquire) : AAUDIO_ERROR_INVALID_STATE;
 }
 
 extern "C" JNIEXPORT jint JNICALL
