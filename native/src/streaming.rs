@@ -50,12 +50,12 @@ struct StreamDecoder {
     input_pending: Vec<f32>,
     output_pending: VecDeque<f32>,
     eof: bool,
-    resampler_flushed: bool,
     gains: [f32;31],
     coefficients: [BiquadCoefficients;31],
     eq_state: Vec<[BiquadState;31]>,
     produced_frames: u64,
     source_frames_decoded: u64,
+    duration_ms: u64,
     resampler_delay_frames: usize,
 }
 
@@ -74,6 +74,7 @@ impl StreamDecoder {
         let track_id = track.id;
         let params = track.codec_params.clone();
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
+        let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
         if channels == 0 || channels > 2 { return Err(format!("AAudio streaming currently supports mono/stereo, found {channels} channels")); }
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
@@ -81,9 +82,9 @@ impl StreamDecoder {
         Ok(Self {
             format, decoder, track_id, source_rate, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
-            eof: false, resampler_flushed: false, gains: [0.0;31],
+            eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, resampler_delay_frames: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0,
         })
     }
 
@@ -160,9 +161,6 @@ impl StreamDecoder {
         let take_samples = take_frames * self.channels;
         input[..take_samples].copy_from_slice(&self.input_pending[..take_samples]);
         self.input_pending.drain(..take_samples);
-        if take_frames < input_frames {
-            self.resampler_flushed = true;
-        }
         let resampler = self.resampler.as_mut().ok_or("Resampler is not configured")?;
         let output_frames = resampler.output_frames_next();
         let mut output = vec![0.0_f32; output_frames * self.channels];
@@ -256,9 +254,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDur
 ) -> jlong {
     if handle==0 { return 0; }
     let decoder=unsafe { &*(handle as *mut StreamDecoder) };
-    if decoder.source_frames_decoded == 0 { 0 } else {
-        (decoder.source_frames_decoded as u128 * 1000u128 / decoder.source_rate as u128) as jlong
-    }
+    decoder.duration_ms as jlong
 }
 
 #[no_mangle]
