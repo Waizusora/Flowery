@@ -28,6 +28,19 @@ Application ID: `com.waizusora.flowery`
 
 ## Features
 
+### Navigation and settings
+
+- A transparent four-icon navigation bar provides Folders, Lyrics, DSP, and Settings destinations.
+- The Folders destination lists configured SAF roots, supports multi-select removal from Flowery's list, per-folder scan enablement, scanning, and folder-specific track browsing. Removing a folder releases its persisted access grant and removes it from the app's configured list; it does not delete the user's original files.
+- Selecting a track from a folder starts playback with that folder's tracks as the playback queue, keeping the user in the selected folder view.
+- The Lyrics icon toggles synchronized sidecar LRC lyrics in the album-artwork area; toggling it again restores the artwork.
+- DSP contains software output volume and the 31-band equalizer.
+- Settings provides Audio information, Library guidance, Appearance, and Other pages. Appearance offers Light, Black, and Auto themes; Auto follows Android's system dark-mode setting. Language selection, translator credits, and contributor credits are currently placeholders.
+- Battery optimization opens Android's per-app exemption request screen. The user must approve the system prompt; Flowery cannot grant the exemption itself.
+- Update opens the project's GitHub Releases page in the browser.
+- Open Source lists key direct components and their upstream license identifiers. It is not a complete inventory of transitive dependencies; consult the exact packaged notices before redistribution.
+
+
 ### Playback
 
 - Play audio documents selected from configured folders.
