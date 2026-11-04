@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
@@ -137,12 +138,12 @@ fun FloweryNavigation(
                     if (durationMs > 0) {
                         Slider(value = positionMs.coerceIn(0L, durationMs).toFloat(), onValueChange = { onSeek(it.toLong()) },
                             valueRange = 0f..durationMs.toFloat())
-                        Text("\${formatPlaybackTime(positionMs)} / \${formatPlaybackTime(durationMs)}", color = foreground,
+                        Text("${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}", color = foreground,
                             modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
                     }
                     currentTag?.let { tag ->
                         val details = listOfNotNull(tag.bitDepth.takeIf { it > 0 }?.let { "Bit depth: $it-bit" },
-                            tag.sampleRate.takeIf { it > 0 }?.let { "Sample rate: \${"%.1f".format(Locale.ROOT, it / 1000.0)} kHz" },
+                            tag.sampleRate.takeIf { it > 0 }?.let { "Sample rate: ${"%.1f".format(Locale.ROOT, it / 1000.0)} kHz" },
                             tag.bitrateKbps.takeIf { it > 0 }?.let { "Bit rate: $it kbps" },
                             tag.channels.takeIf { it > 0 }?.let { "Channel: $it ch" })
                         if (details.isNotEmpty()) Text(details.joinToString("  ·  "), color = muted,
@@ -160,7 +161,7 @@ fun FloweryNavigation(
                         if (removeSelection.isNotEmpty()) Button(onClick = {
                             folders.filter { it.uri in removeSelection }.forEach(onRemoveFolder); removeSelection.clear()
                         }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C3545))) {
-                            Icon(Icons.Default.Delete, null); Text(" Remove selected (\${removeSelection.size})")
+                            Icon(Icons.Default.Delete, null); Text(" Remove selected (${removeSelection.size})")
                         }
                         folders.forEach { folder ->
                             Card(Modifier.fillMaxWidth().clickable { selectedFolder = folder },
@@ -188,7 +189,7 @@ fun FloweryNavigation(
                             Heading(selectedFolder!!.name, foreground)
                         }
                         val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
-                        Text("\${folderTracks.size} tracks", color = muted)
+                        Text("${folderTracks.size} tracks", color = muted)
                         folderTracks.forEach { track ->
                             Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
@@ -208,7 +209,7 @@ fun FloweryNavigation(
                     Heading("DSP", foreground)
                     Text("Software volume", color = foreground, fontWeight = FontWeight.SemiBold)
                     Slider(value = volume, onValueChange = onVolume)
-                    Text("\${(volume * 100).toInt()}%", color = muted, modifier = Modifier.align(Alignment.End))
+                    Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.align(Alignment.End))
                     Text("31-band ISO equalizer · ±12 dB", color = foreground, fontWeight = FontWeight.SemiBold)
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
                         shape = RoundedCornerShape(18.dp)) {
