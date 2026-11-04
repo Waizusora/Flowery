@@ -371,7 +371,7 @@ private fun FloweryApp(
                     Column {
                         Box(
                             modifier = Modifier.fillMaxWidth().height(300.dp)
-                                .combinedClickable(onClick = {}, onLongClick = { currentTag?.let { onInspect(selectedTrack ?: return@combinedClickable) } }),
+                                .combinedClickable(onClick = {}, onLongClick = { selectedTrack?.let(onInspect) }),
                             contentAlignment = Alignment.Center
                         ) {
                             val art = remember(currentTag?.pictureBase64) {
