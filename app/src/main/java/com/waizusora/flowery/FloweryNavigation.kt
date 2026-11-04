@@ -44,7 +44,7 @@ fun FloweryNavigation(
     onInspect: (AudioTrackItem) -> Unit, onEdit: () -> Unit, onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
-    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit
+    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit
 ) {
     var destination by remember { mutableStateOf(Destination.PLAYER) }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
@@ -73,6 +73,9 @@ fun FloweryNavigation(
             NavIcon(Icons.Default.Lyrics, "Lyrics", lyricsVisible, foreground) {
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
                 lyricsVisible = !lyricsVisible
+            }
+            IconButton(onClick = onUsbDacClick) {
+                Icon(Icons.Default.Usb, contentDescription = "USB DAC", tint = foreground)
             }
             NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
             NavIcon(Icons.Default.Settings, "Settings", destination == Destination.SETTINGS, foreground) {
