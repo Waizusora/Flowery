@@ -114,7 +114,7 @@ class UsbDacController(context: Context) {
                     if (ranges.isEmpty()) {
                         "Clock source $clockId on control interface $controlInterface: no valid ranges returned."
                     } else {
-                        "Clock source $clockId on control interface $controlInterface: ${ranges.joinToString();}."
+                        "Clock source $clockId on control interface $controlInterface: ${ranges.joinToString()}."
                     }
                 }
             }
