@@ -108,7 +108,14 @@ class MainActivity : ComponentActivity() {
                     val parsed = nextTrack.sidecarLyricsUri?.let { lyricUri ->
                         runCatching { contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) } }.getOrNull()
                     }.orEmpty()
-                    runOnUiThread { currentTag = tag; lyrics = parsed }
+                    runOnUiThread {
+                        currentTag = tag
+                        lyrics = parsed
+                        sendPlaybackCommand(PlaybackService.ACTION_UPDATE_METADATA) {
+                            putExtra(PlaybackService.EXTRA_TITLE, tag?.title?.ifBlank { nextTrack.title } ?: nextTrack.title)
+                            putExtra(PlaybackService.EXTRA_ARTIST, tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist")
+                        }
+                    }
                 }
             }
         }
@@ -419,7 +426,7 @@ private fun FloweryApp(
                 modifier = Modifier.fillMaxSize()
                     .background(Brush.verticalGradient(listOf(Color(0xFF42454B), Color(0xFF777B82), Color(0xFFB0B2B6))))
                     .verticalScroll(rememberScrollState())
-                    .padding(top = 12.dp, bottom = 10.dp).padding(horizontal = 16.dp),
+                    .padding(padding).padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Card(
