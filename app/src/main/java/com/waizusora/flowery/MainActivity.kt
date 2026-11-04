@@ -64,6 +64,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -113,7 +114,7 @@ class MainActivity : ComponentActivity() {
                 onVolume = { volume = it; player.setVolume(it) },
                 onSaveTags = ::saveTags
             )
-            infoTag?.let { tag -> TagInfoDialog(tag, onDismiss = { infoTag = null }) }
+            infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
                 TagEditorDialog(
                     tag = tag,
@@ -341,8 +342,8 @@ private fun FloweryApp(
                 TopAppBar(
                     title = {
                         Column {
-                            Text("FLOWERY", fontWeight = FontWeight.Black, letterSpacing = androidx.compose.ui.unit.sp(3))
-                            Text("NOVEL INTO MUSIC", style = MaterialTheme.typography.labelSmall, letterSpacing = androidx.compose.ui.unit.sp(2))
+                            Text("FLOWERY", fontWeight = FontWeight.Black, letterSpacing = 3.sp)
+                            Text("NOVEL INTO MUSIC", style = MaterialTheme.typography.labelSmall, letterSpacing = 2.sp)
                         }
                     }
                 )
@@ -377,7 +378,7 @@ private fun FloweryApp(
                             } else {
                                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFFFFFDF5), Color(0xFFFFE9A1)))), contentAlignment = Alignment.Center) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("FLOWERY", color = DeepGold, fontWeight = FontWeight.Black, letterSpacing = androidx.compose.ui.unit.sp(8))
+                                        Text("FLOWERY", color = DeepGold, fontWeight = FontWeight.Black, letterSpacing = 8.sp)
                                         Text("✦", color = Gold, style = MaterialTheme.typography.displayLarge)
                                         Text(currentTag?.album?.ifBlank { "NOVEL INTO MUSIC" } ?: "NOVEL INTO MUSIC", color = DeepGold, style = MaterialTheme.typography.labelLarge, letterSpacing = androidx.compose.ui.unit.sp(3))
                                     }
