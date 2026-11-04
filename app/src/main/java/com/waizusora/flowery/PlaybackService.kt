@@ -12,6 +12,8 @@ import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 import androidx.media.session.MediaButtonReceiver
 import android.support.v4.media.MediaMetadataCompat
@@ -32,11 +34,14 @@ class PlaybackService : Service() {
         const val ACTION_EQUALIZER = "com.waizusora.flowery.EQUALIZER"
         const val ACTION_SHUFFLE = "com.waizusora.flowery.SHUFFLE"
         const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
+        const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_INDEX = "queue_index"
         const val EXTRA_VALUE = "value"
         const val EXTRA_GAINS = "gains"
+        const val EXTRA_POSITION = "position_ms"
+        const val EXTRA_DURATION = "duration_ms"
         const val BROADCAST_STATE = "com.waizusora.flowery.PLAYBACK_STATE"
         const val EXTRA_STATUS = "status"
         private const val CHANNEL_ID = "flowery_playback"
@@ -55,6 +60,17 @@ class PlaybackService : Service() {
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val progressUpdates = object : Runnable {
+        override fun run() {
+            if (::player.isInitialized) {
+                sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
+                    .putExtra(EXTRA_POSITION, player.positionMs())
+                    .putExtra(EXTRA_DURATION, player.durationMs()))
+            }
+            mainHandler.postDelayed(this, 500L)
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -109,6 +125,7 @@ class PlaybackService : Service() {
             ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = (repeatMode + 1) % 3; publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
+            ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
         }
         return START_NOT_STICKY
     }
@@ -220,6 +237,7 @@ class PlaybackService : Service() {
 
     private fun publishState(message: String) {
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
+            .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
         sendBroadcast(intent)
         if (::session.isInitialized) {
             playbackState = when {
