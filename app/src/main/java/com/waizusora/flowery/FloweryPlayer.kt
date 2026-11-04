@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -26,7 +27,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
-    @Volatile private var pendingSeekMs: Long? = null
+    private val pendingSeekMs = AtomicReference<Long?>(null)
 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
@@ -97,13 +98,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 var eofSignalled = false
                 var appliedEqualizerRevision = equalizerRevision
                 while (!stopped.get() && playbackGeneration.get() == generation) {
-                    pendingSeekMs?.let { requested ->
-                        pendingSeekMs = null
+                    pendingSeekMs.getAndSet(null)?.let { requested ->
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
+                        val targetFrame = target * targetRate / 1000L
+                        check(NativeAudio.nativeFlushStreamOutput(targetFrame) == 0) { "Unable to flush or restart the AAudio output stream" }
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
-                        val targetFrame = actual * targetRate / 1000L
-                        check(NativeAudio.nativeFlushStreamOutput(targetFrame) == 0) { "Unable to flush or restart the AAudio output stream" }
                         reachedEnd = false
                         eofSignalled = false
                         appliedEqualizerRevision = equalizerRevision
@@ -143,12 +143,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                 }
 
-                while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeIsOutputActive()) {
-                    pendingSeekMs?.let { requested ->
-                        pendingSeekMs = requested
-                    }
-                    Thread.sleep(20)
-                }
                 if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -172,7 +166,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L) return
-        pendingSeekMs = positionMs.coerceAtLeast(0L)
+        pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 
     fun pause() {
@@ -191,5 +185,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         worker = null
         outputDurationMs = 0L
         outputSampleRate = 0
+        pendingSeekMs.set(null)
     }
 }
