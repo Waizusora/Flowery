@@ -1,4 +1,5 @@
 use std::io::Cursor;
+use base64::Engine;
 
 use jni::objects::{JByteArray, JClass, JFloatArray, JString};
 use jni::sys::{jbyteArray, jfloatArray, jint, jstring};
@@ -298,7 +299,7 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "composer": tag.get_string(ItemKey::Composer).unwrap_or_default(),
             "lyrics": tag.get_string(ItemKey::Lyrics).or_else(|| tag.get_string(ItemKey::UnsyncLyrics)).unwrap_or_default(),
             "pictureMime": picture.and_then(|p| p.mime_type()).map(|mime| format!("{mime:?}")).unwrap_or_default(),
-            "pictureBase64": picture.map(|p| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, p.data())).unwrap_or_default(),
+            "pictureBase64": picture.map(|p| base64::engine::general_purpose::STANDARD.encode(p.data())).unwrap_or_default(),
             "tagType": format!("{:?}", tag.tag_type()),
             "fileType": format!("{:?}", tagged.file_type()),
             "sampleRate": tagged.properties().sample_rate(),
