@@ -215,11 +215,15 @@ class MainActivity : ComponentActivity() {
             try {
                 val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
                     ?: throw IllegalStateException("Unable to open selected audio file")
-                val tag = readTag(track)
+                val tag = runCatching { readTag(track) }.getOrNull()
                 val parsedLyrics = track.sidecarLyricsUri?.let { lyricUri ->
                     contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) }
                 }.orEmpty()
-                runOnUiThread { currentTag = tag; lyrics = parsedLyrics }
+                runOnUiThread {
+                    currentTag = tag
+                    lyrics = parsedLyrics
+                    if (tag == null) status = "Tags unavailable for this format · playback continues"
+                }
                 player.play(bytes)
             } catch (error: Throwable) {
                 runOnUiThread { status = "Unable to load file: ${error.message}" }
