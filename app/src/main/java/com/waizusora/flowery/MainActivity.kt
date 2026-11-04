@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
     private val folders = mutableStateListOf<LibraryFolder>()
     private val tracks = mutableStateListOf<AudioTrackItem>()
     private var status by mutableStateOf("Choose a music folder to begin")
+    private var isPlaying by mutableStateOf(false)
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
     private var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
     private var currentTag by mutableStateOf<AudioTag?>(null)
@@ -111,6 +112,9 @@ class MainActivity : ComponentActivity() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent ?: return
             intent.getStringExtra(PlaybackService.EXTRA_STATUS)?.let { status = it }
+            if (intent.hasExtra(PlaybackService.EXTRA_IS_PLAYING)) {
+                isPlaying = intent.getBooleanExtra(PlaybackService.EXTRA_IS_PLAYING, false)
+            }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
             if (reportedDuration > 0L) playbackDurationMs = reportedDuration
@@ -147,6 +151,7 @@ class MainActivity : ComponentActivity() {
                 folders = folders,
                 tracks = tracks,
                 status = status,
+                isPlaying = isPlaying,
                 selectedTrack = selectedTrack,
                 currentTag = currentTag,
                 lyrics = lyrics,
@@ -163,7 +168,7 @@ class MainActivity : ComponentActivity() {
                 onInspect = ::inspectTrack,
                 onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
                 onTogglePlayback = {
-                    if (status.startsWith("Playing")) sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
+                    if (isPlaying) sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
                     else sendPlaybackCommand(PlaybackService.ACTION_RESUME)
                 },
                 onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
@@ -417,6 +422,7 @@ private fun FloweryApp(
     folders: List<LibraryFolder>,
     tracks: List<AudioTrackItem>,
     status: String,
+    isPlaying: Boolean,
     selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?,
     lyrics: List<LyricLine>,
@@ -514,8 +520,8 @@ private fun FloweryApp(
                         modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))
                     ) {
                         Icon(
-                            if (status.startsWith("Playing")) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = if (status.startsWith("Playing")) "Pause" else "Play",
+                            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
                             tint = Color.White,
                             modifier = Modifier.size(46.dp)
                         )
