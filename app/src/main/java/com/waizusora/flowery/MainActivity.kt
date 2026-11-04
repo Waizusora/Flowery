@@ -94,6 +94,20 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra(PlaybackService.EXTRA_STATUS)?.let { status = it }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             playbackDurationMs = intent.getLongExtra(PlaybackService.EXTRA_DURATION, playbackDurationMs)
+            val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
+            val nextTrack = tracks.firstOrNull { it.uri.toString() == currentUri }
+            if (nextTrack != null && selectedTrack?.uri != nextTrack.uri) {
+                selectedTrack = nextTrack
+                currentTag = null
+                lyrics = emptyList()
+                io.execute {
+                    val tag = runCatching { readTag(nextTrack) }.getOrNull()
+                    val parsed = nextTrack.sidecarLyricsUri?.let { lyricUri ->
+                        runCatching { contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) } }.getOrNull()
+                    }.orEmpty()
+                    runOnUiThread { currentTag = tag; lyrics = parsed }
+                }
+            }
         }
     }
 
