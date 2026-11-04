@@ -1,0 +1,11 @@
+[package]
+name = "flowery_audio"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = "0.21"
+symphonia = { version = "0.5.4", features = ["all"] }
