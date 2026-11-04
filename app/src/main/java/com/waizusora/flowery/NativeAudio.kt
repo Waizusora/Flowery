@@ -3,12 +3,12 @@ object NativeAudio {
     init { System.loadLibrary("flowery_audio"); System.loadLibrary("flowery_aaudio") }
     external fun nativeEngineVersion(): String
     external fun nativeDecode(encodedAudio: ByteArray): ByteArray
-    external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int): Int
+    external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int): Int
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeWriteTags(encodedAudio: ByteArray, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): ByteArray
     external fun nativeResample(samples: FloatArray, inputRate: Int, outputRate: Int, channels: Int): FloatArray
     external fun nativeApplyEqualizer(samples: FloatArray, sampleRate: Int, channels: Int, bandGainsDb: FloatArray): FloatArray
-    external fun nativeStartOutput(samples: FloatArray, sampleRate: Int, channels: Int, volume: Float): Int
+    external fun nativeStartOutput(samples: FloatArray, sampleRate: Int, channels: Int, volume: Float, deviceId: Int): Int
     external fun nativeSetOutputVolume(volume: Float)
     external fun nativePauseOutput(): Int
     external fun nativeResumeOutput(): Int
