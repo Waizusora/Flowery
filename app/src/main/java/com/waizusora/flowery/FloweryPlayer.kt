@@ -101,7 +101,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 while (!stopped.get() && playbackGeneration.get() == generation) {
                     pendingSeekMs.getAndSet(null)?.let { requested ->
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
-                        val targetFrame = target * targetRate / 1000L
+                        val targetFrame = framesAtMilliseconds(target, targetRate)
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame, !paused) == 0) { "Unable to flush or restart the AAudio output stream" }
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
@@ -180,6 +180,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L) return
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
+    }
+
+    private fun framesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long {
+        if (milliseconds <= 0L || sampleRate <= 0) return 0L
+        val seconds = milliseconds / 1_000L
+        val remainder = milliseconds % 1_000L
+        if (seconds > Long.MAX_VALUE / sampleRate) return Long.MAX_VALUE
+        val wholeFrames = seconds * sampleRate
+        val fractionalFrames = remainder * sampleRate / 1_000L
+        return if (wholeFrames > Long.MAX_VALUE - fractionalFrames) Long.MAX_VALUE
+        else wholeFrames + fractionalFrames
     }
 
     fun pause() {
