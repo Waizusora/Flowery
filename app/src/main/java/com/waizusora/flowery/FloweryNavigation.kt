@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,12 +53,15 @@ fun FloweryNavigation(
     val removeSelection = remember { mutableStateListOf<String>() }
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
-    val foreground = if (theme == "Light") Color(0xFF20212A) else Color.White
+    val systemDark = isSystemInDarkTheme()
+    val lightTheme = theme == "Light" || (theme == "Auto" && !systemDark)
+    val foreground = if (lightTheme) Color(0xFF20212A) else Color.White
     val muted = foreground.copy(alpha = .72f)
     val background = Brush.verticalGradient(when (theme) {
         "Light" -> listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
         "Black" -> listOf(Color(0xFF101014), Color(0xFF191922), Color(0xFF24242D))
-        else -> listOf(Color(0xFF42454B), Color(0xFF777B82), Color(0xFFB0B2B6))
+        else -> if (systemDark) listOf(Color(0xFF24262C), Color(0xFF3B3E45), Color(0xFF53565D))
+            else listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
     })
 
     Scaffold(containerColor = Color.Transparent, bottomBar = {
