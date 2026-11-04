@@ -154,6 +154,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoreFolders()
+        volume = OutputVolumeController(this).systemVolumeFraction()
         setContent {
             FloweryNavigation(
                 context = this,
