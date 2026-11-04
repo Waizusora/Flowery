@@ -87,10 +87,12 @@ class PlaybackService : Service() {
                 override fun onStop() = stopPlayback()
                 override fun onSkipToNext() = skipNext()
                 override fun onSkipToPrevious() = skipPrevious()
+                override fun onSeekTo(position: Long) = player.seekTo(position)
             })
             isActive = true
         }
         publishSessionState()
+        mainHandler.post(progressUpdates)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -247,8 +249,7 @@ class PlaybackService : Service() {
                 else -> playbackState
             }
             publishSessionState()
-            if (message.startsWith("Playing")) getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, buildNotification())
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
         }
     }
 
@@ -256,7 +257,7 @@ class PlaybackService : Service() {
         if (!::session.isInitialized) return
         val actions = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
-            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(actions)
             .setState(playbackState, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
