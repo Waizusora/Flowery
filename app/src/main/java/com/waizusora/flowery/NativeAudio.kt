@@ -14,6 +14,9 @@ object NativeAudio {
     external fun nativeResumeOutput(): Int
     external fun nativeStopOutput()
     external fun nativeIsOutputActive(): Boolean
+    external fun nativeGetOutputPositionFrames(): Long
+    external fun nativeGetOutputDurationFrames(): Long
+    external fun nativeSeekOutputFrames(frame: Long)
     data class DecodedPcm(val sampleRate: Int, val channels: Int, val samples: FloatArray)
     fun decode(encodedAudio: ByteArray): DecodedPcm {
         val packet = nativeDecode(encodedAudio)
