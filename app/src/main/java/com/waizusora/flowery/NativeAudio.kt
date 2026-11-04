@@ -12,7 +12,7 @@ object NativeAudio {
     external fun nativeCloseStreamDecoder(handle: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, capacityFrames: Int): Int
     external fun nativeWriteStreamFrames(samples: FloatArray, sourceFrameOffset: Int, frameCount: Int): Int
-    external fun nativeFlushStreamOutput(positionFrames: Long)
+    external fun nativeFlushStreamOutput(positionFrames: Long): Int
     external fun nativeSetStreamEof()
     external fun nativeGetStreamBufferedFrames(): Int
 
