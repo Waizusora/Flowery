@@ -272,7 +272,9 @@ class MainActivity : ComponentActivity() {
                     lyrics = parsedLyrics
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
                     val queueUris = ArrayList(tracks.map { it.uri.toString() })
-                    val queueTitles = ArrayList(tracks.map { it.title })
+                    val queueTitles = ArrayList(tracks.map { item ->
+                        if (item.uri == track.uri) tag?.title?.ifBlank { item.title } ?: item.title else item.title
+                    })
                     val queueArtists = ArrayList(tracks.map { item ->
                         if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         else "Local music"
