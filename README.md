@@ -33,12 +33,12 @@ The editor stages the selected file in the app's temporary directory, asks Lofty
 
 - Symphonia decodes the supported compressed audio formats into floating-point PCM.
 - Rubato 5 performs high-quality fixed-ratio sample-rate conversion using its synchronous FFT resampler and Blackman-Harris 2 anti-aliasing window.
-- If the decoded source sample rate can be opened by AAudio, Flowery keeps that rate. Otherwise it probes the device's default AAudio stream rate and resamples to that negotiated rate.
+- Flowery enumerates connected USB output devices through Android AudioManager, prefers a USB DAC with reported sample rates, selects the source rate when supported, and binds the AAudio stream to that device ID. If the DAC does not report a rate list, AAudio is probed directly. If the requested rate cannot be opened, Flowery uses the device default stream rate; if the USB route cannot be opened, it falls back to the system output route.
 - If the source and selected output rates match, the resampler returns the original PCM samples without conversion.
 - The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls.
 - AAudio requests exclusive, low-latency output and falls back to shared mode if exclusive mode is unavailable.
 
-The AAudio probe reports the stream rate accepted by Android's audio service for the current route. In shared mode, Android may still mix or resample internally. This is not proof of the physical DAC's native clock, supported USB rates, or bit-perfect transport. Guaranteed USB-exclusive output, USB Audio Class capability enumeration, hardware-volume control, and hardware-validated bit-perfect output are not implemented.
+The Android-reported USB sample-rate list is used as the preferred capability hint, then AAudio validates that the selected device and rate can actually open. In shared mode, Android may still mix or resample internally. This is not proof of the physical DAC's native clock or bit-perfect transport; device firmware and Android audio policy can still affect the signal path. Guaranteed USB-exclusive output, USB Audio Class capability enumeration, hardware-volume control, and hardware-validated bit-perfect output are not implemented.
 
 Bit-perfect playback is incompatible with active EQ, software volume scaling, or any sample-rate conversion. The current path uses floating-point decoded PCM and is therefore not a verified bit-perfect path.
 
