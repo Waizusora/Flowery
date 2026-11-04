@@ -19,10 +19,42 @@ internal object UsbAudioDescriptorParser {
         val channels: MutableSet<Int> = linkedSetOf(),
         val subslotBytes: MutableSet<Int> = linkedSetOf(),
         val bitResolutions: MutableSet<Int> = linkedSetOf(),
-        val sampleRates: MutableSet<Int> = linkedSetOf()
+        val sampleRates: MutableSet<Int> = linkedSetOf(),
+        val sampleRateRanges: MutableList<Pair<Int, Int>> = mutableListOf()
     )
 
-    fun report(raw: ByteArray, vid: Int, pid: Int, product: String?, manufacturer: String?): String {
+    fun clockSources(raw: ByteArray): List<Pair<Int, Int>> {
+        val sources = linkedSetOf<Pair<Int, Int>>()
+        var currentControlInterface: Int? = null
+        var offset = 0
+        while (offset + 2 <= raw.size) {
+            val length = raw[offset].toInt() and 0xff
+            val type = raw[offset + 1].toInt() and 0xff
+            if (length < 2 || offset + length > raw.size) break
+            if (type == USB_DT_INTERFACE && length >= 9) {
+                val audioControl = (raw[offset + 5].toInt() and 0xff) == USB_CLASS_AUDIO &&
+                    (raw[offset + 6].toInt() and 0xff) == 1
+                currentControlInterface = if (audioControl) raw[offset + 2].toInt() and 0xff else null
+            } else if (type == USB_DT_CS_INTERFACE && length >= 4 && currentControlInterface != null) {
+                val subtype = raw[offset + 2].toInt() and 0xff
+                if (subtype == 0x0A) {
+                    val clockId = raw[offset + 3].toInt() and 0xff
+                    sources += clockId to currentControlInterface!!
+                }
+            }
+            offset += length
+        }
+        return sources.toList()
+    }
+
+    fun report(
+        raw: ByteArray,
+        vid: Int,
+        pid: Int,
+        product: String?,
+        manufacturer: String?,
+        clockRangeReports: List<String> = emptyList()
+    ): String {
         if (raw.isEmpty()) return "USB descriptors are unavailable. Android returned an empty descriptor block."
         val streams = mutableListOf<StreamInterface>()
         var current: StreamInterface? = null
@@ -60,6 +92,9 @@ internal object UsbAudioDescriptorParser {
                 }
                 USB_DT_CS_INTERFACE -> if (length >= 3 && current != null) {
                     val subtype = raw[offset + 2].toInt() and 0xff
+                    if (subtype == 0x01 && current!!.protocol == 0x20 && length >= 16) {
+                        current!!.channels += raw[offset + 10].toInt() and 0xff
+                    }
                     if (subtype == UAC_FORMAT_TYPE && length >= 6) {
                         val formatType = raw[offset + 3].toInt() and 0xff
                         if (formatType == 1) {
@@ -71,6 +106,13 @@ internal object UsbAudioDescriptorParser {
                                 current!!.subslotBytes += raw[offset + 5].toInt() and 0xff
                                 current!!.bitResolutions += raw[offset + 6].toInt() and 0xff
                                 val frequencyCount = raw[offset + 7].toInt() and 0xff
+                                if (frequencyCount == 0 && length >= 14) {
+                                    val minimum = u24(raw, offset + 8)
+                                    val maximum = u24(raw, offset + 11)
+                                    if (minimum > 0 && maximum >= minimum) {
+                                        current!!.sampleRateRanges += minimum to maximum
+                                    }
+                                }
                                 if (frequencyCount != 0) {
                                     val available = (length - 8) / 3
                                     for (index in 0 until minOf(frequencyCount, available)) {
@@ -107,14 +149,28 @@ internal object UsbAudioDescriptorParser {
                 if (stream.subslotBytes.isNotEmpty()) lines += "  PCM subslot bytes: ${stream.subslotBytes.sorted().joinToString()}"
                 if (stream.bitResolutions.isNotEmpty()) lines += "  PCM bit resolutions: ${stream.bitResolutions.sorted().joinToString()}"
                 if (stream.sampleRates.isNotEmpty()) lines += "  Advertised sample rates: ${stream.sampleRates.sorted().joinToString()} Hz"
-                else if (stream.protocol == 0x20) lines += "  Sample rates: UAC2 clock-source RANGE query required; not inferred from the model name."
+                stream.sampleRateRanges.forEach { (minimum, maximum) ->
+                    lines += "  Continuous sample-rate range: $minimum-$maximum Hz"
+                }
+                if (stream.protocol == 0x20 && clockRangeReports.isEmpty()) {
+                    lines += "  Sample rates: no readable UAC2 clock RANGE result; no rates are inferred from the model name."
+                }
                 stream.endpoints.forEach { lines += "  $it" }
                 if (stream.endpoints.none { it.contains("isochronous") }) lines += "  No isochronous endpoint found in this alternate setting."
             }
         }
+        if (clockRangeReports.isNotEmpty()) {
+            lines += "UAC2 clock-source GET_RANGE results (clock/interface association is reported as advertised):"
+            clockRangeReports.forEach { lines += "  $it" }
+        }
         lines += "Note: descriptor inspection is not an active playback test and does not prove exclusive or bit-perfect output."
         return lines.joinToString("\n")
     }
+
+    private fun u24(bytes: ByteArray, offset: Int): Int =
+        (bytes[offset].toInt() and 0xff) or
+            ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+            ((bytes[offset + 2].toInt() and 0xff) shl 16)
 
     private fun u16(bytes: ByteArray, offset: Int): Int =
         (bytes[offset].toInt() and 0xff) or ((bytes[offset + 1].toInt() and 0xff) shl 8)
