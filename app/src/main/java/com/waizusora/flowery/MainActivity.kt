@@ -388,7 +388,7 @@ private fun FloweryApp(
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text("FLOWERY", color = DeepGold, fontWeight = FontWeight.Black, letterSpacing = 8.sp)
                                         Text("✦", color = Gold, style = MaterialTheme.typography.displayLarge)
-                                        Text(currentTag?.album?.ifBlank { "NOVEL INTO MUSIC" } ?: "NOVEL INTO MUSIC", color = DeepGold, style = MaterialTheme.typography.labelLarge, letterSpacing = androidx.compose.ui.unit.sp(3))
+                                        Text(currentTag?.album?.ifBlank { "NOVEL INTO MUSIC" } ?: "NOVEL INTO MUSIC", color = DeepGold, style = MaterialTheme.typography.labelLarge, letterSpacing = 3.sp)
                                     }
                                 }
                             }
@@ -520,21 +520,17 @@ private fun TagEditorDialog(tag: AudioTag, onDismiss: () -> Unit, onSave: (Audio
         title = { Text("Edit audio tags · Lofty") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()).height(440.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                @androidx.compose.runtime.Composable
-                fun field(label: String, value: String, change: (String) -> Unit) {
-                    OutlinedTextField(value = value, onValueChange = change, label = { Text(label) }, modifier = Modifier.fillMaxWidth(), singleLine = label != "Lyrics" && label != "Comment")
-                }
-                field("Title", title) { title = it }
-                field("Artist", artist) { artist = it }
-                field("Album", album) { album = it }
-                field("Album artist", albumArtist) { albumArtist = it }
-                field("Genre", genre) { genre = it }
-                field("Year / release date", year) { year = it }
-                field("Track number", track) { track = it }
-                field("Disc number", disc) { disc = it }
-                field("Composer", composer) { composer = it }
-                field("Comment", comment) { comment = it }
-                field("Lyrics", lyrics) { lyrics = it }
+                TagEditorField("Title", title) { title = it }
+                TagEditorField("Artist", artist) { artist = it }
+                TagEditorField("Album", album) { album = it }
+                TagEditorField("Album artist", albumArtist) { albumArtist = it }
+                TagEditorField("Genre", genre) { genre = it }
+                TagEditorField("Year / release date", year) { year = it }
+                TagEditorField("Track number", track) { track = it }
+                TagEditorField("Disc number", disc) { disc = it }
+                TagEditorField("Composer", composer) { composer = it }
+                TagEditorField("Comment", comment, singleLine = false) { comment = it }
+                TagEditorField("Lyrics", lyrics, singleLine = false) { lyrics = it }
                 Text("Artwork is preserved when the selected tag format supports it.", style = MaterialTheme.typography.labelSmall)
             }
         },
@@ -542,5 +538,22 @@ private fun TagEditorDialog(tag: AudioTag, onDismiss: () -> Unit, onSave: (Audio
             TextButton(onClick = { onSave(tag.copy(title=title, artist=artist, album=album, albumArtist=albumArtist, genre=genre, year=year, track=track, disc=disc, composer=composer, comment=comment, lyrics=lyrics)) }) { Text("Save to file") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+
+@androidx.compose.runtime.Composable
+private fun TagEditorField(
+    label: String,
+    value: String,
+    singleLine: Boolean = true,
+    onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = singleLine
     )
 }
