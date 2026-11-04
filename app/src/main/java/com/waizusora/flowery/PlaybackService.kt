@@ -30,6 +30,8 @@ class PlaybackService : Service() {
         const val ACTION_QUEUE = "com.waizusora.flowery.QUEUE"
         const val ACTION_VOLUME = "com.waizusora.flowery.VOLUME"
         const val ACTION_EQUALIZER = "com.waizusora.flowery.EQUALIZER"
+        const val ACTION_SHUFFLE = "com.waizusora.flowery.SHUFFLE"
+        const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_INDEX = "queue_index"
@@ -105,6 +107,8 @@ class PlaybackService : Service() {
             ACTION_PREVIOUS -> skipPrevious()
             ACTION_VOLUME -> player.setVolume(intent.getFloatExtra(EXTRA_VALUE, 1f))
             ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
+            ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
+            ACTION_REPEAT -> { repeatMode = (repeatMode + 1) % 3; publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
         }
         return START_NOT_STICKY
     }
