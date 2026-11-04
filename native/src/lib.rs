@@ -301,7 +301,7 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "pictureBase64": picture.map(|p| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, p.data())).unwrap_or_default(),
             "tagType": format!("{:?}", tag.tag_type()),
             "fileType": format!("{:?}", tagged.file_type()),
-            "writable": tagged.primary_tag().is_some() || tagged.file_type().primary_tag_type() != lofty::tag::TagType::Custom,
+            "writable": tagged.tag_support(tagged.primary_tag_type()).is_writable(),
         })
     } else {
         serde_json::json!({
@@ -366,7 +366,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
         set_tag_text(tag, ItemKey::DiscNumber, values.next().unwrap());
         set_tag_text(tag, ItemKey::Comment, values.next().unwrap());
         set_tag_text(tag, ItemKey::Composer, values.next().unwrap());
-        set_tag_text(tag, ItemKey::Lyrics, values.next().unwrap());
+        let lyric_key = if tag.tag_type() == lofty::tag::TagType::Id3v2 { ItemKey::UnsyncLyrics } else { ItemKey::Lyrics };
+        set_tag_text(tag, lyric_key, values.next().unwrap());
         tagged.save_to_path(path, WriteOptions::default())
             .map_err(|e| format!("Lofty could not write tags for this format: {e}"))?;
         fs::read(path).map_err(|e| format!("Unable to read edited audio file: {e}"))
