@@ -38,7 +38,7 @@ Application ID: `com.waizusora.flowery`
 - Settings provides Audio information, Library guidance, Appearance, and Other pages. Appearance offers Light, Black, and Auto themes; Auto follows Android's system dark-mode setting. Language selection, translator credits, and contributor credits are currently placeholders.
 - Battery optimization opens Android's per-app exemption request screen. The user must approve the system prompt; Flowery cannot grant the exemption itself.
 - Update opens the project's GitHub Releases page in the browser.
-- Open Source lists key direct components and their upstream license identifiers. It is not a complete inventory of transitive dependencies; consult the exact packaged notices before redistribution.
+- Open Source lists the direct application and native dependencies with their declared versions and applicable upstream license identifiers. It is not an inventory of transitive dependencies; consult the exact packaged notices and upstream license texts before redistribution.
 
 
 ### Playback
