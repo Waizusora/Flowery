@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { PLAYER, FOLDERS, DSP, SETTINGS }
-private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, LIBRARY, APPEARANCE, OTHER, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -223,10 +223,10 @@ fun FloweryNavigation(
                     }
                 }
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
-                    onBack = { settingsPage = when (settingsPage) {
-                        SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER -> SettingsPage.ROOT
+                    status = status, onBack = { settingsPage = when (settingsPage) {
+                        SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO -> SettingsPage.AUDIO
-                        SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.OTHER
+                        SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
                     navigate = { settingsPage = it },
@@ -250,12 +250,12 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
-    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit) {
+    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit, status: String) {
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
             SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.LIBRARY -> "Library"
-            SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.OPEN_SOURCE -> "Open Source"
+            SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
             SettingsPage.TRANSLATOR -> "Translator"; SettingsPage.CONTRIBUTORS -> "Contributor"; SettingsPage.ROOT -> "Settings"
         }, color)
     } else Heading("Settings", color)
@@ -264,7 +264,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("Audio", "Playback engine and processing", color, muted) { navigate(SettingsPage.AUDIO) }
             SettingCard("Appearance", "Theme and language", color, muted) { navigate(SettingsPage.APPEARANCE) }
             SettingCard("Library", "Folder management and scanning", color, muted) { navigate(SettingsPage.LIBRARY) }
-            SettingCard("Other", "Battery, credits and updates", color, muted) { navigate(SettingsPage.OTHER) }
+            SettingCard("Other", "Battery optimization and application information", color, muted) { navigate(SettingsPage.OTHER) }
         }
         SettingsPage.AUDIO -> SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
         SettingsPage.AUDIO_INFO -> {
@@ -291,7 +291,10 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
         }
         SettingsPage.OTHER -> {
             SettingCard("Battery optimization", "Open Android battery optimization settings", color, muted, Icons.Default.BatteryFull, battery)
-            SettingCard("Open Source", "Libraries and licenses used by Flowery", color, muted, Icons.Default.Info) { navigate(SettingsPage.OPEN_SOURCE) }
+            SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
+        }
+        SettingsPage.ABOUT -> {
+            SettingCard("Open Source", "Libraries and licenses used by Flowery", color, muted, Icons.Default.Code) { navigate(SettingsPage.OPEN_SOURCE) }
             SettingCard("Translator", "Translation credits · planned", color, muted, Icons.Default.Translate) { navigate(SettingsPage.TRANSLATOR) }
             SettingCard("Contributor", "Project contributors", color, muted, Icons.Default.Groups) { navigate(SettingsPage.CONTRIBUTORS) }
             SettingCard("Update", "Open GitHub releases in browser", color, muted, Icons.Default.SystemUpdate, update)
