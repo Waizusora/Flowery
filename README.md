@@ -91,7 +91,7 @@ The ring buffer has a fixed capacity of 16,384 frames in the current player conf
 
 Seeking uses a format-level Symphonia seek, resets decoder and DSP state, rebuilds resampler history where needed, discards preroll before the requested presentation time, and flushes queued output frames. The player tracks playback generations to prevent an older worker from changing the state of a newer track.
 
-See [Audio engine](docs/AUDIO_ENGINE.md) for details.
+See [Audio engine](AUDIO_ENGINE.md) for details.
 
 ## Repository layout
 
@@ -122,7 +122,7 @@ See [Audio engine](docs/AUDIO_ENGINE.md) for details.
 - Rust Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
 - `cargo-ndk`
 
-See [Building Flowery](docs/BUILDING.md) for local and CI build instructions.
+See [Building Flowery](BUILDING.md) for local and CI build instructions.
 
 ## Automated builds
 
