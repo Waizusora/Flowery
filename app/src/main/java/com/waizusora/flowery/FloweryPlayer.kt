@@ -134,7 +134,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     val frames = chunk.size / channels
                     var offsetFrames = 0
-                    while (!stopped.get() && playbackGeneration.get() == generation && offsetFrames < frames) {
+                    while (!stopped.get() && playbackGeneration.get() == generation && offsetFrames < frames && pendingSeekMs.get() == null) {
                         val written = NativeAudio.nativeWriteStreamFrames(
                             chunk, offsetFrames, frames - offsetFrames
                         )
@@ -148,7 +148,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         else offsetFrames += written
                     }
                     outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
-                    while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                    while (!stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
                         check(NativeAudio.nativeIsOutputActive()) {
                             "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
                         }
