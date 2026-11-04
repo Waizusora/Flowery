@@ -297,7 +297,7 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "comment": tag.get_string(ItemKey::Comment).unwrap_or_default(),
             "composer": tag.get_string(ItemKey::Composer).unwrap_or_default(),
             "lyrics": tag.get_string(ItemKey::Lyrics).or_else(|| tag.get_string(ItemKey::UnsyncLyrics)).unwrap_or_default(),
-            "pictureMime": picture.and_then(|p| p.mime_type()).unwrap_or(""),
+            "pictureMime": picture.and_then(|p| p.mime_type()).map(|mime| format!("{mime:?}")).unwrap_or_default(),
             "pictureBase64": picture.map(|p| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, p.data())).unwrap_or_default(),
             "tagType": format!("{:?}", tag.tag_type()),
             "fileType": format!("{:?}", tagged.file_type()),
@@ -353,6 +353,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
         let tag_type = tagged.primary_tag_type();
         if tagged.primary_tag_mut().is_none() {
             tagged.insert_tag(Tag::new(tag_type));
+        }
+        if !tagged.tag_support(tag_type).is_writable() {
+            return Err("Lofty can read this tag format but cannot write it. The original file was not changed.".to_string());
         }
         let tag = tagged.primary_tag_mut().ok_or("The format does not support a writable primary tag")?;
         let mut values = strings.into_iter();
