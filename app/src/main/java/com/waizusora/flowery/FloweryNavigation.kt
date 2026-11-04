@@ -231,7 +231,8 @@ fun FloweryNavigation(
                     } },
                     navigate = { settingsPage = it },
                     changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
-                    battery = onBatterySettings, update = onCheckUpdate)
+                    battery = onBatterySettings, update = onCheckUpdate,
+                    openFolders = { destination = Destination.FOLDERS; selectedFolder = null })
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -249,7 +250,7 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
-    battery: () -> Unit, update: () -> Unit) {
+    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit) {
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
@@ -274,7 +275,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Pipeline", "Decode → resample (if needed) → EQ → AAudio", color, muted)
             Detail("Runtime telemetry", "Detailed per-stage timing and live DSP metrics are not currently exposed by the engine.", color, muted)
         }
-        SettingsPage.LIBRARY -> Detail("Folder", "Use the Folders tab to add, scan, enable, disable, and remove multiple folder entries.", color, muted)
+        SettingsPage.LIBRARY -> SettingCard("Folder", "Add multiple folders, select folders for removal, and scan the library", color, muted, Icons.Default.Folder, openFolders)
         SettingsPage.APPEARANCE -> {
             Text("Theme", color = color, fontWeight = FontWeight.SemiBold)
             listOf("Light", "Black", "Auto").forEach { option ->
@@ -301,6 +302,13 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Lofty", "MIT OR Apache-2.0", color, muted)
             Detail("AndroidX / Jetpack Compose", "Apache-2.0", color, muted)
             Detail("AAudio", "Android NDK platform API", color, muted)
+            Detail("JNI", "jni 0.21 · Rust/Java native interface", color, muted)
+            Detail("Audio adapter buffers", "audioadapter-buffers 5.1", color, muted)
+            Detail("JSON", "serde_json 1", color, muted)
+            Detail("Base64", "base64 0.22", color, muted)
+            Detail("Native platform bindings", "libc 0.2", color, muted)
+            Detail("Android media", "AndroidX Media 1.7.0 · Apache-2.0", color, muted)
+            Detail("Document provider", "AndroidX DocumentFile 1.0.1 · Apache-2.0", color, muted)
             Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
                 style = MaterialTheme.typography.bodySmall)
         }
