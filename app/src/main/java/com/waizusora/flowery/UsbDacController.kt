@@ -7,6 +7,7 @@ import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
+import java.util.Locale
 
 /**
  * Discovers USB Audio Class devices and requests Android USB host permission.
@@ -17,6 +18,9 @@ import android.os.Build
 class UsbDacController(context: Context) {
     companion object {
         const val ACTION_USB_PERMISSION = "com.waizusora.flowery.action.USB_PERMISSION"
+        const val KTMICRO_VENDOR_ID = 0x31B2
+        const val KTMICRO_KT384_32_PRODUCT_ID = 0x0111
+        const val KTMICRO_KT384_32_NAME = "KT Micro KT-384/32 HIFI"
     }
 
     private val appContext = context.applicationContext
@@ -26,34 +30,45 @@ class UsbDacController(context: Context) {
         val usbDevice: UsbDevice,
         val displayName: String,
         val identity: String,
-        val hasStreamingInterface: Boolean
+        val hasStreamingInterface: Boolean,
+        val isReferenceKtmicro: Boolean
     )
 
     fun audioDevices(): List<Device> = manager.deviceList.values
-        .filter { device ->
-            (0 until device.interfaceCount).any { index ->
-                val intf = device.getInterface(index)
-                intf.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
-                    intf.interfaceSubclass == 2
-            }
-        }
+        .filter(::hasAudioStreamingInterface)
         .map { device ->
-            val streaming = (0 until device.interfaceCount).any { index ->
-                val intf = device.getInterface(index)
-                intf.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
-                    intf.interfaceSubclass == 2
-            }
-            val product = device.productName?.takeIf { it.isNotBlank() } ?: "USB Audio Device"
             Device(
                 usbDevice = device,
-                displayName = product,
-                identity = "%04x:%04x:%d:%d".format(
-                    java.util.Locale.ROOT,
-                    device.vendorId, device.productId, device.deviceClass, device.deviceSubclass
-                ),
-                hasStreamingInterface = streaming
+                displayName = describeDevice(device),
+                identity = deviceIdentity(device),
+                hasStreamingInterface = hasAudioStreamingInterface(device),
+                isReferenceKtmicro = isReferenceKtmicro(device)
             )
         }
+
+    fun hasAudioStreamingInterface(device: UsbDevice): Boolean =
+        (0 until device.interfaceCount).any { index ->
+            val intf = device.getInterface(index)
+            intf.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
+                intf.interfaceSubclass == 2
+        }
+
+    fun isReferenceKtmicro(device: UsbDevice): Boolean =
+        device.vendorId == KTMICRO_VENDOR_ID &&
+            device.productId == KTMICRO_KT384_32_PRODUCT_ID
+
+    fun deviceIdentity(device: UsbDevice): String =
+        "%04X:%04X".format(Locale.ROOT, device.vendorId, device.productId)
+
+    fun describeDevice(device: UsbDevice): String {
+        val identity = deviceIdentity(device)
+        return if (isReferenceKtmicro(device)) {
+            "$KTMICRO_KT384_32_NAME (VID/PID $identity)"
+        } else {
+            val product = device.productName?.takeIf { it.isNotBlank() } ?: "USB Audio Device"
+            "$product (VID/PID $identity)"
+        }
+    }
 
     fun hasPermission(device: UsbDevice): Boolean = manager.hasPermission(device)
 
