@@ -597,13 +597,18 @@ private fun FloweryApp(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier.width(48.dp)
                             ) {
-                                Text("${equalizerGains[index].toInt()} dB", color = Color.White, style = MaterialTheme.typography.labelSmall)
                                 VerticalEqualizerSlider(
                                     value = equalizerGains[index],
                                     onValueChange = { onBandGain(index, it) },
                                     modifier = Modifier.height(250.dp).width(44.dp)
                                 )
                                 Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                Text(
+                                    String.format(java.util.Locale.ROOT, "%.1f", equalizerGains[index]),
+                                    color = Color.White.copy(alpha = 0.72f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }
@@ -668,21 +673,15 @@ private fun TagEditorDialog(tag: AudioTag, onDismiss: () -> Unit, onSave: (Audio
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 640.dp),
+            modifier = Modifier.fillMaxWidth(0.92f).heightIn(min = 360.dp, max = 600.dp),
             shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp)
+                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 18.dp)
             ) {
-                Text(
-                    "Edit audio tags",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.padding(bottom = 12.dp)
-                )
                 Column(
-                    modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     TagEditorField("Title", title) { title = it }
@@ -754,7 +753,7 @@ private fun VerticalEqualizerSlider(
             end = Offset(centerX, bottom),
             strokeWidth = 3.dp.toPx()
         )
-        listOf(top + 12.dp.toPx(), centerY, bottom - 12.dp.toPx()).forEach { y ->
+        listOf(top + 24.dp.toPx(), bottom - 24.dp.toPx()).forEach { y ->
             drawLine(
                 color = Color(0xFFBDBDBD),
                 start = Offset(centerX - 21.dp.toPx(), y),
