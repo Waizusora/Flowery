@@ -42,6 +42,7 @@ class PlaybackService : Service() {
         const val EXTRA_GAINS = "gains"
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
+        const val EXTRA_CURRENT_URI = "current_uri"
         const val BROADCAST_STATE = "com.waizusora.flowery.PLAYBACK_STATE"
         const val EXTRA_STATUS = "status"
         private const val CHANNEL_ID = "flowery_playback"
@@ -52,6 +53,7 @@ class PlaybackService : Service() {
     private lateinit var session: MediaSessionCompat
     private lateinit var audioManager: AudioManager
     private var focusRequest: AudioFocusRequest? = null
+    private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private val io = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
     private var queueIndex = -1
@@ -145,6 +147,7 @@ class PlaybackService : Service() {
                 AudioManager.AUDIOFOCUS_GAIN -> player.setVolume(1f)
             }
         }
+        focusListener = listener
         val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(attributes)
@@ -206,6 +209,8 @@ class PlaybackService : Service() {
 
     private fun stopPlayback() {
         player.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
+        else focusListener?.let { @Suppress("DEPRECATION") audioManager.abandonAudioFocus(it) }
         playbackState = PlaybackStateCompat.STATE_STOPPED
         publishSessionState()
         publishState("Stopped")
@@ -234,12 +239,17 @@ class PlaybackService : Service() {
         if (repeatMode == 2) {
             player.stop()
             playCurrent()
-        } else skipNext()
+        } else if (queueIndex < queue.lastIndex || repeatMode == 1 || (shuffle && queue.size > 1)) {
+            skipNext()
+        } else {
+            stopPlayback()
+        }
     }
 
     private fun publishState(message: String) {
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
             .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
+            .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
         sendBroadcast(intent)
         if (::session.isInitialized) {
             playbackState = when {
