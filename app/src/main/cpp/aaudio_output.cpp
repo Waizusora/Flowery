@@ -47,7 +47,7 @@ aaudio_result_t openStream(OutputState* state,int32_t rate,int32_t channels,aaud
  r=AAudioStreamBuilder_openStream(b,&g_stream); AAudioStreamBuilder_delete(b);
  if(r!=AAUDIO_OK)return r;
  if(AAudioStream_getFormat(g_stream)!=AAUDIO_FORMAT_PCM_FLOAT ||
-    AAudioStream_getSampleRate(g_stream)!=rate || AAudioStream_getChannelCount(g_stream)!=channels){
+    (rate > 0 && AAudioStream_getSampleRate(g_stream)!=rate) || AAudioStream_getChannelCount(g_stream)!=channels){
   AAudioStream_close(g_stream);g_stream=nullptr;return AAUDIO_ERROR_INVALID_FORMAT;
  }
  return AAUDIO_OK;
@@ -80,4 +80,23 @@ extern "C" JNIEXPORT void JNICALL Java_com_waizusora_flowery_NativeAudio_nativeS
 }
 extern "C" JNIEXPORT jboolean JNICALL Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(JNIEnv*,jobject){
  std::lock_guard<std::mutex> lock(g_mutex);return g_output&&g_output->active.load()?JNI_TRUE:JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(JNIEnv*,jobject,jint requestedRate,jint channels){
+ if(requestedRate<=0||(channels!=1&&channels!=2))return AAUDIO_ERROR_INVALID_FORMAT;
+ std::lock_guard<std::mutex> lock(g_mutex);
+ stopLocked();
+ OutputState probe;
+ probe.channels=channels;
+ auto tryRate=[&](int32_t rate)->int32_t{
+  auto r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_EXCLUSIVE);
+  if(r!=AAUDIO_OK)r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_SHARED);
+  if(r!=AAUDIO_OK)return 0;
+  const int32_t actual=AAudioStream_getSampleRate(g_stream);
+  AAudioStream_close(g_stream);g_stream=nullptr;
+  return actual;
+ };
+ int32_t selected=tryRate(requestedRate);
+ if(selected==0)selected=tryRate(0);
+ return selected>0?selected:AAUDIO_ERROR_UNAVAILABLE;
 }
