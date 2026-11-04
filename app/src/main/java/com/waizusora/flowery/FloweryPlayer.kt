@@ -25,6 +25,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
+    @Volatile private var decoderHandle = 0L
+    @Volatile private var pendingSeekMs: Long? = null
 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
@@ -50,6 +52,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ?: throw IllegalStateException("Unable to open the selected audio document")
                 val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
+                decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
@@ -93,6 +96,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 var reachedEnd = false
                 var appliedEqualizerRevision = equalizerRevision
                 while (!stopped.get() && playbackGeneration.get() == generation && !reachedEnd) {
+                    pendingSeekMs?.let { requested ->
+                        pendingSeekMs = null
+                        val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
+                        val targetFrame = target * targetRate / 1000L
+                        NativeAudio.nativeFlushStreamOutput(targetFrame)
+                        NativeAudio.nativeSeekStreamDecoder(handle, target)
+                        reachedEnd = false
+                        appliedEqualizerRevision = equalizerRevision
+                        onState("Seeking · ${target / 1000}s")
+                    }
                     if (appliedEqualizerRevision != equalizerRevision) {
                         check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) { "Unable to update streaming equalizer" }
                         appliedEqualizerRevision = equalizerRevision
@@ -127,6 +140,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 if (handle != 0L) {
+                    if (decoderHandle == handle) decoderHandle = 0L
                     NativeAudio.nativeCloseStreamDecoder(handle)
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
@@ -141,7 +155,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun durationMs(): Long = outputDurationMs
 
     fun seekTo(positionMs: Long) {
-        // Seeking requires a format-level decoder seek and ring-buffer flush; it is not emulated by dropping PCM.
+        if (decoderHandle == 0L) return
+        pendingSeekMs = positionMs.coerceAtLeast(0L)
     }
 
     fun pause() {
