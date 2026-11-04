@@ -228,7 +228,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResample(
 
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::tag::{Accessor, ItemKey, Tag, TagExt};
+use lofty::tag::{ItemKey, Tag, TagExt};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
