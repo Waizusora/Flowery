@@ -325,11 +325,12 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadTags(
-    mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString,
+    mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString, temp_dir: JString,
 ) -> jstring {
     let bytes = match jbytes(&mut env, &input) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
     let ext = match java_text(&mut env, &extension) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
-    let temp_dir = match java_text(&mut env, &temp_dir) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };\n    let json = match with_temp_audio(&bytes, &ext, &temp_dir, tag_json) {
+    let temp_dir = match java_text(&mut env, &temp_dir) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
+    let json = match with_temp_audio(&bytes, &ext, &temp_dir, tag_json) {
         Ok(v) => v,
         Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); }
     };
@@ -357,7 +358,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
         }
     }
     let ext = strings.remove(0);
-    let result = with_temp_audio(&bytes, &ext, |path| {
+    let temp_dir = strings.remove(0);
+    let result = with_temp_audio(&bytes, &ext, &temp_dir, |path| {
         let mut tagged = lofty::read_from_path(path).map_err(|e| format!("This format cannot be edited by Lofty: {e}"))?;
         let tag_type = tagged.primary_tag_type();
         if tagged.primary_tag_mut().is_none() {
