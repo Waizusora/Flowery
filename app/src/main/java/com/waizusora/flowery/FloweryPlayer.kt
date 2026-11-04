@@ -13,6 +13,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var bandGainsDb = FloatArray(31)
+    @Volatile private var outputSampleRate = 0
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
         bandGainsDb = gains.copyOf()
@@ -45,6 +46,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     targetRate = NativeAudio.nativeSelectOutputSampleRate(pcm.sampleRate, pcm.channels, 0)
                 }
                 check(targetRate > 0) { "Unable to negotiate an AAudio output sample rate" }
+                outputSampleRate = targetRate
                 val resampled = NativeAudio.nativeResample(pcm.samples, pcm.sampleRate, targetRate, pcm.channels)
                 val processed = NativeAudio.nativeApplyEqualizer(resampled, targetRate, pcm.channels, bandGainsDb)
                 val result = NativeAudio.nativeStartOutput(processed, targetRate, pcm.channels, softwareVolume, outputDeviceId)
@@ -61,6 +63,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
             }
         }
+    }
+    fun positionMs(): Long = if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate else 0L
+    fun durationMs(): Long = if (outputSampleRate > 0) NativeAudio.nativeGetOutputDurationFrames() * 1000L / outputSampleRate else 0L
+    fun seekTo(positionMs: Long) {
+        if (outputSampleRate > 0) NativeAudio.nativeSeekOutputFrames(positionMs.coerceAtLeast(0) * outputSampleRate / 1000L)
     }
     fun pause() { if (NativeAudio.nativePauseOutput() == 0) onState("Paused") }
     fun resume() { if (NativeAudio.nativeResumeOutput() == 0) onState("Playing · AAudio") }
