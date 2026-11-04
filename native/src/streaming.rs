@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
+use std::time::Duration;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -10,7 +11,7 @@ use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::Error;
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -57,6 +58,8 @@ struct StreamDecoder {
     source_frames_decoded: u64,
     duration_ms: u64,
     resampler_delay_frames: usize,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    discard_source_frames: u64,
 }
 
 impl StreamDecoder {
@@ -73,6 +76,7 @@ impl StreamDecoder {
         let track = format.default_track().ok_or("No default audio track found")?;
         let track_id = track.id;
         let params = track.codec_params.clone();
+        let time_base = track.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
@@ -84,7 +88,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0,
         })
     }
 
@@ -100,6 +104,29 @@ impl StreamDecoder {
         } else { None };
         self.resampler_delay_frames = self.resampler.as_ref().map(|r| r.output_delay()).unwrap_or(0);
         Ok(())
+    }
+
+    fn seek_to(&mut self, position_ms: u64) -> Result<u64,String> {
+        let requested_ms = if self.duration_ms > 0 { position_ms.min(self.duration_ms) } else { position_ms };
+        let seeked = self.format.seek(
+            SeekMode::Accurate,
+            SeekTo::Time { time: Duration::from_millis(requested_ms).into(), track_id: Some(self.track_id) }
+        ).map_err(|e| format!("Container seek failed: {e}"))?;
+        self.decoder.reset();
+        self.input_pending.clear();
+        self.output_pending.clear();
+        self.eof = false;
+        self.source_frames_decoded = 0;
+        self.produced_frames = (requested_ms as u128 * self.output_rate as u128 / 1000) as u64;
+        let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
+        let actual_ms = actual_time.map(|t| (t.seconds as f64 + t.frac) * 1000.0).unwrap_or(requested_ms as f64);
+        let actual_frames = (actual_ms.max(0.0) as u128 * self.source_rate as u128 / 1000) as u64;
+        let requested_frames = (requested_ms as u128 * self.source_rate as u128 / 1000) as u64;
+        self.discard_source_frames = requested_frames.saturating_sub(actual_frames);
+        let rate = self.output_rate;
+        let gains = self.gains;
+        self.configure(rate, &gains)?;
+        Ok(requested_ms)
     }
 
     fn decode_packet(&mut self) -> Result<bool,String> {
@@ -118,8 +145,15 @@ impl StreamDecoder {
                     }
                     let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                     buffer.copy_interleaved_ref(decoded);
-                    self.source_frames_decoded += (buffer.samples().len() / self.channels) as u64;
-                    self.input_pending.extend_from_slice(buffer.samples());
+                    let mut samples = buffer.samples().to_vec();
+                    let decoded_frames = (samples.len() / self.channels) as u64;
+                    let discard_samples = self.discard_source_frames.min(decoded_frames) as usize * self.channels;
+                    if discard_samples > 0 {
+                        samples.drain(..discard_samples);
+                        self.discard_source_frames -= (discard_samples / self.channels) as u64;
+                    }
+                    self.source_frames_decoded += decoded_frames;
+                    self.input_pending.extend_from_slice(&samples);
                     return Ok(true);
                 }
                 Err(Error::DecodeError(_)) => continue,
@@ -236,6 +270,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     match StreamDecoder::new(fd,&ext) {
         Ok(decoder)=>Box::into_raw(Box::new(decoder)) as jlong,
         Err(error)=>{let _=env.throw_new("java/lang/IllegalArgumentException",error);0}
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDecoder(
+    mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong
+) -> jlong {
+    if handle == 0 || position_ms < 0 { return -1; }
+    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
+    match decoder.seek_to(position_ms as u64) {
+        Ok(position) => position as jlong,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
     }
 }
 
