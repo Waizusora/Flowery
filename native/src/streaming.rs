@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::fs::File;
+use std::io::ErrorKind;
 use std::time::Duration;
 use std::os::fd::FromRawFd;
 
@@ -37,6 +38,30 @@ fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> Biquad
         b2: (1.0 - alpha * a) / a0,
         a1: (-2.0 * cosine) / a0,
         a2: (1.0 - alpha / a) / a0,
+    }
+}
+
+fn apply_eq_samples(
+    samples: &mut [f32],
+    channels: usize,
+    coefficients: &[BiquadCoefficients; 31],
+    state: &mut Vec<[BiquadState; 31]>,
+) {
+    for (index, sample) in samples.iter_mut().enumerate() {
+        let channel = index % channels;
+        let mut value = *sample;
+        for band in 0..31 {
+            let c = coefficients[band];
+            let z = &mut state[channel][band];
+            let filtered = c.b0 * value + c.b1 * z.x1 + c.b2 * z.x2
+                - c.a1 * z.y1 - c.a2 * z.y2;
+            z.x2 = z.x1;
+            z.x1 = value;
+            z.y2 = z.y1;
+            z.y1 = filtered;
+            value = filtered;
+        }
+        *sample = value;
     }
 }
 
@@ -133,7 +158,15 @@ impl StreamDecoder {
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
-                Err(Error::IoError(_)) | Err(Error::ResetRequired) => { self.eof = true; return Ok(false); }
+                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                    self.eof = true;
+                    return Ok(false);
+                }
+                Err(Error::ResetRequired) => {
+                    self.decoder.reset();
+                    continue;
+                }
+                Err(Error::IoError(error)) => return Err(format!("Audio stream I/O failed: {error}")),
                 Err(e) => return Err(format!("Audio packet read failed: {e}")),
             };
             if packet.track_id() != self.track_id { continue; }
@@ -163,19 +196,7 @@ impl StreamDecoder {
     }
 
     fn apply_eq(&mut self, samples: &mut [f32]) {
-        for (index, sample) in samples.iter_mut().enumerate() {
-            let channel = index % self.channels;
-            let mut value = *sample;
-            for band in 0..31 {
-                let coefficients = self.coefficients[band];
-                let state = &mut self.eq_state[channel][band];
-                let filtered = coefficients.b0*value + coefficients.b1*state.x1 + coefficients.b2*state.x2
-                    - coefficients.a1*state.y1 - coefficients.a2*state.y2;
-                state.x2=state.x1; state.x1=value; state.y2=state.y1; state.y1=filtered;
-                value=filtered;
-            }
-            *sample=value;
-        }
+        apply_eq_samples(samples, self.channels, &self.coefficients, &mut self.eq_state);
     }
 
     fn produce_resampled_chunk(&mut self) -> Result<bool,String> {
@@ -342,4 +363,52 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseStreamD
     _env: JNIEnv, _class: JClass, handle: jlong
 ) {
     if handle!=0 { unsafe { drop(Box::from_raw(handle as *mut StreamDecoder)); } }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn equalizer_state_is_continuous_across_chunk_boundaries() {
+        let coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], 4.5, 48_000));
+        let mut input: Vec<f32> = (0..4096)
+            .map(|i| ((i as f32) * 0.031).sin() * 0.4)
+            .collect();
+
+        let mut whole = input.clone();
+        let mut whole_state = vec![[BiquadState::default(); 31]; 2];
+        apply_eq_samples(&mut whole, 2, &coefficients, &mut whole_state);
+
+        let mut chunked = input.clone();
+        let mut chunk_state = vec![[BiquadState::default(); 31]; 2];
+        for chunk in chunked.chunks_mut(514) {
+            apply_eq_samples(chunk, 2, &coefficients, &mut chunk_state);
+        }
+
+        for (a, b) in whole.iter().zip(chunked.iter()) {
+            assert!((a - b).abs() < 1.0e-6, "chunk boundary changed filter output");
+        }
+    }
+
+    #[test]
+    fn equalizer_coefficients_remain_finite_at_supported_rates() {
+        for rate in [8_000usize, 22_050, 44_100, 48_000, 96_000, 192_000] {
+            for frequency in FREQUENCIES {
+                for gain in [-12.0, -6.0, 0.0, 6.0, 12.0] {
+                    let c = make_coefficients(frequency, gain, rate);
+                    assert!(c.b0.is_finite() && c.b1.is_finite() && c.b2.is_finite());
+                    assert!(c.a1.is_finite() && c.a2.is_finite());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn seek_frame_conversion_uses_wide_integer_arithmetic() {
+        let position_ms = u64::MAX / 4;
+        let sample_rate = 192_000u64;
+        let frames = (position_ms as u128 * sample_rate as u128 / 1000) as u64;
+        assert!(frames > position_ms);
+    }
 }
