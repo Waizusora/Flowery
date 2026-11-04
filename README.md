@@ -16,7 +16,7 @@ Flowery is an Android music player project built with Kotlin, Jetpack Compose, M
 - Add, remove, enable, disable, and recursively scan selected folders.
 - Audio-file discovery without MediaStore.
 - Native Symphonia decoding for the codecs and containers enabled by the `all` feature set.
-- Native 31-band ISO one-third-octave graphic equalizer with independent ±12 dB band controls.
+- Native 31-band ISO one-third-octave graphic equalizer with independent ±12 dB band controls.\n- Fixed-rate 48 kHz output conversion using Rubato 5 FFT resampling with its Blackman-Harris anti-aliasing window.\n- Lofty metadata library dependency selected for tag parsing and writing across MP3, FLAC, Ogg Vorbis, Opus, WAV, AIFF, MP4/M4A, AAC, APE, MPC, Speex, and WavPack where the format/tag mapping is writable.
 - Native AAudio PCM-float output for mono and stereo playback, requesting exclusive low-latency mode and falling back to shared mode when unavailable.
 - Sidecar LRC discovery and timestamp parsing.
 - Basic playback controls and software volume.
@@ -30,7 +30,7 @@ The project does not use ExoPlayer, AndroidX Media3, Firebase, or MediaStore. Fi
 
 ## Audio compatibility and current limitations
 
-The current playback path decodes the selected file into memory and sends mono/stereo floating-point PCM to Android `AAudio`. It is a functional initial playback path, not yet a low-memory streaming decoder. Large files can require substantial memory.
+The current playback path decodes the selected file into memory, converts it to 48 kHz using Rubato fixed-ratio FFT resampling, then sends mono/stereo floating-point PCM to Android `AAudio`. Rubato documents this synchronous FFT path as its recommended high-quality choice for fixed sample-rate conversion. It is a functional initial playback path, not yet a low-memory streaming decoder. Large files can require substantial memory.
 
 Symphonia's `all` feature enables the codecs and container support provided by the selected Symphonia release; it does not guarantee every proprietary, damaged, or uncommon audio format. The current Android output path supports mono and stereo. Multichannel output, gapless playback, seeking, queue management, and background playback are not implemented yet.
 
@@ -44,7 +44,7 @@ The current equalizer is a native 31-band peaking-EQ filter bank using ISO one-t
 
 The library scanner recursively traverses enabled folder roots and discovers common audio filename extensions. It also looks for matching sidecar `.lrc` files. The LRC parser supports multiple timestamps per line and sorts timed lines.
 
-Embedded lyric extraction, synchronized lyric position updates, lyric-provider lookup, and saving downloaded lyrics are not implemented yet. No remote lyrics service is contacted by the current build.
+The Lofty dependency is present for the metadata editing subsystem; interactive tag editing and writing through Android Storage Access Framework permissions still require implementation and device validation. Embedded lyric extraction, synchronized lyric position updates, lyric-provider lookup, and saving downloaded lyrics are not implemented yet. No remote lyrics service is contacted by the current build.
 
 ## Build
 
