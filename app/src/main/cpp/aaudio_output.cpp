@@ -189,8 +189,25 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     g_output->writeFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->eof.store(false, std::memory_order_release);
     g_output->active.store(true, std::memory_order_release);
-    const auto state = AAudioStream_getState(g_stream);
+    auto state = AAudioStream_getState(g_stream);
     if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
+    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
+        g_output->active.store(false, std::memory_order_release);
+        return AAUDIO_ERROR_DISCONNECTED;
+    }
+    if (state == AAUDIO_STREAM_STATE_STOPPING || state == AAUDIO_STREAM_STATE_PAUSING) {
+        aaudio_stream_state_t nextState = state;
+        const auto waitResult = AAudioStream_waitForStateChange(g_stream, state, &nextState, 1000000000LL);
+        if (waitResult != AAUDIO_OK) {
+            g_output->active.store(false, std::memory_order_release);
+            return waitResult;
+        }
+        state = nextState;
+    }
+    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
+        g_output->active.store(false, std::memory_order_release);
+        return AAUDIO_ERROR_DISCONNECTED;
+    }
     const auto result = AAudioStream_requestStart(g_stream);
     if (result != AAUDIO_OK) g_output->active.store(false, std::memory_order_release);
     return result;
