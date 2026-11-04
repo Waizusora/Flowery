@@ -268,7 +268,9 @@ impl StreamDecoder {
         self.apply_eq(&mut output);
         self.produced_frames += (output.len() / self.channels) as u64;
         self.output_pending.extend(output);
-        Ok(!self.output_pending.is_empty())
+        // A chunk may be consumed entirely by startup-delay or seek-preroll trimming.
+        // Report progress so read_frames continues producing instead of mistaking it for EOF.
+        Ok(true)
     }
 
     fn read_frames(&mut self, requested: usize) -> Result<Vec<f32>,String> {
@@ -458,6 +460,14 @@ mod tests {
         assert_eq!(resumed.len(), 16);
         let expected = 24_000.0 / 32_768.0;
         assert!((resumed[0] - expected).abs() < 0.03);
+
+        // A converted seek must retain decoder preroll to rebuild Rubato's filter history.
+        // The output blocks before the target timestamp are discarded internally.
+        stream.configure(44_100, &[0.0; 31]).unwrap();
+        assert_eq!(stream.seek_to(500).unwrap(), 500);
+        let converted = stream.read_frames(8).unwrap();
+        assert_eq!(converted.len(), 16);
+        assert!((converted[0] - expected).abs() < 0.02);
         drop(stream);
         drop(source_file);
         std::fs::remove_file(path).unwrap();
