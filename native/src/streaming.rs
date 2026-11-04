@@ -106,7 +106,7 @@ impl StreamDecoder {
         let track = format.default_track().ok_or("No default audio track found")?;
         let track_id = track.id;
         let params = track.codec_params.clone();
-        let time_base = track.time_base;
+        let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn equalizer_state_is_continuous_across_chunk_boundaries() {
         let coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], 4.5, 48_000));
-        let mut input: Vec<f32> = (0..4096)
+        let input: Vec<f32> = (0..4096)
             .map(|i| ((i as f32) * 0.031).sin() * 0.4)
             .collect();
 
