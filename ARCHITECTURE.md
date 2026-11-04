@@ -8,6 +8,10 @@ The streaming decoder supports mono and stereo. The equalizer requires 31 gains 
 
 The library uses Storage Access Framework and `DocumentFile`; it does not use MediaStore. The foreground service maintains `MediaSessionCompat`, handles notification/media-button actions and audio focus, and responds to noisy-route events.
 
+## USB DAC access
+
+`UsbDacController` discovers attached USB Audio Class streaming interfaces and requests Android USB host permission. The permission result is shown to the user. This is only device access authorization; no USB isochronous audio transport is implemented, and the existing AAudio float output remains the playback path. The application does not claim bit-perfect playback or physical DAC button-volume control.
+
 ## Navigation and settings UI
 
 `FloweryNavigation.kt` provides the four-icon navigation surface: Folders, Lyrics, DSP, and Settings. The Folders destination shows configured SAF roots and opens a folder-scoped track list. Playback requests from that list construct the queue from the selected folder's scanned tracks. Removing selected roots removes their app configuration and releases persisted URI permissions; it does not delete source documents.
