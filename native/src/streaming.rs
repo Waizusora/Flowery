@@ -373,6 +373,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseStreamD
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
 
     #[test]
     fn equalizer_state_is_continuous_across_chunk_boundaries() {
@@ -394,6 +396,48 @@ mod tests {
         for (a, b) in whole.iter().zip(chunked.iter()) {
             assert!((a - b).abs() < 1.0e-6, "chunk boundary changed filter output");
         }
+    }
+
+    #[test]
+    fn wav_seek_discards_preroll_and_resumes_at_requested_time() {
+        let path = std::env::temp_dir().join(format!("flowery-seek-test-{}.wav", std::process::id()));
+        let sample_rate = 48_000u32;
+        let channels = 2u16;
+        let frames = 48_000u32;
+        let data_bytes = frames * channels as u32 * 2;
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"RIFF").unwrap();
+            file.write_all(&(36 + data_bytes).to_le_bytes()).unwrap();
+            file.write_all(b"WAVEfmt ").unwrap();
+            file.write_all(&16u32.to_le_bytes()).unwrap();
+            file.write_all(&1u16.to_le_bytes()).unwrap();
+            file.write_all(&channels.to_le_bytes()).unwrap();
+            file.write_all(&sample_rate.to_le_bytes()).unwrap();
+            file.write_all(&(sample_rate * channels as u32 * 2).to_le_bytes()).unwrap();
+            file.write_all(&(channels * 2).to_le_bytes()).unwrap();
+            file.write_all(&16u16.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+            file.write_all(&data_bytes.to_le_bytes()).unwrap();
+            for frame in 0..frames {
+                let value = (frame % 30_000) as i16;
+                file.write_all(&value.to_le_bytes()).unwrap();
+                file.write_all(&value.to_le_bytes()).unwrap();
+            }
+        }
+
+        let source_file = std::fs::File::open(&path).unwrap();
+        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
+        stream.configure(48_000, &[0.0; 31]).unwrap();
+        assert_eq!(stream.read_frames(128).unwrap().len(), 256);
+        assert_eq!(stream.seek_to(500).unwrap(), 500);
+        let resumed = stream.read_frames(8).unwrap();
+        assert_eq!(resumed.len(), 16);
+        let expected = 24_000.0 / 32_768.0;
+        assert!((resumed[0] - expected).abs() < 0.03);
+        drop(stream);
+        drop(source_file);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
