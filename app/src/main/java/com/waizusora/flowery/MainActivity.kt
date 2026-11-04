@@ -116,7 +116,10 @@ class MainActivity : ComponentActivity() {
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
-                granted -> "USB access granted for ${usbDacController.describeDevice(device)}. The current Flowery audio engine does not yet provide a native USB Audio Class bit-perfect transport. Playback remains on the regular Android audio route."
+                granted -> {
+                    inspectUsbDevice(device)
+                    "USB access granted for ${usbDacController.describeDevice(device)}. Reading USB Audio Class descriptors…"
+                }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
         }
@@ -221,7 +224,7 @@ class MainActivity : ComponentActivity() {
             usbDacMessage?.let { message ->
                 AlertDialog(onDismissRequest = { usbDacMessage = null },
                     title = { Text("USB DAC") },
-                    text = { Text(message) },
+                    text = { Text(message, Modifier.verticalScroll(rememberScrollState())) },
                     confirmButton = { TextButton(onClick = { usbDacMessage = null }) { Text("Close") } })
             }
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
@@ -261,12 +264,20 @@ class MainActivity : ComponentActivity() {
                     ""
                 }
                 if (usbDacController.hasPermission(device)) {
-                    usbDacMessage = "Android USB access is already granted for ${detected.displayName}.$referenceNote Native USB Audio Class streaming, format negotiation, and verified bit-perfect output are not implemented yet, so Flowery will not claim exclusive bit-perfect mode."
+                    usbDacMessage = "USB permission is already granted. Reading descriptors for ${detected.displayName}.$referenceNote"
+                    inspectUsbDevice(device)
                 } else {
                     usbDacController.requestPermission(device)
-                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote Granting USB access alone does not enable bit-perfect playback."
+                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote Granting USB access allows descriptor inspection; it does not enable bit-perfect playback."
                 }
             }
+        }
+    }
+
+    private fun inspectUsbDevice(device: android.hardware.usb.UsbDevice) {
+        io.execute {
+            val report = usbDacController.inspectDescriptors(device)
+            runOnUiThread { usbDacMessage = report }
         }
     }
 
