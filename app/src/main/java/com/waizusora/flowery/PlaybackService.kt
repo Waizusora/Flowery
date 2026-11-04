@@ -6,6 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
@@ -63,6 +66,11 @@ class PlaybackService : Service() {
     private var currentArtist = "Local music"
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pausePlayback()
+        }
+    }
     private val progressUpdates = object : Runnable {
         override fun run() {
             if (::player.isInitialized) {
@@ -95,6 +103,7 @@ class PlaybackService : Service() {
         }
         publishSessionState()
         mainHandler.post(progressUpdates)
+        registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -175,6 +184,7 @@ class PlaybackService : Service() {
         session.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
             .build())
         startForeground(NOTIFICATION_ID, buildNotification())
         io.execute {
