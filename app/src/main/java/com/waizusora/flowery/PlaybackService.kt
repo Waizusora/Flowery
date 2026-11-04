@@ -189,9 +189,7 @@ class PlaybackService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         io.execute {
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: throw IllegalStateException("Unable to open selected audio file")
-                player.play(bytes)
+                player.play(uri)
                 playbackState = PlaybackStateCompat.STATE_PLAYING
                 publishSessionState()
             } catch (error: Throwable) {
