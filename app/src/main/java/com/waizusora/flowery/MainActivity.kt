@@ -1,6 +1,9 @@
 package com.waizusora.flowery
 
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
@@ -81,8 +84,18 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
+    private var playbackPositionMs by mutableStateOf(0L)
+    private var playbackDurationMs by mutableStateOf(0L)
     private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
     private val io = Executors.newSingleThreadExecutor()
+    private val playbackReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent ?: return
+            intent.getStringExtra(PlaybackService.EXTRA_STATUS)?.let { status = it }
+            playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
+            playbackDurationMs = intent.getLongExtra(PlaybackService.EXTRA_DURATION, playbackDurationMs)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -96,6 +109,8 @@ class MainActivity : ComponentActivity() {
                 currentTag = currentTag,
                 lyrics = lyrics,
                 volume = volume,
+                playbackPositionMs = playbackPositionMs,
+                playbackDurationMs = playbackDurationMs,
                 equalizerGains = equalizerGains,
                 onBandGain = { index, gain -> equalizerGains[index] = gain; sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) { putExtra(PlaybackService.EXTRA_GAINS, equalizerGains.toFloatArray()) } },
                 onAddFolder = { folderPicker.launch(null) },
@@ -109,6 +124,11 @@ class MainActivity : ComponentActivity() {
                 onResume = { sendPlaybackCommand(PlaybackService.ACTION_RESUME) },
                 onStop = { sendPlaybackCommand(PlaybackService.ACTION_STOP); status = "Stopped" },
                 onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
+                onPrevious = { sendPlaybackCommand(PlaybackService.ACTION_PREVIOUS) },
+                onNext = { sendPlaybackCommand(PlaybackService.ACTION_NEXT) },
+                onShuffle = { sendPlaybackCommand(PlaybackService.ACTION_SHUFFLE) },
+                onRepeat = { sendPlaybackCommand(PlaybackService.ACTION_REPEAT) },
+                onSeek = { position -> sendPlaybackCommand(PlaybackService.ACTION_SEEK) { putExtra(PlaybackService.EXTRA_POSITION, position) } },
             )
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
@@ -119,6 +139,16 @@ class MainActivity : ComponentActivity() {
                 ) }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+    }
+
+    override fun onStop() {
+        unregisterReceiver(playbackReceiver)
+        super.onStop()
     }
 
     private fun sendPlaybackCommand(action: String, configure: Intent.() -> Unit = {}) {
@@ -339,6 +369,8 @@ private fun FloweryApp(
     currentTag: AudioTag?,
     lyrics: List<LyricLine>,
     volume: Float,
+    playbackPositionMs: Long,
+    playbackDurationMs: Long,
     equalizerGains: List<Float>,
     onBandGain: (Int, Float) -> Unit,
     onAddFolder: () -> Unit,
@@ -352,6 +384,11 @@ private fun FloweryApp(
     onResume: () -> Unit,
     onStop: () -> Unit,
     onVolume: (Float) -> Unit,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onShuffle: () -> Unit,
+    onRepeat: () -> Unit,
+    onSeek: (Long) -> Unit,
 ) {
     MaterialTheme {
         Scaffold(
@@ -418,9 +455,24 @@ private fun FloweryApp(
                     Text("HOLD TITLE OR ARTIST TO EDIT TAGS", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.75f))
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White) }
                     IconButton(onClick = onPause, modifier = Modifier.background(DeepGold.copy(alpha = 0.55f), RoundedCornerShape(30.dp))) { Icon(Icons.Default.Pause, "Pause", tint = Color.White) }
                     IconButton(onClick = onResume, modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))) { Icon(Icons.Default.PlayArrow, "Play", tint = Color.White, modifier = Modifier.size(46.dp)) }
                     IconButton(onClick = onStop, modifier = Modifier.background(DeepGold.copy(alpha = 0.55f), RoundedCornerShape(30.dp))) { Icon(Icons.Default.Stop, "Stop", tint = Color.White) }
+                    IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White) }
+                }
+                if (playbackDurationMs > 0L) {
+                    Slider(
+                        value = playbackPositionMs.coerceIn(0L, playbackDurationMs).toFloat(),
+                        onValueChange = { onSeek(it.toLong()) },
+                        valueRange = 0f..playbackDurationMs.toFloat(),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text("${formatPlaybackTime(playbackPositionMs)} / ${formatPlaybackTime(playbackDurationMs)}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    TextButton(onClick = onShuffle) { Text("SHUFFLE", color = Color.White) }
+                    TextButton(onClick = onRepeat) { Text("REPEAT", color = Color.White) }
                 }
                 Text(status, color = Color.White, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 if (currentTag != null) {
@@ -480,6 +532,11 @@ private fun FloweryApp(
             }
         }
     }
+}
+
+private fun formatPlaybackTime(valueMs: Long): String {
+    val seconds = valueMs.coerceAtLeast(0L) / 1000L
+    return "%d:%02d".format(seconds / 60L, seconds % 60L)
 }
 
 @androidx.compose.runtime.Composable
