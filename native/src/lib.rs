@@ -108,7 +108,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDecode(
 }
 
 
-const ISO_FREQUENCIES: [f32; 31] = [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000];
+const ISO_FREQUENCIES: [f32; 31] = [20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0];
 fn apply_peaking_eq(samples: &mut [f32], channels: usize, sample_rate: f32, frequency: f32, gain_db: f32) {
     if gain_db.abs() < 0.001 || frequency >= sample_rate * 0.49 { return; }
     let a = 10.0_f32.powf(gain_db / 40.0);
@@ -229,7 +229,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResample(
 
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
-use lofty::tag::{ItemKey, Tag, TagExt};
+use lofty::tag::{ItemKey, Tag};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
