@@ -6,7 +6,7 @@ Flowery is an Android music player project built with Kotlin, Jetpack Compose, M
 
 - Application ID: `com.waizusora.flowery`
 - Product name: Flowery
-- Android UI and output: Kotlin, Jetpack Compose, Material 3, Android `AudioTrack`
+- Android UI and output: Kotlin, Jetpack Compose, Material 3, Android `AAudio`
 - Decoder and DSP: Rust through JNI, using Symphonia
 - Build automation: GitHub Actions
 
@@ -17,26 +17,26 @@ Flowery is an Android music player project built with Kotlin, Jetpack Compose, M
 - Audio-file discovery without MediaStore.
 - Native Symphonia decoding for the codecs and containers enabled by the `all` feature set.
 - Native three-band bass, midrange, and treble equalization.
-- Android PCM-float streaming through `AudioTrack` for mono and stereo output.
+- Native AAudio PCM-float output for mono and stereo playback, requesting exclusive low-latency mode and falling back to shared mode when unavailable.
 - Sidecar LRC discovery and timestamp parsing.
 - Basic playback controls and software volume.
 - GitHub Actions debug/release APK build and tag-based GitHub Release publishing.
 
 ## Architecture
 
-The Android layer owns the user interface, Storage Access Framework permissions, library traversal, and Android output routing. Rust owns compressed-audio decoding and the current equalizer DSP implementation.
+The Android layer owns the user interface, Storage Access Framework permissions, and library traversal. Rust owns compressed-audio decoding and the current equalizer DSP implementation. A C++ Android NDK layer streams PCM through AAudio.
 
 The project does not use ExoPlayer, AndroidX Media3, Firebase, or MediaStore. Files are accessed through user-selected document-tree permissions and are not copied into the application library.
 
 ## Audio compatibility and current limitations
 
-The current playback path decodes the selected file into memory and sends mono/stereo floating-point PCM to Android `AudioTrack`. It is a functional initial playback path, not yet a low-memory streaming decoder. Large files can require substantial memory.
+The current playback path decodes the selected file into memory and sends mono/stereo floating-point PCM to Android `AAudio`. It is a functional initial playback path, not yet a low-memory streaming decoder. Large files can require substantial memory.
 
 Symphonia's `all` feature enables the codecs and container support provided by the selected Symphonia release; it does not guarantee every proprietary, damaged, or uncommon audio format. The current Android output path supports mono and stereo. Multichannel output, gapless playback, seeking, queue management, and background playback are not implemented yet.
 
 AUX, built-in speakers, and Bluetooth use Android's managed media output route and follow system media-volume behavior.
 
-USB exclusive access, USB Audio Class transport, DAC hardware-volume reporting/control, sample-rate negotiation, and verified bit-perfect output are not implemented by the current `AudioTrack` backend. Android `AudioTrack` must not be described as USB-exclusive or bit-perfect. Those features require a separate USB Audio backend, device capability negotiation, and hardware validation. Bit-perfect mode must bypass equalization, software gain, resampling, and any sample conversion that changes the source PCM.
+AAudio requests exclusive, low-latency sharing mode and falls back to shared mode if the device or Android audio service cannot provide it. This is not equivalent to guaranteed USB-exclusive access. USB Audio Class transport, DAC hardware-volume reporting/control, device-specific sample-rate negotiation, and verified bit-perfect output are not implemented. Those features require USB device handling, capability negotiation, and hardware validation. Bit-perfect mode must bypass equalization, software gain, resampling, and any sample conversion that changes the source PCM.
 
 The current equalizer is a native three-band biquad processor. Enabling it changes PCM samples and is therefore incompatible with bit-perfect output.
 
