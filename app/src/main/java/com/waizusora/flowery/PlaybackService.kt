@@ -53,6 +53,8 @@ class PlaybackService : Service() {
         const val BROADCAST_STATE = "com.waizusora.flowery.PLAYBACK_STATE"
         const val EXTRA_STATUS = "status"
         const val EXTRA_IS_PLAYING = "is_playing"
+        const val EXTRA_SHUFFLE_ENABLED = "shuffle_enabled"
+        const val EXTRA_REPEAT_MODE = "repeat_mode"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -86,7 +88,9 @@ class PlaybackService : Service() {
                 sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
                     .putExtra(EXTRA_POSITION, player.positionMs())
                     .putExtra(EXTRA_DURATION, player.durationMs())
-                    .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING))
+                    .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
+                    .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
+                    .putExtra(EXTRA_REPEAT_MODE, repeatMode))
             }
             mainHandler.postDelayed(this, 500L)
         }
@@ -330,6 +334,8 @@ class PlaybackService : Service() {
             .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
+            .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
+            .putExtra(EXTRA_REPEAT_MODE, repeatMode)
         sendBroadcast(intent)
         if (::session.isInitialized) {
             publishSessionState()
