@@ -158,3 +158,69 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeApplyEqualiz
         Err(_) => std::ptr::null_mut(),
     }
 }
+
+
+use audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{Fft, FixedSync, Resampler};
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResample(
+    mut env: JNIEnv,
+    _class: JClass,
+    input: JFloatArray,
+    input_rate: jint,
+    output_rate: jint,
+    channels: jint,
+) -> jfloatArray {
+    if input_rate <= 0 || output_rate <= 0 || channels <= 0 || channels > 2 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid resampler parameters");
+        return std::ptr::null_mut();
+    }
+    let length = match env.get_array_length(&input) { Ok(v) => v as usize, Err(_) => return std::ptr::null_mut() };
+    if length == 0 || length % channels as usize != 0 { return std::ptr::null_mut(); }
+    let mut source = vec![0.0_f32; length];
+    if env.get_float_array_region(&input, 0, &mut source).is_err() { return std::ptr::null_mut(); }
+    if input_rate == output_rate {
+        return match env.new_float_array(length as i32) {
+            Ok(output) => {
+                if env.set_float_array_region(&output, 0, &source).is_err() { return std::ptr::null_mut(); }
+                output.into_raw()
+            }
+            Err(_) => std::ptr::null_mut(),
+        };
+    }
+    let channel_count = channels as usize;
+    let frames = length / channel_count;
+    let mut resampler = match Fft::<f32>::new(input_rate as usize, output_rate as usize, 1024, channel_count, FixedSync::Both) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", format!("Resampler initialization failed: {error}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let output_capacity = resampler.process_all_needed_output_len(frames);
+    let mut output_samples = vec![0.0_f32; output_capacity * channel_count];
+    let input_adapter = match InterleavedSlice::new(&source, channel_count, frames) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let mut output_adapter = match InterleavedSlice::new_mut(&mut output_samples, channel_count, output_capacity) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let (_, written_frames) = match resampler.process_all_into_buffer(&input_adapter, &mut output_adapter, frames, None) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", format!("Resampling failed: {error}"));
+            return std::ptr::null_mut();
+        }
+    };
+    output_samples.truncate(written_frames * channel_count);
+    match env.new_float_array(output_samples.len() as i32) {
+        Ok(output) => {
+            if env.set_float_array_region(&output, 0, &output_samples).is_err() { return std::ptr::null_mut(); }
+            output.into_raw()
+        }
+        Err(_) => std::ptr::null_mut(),
+    }
+}
