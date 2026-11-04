@@ -36,6 +36,7 @@ struct StreamDecoder {
     gains: [f32;31],
     eq_state: Vec<[BiquadState;31]>,
     produced_frames: u64,
+    source_frames_decoded: u64,
 }
 
 impl StreamDecoder {
@@ -93,6 +94,7 @@ impl StreamDecoder {
                     }
                     let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
                     buffer.copy_interleaved_ref(decoded);
+                    self.source_frames_decoded += (buffer.samples().len() / self.channels) as u64;
                     self.input_pending.extend_from_slice(buffer.samples());
                     return Ok(true);
                 }
@@ -130,8 +132,7 @@ impl StreamDecoder {
     }
 
     fn produce_resampled_chunk(&mut self) -> Result<bool,String> {
-        let resampler = self.resampler.as_mut().ok_or("Resampler is not configured")?;
-        let input_frames = resampler.input_frames_next();
+        let input_frames = self.resampler.as_ref().ok_or("Resampler is not configured")?.input_frames_next();
         while self.input_pending.len() / self.channels < input_frames && !self.eof {
             self.decode_packet()?;
         }
@@ -146,6 +147,7 @@ impl StreamDecoder {
         if take_frames < input_frames {
             self.resampler_flushed = true;
         }
+        let resampler = self.resampler.as_mut().ok_or("Resampler is not configured")?;
         let output_frames = resampler.output_frames_next();
         let mut output = vec![0.0_f32; output_frames * self.channels];
         let input_adapter = InterleavedSlice::new(&input, self.channels, input_frames)
@@ -217,6 +219,17 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
     if handle==0 { return 0; }
     let decoder=unsafe { &*(handle as *mut StreamDecoder) };
     (((decoder.source_rate as u64)<<32) | decoder.channels as u64) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDurationMs(
+    _env: JNIEnv, _class: JClass, handle: jlong
+) -> jlong {
+    if handle==0 { return 0; }
+    let decoder=unsafe { &*(handle as *mut StreamDecoder) };
+    if decoder.source_frames_decoded == 0 { 0 } else {
+        (decoder.source_frames_decoded as u128 * 1000u128 / decoder.source_rate as u128) as jlong
+    }
 }
 
 #[no_mangle]
