@@ -29,7 +29,6 @@ class PlaybackService : Service() {
         const val ACTION_PLAY = "com.waizusora.flowery.PLAY"
         const val ACTION_PAUSE = "com.waizusora.flowery.PAUSE"
         const val ACTION_RESUME = "com.waizusora.flowery.RESUME"
-        const val ACTION_STOP = "com.waizusora.flowery.STOP"
         const val ACTION_NEXT = "com.waizusora.flowery.NEXT"
         const val ACTION_PREVIOUS = "com.waizusora.flowery.PREVIOUS"
         const val ACTION_QUEUE = "com.waizusora.flowery.QUEUE"
@@ -103,7 +102,6 @@ class PlaybackService : Service() {
             setCallback(object : MediaSessionCompat.Callback() {
                 override fun onPlay() = resumePlayback()
                 override fun onPause() = pausePlayback()
-                override fun onStop() = stopPlayback()
                 override fun onSkipToNext() = skipNext()
                 override fun onSkipToPrevious() = skipPrevious()
                 override fun onSeekTo(position: Long) = player.seekTo(position)
@@ -144,7 +142,6 @@ class PlaybackService : Service() {
             }
             ACTION_PAUSE -> pausePlayback()
             ACTION_RESUME -> resumePlayback()
-            ACTION_STOP -> stopPlayback()
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> skipPrevious()
             ACTION_VOLUME -> player.setVolume(intent.getFloatExtra(EXTRA_VALUE, 1f))
@@ -340,7 +337,7 @@ class PlaybackService : Service() {
     private fun publishSessionState() {
         if (!::session.isInitialized) return
         val actions = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
-            PlaybackStateCompat.ACTION_PLAY_PAUSE or PlaybackStateCompat.ACTION_STOP or
+            PlaybackStateCompat.ACTION_PLAY_PAUSE or
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(actions)
