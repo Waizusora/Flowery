@@ -6,6 +6,7 @@ object NativeAudio {
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
+    external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
     external fun nativeReadStreamChunk(handle: Long, maxFrames: Int): FloatArray
     external fun nativeCloseStreamDecoder(handle: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, capacityFrames: Int): Int
