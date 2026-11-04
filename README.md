@@ -1,84 +1,171 @@
 # Flowery
 
-Flowery is an Android music player built with Kotlin, Jetpack Compose, Material 3, Android AAudio, and a Rust audio engine.
+Flowery is an Android music player with a Kotlin and Jetpack Compose interface, a Rust-based decoding and DSP layer, and native C++ audio output through Android AAudio.
 
-## Project identity
+## Project status
 
-- Application ID: `com.waizusora.flowery`
-- Product name: Flowery
-- Android UI and audio output: Kotlin, Jetpack Compose, Material 3, Android AAudio
-- Audio decoding and DSP: Rust, Symphonia, Rubato
-- Audio metadata: Lofty
-- Native Android output: C++ and AAudio
-- Build automation: GitHub Actions
+The application currently includes folder-based audio discovery, playback queue controls, shuffle and repeat modes, seek support, a 31-band ISO graphic equalizer, software volume, audio metadata display and editing, and sidecar LRC lyric parsing.
 
-## Player interface
+The repository is under active development. Features described as limitations below are not implied to be available merely because a related library or native API is present.
 
-The player uses an amber/gold visual theme with a large embedded-cover display, track and artist information, transport controls, format details, folder selection, library listing, software volume, and a 31-band ISO equalizer.
+## Technology
 
-- Long-press the album artwork or a library row to inspect file metadata and technical audio properties.
-- Long-press the track title or artist to open the tag editor.
-- Embedded front-cover artwork is displayed when available. Artwork is preserved when text tags are edited; replacing artwork is not currently exposed.
-- The tag editor writes supported metadata fields back into the original SAF document.
+| Area | Implementation |
+| --- | --- |
+| Android application | Kotlin, Android SDK 35, minSdk 26 |
+| User interface | Jetpack Compose, Material 3 |
+| Compressed audio decoding | Symphonia 0.5.4 (Rust) |
+| Streaming sample-rate conversion | Rubato 5.0.1 (Rust) |
+| Equalizer | Native Rust 31-band ISO graphic EQ |
+| Audio output | C++ and Android AAudio |
+| PCM buffering | Fixed-capacity single-producer/single-consumer ring buffer |
+| Audio tags | Lofty 0.25.5 |
+| Folder access | Storage Access Framework (SAF) |
+| Playback integration | Android foreground service and MediaSessionCompat |
+| CI | GitHub Actions |
 
-## Metadata support
+Application ID: `com.waizusora.flowery`
 
-Lofty 0.25.5 is used for metadata parsing and writing. The editor exposes title, artist, album, album artist, genre, release date/year, track number, disc number, composer, comment, and lyrics.
+## Features
 
-Lofty supports metadata for AAC (ADTS), APE, AIFF, FLAC, MP3, MP4, MPC, Opus, Ogg Vorbis, Speex, WAV, and WavPack. The exact writable tag mapping depends on the container. Some tag/container combinations are read-only; Flowery checks Lofty's write support and refuses to write those combinations. Unsupported formats such as formats outside Lofty's supported list cannot be edited through this metadata path.
+### Playback
 
-The editor stages the selected file in the app-private cache directory, asks Lofty to update the tag, then writes the resulting bytes back through the user's Storage Access Framework document permission. A document provider must grant write access. The audio stream itself is not decoded and re-encoded when text tags are changed.
+- Play audio documents selected from configured folders.
+- Maintain a playback queue with previous and next controls.
+- Shuffle and repeat-off, repeat-all, and repeat-one modes.
+- Seek within the current track.
+- Pause and resume playback.
+- Continue playback through a foreground media playback service, with media-session and notification controls.
+- Handle audio focus changes, including transient interruptions and ducking.
 
-## Audio engine
+### Library
 
-- Symphonia opens the SAF document file descriptor and decodes compressed audio incrementally in bounded packets/chunks; the compressed file and complete decoded PCM are not copied into a whole-track byte array.
-- Rubato 5 performs fixed-ratio streaming sample-rate conversion with one persistent synchronous FFT resampler per track. Resampler history is retained between chunks.
-- Flowery enumerates connected USB output devices through Android AudioManager, prefers a USB DAC with reported sample rates, selects the source rate when supported, and binds the AAudio stream to that device ID. If the DAC does not report a rate list, AAudio is probed directly. If the requested rate cannot be opened, Flowery uses the device default stream rate; if the USB route cannot be opened, it falls back to the system output route.
-- If the source and selected output rates match, the resampler returns the original PCM samples without conversion.
-- The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls. Per-channel biquad delay state is retained across decoded chunks, and gain changes are applied without resetting filter history. Native unit tests verify chunk-boundary continuity and finite filter coefficients across common sample rates.
-- AAudio requests exclusive, low-latency output and falls back to shared mode if exclusive mode is unavailable.
+- Add multiple folder roots through the Storage Access Framework.
+- Enable or disable individual roots and remove roots from the configured list.
+- Recursively scan enabled roots for supported filename extensions.
+- Associate a sidecar `.lrc` file with an audio file when the base filenames match.
+- Scan document trees directly; the library does not use MediaStore.
 
-The Android-reported USB sample-rate list is used as the preferred capability hint, then AAudio validates that the selected device and rate can actually open. In shared mode, Android may still mix or resample internally. This is not proof of the physical DAC's native clock or bit-perfect transport; device firmware and Android audio policy can still affect the signal path. Guaranteed USB-exclusive output, USB Audio Class capability enumeration, hardware-volume control, and hardware-validated bit-perfect output are not implemented.
+Folder scanning recognizes these extensions: `.mp3`, `.flac`, `.wav`, `.wave`, `.aiff`, `.aif`, `.alac`, `.m4a`, `.mp4`, `.aac`, `.ogg`, `.opus`, `.oga`, `.wma`, `.ape`, `.wv`, `.tta`, `.mka`, `.m4b`, `.dsf`, and `.dff`.
 
-Bit-perfect playback is incompatible with active EQ, software volume scaling, or any sample-rate conversion. The current path uses floating-point decoded PCM and is therefore not a verified bit-perfect path.
+A filename being recognized by the scanner does not guarantee that its codec can be decoded. Actual playback depends on the container and codec support available in the configured Symphonia build.
 
-## Library and lyrics
+### Audio processing and output
 
-- Multiple Storage Access Framework folder roots can be added, removed, enabled, disabled, and recursively scanned.
-- The library scanner does not use MediaStore.
-- Sidecar LRC files are discovered and parsed.
-- Embedded lyrics, synchronized lyric position updates, remote lyric lookup, and saving downloaded lyrics are not implemented.
+- Decode audio progressively from a SAF file descriptor using Symphonia.
+- Convert sample rates incrementally using a persistent Rubato resampler.
+- Apply a 31-band ISO one-third-octave equalizer with per-band gain limited to -12 dB through +12 dB.
+- Preserve resampler and equalizer history across streaming chunks.
+- Update equalizer gains during playback without rebuilding the track decoder.
+- Feed PCM to AAudio through a bounded ring buffer.
+- Request exclusive AAudio sharing first and fall back to shared mode when exclusive mode cannot be opened.
+- Prefer a reported USB output sample rate when one is available and attempt to open the selected rate.
 
-## Architecture and exclusions
+The equalizer's center frequencies are 20 Hz, 25 Hz, 31.5 Hz, 40 Hz, 50 Hz, 63 Hz, 80 Hz, 100 Hz, 125 Hz, 160 Hz, 200 Hz, 250 Hz, 315 Hz, 400 Hz, 500 Hz, 630 Hz, 800 Hz, 1 kHz, 1.25 kHz, 1.6 kHz, 2 kHz, 2.5 kHz, 3.15 kHz, 4 kHz, 5 kHz, 6.3 kHz, 8 kHz, 10 kHz, 12.5 kHz, 16 kHz, and 20 kHz.
 
-The Android layer owns the UI, SAF permissions, and library traversal. Rust owns compressed-audio decoding, metadata operations through Lofty, resampling through Rubato, and the 31-band equalizer. C++ streams PCM through AAudio. A dedicated producer thread feeds a fixed-capacity single-producer/single-consumer ring buffer; the AAudio callback only copies available frames, applies output gain, fills underruns with silence, and checks end-of-stream state. It performs no file I/O, decoding, resampling, allocation, or locking.
+**USB and bit-perfect limitations:** USB device selection currently relies on Android's reported output-device information and AAudio device binding where supported. The implementation does not provide exhaustive USB Audio Class descriptor enumeration, guaranteed exclusive USB transport, DAC hardware-volume integration, or hardware verification of bit-perfect output. AAudio shared mode may mix or resample audio. The current floating-point DSP path, active equalizer, software gain, or sample-rate conversion can alter sample data; bit-perfect playback is therefore not claimed.
 
-The project does not use ExoPlayer, AndroidX Media3, Firebase, MediaStore, or Google app services.
+### Metadata and tag editing
 
-## Build
+Lofty is used to read and write supported audio tags. The editor exposes title, artist, album, album artist, genre, year/date, track number, disc number, comment, composer, and lyrics.
 
-Open the project in Android Studio with JDK 17, Android SDK 35, Android NDK 27.2.12479018, and a Rust toolchain compatible with Rubato 5 (rustc 1.87 or newer). The GitHub Actions workflow is located at `.github/workflows/build.yml`.
+Tag writes are staged in the app-private cache and written back to the original SAF document. The document provider must grant write access. Tag/container support varies; unsupported or read-only combinations are rejected rather than treated as successful writes. Editing text tags does not require decoding and re-encoding the audio stream.
 
-The workflow builds Rust native libraries for arm64-v8a, armeabi-v7a, and x86_64, then assembles debug and release APKs. A tag matching `v*` triggers GitHub Release publishing.
+Embedded cover artwork can be read for display. Replacing embedded artwork is not currently exposed by the editor.
 
-Configure these GitHub repository secrets for signed releases:
+### Lyrics
+
+- Discover a sidecar `.lrc` file with the same base filename as the audio file.
+- Parse one or more timestamps per line and sort the resulting lyric entries by timestamp.
+- Resolve the lyric line corresponding to the current playback position.
+
+Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-file writing are not implemented.
+
+## Audio pipeline
+
+The streaming playback path is:
+
+`SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → Kotlin producer → native PCM ring buffer → AAudio callback → output device`
+
+The ring buffer has a fixed capacity of 16,384 frames in the current player configuration. The decoder worker produces chunks of up to 2,048 frames and replenishes the queue around a 4,096-frame low-water mark. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
+
+Seeking uses a format-level Symphonia seek, resets decoder and DSP state, rebuilds resampler history where needed, discards preroll before the requested presentation time, and flushes queued output frames. The player tracks playback generations to prevent an older worker from changing the state of a newer track.
+
+See [Audio engine](docs/AUDIO_ENGINE.md) for details.
+
+## Repository layout
+
+```text
+.
+├── app/
+│   └── src/main/
+│       ├── cpp/                 # AAudio output and CMake configuration
+│       ├── java/.../flowery/    # Android UI, service, SAF library, JNI bridge
+│       └── AndroidManifest.xml
+├── native/
+│   ├── Cargo.toml               # Rust dependencies
+│   └── src/
+│       ├── lib.rs               # JNI, decode helpers, Lofty tag operations
+│       └── streaming.rs         # Streaming decoder, resampler, EQ, seek
+├── docs/                        # Project and implementation documentation
+└── .github/workflows/build.yml  # Android and native CI
+```
+
+## Build requirements
+
+- JDK 17
+- Gradle 8.9 (or the wrapper version configured by the project)
+- Android SDK Platform 35 and Build Tools 35.0.0
+- Android NDK 27.2.12479018
+- CMake 3.22.1
+- Rust toolchain compatible with Rubato 5 (rustc 1.87 or newer)
+- Rust Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
+- `cargo-ndk`
+
+See [Building Flowery](docs/BUILDING.md) for local and CI build instructions.
+
+## Automated builds
+
+GitHub Actions runs native Rust unit tests, builds Rust libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, then assembles debug and release APKs.
+
+Workflow: [Build Flowery](.github/workflows/build.yml)
+
+A push to `main`, a pull request, a version tag matching `v*`, or a manual workflow dispatch can start the workflow. Version tags also trigger GitHub Release publishing. Without signing secrets, the release APK is unsigned.
+
+For signed release builds, configure these repository secrets:
 
 - `KEYSTORE_BASE64`: Base64-encoded JKS or PKCS12 keystore.
 - `KEYSTORE_PASSWORD`: Keystore password.
 - `KEY_ALIAS`: Signing key alias.
 - `KEY_PASSWORD`: Signing key password.
 
-Without signing secrets, CI builds an unsigned release APK. Never commit keystores or signing credentials.
+Do not commit keystores, signing passwords, or private signing material.
 
-## Development status
+## Tests and verification
 
-The player uses incremental decode, bounded PCM buffering, format-level seeking, and ring-buffer flushing. Seeking uses Symphonia accurate container seeks, resets the decoder and DSP history, preserves source preroll when Rubato needs to rebuild its filter history, discards converted samples up to the requested output timestamp, flushes the bounded AAudio ring buffer, and preserves paused versus playing state. Native unit tests cover seek positioning, resampled seek preroll, EQ continuity across chunk boundaries, and coefficient stability across common sample rates. CI runs these host-side tests before Android cross-compilation and APK assembly. Gapless transitions, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
+The Rust test suite includes checks for:
 
-## Open-source licenses
+- Equalizer continuity across processing chunk boundaries.
+- Finite equalizer coefficients at common sample rates and gain settings.
+- Accurate WAV seek positioning, including converted seek preroll.
+- Saturating millisecond-to-frame conversion.
 
-- Lofty: MIT OR Apache-2.0.
-- Rubato: MIT OR Apache-2.0.
-- Symphonia and transitive dependencies retain their respective upstream licenses. Review the dependency license set before distributing binaries.
+CI success confirms that the configured build and automated tests completed. It does not replace playback testing across Android versions, audio routes, USB DACs, and individual file formats.
+
+## Current limitations
+
+- Bit-perfect USB playback is not guaranteed or hardware-verified.
+- USB Audio Class capability enumeration and DAC hardware-volume integration are not implemented.
+- AAudio exclusive mode is requested but may fall back to shared mode.
+- Multichannel output beyond mono and stereo is not supported by the current streaming output path.
+- Gapless playback and crossfade are not implemented.
+- Embedded and remote lyric retrieval are not implemented.
+- Embedded artwork replacement is not implemented.
+- Scanner extension recognition is broader than the set of formats that can necessarily be decoded.
+
+## License and third-party components
+
+Review the repository's license file and the license terms of all bundled dependencies before redistributing the application. Lofty and Rubato are available under MIT OR Apache-2.0; Symphonia and transitive dependencies retain their respective upstream licenses.
 
 ## Attribution
 
