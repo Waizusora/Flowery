@@ -101,3 +101,24 @@ extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeS
  if(selected==0)selected=tryRate(0);
  return selected>0?selected:AAUDIO_ERROR_UNAVAILABLE;
 }
+
+
+extern "C" JNIEXPORT jlong JNICALL Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(JNIEnv*,jobject){
+ std::lock_guard<std::mutex> lock(g_mutex);
+ if(!g_output)return 0;
+ const int64_t frames=g_output->position.load()/g_output->channels;
+ const int64_t total=static_cast<int64_t>(g_output->samples.size()/g_output->channels);
+ return static_cast<jlong>(std::clamp<int64_t>(frames,0,total));
+}
+extern "C" JNIEXPORT jlong JNICALL Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDurationFrames(JNIEnv*,jobject){
+ std::lock_guard<std::mutex> lock(g_mutex);
+ return g_output?static_cast<jlong>(g_output->samples.size()/g_output->channels):0;
+}
+extern "C" JNIEXPORT void JNICALL Java_com_waizusora_flowery_NativeAudio_nativeSeekOutputFrames(JNIEnv*,jobject,jlong frame){
+ std::lock_guard<std::mutex> lock(g_mutex);
+ if(!g_output)return;
+ const int64_t total=static_cast<int64_t>(g_output->samples.size()/g_output->channels);
+ const int64_t target=std::clamp<int64_t>(static_cast<int64_t>(frame),0,total);
+ g_output->position.store(target*g_output->channels);
+ if(target<total)g_output->active.store(true);
+}
