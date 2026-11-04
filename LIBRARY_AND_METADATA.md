@@ -19,3 +19,9 @@ The Rust layer uses Lofty to read and write supported tags. The editor exposes t
 Tag support varies by format and tag type. Unsupported write combinations and provider write failures must be treated as failed edits. Embedded artwork can be read for display, but artwork replacement is not currently exposed.
 
 Audio files remain in the selected document provider. Temporary metadata-editing files are stored in the application's private cache; the library does not upload audio files to a remote service.
+
+## Folder-scoped playback
+
+The folder browser filters the scanned track list by the configured root name. Selecting a track passes the filtered folder track list to the playback service as the queue, rather than using the entire library. Removing one or more selected folder roots removes only their entries from Flowery's configured list and releases the associated persisted SAF permission. It does not delete source folders or audio files.
+
+The Android system folder picker returns one tree URI per selection. Multiple folder roots are supported by repeating the Add folder action; the current picker integration does not provide a single multi-tree selection dialog.
