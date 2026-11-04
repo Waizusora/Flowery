@@ -27,6 +27,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
+    @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
 
     fun setEqualizerGains(gains: FloatArray) {
@@ -102,6 +103,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = target * targetRate / 1000L
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame) == 0) { "Unable to flush or restart the AAudio output stream" }
+                        if (paused) check(NativeAudio.nativePauseOutput() == 0) { "Unable to preserve the paused state after seeking" }
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
                         reachedEnd = false
@@ -182,11 +184,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun pause() {
-        if (NativeAudio.nativePauseOutput() == 0) onState("Paused")
+        if (NativeAudio.nativePauseOutput() == 0) {
+            paused = true
+            onState("Paused")
+        }
     }
 
     fun resume() {
-        if (NativeAudio.nativeResumeOutput() == 0) onState("Playing · AAudio streaming")
+        if (NativeAudio.nativeResumeOutput() == 0) {
+            paused = false
+            onState("Playing · AAudio streaming")
+        }
     }
 
     fun stop() {
@@ -198,5 +206,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputDurationMs = 0L
         outputSampleRate = 0
         pendingSeekMs.set(null)
+        paused = false
     }
 }
