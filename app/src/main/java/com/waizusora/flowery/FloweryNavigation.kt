@@ -272,8 +272,9 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Resampler", "Rubato · persistent streaming state", color, muted)
             Detail("Equalizer", "31-band ISO biquad EQ · ±12 dB", color, muted)
             Detail("Output", "AAudio · bounded PCM ring buffer", color, muted)
-            Detail("Pipeline", "Decode → resample (if needed) → EQ → AAudio", color, muted)
-            Detail("Runtime telemetry", "Detailed per-stage timing and live DSP metrics are not currently exposed by the engine.", color, muted)
+            Detail("Pipeline", "SAF file → Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring → AAudio", color, muted)
+            Detail("Playback status", status, color, muted)
+            Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
         }
         SettingsPage.LIBRARY -> SettingCard("Folder", "Add multiple folders, select folders for removal, and scan the library", color, muted, Icons.Default.Folder, openFolders)
         SettingsPage.APPEARANCE -> {
@@ -321,9 +322,14 @@ private fun SettingCard(title: String, subtitle: String, color: Color, muted: Co
     icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.ChevronRight, action: () -> Unit) {
     Card(Modifier.fillMaxWidth().clickable(onClick = action), shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .09f))) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-            Text(subtitle, color = muted, style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(27.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                Text(subtitle, color = muted, style = MaterialTheme.typography.bodyMedium)
+            }
+            Icon(Icons.Default.ChevronRight, contentDescription = null, tint = muted)
         }
     }
 }
