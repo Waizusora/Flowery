@@ -25,7 +25,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
-    @Volatile private var decoderHandle = 0L
 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
@@ -52,7 +51,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
                 check(handle != 0L) { "The native decoder could not be created" }
-                decoderHandle = handle
 
                 val streamInfo = NativeAudio.nativeGetStreamInfo(handle)
                 val sourceRate = (streamInfo ushr 32).toInt()
@@ -126,12 +124,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 if (handle != 0L) {
-                    decoderHandle = 0L
                     NativeAudio.nativeCloseStreamDecoder(handle)
                 }
-                NativeAudio.nativeStopOutput()
+                if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
                 descriptor?.close()
-                if (playbackGeneration.get() != generation) return@thread
             }
         }
     }
