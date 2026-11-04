@@ -20,9 +20,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64") }
     }
 
     signingConfigs {
@@ -38,32 +36,24 @@ android {
 
     buildTypes {
         release {
-            if (!signingStorePath.isNullOrBlank()) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            if (!signingStorePath.isNullOrBlank()) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
         }
     }
 
     buildFeatures { compose = true }
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
     kotlinOptions { jvmTarget = "17" }
-
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
     }
-
-    packaging {
-        jniLibs.useLegacyPackaging = false
-    }
+    packaging { jniLibs.useLegacyPackaging = false }
 }
 
 dependencies {
@@ -79,5 +69,7 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.media:media:1.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
