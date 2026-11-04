@@ -33,9 +33,10 @@ void stopLocked(){
  if(g_stream){AAudioStream_requestStop(g_stream);AAudioStream_close(g_stream);g_stream=nullptr;}
  g_output.reset();
 }
-aaudio_result_t openStream(OutputState* state,int32_t rate,int32_t channels,aaudio_sharing_mode_t sharing){
+aaudio_result_t openStream(OutputState* state,int32_t rate,int32_t channels,aaudio_sharing_mode_t sharing,int32_t deviceId){
  AAudioStreamBuilder* b=nullptr; auto r=AAudio_createStreamBuilder(&b); if(r!=AAUDIO_OK)return r;
  AAudioStreamBuilder_setDirection(b,AAUDIO_DIRECTION_OUTPUT);
+ if(deviceId>0)AAudioStreamBuilder_setDeviceId(b,deviceId);
  AAudioStreamBuilder_setFormat(b,AAUDIO_FORMAT_PCM_FLOAT);
  AAudioStreamBuilder_setSampleRate(b,rate);
  AAudioStreamBuilder_setChannelCount(b,channels);
@@ -53,15 +54,15 @@ aaudio_result_t openStream(OutputState* state,int32_t rate,int32_t channels,aaud
  return AAUDIO_OK;
 }
 }
-extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeStartOutput(JNIEnv* e,jobject,jfloatArray input,jint rate,jint channels,jfloat volume){
+extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeStartOutput(JNIEnv* e,jobject,jfloatArray input,jint rate,jint channels,jfloat volume,jint deviceId){
  if(rate<=0||(channels!=1&&channels!=2))return AAUDIO_ERROR_INVALID_FORMAT;
  jsize n=e->GetArrayLength(input);if(n<=0||n%channels!=0)return AAUDIO_ERROR_INVALID_FORMAT;
  auto state=std::make_unique<OutputState>();state->channels=channels;state->samples.resize(static_cast<size_t>(n));
  e->GetFloatArrayRegion(input,0,n,state->samples.data());if(e->ExceptionCheck())return AAUDIO_ERROR_INTERNAL;
  state->volume.store(std::clamp(volume,0.0f,1.0f));
  std::lock_guard<std::mutex> lock(g_mutex);stopLocked();g_output=std::move(state);
- auto r=openStream(g_output.get(),rate,channels,AAUDIO_SHARING_MODE_EXCLUSIVE);
- if(r!=AAUDIO_OK)r=openStream(g_output.get(),rate,channels,AAUDIO_SHARING_MODE_SHARED);
+ auto r=openStream(g_output.get(),rate,channels,AAUDIO_SHARING_MODE_EXCLUSIVE,deviceId);
+ if(r!=AAUDIO_OK)r=openStream(g_output.get(),rate,channels,AAUDIO_SHARING_MODE_SHARED,deviceId);
  if(r!=AAUDIO_OK){stopLocked();return r;}
  g_output->active.store(true);r=AAudioStream_requestStart(g_stream);
  if(r!=AAUDIO_OK){g_output->active.store(false);stopLocked();return r;}return 0;
@@ -82,15 +83,15 @@ extern "C" JNIEXPORT jboolean JNICALL Java_com_waizusora_flowery_NativeAudio_nat
  std::lock_guard<std::mutex> lock(g_mutex);return g_output&&g_output->active.load()?JNI_TRUE:JNI_FALSE;
 }
 
-extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(JNIEnv*,jobject,jint requestedRate,jint channels){
+extern "C" JNIEXPORT jint JNICALL Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(JNIEnv*,jobject,jint requestedRate,jint channels,jint deviceId){
  if(requestedRate<=0||(channels!=1&&channels!=2))return AAUDIO_ERROR_INVALID_FORMAT;
  std::lock_guard<std::mutex> lock(g_mutex);
  stopLocked();
  OutputState probe;
  probe.channels=channels;
  auto tryRate=[&](int32_t rate)->int32_t{
-  auto r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_EXCLUSIVE);
-  if(r!=AAUDIO_OK)r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_SHARED);
+  auto r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_EXCLUSIVE,deviceId);
+  if(r!=AAUDIO_OK)r=openStream(&probe,rate,channels,AAUDIO_SHARING_MODE_SHARED,deviceId);
   if(r!=AAUDIO_OK)return 0;
   const int32_t actual=AAudioStream_getSampleRate(g_stream);
   AAudioStream_close(g_stream);g_stream=nullptr;
