@@ -243,6 +243,17 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeConfigureStr
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStreamGains(
+    mut env: JNIEnv, _class: JClass, handle: jlong, gains: JFloatArray
+) -> jint {
+    if handle==0 { return -1; }
+    let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
+    let decoder=unsafe { &mut *(handle as *mut StreamDecoder) };
+    decoder.gains.copy_from_slice(&gains);
+    0
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamChunk(
     mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
 ) -> jfloatArray {
