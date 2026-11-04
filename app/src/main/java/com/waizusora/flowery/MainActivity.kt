@@ -83,12 +83,10 @@ class MainActivity : ComponentActivity() {
     private var volume by mutableStateOf(1f)
     private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
     private val io = Executors.newSingleThreadExecutor()
-    private lateinit var player: FloweryPlayer
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoreFolders()
-        player = FloweryPlayer(this) { message -> runOnUiThread { status = message } }
         setContent {
             FloweryApp(
                 folders = folders,
@@ -99,7 +97,7 @@ class MainActivity : ComponentActivity() {
                 lyrics = lyrics,
                 volume = volume,
                 equalizerGains = equalizerGains,
-                onBandGain = { index, gain -> equalizerGains[index] = gain; player.setEqualizerGains(equalizerGains.toFloatArray()) },
+                onBandGain = { index, gain -> equalizerGains[index] = gain; sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) { putExtra(PlaybackService.EXTRA_GAINS, equalizerGains.toFloatArray()) } },
                 onAddFolder = { folderPicker.launch(null) },
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
@@ -107,10 +105,10 @@ class MainActivity : ComponentActivity() {
                 onPlay = ::playTrack,
                 onInspect = ::inspectTrack,
                 onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
-                onPause = { player.pause() },
-                onResume = { player.resume() },
-                onStop = { player.stop(); status = "Stopped" },
-                onVolume = { volume = it; player.setVolume(it) },
+                onPause = { sendPlaybackCommand(PlaybackService.ACTION_PAUSE) },
+                onResume = { sendPlaybackCommand(PlaybackService.ACTION_RESUME) },
+                onStop = { sendPlaybackCommand(PlaybackService.ACTION_STOP); status = "Stopped" },
+                onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
             )
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
@@ -121,6 +119,11 @@ class MainActivity : ComponentActivity() {
                 ) }
             }
         }
+    }
+
+    private fun sendPlaybackCommand(action: String, configure: Intent.() -> Unit = {}) {
+        val command = Intent(this, PlaybackService::class.java).setAction(action).apply(configure)
+        startService(command)
     }
 
     private fun addFolder(uri: Uri) {
@@ -213,8 +216,6 @@ class MainActivity : ComponentActivity() {
         status = "Reading tags and preparing ${track.title}…"
         io.execute {
             try {
-                val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
-                    ?: throw IllegalStateException("Unable to open selected audio file")
                 val tag = runCatching { readTag(track) }.getOrNull()
                 val parsedLyrics = track.sidecarLyricsUri?.let { lyricUri ->
                     contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) }
@@ -223,8 +224,14 @@ class MainActivity : ComponentActivity() {
                     currentTag = tag
                     lyrics = parsedLyrics
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
+                    val queueUris = ArrayList(tracks.map { it.uri.toString() })
+                    val queueIndex = tracks.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
+                    val command = Intent(this, PlaybackService::class.java)
+                        .setAction(PlaybackService.ACTION_PLAY)
+                        .putStringArrayListExtra(PlaybackService.EXTRA_QUEUE, queueUris)
+                        .putExtra(PlaybackService.EXTRA_INDEX, queueIndex)
+                    androidx.core.content.ContextCompat.startForegroundService(this, command)
                 }
-                player.play(bytes)
             } catch (error: Throwable) {
                 runOnUiThread { status = "Unable to load file: ${error.message}" }
             }
@@ -286,7 +293,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (::player.isInitialized) player.stop()
         io.shutdownNow()
         super.onDestroy()
     }
