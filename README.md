@@ -81,6 +81,13 @@ Embedded cover artwork can be read for display. Replacing embedded artwork is no
 
 Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-file writing are not implemented.
 
+## Documentation
+
+- [Architecture](ARCHITECTURE.md)
+- [Audio engine](AUDIO_ENGINE.md)
+- [Library, metadata, and lyrics](LIBRARY_AND_METADATA.md)
+- [Build instructions](BUILDING.md)
+
 ## Audio pipeline
 
 The streaming playback path is:
