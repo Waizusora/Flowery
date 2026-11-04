@@ -80,5 +80,27 @@ class UsbDacController(context: Context) {
         manager.requestPermission(device, permissionIntent)
     }
 
+    fun inspectDescriptors(device: UsbDevice): String {
+        if (!manager.hasPermission(device)) {
+            return "USB permission is required before Flowery can inspect this device's descriptors."
+        }
+        val connection = manager.openDevice(device)
+            ?: return "Android could not open the USB device connection."
+        return try {
+            val descriptors = connection.rawDescriptors
+            UsbAudioDescriptorParser.report(
+                raw = descriptors,
+                vid = device.vendorId,
+                pid = device.productId,
+                product = device.productName,
+                manufacturer = device.manufacturerName
+            )
+        } catch (error: Throwable) {
+            "USB descriptor inspection failed: ${error.message ?: error.javaClass.simpleName}"
+        } finally {
+            connection.close()
+        }
+    }
+
     fun permissionGranted(device: UsbDevice): Boolean = manager.hasPermission(device)
 }
