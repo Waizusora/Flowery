@@ -114,7 +114,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             NativeAudio.nativeSetStreamEof()
                             eofSignalled = true
                         }
-                        if (!NativeAudio.nativeIsOutputActive()) break
+                        if (!NativeAudio.nativeIsOutputActive()) {
+                            val errorCode = NativeAudio.nativeGetOutputError()
+                            check(errorCode == 0) { "AAudio output failed (error $errorCode)" }
+                            break
+                        }
                         Thread.sleep(8)
                         continue
                     }
@@ -134,11 +138,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             chunk, offsetFrames, frames - offsetFrames
                         )
                         if (written < 0) throw IllegalStateException("AAudio ring-buffer write failed")
-                        if (written == 0) Thread.sleep(4)
+                        if (written == 0) {
+                            check(NativeAudio.nativeIsOutputActive()) {
+                                "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
+                            }
+                            Thread.sleep(4)
+                        }
                         else offsetFrames += written
                     }
                     outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                        check(NativeAudio.nativeIsOutputActive()) {
+                            "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
+                        }
                         Thread.sleep(4)
                     }
                 }
