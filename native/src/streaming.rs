@@ -25,6 +25,11 @@ struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
 #[derive(Clone, Copy, Default)]
 struct BiquadCoefficients { b0:f32, b1:f32, b2:f32, a1:f32, a2:f32 }
 
+fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
+    ((milliseconds as u128 * sample_rate as u128) / 1000)
+        .min(u64::MAX as u128) as u64
+}
+
 fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> BiquadCoefficients {
     if frequency >= sample_rate as f32 * 0.49 { return BiquadCoefficients { b0:1.0, ..Default::default() }; }
     let a = 10.0_f32.powf(gain_db.clamp(-12.0,12.0) / 40.0);
@@ -141,12 +146,12 @@ impl StreamDecoder {
         self.input_pending.clear();
         self.output_pending.clear();
         self.eof = false;
-        self.produced_frames = (requested_ms as u128 * self.output_rate as u128 / 1000) as u64;
+        self.produced_frames = milliseconds_to_frames(requested_ms, self.output_rate);
         let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
         let actual_ms = actual_time.map(|t| (t.seconds as f64 + t.frac) * 1000.0).unwrap_or(requested_ms as f64);
-        let actual_frames = (actual_ms.max(0.0) as u128 * self.source_rate as u128 / 1000) as u64;
+        let actual_frames = milliseconds_to_frames(actual_ms.max(0.0) as u64, self.source_rate);
         self.source_frames_decoded = actual_frames;
-        let requested_frames = (requested_ms as u128 * self.source_rate as u128 / 1000) as u64;
+        let requested_frames = milliseconds_to_frames(requested_ms, self.source_rate);
         self.discard_source_frames = requested_frames.saturating_sub(actual_frames);
         let rate = self.output_rate;
         let gains = self.gains;
@@ -405,10 +410,8 @@ mod tests {
     }
 
     #[test]
-    fn seek_frame_conversion_uses_wide_integer_arithmetic() {
-        let position_ms = u64::MAX / 4;
-        let sample_rate = 192_000u64;
-        let frames = (position_ms as u128 * sample_rate as u128 / 1000) as u64;
-        assert!(frames > position_ms);
+    fn seek_frame_conversion_saturates_instead_of_wrapping() {
+        assert_eq!(milliseconds_to_frames(u64::MAX, 192_000), u64::MAX);
+        assert_eq!(milliseconds_to_frames(1_000, 48_000), 48_000);
     }
 }
