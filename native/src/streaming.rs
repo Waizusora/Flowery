@@ -21,6 +21,25 @@ const FREQUENCIES: [f32; 31] = [20.0,25.0,31.5,40.0,50.0,63.0,80.0,100.0,125.0,1
 #[derive(Clone, Copy, Default)]
 struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
 
+#[derive(Clone, Copy, Default)]
+struct BiquadCoefficients { b0:f32, b1:f32, b2:f32, a1:f32, a2:f32 }
+
+fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> BiquadCoefficients {
+    if frequency >= sample_rate as f32 * 0.49 { return BiquadCoefficients { b0:1.0, ..Default::default() }; }
+    let a = 10.0_f32.powf(gain_db.clamp(-12.0,12.0) / 40.0);
+    let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate as f32;
+    let alpha = omega.sin() / (2.0 * 4.318_f32);
+    let cosine = omega.cos();
+    let a0 = 1.0 + alpha / a;
+    BiquadCoefficients {
+        b0: (1.0 + alpha * a) / a0,
+        b1: (-2.0 * cosine) / a0,
+        b2: (1.0 - alpha * a) / a0,
+        a1: (-2.0 * cosine) / a0,
+        a2: (1.0 - alpha / a) / a0,
+    }
+}
+
 struct StreamDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
@@ -34,6 +53,7 @@ struct StreamDecoder {
     eof: bool,
     resampler_flushed: bool,
     gains: [f32;31],
+    coefficients: [BiquadCoefficients;31],
     eq_state: Vec<[BiquadState;31]>,
     produced_frames: u64,
     source_frames_decoded: u64,
@@ -62,6 +82,7 @@ impl StreamDecoder {
             format, decoder, track_id, source_rate, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, resampler_flushed: false, gains: [0.0;31],
+            coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
             eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0,
         })
     }
@@ -70,6 +91,7 @@ impl StreamDecoder {
         if output_rate == 0 || gains.len() != 31 { return Err("Invalid streaming DSP configuration".into()); }
         self.output_rate = output_rate;
         self.gains.copy_from_slice(gains);
+        self.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], self.gains[i], output_rate));
         self.eq_state = vec![[BiquadState::default();31]; self.channels];
         self.resampler = if output_rate != self.source_rate {
             Some(Fft::<f32>::new(self.source_rate, output_rate, 1024, self.channels, FixedSync::Both)
@@ -109,21 +131,10 @@ impl StreamDecoder {
             let channel = index % self.channels;
             let mut value = *sample;
             for band in 0..31 {
-                let frequency = FREQUENCIES[band];
-                let gain = self.gains[band].clamp(-12.0,12.0);
-                if gain.abs() < 0.001 || frequency >= self.output_rate as f32 * 0.49 { continue; }
-                let a = 10.0_f32.powf(gain / 40.0);
-                let omega = 2.0 * std::f32::consts::PI * frequency / self.output_rate as f32;
-                let alpha = omega.sin() / (2.0 * 4.318_f32);
-                let cosine = omega.cos();
-                let a0 = 1.0 + alpha / a;
-                let b0 = (1.0 + alpha * a) / a0;
-                let b1 = (-2.0 * cosine) / a0;
-                let b2 = (1.0 - alpha * a) / a0;
-                let a1 = (-2.0 * cosine) / a0;
-                let a2 = (1.0 - alpha / a) / a0;
+                let coefficients = self.coefficients[band];
                 let state = &mut self.eq_state[channel][band];
-                let filtered = b0*value + b1*state.x1 + b2*state.x2 - a1*state.y1 - a2*state.y2;
+                let filtered = coefficients.b0*value + coefficients.b1*state.x1 + coefficients.b2*state.x2
+                    - coefficients.a1*state.y1 - coefficients.a2*state.y2;
                 state.x2=state.x1; state.x1=value; state.y2=state.y1; state.y1=filtered;
                 value=filtered;
             }
@@ -250,6 +261,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
     let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
     let decoder=unsafe { &mut *(handle as *mut StreamDecoder) };
     decoder.gains.copy_from_slice(&gains);
+    decoder.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], decoder.gains[i], decoder.output_rate));
     0
 }
 
