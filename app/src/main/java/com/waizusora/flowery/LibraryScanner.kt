@@ -8,7 +8,8 @@ data class AudioTrackItem(
     val uri: Uri,
     val title: String,
     val folder: String,
-    val mimeType: String?
+    val mimeType: String?,
+    val sidecarLyricsUri: Uri? = null
 )
 
 class LibraryScanner(private val context: Context) {
@@ -28,17 +29,22 @@ class LibraryScanner(private val context: Context) {
     }
 
     private fun visit(directory: DocumentFile, rootName: String, output: MutableMap<String, AudioTrackItem>) {
-        directory.listFiles().forEach { file ->
+        val children = directory.listFiles()
+        val lyricFiles = children.filter { it.isFile && it.name?.endsWith(".lrc", ignoreCase = true) == true }
+            .associateBy { it.name?.substringBeforeLast('.')?.lowercase().orEmpty() }
+        children.forEach { file ->
             if (file.isDirectory) {
                 visit(file, rootName, output)
             } else if (file.isFile) {
-                val extension = file.name?.substringAfterLast('.', "")?.lowercase().orEmpty()
+                val name = file.name ?: return@forEach
+                val extension = name.substringAfterLast('.', "").lowercase()
                 if (extension in extensions) {
                     output[file.uri.toString()] = AudioTrackItem(
-                        file.uri,
-                        file.name?.substringBeforeLast('.') ?: file.name ?: "Unknown track",
-                        rootName,
-                        file.type
+                        uri = file.uri,
+                        title = name.substringBeforeLast('.'),
+                        folder = rootName,
+                        mimeType = file.type,
+                        sidecarLyricsUri = lyricFiles[name.substringBeforeLast('.').lowercase()]?.uri
                     )
                 }
             }
