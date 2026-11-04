@@ -11,6 +11,24 @@ import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.consume
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.material3.Surface
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -449,7 +467,7 @@ private fun FloweryApp(
                                 }.getOrNull()
                             }
                             if (art != null) {
-                                androidx.compose.foundation.Image(bitmap = art, contentDescription = "Embedded album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                                androidx.compose.foundation.Image(bitmap = art, contentDescription = "Embedded album artwork", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
                             } else {
                                 Box(Modifier.fillMaxSize().background(Color(0xFF686C73)), contentAlignment = Alignment.Center) {
                                     Icon(Icons.Default.MusicNote, contentDescription = "No artwork", tint = Color.White.copy(alpha = 0.65f), modifier = Modifier.size(72.dp))
@@ -480,9 +498,21 @@ private fun FloweryApp(
                         maxLines = 1
                     )
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = Color.White, modifier = Modifier.size(30.dp)) }
-                    IconButton(onClick = onTogglePlayback, modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onShuffle) {
+                        Icon(Icons.Default.Shuffle, contentDescription = "Shuffle", tint = Color.White, modifier = Modifier.size(25.dp))
+                    }
+                    IconButton(onClick = onPrevious) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = "Previous", tint = Color.White, modifier = Modifier.size(30.dp))
+                    }
+                    IconButton(
+                        onClick = onTogglePlayback,
+                        modifier = Modifier.size(76.dp).background(DeepGold, RoundedCornerShape(40.dp))
+                    ) {
                         Icon(
                             if (status.startsWith("Playing")) Icons.Default.Pause else Icons.Default.PlayArrow,
                             contentDescription = if (status.startsWith("Playing")) "Pause" else "Play",
@@ -490,7 +520,12 @@ private fun FloweryApp(
                             modifier = Modifier.size(46.dp)
                         )
                     }
-                    IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = Color.White, modifier = Modifier.size(30.dp)) }
+                    IconButton(onClick = onNext) {
+                        Icon(Icons.Default.SkipNext, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(30.dp))
+                    }
+                    IconButton(onClick = onRepeat) {
+                        Icon(Icons.Default.Repeat, contentDescription = "Repeat mode", tint = Color.White, modifier = Modifier.size(25.dp))
+                    }
                 }
                 if (playbackDurationMs > 0L) {
                     val safeDuration = playbackDurationMs.coerceAtLeast(1L)
@@ -501,10 +536,6 @@ private fun FloweryApp(
                         modifier = Modifier.fillMaxWidth()
                     )
                     Text("${formatPlaybackTime(playbackPositionMs)} / ${formatPlaybackTime(playbackDurationMs)}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-                }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    TextButton(onClick = onShuffle) { Text("SHUFFLE", color = Color.White) }
-                    TextButton(onClick = onRepeat) { Text("REPEAT", color = Color.White) }
                 }
                 Text(status, color = Color.White, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 if (currentTag != null) {
@@ -551,12 +582,29 @@ private fun FloweryApp(
                 Text("SOFTWARE VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
                 Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ISO_BANDS.forEachIndexed { index, band ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(100.dp)) {
-                            Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            Text("${equalizerGains[index].toInt()} dB", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                            Slider(value = equalizerGains[index], onValueChange = { onBandGain(index, it) }, valueRange = -12f..12f)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.Bottom
+                    ) {
+                        ISO_BANDS.forEachIndexed { index, band ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.width(48.dp)
+                            ) {
+                                Text("${equalizerGains[index].toInt()} dB", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                                VerticalEqualizerSlider(
+                                    value = equalizerGains[index],
+                                    onValueChange = { onBandGain(index, it) },
+                                    modifier = Modifier.height(250.dp).width(44.dp)
+                                )
+                                Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                            }
                         }
                     }
                 }
@@ -614,32 +662,128 @@ private fun TagEditorDialog(tag: AudioTag, onDismiss: () -> Unit, onSave: (Audio
     var composer by remember(tag) { mutableStateOf(tag.composer) }
     var comment by remember(tag) { mutableStateOf(tag.comment) }
     var lyrics by remember(tag) { mutableStateOf(tag.lyrics) }
-    AlertDialog(
+
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit audio tags · Lofty") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()).height(440.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                TagEditorField("Title", title) { title = it }
-                TagEditorField("Artist", artist) { artist = it }
-                TagEditorField("Album", album) { album = it }
-                TagEditorField("Album artist", albumArtist) { albumArtist = it }
-                TagEditorField("Genre", genre) { genre = it }
-                TagEditorField("Year / release date", year) { year = it }
-                TagEditorField("Track number", track) { track = it }
-                TagEditorField("Disc number", disc) { disc = it }
-                TagEditorField("Composer", composer) { composer = it }
-                TagEditorField("Comment", comment, singleLine = false) { comment = it }
-                TagEditorField("Lyrics", lyrics, singleLine = false) { lyrics = it }
-                Text("Artwork is preserved when the selected tag format supports it.", style = MaterialTheme.typography.labelSmall)
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(0.92f).heightIn(max = 640.dp),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 22.dp, vertical = 18.dp)
+            ) {
+                Text(
+                    "Edit audio tags",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 12.dp)
+                )
+                Column(
+                    modifier = Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    TagEditorField("Title", title) { title = it }
+                    TagEditorField("Artist", artist) { artist = it }
+                    TagEditorField("Album", album) { album = it }
+                    TagEditorField("Album artist", albumArtist) { albumArtist = it }
+                    TagEditorField("Genre", genre) { genre = it }
+                    TagEditorField("Year / release date", year) { year = it }
+                    TagEditorField("Track number", track) { track = it }
+                    TagEditorField("Disc number", disc) { disc = it }
+                    TagEditorField("Composer", composer) { composer = it }
+                    TagEditorField("Comment", comment, singleLine = false) { comment = it }
+                    TagEditorField("Lyrics", lyrics, singleLine = false) { lyrics = it }
+                    Text(
+                        "Artwork is preserved when the selected tag format supports it.",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    TextButton(
+                        onClick = {
+                            onSave(tag.copy(
+                                title = title, artist = artist, album = album, albumArtist = albumArtist,
+                                genre = genre, year = year, track = track, disc = disc,
+                                composer = composer, comment = comment, lyrics = lyrics
+                            ))
+                        }
+                    ) { Text("Save") }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(tag.copy(title=title, artist=artist, album=album, albumArtist=albumArtist, genre=genre, year=year, track=track, disc=disc, composer=composer, comment=comment, lyrics=lyrics)) }) { Text("Save to file") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
+        }
+    }
 }
 
+@androidx.compose.runtime.Composable
+private fun VerticalEqualizerSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Canvas(
+        modifier = modifier.pointerInput(Unit) {
+            fun valueAt(y: Float): Float =
+                (12f - (y / size.height.coerceAtLeast(1)) * 24f).coerceIn(-12f, 12f)
+            detectTapGestures { offset -> onValueChange(valueAt(offset.y)) }
+        }.pointerInput(Unit) {
+            fun valueAt(y: Float): Float =
+                (12f - (y / size.height.coerceAtLeast(1)) * 24f).coerceIn(-12f, 12f)
+            detectDragGestures { change, _ ->
+                change.consume()
+                onValueChange(valueAt(change.position.y))
+            }
+        }
+    ) {
+        val centerX = size.width / 2f
+        val top = 8.dp.toPx()
+        val bottom = size.height - 8.dp.toPx()
+        val centerY = (top + bottom) / 2f
+        val thumbY = bottom - ((value + 12f) / 24f) * (bottom - top)
+
+        drawLine(
+            color = Color(0xFF777777),
+            start = Offset(centerX, top),
+            end = Offset(centerX, bottom),
+            strokeWidth = 3.dp.toPx()
+        )
+        listOf(top + 12.dp.toPx(), centerY, bottom - 12.dp.toPx()).forEach { y ->
+            drawLine(
+                color = Color(0xFFBDBDBD),
+                start = Offset(centerX - 21.dp.toPx(), y),
+                end = Offset(centerX - 16.dp.toPx(), y),
+                strokeWidth = 1.dp.toPx()
+            )
+            drawLine(
+                color = Color(0xFFBDBDBD),
+                start = Offset(centerX + 16.dp.toPx(), y),
+                end = Offset(centerX + 21.dp.toPx(), y),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+        drawRoundRect(
+            color = Color.White,
+            topLeft = Offset(centerX - 15.dp.toPx(), thumbY - 22.dp.toPx()),
+            size = Size(30.dp.toPx(), 44.dp.toPx()),
+            cornerRadius = CornerRadius(10.dp.toPx()),
+            style = Stroke(width = 2.5.dp.toPx())
+        )
+        drawLine(
+            color = Color.White,
+            start = Offset(centerX - 5.dp.toPx(), thumbY),
+            end = Offset(centerX + 5.dp.toPx(), thumbY),
+            strokeWidth = 2.dp.toPx(),
+            cap = androidx.compose.ui.graphics.StrokeCap.Round
+        )
+    }
+}
 
 @androidx.compose.runtime.Composable
 private fun TagEditorField(
