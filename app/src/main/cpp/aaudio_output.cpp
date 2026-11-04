@@ -195,7 +195,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     g_output->flushEpoch.fetch_add(1, std::memory_order_release);
     g_output->active.store(true, std::memory_order_release);
     auto state = AAudioStream_getState(g_stream);
-    if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
+    if (state == AAUDIO_STREAM_STATE_STARTED && shouldStart == JNI_TRUE) return AAUDIO_OK;
     if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
         g_output->active.store(false, std::memory_order_release);
         return AAUDIO_ERROR_DISCONNECTED;
