@@ -72,7 +72,7 @@ Without signing secrets, CI builds an unsigned release APK. Never commit keystor
 
 ## Development status
 
-The player uses incremental decode, bounded PCM buffering, format-level seeking, and ring-buffer flushing. Seeking resets decoder and DSP history, discards preroll samples to the requested source timestamp, and restarts AAudio output when necessary. Native unit tests cover EQ continuity across chunk boundaries and coefficient stability across common sample rates. CI runs these host-side tests before Android cross-compilation and APK assembly. Gapless transitions, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
+The player uses incremental decode, bounded PCM buffering, format-level seeking, and ring-buffer flushing. Seeking uses Symphonia accurate container seeks, resets the decoder and DSP history, preserves source preroll when Rubato needs to rebuild its filter history, discards converted samples up to the requested output timestamp, flushes the bounded AAudio ring buffer, and preserves paused versus playing state. Native unit tests cover seek positioning, resampled seek preroll, EQ continuity across chunk boundaries, and coefficient stability across common sample rates. CI runs these host-side tests before Android cross-compilation and APK assembly. Gapless transitions, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
 
 ## Open-source licenses
 
