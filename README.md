@@ -35,7 +35,7 @@ The editor stages the selected file in the app-private cache directory, asks Lof
 - Rubato 5 performs fixed-ratio streaming sample-rate conversion with one persistent synchronous FFT resampler per track. Resampler history is retained between chunks.
 - Flowery enumerates connected USB output devices through Android AudioManager, prefers a USB DAC with reported sample rates, selects the source rate when supported, and binds the AAudio stream to that device ID. If the DAC does not report a rate list, AAudio is probed directly. If the requested rate cannot be opened, Flowery uses the device default stream rate; if the USB route cannot be opened, it falls back to the system output route.
 - If the source and selected output rates match, the resampler returns the original PCM samples without conversion.
-- The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls. Per-channel biquad delay state is retained across decoded chunks, and gain changes are applied without resetting filter history.
+- The native 31-band ISO one-third-octave graphic equalizer provides independent ±12 dB band controls. Per-channel biquad delay state is retained across decoded chunks, and gain changes are applied without resetting filter history. Native unit tests verify chunk-boundary continuity and finite filter coefficients across common sample rates.
 - AAudio requests exclusive, low-latency output and falls back to shared mode if exclusive mode is unavailable.
 
 The Android-reported USB sample-rate list is used as the preferred capability hint, then AAudio validates that the selected device and rate can actually open. In shared mode, Android may still mix or resample internally. This is not proof of the physical DAC's native clock or bit-perfect transport; device firmware and Android audio policy can still affect the signal path. Guaranteed USB-exclusive output, USB Audio Class capability enumeration, hardware-volume control, and hardware-validated bit-perfect output are not implemented.
@@ -72,7 +72,7 @@ Without signing secrets, CI builds an unsigned release APK. Never commit keystor
 
 ## Development status
 
-The player now uses incremental decode and bounded PCM buffering. Format-level seeking and gapless transitions are not yet integrated with the streaming decoder. Multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
+The player uses incremental decode, bounded PCM buffering, format-level seeking, and ring-buffer flushing. Seeking resets decoder and DSP history, discards preroll samples to the requested source timestamp, and restarts AAudio output when necessary. Native unit tests cover EQ continuity across chunk boundaries and coefficient stability across common sample rates. CI runs these host-side tests before Android cross-compilation and APK assembly. Gapless transitions, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
 
 ## Open-source licenses
 
