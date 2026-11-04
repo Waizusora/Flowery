@@ -105,21 +105,20 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDecode(
     result.into_raw()
 }
 
-fn biquad(samples: &mut [f32], channels: usize, sample_rate: f32, frequency: f32, gain_db: f32) {
-    if gain_db.abs() < 0.01 || frequency >= sample_rate * 0.49 {
-        return;
-    }
+
+const ISO_FREQUENCIES: [f32; 31] = [20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000];
+fn apply_peaking_eq(samples: &mut [f32], channels: usize, sample_rate: f32, frequency: f32, gain_db: f32) {
+    if gain_db.abs() < 0.001 || frequency >= sample_rate * 0.49 { return; }
     let a = 10.0_f32.powf(gain_db / 40.0);
     let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
-    let alpha = omega.sin() / (2.0 * 0.8);
+    let alpha = omega.sin() / (2.0 * 4.318_f32);
     let cos = omega.cos();
-    let b0 = 1.0 + alpha * a;
-    let b1 = -2.0 * cos;
-    let b2 = 1.0 - alpha * a;
     let a0 = 1.0 + alpha / a;
-    let a1 = -2.0 * cos;
-    let a2 = 1.0 - alpha / a;
-    let (b0, b1, b2, a1, a2) = (b0/a0, b1/a0, b2/a0, a1/a0, a2/a0);
+    let b0 = (1.0 + alpha * a) / a0;
+    let b1 = (-2.0 * cos) / a0;
+    let b2 = (1.0 - alpha * a) / a0;
+    let a1 = (-2.0 * cos) / a0;
+    let a2 = (1.0 - alpha / a) / a0;
     let mut state = vec![(0.0_f32, 0.0_f32, 0.0_f32, 0.0_f32); channels];
     for (index, sample) in samples.iter_mut().enumerate() {
         let channel = index % channels;
@@ -127,7 +126,36 @@ fn biquad(samples: &mut [f32], channels: usize, sample_rate: f32, frequency: f32
         let x = *sample;
         let y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2;
         state[channel] = (x, x1, y, y1);
-        *sample = y.clamp(-1.0, 1.0);
+        *sample = y;
+    }
+}
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeApplyEqualizer(
+    mut env: JNIEnv, _class: JClass, input: JFloatArray, sample_rate: jint, channels: jint, gains: JFloatArray,
+) -> jfloatArray {
+    if sample_rate <= 0 || channels <= 0 || channels > 8 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid PCM format");
+        return std::ptr::null_mut();
+    }
+    let gain_length = match env.get_array_length(&gains) { Ok(v) => v as usize, Err(_) => return std::ptr::null_mut() };
+    if gain_length != ISO_FREQUENCIES.len() {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "The ISO equalizer requires exactly 31 band gains");
+        return std::ptr::null_mut();
+    }
+    let mut band_gains = vec![0.0_f32; gain_length];
+    if env.get_float_array_region(&gains, 0, &mut band_gains).is_err() { return std::ptr::null_mut(); }
+    let length = match env.get_array_length(&input) { Ok(v) => v as usize, Err(_) => return std::ptr::null_mut() };
+    let mut samples = vec![0.0_f32; length];
+    if env.get_float_array_region(&input, 0, &mut samples).is_err() { return std::ptr::null_mut(); }
+    for (frequency, gain) in ISO_FREQUENCIES.iter().zip(band_gains.iter()) {
+        apply_peaking_eq(&mut samples, channels as usize, sample_rate as f32, *frequency, gain.clamp(-12.0, 12.0));
+    }
+    match env.new_float_array(length as i32) {
+        Ok(output) => {
+            if env.set_float_array_region(&output, 0, &samples).is_err() { return std::ptr::null_mut(); }
+            output.into_raw()
+        }
+        Err(_) => std::ptr::null_mut(),
     }
 }
 
