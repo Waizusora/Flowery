@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
         val json = JSONObject(NativeAudio.nativeReadTags(bytes, extensionOf(track)))
         return AudioTag(
             uri = track.uri,
-            fileName = track.title,
+            fileName = Uri.decode(track.uri.lastPathSegment.orEmpty()),
             title = json.optString("title"),
             artist = json.optString("artist"),
             album = json.optString("album"),
@@ -208,6 +208,7 @@ class MainActivity : ComponentActivity() {
 
     private fun playTrack(track: AudioTrackItem) {
         selectedTrack = track
+        currentTag = null
         lyrics = emptyList()
         status = "Reading tags and preparing ${track.title}…"
         io.execute {
