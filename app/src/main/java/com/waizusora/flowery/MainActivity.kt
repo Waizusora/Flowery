@@ -40,7 +40,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -112,15 +111,14 @@ class MainActivity : ComponentActivity() {
                 onResume = { player.resume() },
                 onStop = { player.stop(); status = "Stopped" },
                 onVolume = { volume = it; player.setVolume(it) },
-                onSaveTags = ::saveTags
             )
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
-                TagEditorDialog(
+                MaterialTheme { TagEditorDialog(
                     tag = tag,
                     onDismiss = { editingTag = null },
                     onSave = { edited -> editingTag = null; saveTags(edited) }
-                )
+                ) }
             }
         }
     }
@@ -175,7 +173,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extensionOf(track: AudioTrackItem): String =
-        (track.title.substringAfterLast('.', "")).ifBlank { track.uri.lastPathSegment?.substringAfterLast('.', "").orEmpty() }
+        Uri.decode(track.uri.lastPathSegment.orEmpty()).substringAfterLast('.', "")
 
     private fun readTag(track: AudioTrackItem): AudioTag {
         val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
@@ -333,7 +331,6 @@ private fun FloweryApp(
     onResume: () -> Unit,
     onStop: () -> Unit,
     onVolume: (Float) -> Unit,
-    onSaveTags: (AudioTag) -> Unit
 ) {
     MaterialTheme {
         Scaffold(
@@ -477,7 +474,8 @@ private fun TagInfoDialog(tag: AudioTag, onDismiss: () -> Unit) {
                     "Year" to tag.year, "Track" to tag.track, "Disc" to tag.disc,
                     "Composer" to tag.composer, "Comment" to tag.comment, "Tag type" to tag.tagType,
                     "Container" to tag.fileType, "Embedded lyrics" to tag.lyrics,
-                    "Artwork" to if (tag.pictureBase64.isBlank()) "Not embedded" else tag.pictureMime
+                    "Artwork" to if (tag.pictureBase64.isBlank()) "Not embedded" else tag.pictureMime,
+                    "Tag writing" to if (tag.writable) "Supported by Lofty" else "Read-only for this format"
                 ).forEach { (label, value) ->
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium)
