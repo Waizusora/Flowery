@@ -50,6 +50,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ?: throw IllegalStateException("Unable to open the selected audio document")
                 val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
+                if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
                 val streamInfo = NativeAudio.nativeGetStreamInfo(handle)
@@ -74,9 +75,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 check(targetRate > 0) { "Unable to negotiate an AAudio output sample rate" }
 
+                if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
                     "Unable to configure the streaming resampler and equalizer"
                 }
+                if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val started = NativeAudio.nativeStartStreamOutput(
                     targetRate, channels, softwareVolume, deviceId, OUTPUT_RING_CAPACITY_FRAMES
                 )
@@ -89,7 +92,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
                 var reachedEnd = false
                 var appliedEqualizerRevision = equalizerRevision
-                while (!stopped.get() && !reachedEnd) {
+                while (!stopped.get() && playbackGeneration.get() == generation && !reachedEnd) {
                     if (appliedEqualizerRevision != equalizerRevision) {
                         check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) { "Unable to update streaming equalizer" }
                         appliedEqualizerRevision = equalizerRevision
@@ -102,7 +105,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     val frames = chunk.size / channels
                     var offsetFrames = 0
-                    while (!stopped.get() && offsetFrames < frames) {
+                    while (!stopped.get() && playbackGeneration.get() == generation && offsetFrames < frames) {
                         val written = NativeAudio.nativeWriteStreamFrames(
                             chunk, offsetFrames, frames - offsetFrames
                         )
@@ -111,12 +114,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         else offsetFrames += written
                     }
                     outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
-                    while (!stopped.get() && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                    while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
                         Thread.sleep(4)
                     }
                 }
 
-                while (!stopped.get() && NativeAudio.nativeIsOutputActive()) Thread.sleep(20)
+                while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeIsOutputActive()) Thread.sleep(20)
                 if (!stopped.get()) onState("Playback finished")
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
