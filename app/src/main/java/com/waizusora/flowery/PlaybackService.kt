@@ -210,12 +210,17 @@ class PlaybackService : Service() {
     private fun stopPlayback() {
         player.stop()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
-        else focusListener?.let { @Suppress("DEPRECATION") audioManager.abandonAudioFocus(it) }
+        else abandonLegacyAudioFocus()
         playbackState = PlaybackStateCompat.STATE_STOPPED
         publishSessionState()
         publishState("Stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun abandonLegacyAudioFocus() {
+        focusListener?.let { audioManager.abandonAudioFocus(it) }
     }
 
     private fun skipNext() {
