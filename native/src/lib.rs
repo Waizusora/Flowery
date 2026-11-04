@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
-use jni::objects::{JByteArray, JClass, JFloatArray};
-use jni::sys::{jbyteArray, jfloatArray, jint};
+use jni::objects::{JByteArray, JClass, JFloatArray, JString};
+use jni::sys::{jbyteArray, jfloatArray, jint, jstring};
 use jni::JNIEnv;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::DecoderOptions;
@@ -222,5 +222,157 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResample(
             output.into_raw()
         }
         Err(_) => std::ptr::null_mut(),
+    }
+}
+
+use lofty::config::WriteOptions;
+use lofty::file::{AudioFile, TaggedFileExt};
+use lofty::tag::{Accessor, ItemKey, Tag, TagExt};
+use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TAG_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn temporary_audio_path(extension: &str) -> PathBuf {
+    let safe_extension = extension.trim_start_matches('.').chars()
+        .filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
+    let id = TAG_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("flowery-tag-{}-{}.{}", std::process::id(), id, safe_extension))
+}
+
+fn jbytes(env: &mut JNIEnv, input: &JByteArray) -> Result<Vec<u8>, String> {
+    let len = env.get_array_length(input).map_err(|e| e.to_string())? as usize;
+    let mut signed = vec![0_i8; len];
+    env.get_byte_array_region(input, 0, &mut signed).map_err(|e| e.to_string())?;
+    Ok(signed.into_iter().map(|v| v as u8).collect())
+}
+
+fn java_text(env: &mut JNIEnv, value: &JString) -> Result<String, String> {
+    env.get_string(value).map(|s| s.to_string_lossy().into_owned()).map_err(|e| e.to_string())
+}
+
+fn write_bytes_to_java(env: &mut JNIEnv, bytes: &[u8]) -> jbyteArray {
+    let output = match env.new_byte_array(bytes.len() as i32) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let signed: Vec<i8> = bytes.iter().map(|v| *v as i8).collect();
+    if env.set_byte_array_region(&output, 0, &signed).is_err() { return std::ptr::null_mut(); }
+    output.into_raw()
+}
+
+fn write_text_to_java(env: &mut JNIEnv, value: &str) -> jstring {
+    match env.new_string(value) {
+        Ok(output) => output.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+fn with_temp_audio<T>(bytes: &[u8], extension: &str, operation: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
+    if extension.is_empty() { return Err("The audio file extension is missing".to_string()); }
+    let path = temporary_audio_path(extension);
+    fs::write(&path, bytes).map_err(|e| format!("Unable to stage audio file: {e}"))?;
+    let result = operation(&path);
+    let _ = fs::remove_file(&path);
+    result
+}
+
+fn tag_json(path: &std::path::Path) -> Result<String, String> {
+    let tagged = lofty::read_from_path(path).map_err(|e| format!("Lofty could not read this file: {e}"))?;
+    let tag = tagged.primary_tag().or_else(|| tagged.first_tag());
+    let value = if let Some(tag) = tag {
+        let picture = tag.pictures().iter()
+            .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
+            .or_else(|| tag.pictures().first());
+        serde_json::json!({
+            "title": tag.get_string(ItemKey::TrackTitle).unwrap_or_default(),
+            "artist": tag.get_string(ItemKey::TrackArtist).unwrap_or_default(),
+            "album": tag.get_string(ItemKey::AlbumTitle).unwrap_or_default(),
+            "albumArtist": tag.get_string(ItemKey::AlbumArtist).unwrap_or_default(),
+            "genre": tag.get_string(ItemKey::Genre).unwrap_or_default(),
+            "year": tag.get_string(ItemKey::RecordingDate).or_else(|| tag.get_string(ItemKey::Year)).unwrap_or_default(),
+            "track": tag.get_string(ItemKey::TrackNumber).unwrap_or_default(),
+            "disc": tag.get_string(ItemKey::DiscNumber).unwrap_or_default(),
+            "comment": tag.get_string(ItemKey::Comment).unwrap_or_default(),
+            "composer": tag.get_string(ItemKey::Composer).unwrap_or_default(),
+            "lyrics": tag.get_string(ItemKey::Lyrics).or_else(|| tag.get_string(ItemKey::UnsyncLyrics)).unwrap_or_default(),
+            "pictureMime": picture.and_then(|p| p.mime_type()).unwrap_or(""),
+            "pictureBase64": picture.map(|p| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, p.data())).unwrap_or_default(),
+            "tagType": format!("{:?}", tag.tag_type()),
+            "fileType": format!("{:?}", tagged.file_type()),
+            "writable": tagged.primary_tag().is_some() || tagged.file_type().primary_tag_type() != lofty::tag::TagType::Custom,
+        })
+    } else {
+        serde_json::json!({
+            "title": "", "artist": "", "album": "", "albumArtist": "", "genre": "",
+            "year": "", "track": "", "disc": "", "comment": "", "composer": "",
+            "lyrics": "", "pictureMime": "", "pictureBase64": "",
+            "tagType": "None", "fileType": format!("{:?}", tagged.file_type()), "writable": true
+        })
+    };
+    serde_json::to_string(&value).map_err(|e| e.to_string())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadTags(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString,
+) -> jstring {
+    let bytes = match jbytes(&mut env, &input) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
+    let ext = match java_text(&mut env, &extension) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
+    let json = match with_temp_audio(&bytes, &ext, tag_json) {
+        Ok(v) => v,
+        Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); }
+    };
+    write_text_to_java(&mut env, &json)
+}
+
+fn set_tag_text(tag: &mut Tag, key: ItemKey, value: String) {
+    if value.trim().is_empty() { tag.remove_key(key); } else { tag.insert_text(key, value); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString,
+    title: JString, artist: JString, album: JString, album_artist: JString,
+    genre: JString, year: JString, track: JString, disc: JString,
+    comment: JString, composer: JString, lyrics: JString,
+) -> jbyteArray {
+    let bytes = match jbytes(&mut env, &input) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
+    let values = [&extension, &title, &artist, &album, &album_artist, &genre, &year, &track, &disc, &comment, &composer, &lyrics];
+    let mut strings = Vec::with_capacity(values.len());
+    for value in values {
+        match java_text(&mut env, value) {
+            Ok(v) => strings.push(v),
+            Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); }
+        }
+    }
+    let ext = strings.remove(0);
+    let result = with_temp_audio(&bytes, &ext, |path| {
+        let mut tagged = lofty::read_from_path(path).map_err(|e| format!("This format cannot be edited by Lofty: {e}"))?;
+        let tag_type = tagged.primary_tag_type();
+        if tagged.primary_tag_mut().is_none() {
+            tagged.insert_tag(Tag::new(tag_type));
+        }
+        let tag = tagged.primary_tag_mut().ok_or("The format does not support a writable primary tag")?;
+        let mut values = strings.into_iter();
+        set_tag_text(tag, ItemKey::TrackTitle, values.next().unwrap());
+        set_tag_text(tag, ItemKey::TrackArtist, values.next().unwrap());
+        set_tag_text(tag, ItemKey::AlbumTitle, values.next().unwrap());
+        set_tag_text(tag, ItemKey::AlbumArtist, values.next().unwrap());
+        set_tag_text(tag, ItemKey::Genre, values.next().unwrap());
+        set_tag_text(tag, ItemKey::RecordingDate, values.next().unwrap());
+        set_tag_text(tag, ItemKey::TrackNumber, values.next().unwrap());
+        set_tag_text(tag, ItemKey::DiscNumber, values.next().unwrap());
+        set_tag_text(tag, ItemKey::Comment, values.next().unwrap());
+        set_tag_text(tag, ItemKey::Composer, values.next().unwrap());
+        set_tag_text(tag, ItemKey::Lyrics, values.next().unwrap());
+        tagged.save_to_path(path, WriteOptions::default())
+            .map_err(|e| format!("Lofty could not write tags for this format: {e}"))?;
+        fs::read(path).map_err(|e| format!("Unable to read edited audio file: {e}"))
+    });
+    match result {
+        Ok(output) => write_bytes_to_java(&mut env, &output),
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalArgumentException", error); std::ptr::null_mut() }
     }
 }
