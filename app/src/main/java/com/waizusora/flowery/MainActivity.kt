@@ -741,7 +741,7 @@ private fun FloweryApp(
     }
 }
 
-private fun formatPlaybackTime(valueMs: Long): String {
+internal fun formatPlaybackTime(valueMs: Long): String {
     val seconds = valueMs.coerceAtLeast(0L) / 1000L
     return "%d:%02d".format(seconds / 60L, seconds % 60L)
 }
