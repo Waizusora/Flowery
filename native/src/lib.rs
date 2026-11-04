@@ -1,3 +1,4 @@
+mod streaming;
 use std::io::Cursor;
 use base64::Engine;
 
