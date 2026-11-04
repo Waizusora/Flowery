@@ -48,9 +48,11 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
         std::fill(output + count * state->channels,
                   output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
     }
-    if (state->flushEpoch.load(std::memory_order_acquire) == epoch) {
-        state->readFrame.store(read + count, std::memory_order_release);
+    if (state->flushEpoch.load(std::memory_order_acquire) != epoch) {
+        std::fill(output, output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
+        return AAUDIO_CALLBACK_RESULT_CONTINUE;
     }
+    state->readFrame.store(read + count, std::memory_order_release);
 
     if (remaining > 0 && state->eof.load(std::memory_order_acquire) &&
         state->writeFrame.load(std::memory_order_acquire) == read + count) {
@@ -173,11 +175,17 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
 extern "C" JNIEXPORT void JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject, jlong positionFrames) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_output || positionFrames < 0) return;
+    if (!g_output || !g_stream || positionFrames < 0) return AAUDIO_ERROR_INVALID_STATE;
     g_output->flushEpoch.fetch_add(1, std::memory_order_acq_rel);
     g_output->readFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->writeFrame.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->eof.store(false, std::memory_order_release);
+    g_output->active.store(true, std::memory_order_release);
+    const auto state = AAudioStream_getState(g_stream);
+    if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
+    const auto result = AAudioStream_requestStart(g_stream);
+    if (result != AAUDIO_OK) g_output->active.store(false, std::memory_order_release);
+    return result;
 }
 
 extern "C" JNIEXPORT void JNICALL
