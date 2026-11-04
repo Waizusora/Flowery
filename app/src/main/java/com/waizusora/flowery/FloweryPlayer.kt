@@ -78,8 +78,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val usbDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
                     it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
                 }
-                val selectedDevice = usbDevices.firstOrNull { it.sampleRates?.isNotEmpty() == true }
-                    ?: usbDevices.firstOrNull()
+                val selectedDevice = if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    usbDevices.firstOrNull { it.sampleRates?.isNotEmpty() == true }
+                        ?: usbDevices.firstOrNull()
+                } else {
+                    null
+                }
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
                 val preferredRate = if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { abs(it - sourceRate) } ?: sourceRate
