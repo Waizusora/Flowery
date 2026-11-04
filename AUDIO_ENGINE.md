@@ -34,6 +34,12 @@ Speaker, wired AUX/headphones, and Bluetooth use Android's `STREAM_MUSIC` volume
 
 USB output uses a separate software gain preference keyed to the selected Android USB output identity. A newly encountered DAC defaults to 20%; subsequent slider changes are saved per key. This is software gain in the current float PCM callback, not physical DAC hardware volume control. The current implementation cannot detect whether a DAC exposes physical volume buttons or map those controls to the application.
 
+## USB DAC discovery and permission
+
+`UsbDacController.kt` enumerates attached USB devices and identifies interfaces declared as USB Audio Class streaming interfaces. The USB icon requests Android USB host permission for the single detected audio device; Android presents the permission prompt and the Activity receives the result through a package-scoped broadcast. If multiple USB audio devices are connected, the UI asks the user to disconnect the unselected devices rather than silently choosing one.
+
+A USB host permission grant only authorizes application access to the USB device. It does not claim an audio streaming interface, negotiate isochronous endpoints, configure a UAC clock, or bypass Android's audio service. The current application does not yet contain a native USB Audio Class host transport or an integer/native-format decoder output path. Consequently, a permission grant does not activate exclusive or bit-perfect playback and the USB icon deliberately remains a permission/access control, not a bit-perfect status indicator.
+
 ## Output limitations
 
 Flowery does not claim hardware-verified bit-perfect playback. Floating-point DSP, equalization, software gain and sample-rate conversion can change sample values. AAudio shared mode may introduce system mixing or resampling. USB Audio Class descriptor enumeration, USB permission-to-stream integration, DAC hardware-volume integration, guaranteed exclusive USB transport, native-format PCM passthrough, and physical DAC clock verification are not implemented. The current AAudio path outputs PCM float and can fall back from exclusive to shared mode; therefore it is not bit-perfect. Multichannel output beyond mono/stereo, gapless playback and crossfade are also not implemented.
