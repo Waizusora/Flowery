@@ -235,11 +235,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static TAG_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
-fn temporary_audio_path(extension: &str) -> PathBuf {
+fn temporary_audio_path(temp_dir: &str, extension: &str) -> PathBuf {
     let safe_extension = extension.trim_start_matches('.').chars()
         .filter(|c| c.is_ascii_alphanumeric()).collect::<String>();
     let id = TAG_TEMP_ID.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("flowery-tag-{}-{}.{}", std::process::id(), id, safe_extension))
+    PathBuf::from(temp_dir).join(format!("flowery-tag-{}-{}.{}", std::process::id(), id, safe_extension))
 }
 
 fn jbytes(env: &mut JNIEnv, input: &JByteArray) -> Result<Vec<u8>, String> {
@@ -270,9 +270,9 @@ fn write_text_to_java(env: &mut JNIEnv, value: &str) -> jstring {
     }
 }
 
-fn with_temp_audio<T>(bytes: &[u8], extension: &str, operation: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
+fn with_temp_audio<T>(bytes: &[u8], extension: &str, temp_dir: &str, operation: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
     if extension.is_empty() { return Err("The audio file extension is missing".to_string()); }
-    let path = temporary_audio_path(extension);
+    let path = temporary_audio_path(temp_dir, extension);
     fs::write(&path, bytes).map_err(|e| format!("Unable to stage audio file: {e}"))?;
     let result = operation(&path);
     let _ = fs::remove_file(&path);
@@ -329,7 +329,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadTags(
 ) -> jstring {
     let bytes = match jbytes(&mut env, &input) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
     let ext = match java_text(&mut env, &extension) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
-    let json = match with_temp_audio(&bytes, &ext, tag_json) {
+    let temp_dir = match java_text(&mut env, &temp_dir) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };\n    let json = match with_temp_audio(&bytes, &ext, &temp_dir, tag_json) {
         Ok(v) => v,
         Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); }
     };
@@ -343,12 +343,12 @@ fn set_tag_text(tag: &mut Tag, key: ItemKey, value: String) {
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
     mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString,
-    title: JString, artist: JString, album: JString, album_artist: JString,
+    temp_dir: JString, title: JString, artist: JString, album: JString, album_artist: JString,
     genre: JString, year: JString, track: JString, disc: JString,
     comment: JString, composer: JString, lyrics: JString,
 ) -> jbyteArray {
     let bytes = match jbytes(&mut env, &input) { Ok(v) => v, Err(e) => { let _ = env.throw_new("java/lang/IllegalArgumentException", e); return std::ptr::null_mut(); } };
-    let values = [&extension, &title, &artist, &album, &album_artist, &genre, &year, &track, &disc, &comment, &composer, &lyrics];
+    let values = [&extension, &temp_dir, &title, &artist, &album, &album_artist, &genre, &year, &track, &disc, &comment, &composer, &lyrics];
     let mut strings = Vec::with_capacity(values.len());
     for value in values {
         match java_text(&mut env, value) {
