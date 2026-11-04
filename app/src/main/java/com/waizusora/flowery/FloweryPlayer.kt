@@ -120,7 +120,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 while (!stopped.get() && playbackGeneration.get() == generation && NativeAudio.nativeIsOutputActive()) Thread.sleep(20)
-                if (!stopped.get()) onState("Playback finished")
+                if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
