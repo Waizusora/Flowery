@@ -143,6 +143,7 @@ class MainActivity : ComponentActivity() {
                 onScan = ::scanLibrary,
                 onPlay = ::playTrack,
                 onInspect = ::inspectTrack,
+                onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
                 onTogglePlayback = {
                     if (status.startsWith("Playing")) sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
                     else sendPlaybackCommand(PlaybackService.ACTION_RESUME)
@@ -412,6 +413,7 @@ private fun FloweryApp(
     onScan: () -> Unit,
     onPlay: (AudioTrackItem) -> Unit,
     onInspect: (AudioTrackItem) -> Unit,
+    onEdit: () -> Unit,
     onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit,
     onPrevious: () -> Unit,
@@ -436,7 +438,8 @@ private fun FloweryApp(
                 ) {
                     Column {
                         Box(
-                            modifier = Modifier.fillMaxWidth().height(300.dp),
+                            modifier = Modifier.fillMaxWidth().height(300.dp)
+                                .combinedClickable(onClick = {}, onLongClick = { selectedTrack?.let(onInspect) }),
                             contentAlignment = Alignment.Center
                         ) {
                             val art = remember(currentTag?.pictureBase64) {
@@ -456,7 +459,7 @@ private fun FloweryApp(
                     }
                 }
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onEdit).padding(horizontal = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
