@@ -22,6 +22,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
+    @Volatile private var outputDucked = false
     @Volatile private var bandGainsDb = FloatArray(31)
     @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
@@ -38,7 +39,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun setVolume(value: Float) {
         softwareVolume = value.coerceIn(0f, 1f)
-        NativeAudio.nativeSetOutputVolume(softwareVolume)
+        applyOutputVolume()
+    }
+
+    fun setDucked(ducked: Boolean) {
+        outputDucked = ducked
+        applyOutputVolume()
+    }
+
+    private fun applyOutputVolume() {
+        val duckGain = if (outputDucked) 0.25f else 1f
+        NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
 
     fun play(uri: Uri) {
