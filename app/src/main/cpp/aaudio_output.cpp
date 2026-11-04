@@ -185,7 +185,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
 }
 
 extern "C" JNIEXPORT jint JNICALL
-Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject, jlong positionFrames) {
+Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject, jlong positionFrames, jboolean shouldStart) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_output || !g_stream || positionFrames < 0) return AAUDIO_ERROR_INVALID_STATE;
     g_output->flushEpoch.fetch_add(1, std::memory_order_acq_rel);
@@ -212,6 +212,22 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
         g_output->active.store(false, std::memory_order_release);
         return AAUDIO_ERROR_DISCONNECTED;
+    }
+    if (shouldStart != JNI_TRUE) {
+        if (state == AAUDIO_STREAM_STATE_STARTED) {
+            const auto pauseResult = AAudioStream_requestPause(g_stream);
+            if (pauseResult != AAUDIO_OK) {
+                g_output->active.store(false, std::memory_order_release);
+                return pauseResult;
+            }
+            aaudio_stream_state_t nextState = state;
+            const auto waitResult = AAudioStream_waitForStateChange(g_stream, state, &nextState, 1000000000LL);
+            if (waitResult != AAUDIO_OK) {
+                g_output->active.store(false, std::memory_order_release);
+                return waitResult;
+            }
+        }
+        return AAUDIO_OK;
     }
     const auto result = AAudioStream_requestStart(g_stream);
     if (result != AAUDIO_OK) g_output->active.store(false, std::memory_order_release);
