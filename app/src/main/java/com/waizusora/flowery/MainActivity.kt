@@ -533,22 +533,52 @@ private fun FloweryApp(
                         Icon(Icons.Default.Repeat, contentDescription = "Repeat mode", tint = Color.White, modifier = Modifier.size(25.dp))
                     }
                 }
-                if (playbackDurationMs > 0L) {
-                    val safeDuration = playbackDurationMs.coerceAtLeast(1L)
-                    Slider(
-                        value = playbackPositionMs.coerceIn(0L, safeDuration).toFloat(),
-                        onValueChange = { onSeek(it.toLong()) },
-                        valueRange = 0f..safeDuration.toFloat(),
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    if (playbackDurationMs > 0L) {
+                        val safeDuration = playbackDurationMs.coerceAtLeast(1L)
+                        Slider(
+                            value = playbackPositionMs.coerceIn(0L, safeDuration).toFloat(),
+                            onValueChange = { onSeek(it.toLong()) },
+                            valueRange = 0f..safeDuration.toFloat(),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            "${formatPlaybackTime(playbackPositionMs)} / ${formatPlaybackTime(playbackDurationMs)}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                    Text(
+                        status,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodySmall,
+                        textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text("${formatPlaybackTime(playbackPositionMs)} / ${formatPlaybackTime(playbackDurationMs)}", color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
-                }
-                Text(status, color = Color.White, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
-                if (currentTag != null) {
-                    Text(
-                        listOf(currentTag.bitDepth.takeIf { it > 0 }?.let { "$it BIT" }, currentTag.sampleRate.takeIf { it > 0 }?.let { "${it / 1000.0} KHZ" }, currentTag.bitrateKbps.takeIf { it > 0 }?.let { "$it KBPS" }, currentTag.fileType).filterNotNull().filter { it.isNotBlank() }.joinToString("  ·  "),
-                        color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
-                    )
+                    currentTag?.let { tag ->
+                        val playbackDetails = listOfNotNull(
+                            tag.bitDepth.takeIf { it > 0 }?.let { "Bit depth: $it-bit" },
+                            tag.sampleRate.takeIf { it > 0 }?.let { "Sample rate: ${"%.1f".format(java.util.Locale.ROOT, it / 1000.0)} kHz" },
+                            tag.bitrateKbps.takeIf { it > 0 }?.let { "Bit rate: $it kbps" },
+                            tag.channels.takeIf { it > 0 }?.let { "$it ch" },
+                            tag.fileType.takeIf { it.isNotBlank() }?.uppercase()
+                        )
+                        if (playbackDetails.isNotEmpty()) {
+                            Text(
+                                playbackDetails.joinToString("  ·  "),
+                                color = Color.White.copy(alpha = 0.82f),
+                                style = MaterialTheme.typography.labelSmall,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
                 }
                 if (lyrics.isNotEmpty()) {
                     Card(colors = CardDefaults.cardColors(containerColor = Color(0x44FFFFFF))) {
