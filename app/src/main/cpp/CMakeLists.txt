@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(flowery_aaudio LANGUAGES CXX)
+add_library(flowery_aaudio SHARED aaudio_output.cpp)
+target_compile_features(flowery_aaudio PRIVATE cxx_std_17)
+target_link_libraries(flowery_aaudio PRIVATE aaudio)
