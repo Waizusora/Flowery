@@ -90,6 +90,7 @@ struct StreamDecoder {
     resampler_delay_frames: usize,
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
+    discard_output_frames: u64,
 }
 
 impl StreamDecoder {
@@ -118,7 +119,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0,
         })
     }
 
@@ -146,16 +147,32 @@ impl StreamDecoder {
         self.input_pending.clear();
         self.output_pending.clear();
         self.eof = false;
-        self.produced_frames = milliseconds_to_frames(requested_ms, self.output_rate);
         let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
-        let actual_ms = actual_time.map(|t| (t.seconds as f64 + t.frac) * 1000.0).unwrap_or(requested_ms as f64);
-        let actual_frames = milliseconds_to_frames(actual_ms.max(0.0) as u64, self.source_rate);
-        self.source_frames_decoded = actual_frames;
-        let requested_frames = milliseconds_to_frames(requested_ms, self.source_rate);
-        self.discard_source_frames = requested_frames.saturating_sub(actual_frames);
+        let actual_ms = actual_time
+            .map(|t| (t.seconds as f64 + t.frac) * 1000.0)
+            .unwrap_or(requested_ms as f64)
+            .max(0.0);
+        let actual_source_frames = milliseconds_to_frames(actual_ms as u64, self.source_rate);
+        let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
+        let requested_output_frames = milliseconds_to_frames(requested_ms, self.output_rate);
+        let actual_output_frames = milliseconds_to_frames(actual_ms as u64, self.output_rate);
+        self.source_frames_decoded = actual_source_frames;
+
         let rate = self.output_rate;
         let gains = self.gains;
         self.configure(rate, &gains)?;
+
+        if self.resampler.is_some() {
+            // Keep the container seek preroll so Rubato can rebuild its filter history.
+            // Discard converted output up to the requested presentation timestamp instead.
+            self.produced_frames = actual_output_frames;
+            self.discard_source_frames = 0;
+            self.discard_output_frames = requested_output_frames.saturating_sub(actual_output_frames);
+        } else {
+            self.produced_frames = requested_output_frames;
+            self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
+            self.discard_output_frames = 0;
+        }
         Ok(requested_ms)
     }
 
@@ -235,6 +252,12 @@ impl StreamDecoder {
         if delay_samples > 0 {
             output.drain(..delay_samples);
             self.resampler_delay_frames -= delay_samples / self.channels;
+        }
+        if self.discard_output_frames > 0 && !output.is_empty() {
+            let discard = self.discard_output_frames.min((output.len() / self.channels) as u64) as usize;
+            output.drain(..discard * self.channels);
+            self.discard_output_frames -= discard as u64;
+            self.produced_frames += discard as u64;
         }
         if self.eof && self.input_pending.is_empty() {
             let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
