@@ -3,79 +3,156 @@ package com.waizusora.flowery
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import kotlin.math.abs
+import android.net.Uri
+import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
+import kotlin.math.abs
+
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
+    companion object {
+        private const val OUTPUT_RING_CAPACITY_FRAMES = 16_384
+        private const val DECODE_CHUNK_FRAMES = 2_048
+        private const val LOW_WATERMARK_FRAMES = 4_096
+    }
+
     private var worker: Thread? = null
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var bandGainsDb = FloatArray(31)
     @Volatile private var outputSampleRate = 0
+    @Volatile private var outputDurationMs = 0L
+    @Volatile private var decoderHandle = 0L
+
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
         bandGainsDb = gains.copyOf()
     }
+
     fun setVolume(value: Float) {
         softwareVolume = value.coerceIn(0f, 1f)
         NativeAudio.nativeSetOutputVolume(softwareVolume)
     }
-    fun play(encodedAudio: ByteArray) {
+
+    fun play(uri: Uri) {
         stop()
         stopped.set(false)
         val generation = playbackGeneration.incrementAndGet()
-        worker = thread(name = "FloweryAAudio") {
+        worker = thread(name = "FloweryStreamPlayer") {
+            var descriptor: ParcelFileDescriptor? = null
+            var handle = 0L
             try {
-                onState("Decoding audio with Rust / Symphonia…")
-                val pcm = NativeAudio.decode(encodedAudio)
-                require(pcm.channels in 1..2) { "The current AAudio output path supports mono and stereo PCM" }
+                onState("Opening audio stream…")
+                descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                    ?: throw IllegalStateException("Unable to open the selected audio document")
+                val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
+                handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
+                check(handle != 0L) { "The native decoder could not be created" }
+                decoderHandle = handle
+
+                val streamInfo = NativeAudio.nativeGetStreamInfo(handle)
+                val sourceRate = (streamInfo ushr 32).toInt()
+                val channels = (streamInfo and 0xffff_ffffL).toInt()
+                check(sourceRate > 0 && channels in 1..2) { "The decoder returned an invalid audio format" }
+
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 val usbDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
                     it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
                 }
-                val selectedDevice = usbDevices.firstOrNull { it.sampleRates?.isNotEmpty() == true } ?: usbDevices.firstOrNull()
+                val selectedDevice = usbDevices.firstOrNull { it.sampleRates?.isNotEmpty() == true }
+                    ?: usbDevices.firstOrNull()
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
-                val preferredRate = if (pcm.sampleRate in supportedRates) pcm.sampleRate
-                    else supportedRates.minByOrNull { abs(it - pcm.sampleRate) } ?: pcm.sampleRate
-                var outputDeviceId = selectedDevice?.id ?: 0
-                var targetRate = NativeAudio.nativeSelectOutputSampleRate(preferredRate, pcm.channels, outputDeviceId)
-                if (targetRate <= 0 && outputDeviceId != 0) {
-                    outputDeviceId = 0
-                    targetRate = NativeAudio.nativeSelectOutputSampleRate(pcm.sampleRate, pcm.channels, 0)
+                val preferredRate = if (sourceRate in supportedRates) sourceRate
+                    else supportedRates.minByOrNull { abs(it - sourceRate) } ?: sourceRate
+                var deviceId = selectedDevice?.id ?: 0
+                var targetRate = NativeAudio.nativeSelectOutputSampleRate(preferredRate, channels, deviceId)
+                if (targetRate <= 0 && deviceId != 0) {
+                    deviceId = 0
+                    targetRate = NativeAudio.nativeSelectOutputSampleRate(sourceRate, channels, 0)
                 }
                 check(targetRate > 0) { "Unable to negotiate an AAudio output sample rate" }
+
+                check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
+                    "Unable to configure the streaming resampler and equalizer"
+                }
+                val started = NativeAudio.nativeStartStreamOutput(
+                    targetRate, channels, softwareVolume, deviceId, OUTPUT_RING_CAPACITY_FRAMES
+                )
+                check(started == 0) { "AAudio could not start the bounded output stream (error $started)" }
                 outputSampleRate = targetRate
-                val resampled = NativeAudio.nativeResample(pcm.samples, pcm.sampleRate, targetRate, pcm.channels)
-                val processed = NativeAudio.nativeApplyEqualizer(resampled, targetRate, pcm.channels, bandGainsDb)
-                val result = NativeAudio.nativeStartOutput(processed, targetRate, pcm.channels, softwareVolume, outputDeviceId)
-                check(result == 0) { "AAudio could not open or start the output stream (error $result)" }
-                val routeName = if (outputDeviceId != 0) "USB DAC" else "system output"
-                onState("Playing · ${targetRate} Hz · ${pcm.channels} ch · $routeName · AAudio / Rubato FFT")
-                while (!stopped.get() && NativeAudio.nativeIsOutputActive()) Thread.sleep(50)
+                outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+
+                val routeName = if (deviceId != 0) "USB DAC" else "system output"
+                onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
+
+                var reachedEnd = false
+                while (!stopped.get() && !reachedEnd) {
+                    val chunk = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
+                    if (chunk.isEmpty()) {
+                        NativeAudio.nativeSetStreamEof()
+                        reachedEnd = true
+                        break
+                    }
+                    val frames = chunk.size / channels
+                    var offsetFrames = 0
+                    while (!stopped.get() && offsetFrames < frames) {
+                        val written = NativeAudio.nativeWriteStreamFrames(
+                            chunk, offsetFrames, frames - offsetFrames
+                        )
+                        if (written < 0) throw IllegalStateException("AAudio ring-buffer write failed")
+                        if (written == 0) Thread.sleep(4)
+                        else offsetFrames += written
+                    }
+                    outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+                    while (!stopped.get() && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                        Thread.sleep(4)
+                    }
+                }
+
+                while (!stopped.get() && NativeAudio.nativeIsOutputActive()) Thread.sleep(20)
                 if (!stopped.get()) onState("Playback finished")
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
-                if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
+                if (handle != 0L) {
+                    decoderHandle = 0L
+                    NativeAudio.nativeCloseStreamDecoder(handle)
+                }
+                NativeAudio.nativeStopOutput()
+                descriptor?.close()
+                if (playbackGeneration.get() != generation) return@thread
             }
         }
     }
-    fun positionMs(): Long = if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate else 0L
-    fun durationMs(): Long = if (outputSampleRate > 0) NativeAudio.nativeGetOutputDurationFrames() * 1000L / outputSampleRate else 0L
+
+    fun positionMs(): Long =
+        if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate else 0L
+
+    fun durationMs(): Long = outputDurationMs
+
     fun seekTo(positionMs: Long) {
-        if (outputSampleRate > 0) NativeAudio.nativeSeekOutputFrames(positionMs.coerceAtLeast(0) * outputSampleRate / 1000L)
+        // Seeking requires a format-level decoder seek and ring-buffer flush; it is not emulated by dropping PCM.
     }
-    fun pause() { if (NativeAudio.nativePauseOutput() == 0) onState("Paused") }
-    fun resume() { if (NativeAudio.nativeResumeOutput() == 0) onState("Playing · AAudio") }
+
+    fun pause() {
+        if (NativeAudio.nativePauseOutput() == 0) onState("Paused")
+    }
+
+    fun resume() {
+        if (NativeAudio.nativeResumeOutput() == 0) onState("Playing · AAudio streaming")
+    }
+
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
         worker = null
+        outputDurationMs = 0L
+        outputSampleRate = 0
     }
 }
