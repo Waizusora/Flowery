@@ -61,3 +61,7 @@ cargo install cargo-ndk --locked
 ```
 
 If the release APK is unsigned, verify that all signing environment variables and the keystore path are configured. Never commit credentials to resolve signing failures.
+
+## Battery optimization prompt
+
+The application declares `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and can open Android's per-app exemption request screen. The user must make the choice in Android system UI. The application does not silently change battery policy.
