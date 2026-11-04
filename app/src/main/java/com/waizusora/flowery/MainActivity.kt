@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -56,9 +57,7 @@ class MainActivity : ComponentActivity() {
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
     private var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
     private var volume by mutableStateOf(1f)
-    private var bass by mutableStateOf(0f)
-    private var mid by mutableStateOf(0f)
-    private var treble by mutableStateOf(0f)
+    private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
     private val io = Executors.newSingleThreadExecutor()
     private lateinit var player: FloweryPlayer
 
@@ -74,9 +73,8 @@ class MainActivity : ComponentActivity() {
                 selectedTrack = selectedTrack,
                 lyrics = lyrics,
                 volume = volume,
-                bass = bass,
-                mid = mid,
-                treble = treble,
+                equalizerGains = equalizerGains,
+                onBandGain = { index, gain -> equalizerGains[index] = gain; player.setEqualizerGains(equalizerGains.toFloatArray()) },
                 onAddFolder = { folderPicker.launch(null) },
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
@@ -86,9 +84,6 @@ class MainActivity : ComponentActivity() {
                 onResume = { player.resume() },
                 onStop = { player.stop(); status = "Stopped" },
                 onVolume = { volume = it; player.setVolume(it) },
-                onBass = { bass = it; player.bassDb = it },
-                onMid = { mid = it; player.midDb = it },
-                onTreble = { treble = it; player.trebleDb = it }
             )
         }
     }
@@ -183,6 +178,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+private val ISO_BANDS = listOf("20", "25", "31.5", "40", "50", "63", "80", "100", "125", "160", "200", "250", "315", "400", "500", "630", "800", "1k", "1.25k", "1.6k", "2k", "2.5k", "3.15k", "4k", "5k", "6.3k", "8k", "10k", "12.5k", "16k", "20k")
+
 data class LibraryFolder(val uri: String, val name: String, val enabled: Boolean)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,9 +191,8 @@ private fun FloweryApp(
     selectedTrack: AudioTrackItem?,
     lyrics: List<LyricLine>,
     volume: Float,
-    bass: Float,
-    mid: Float,
-    treble: Float,
+    equalizerGains: List<Float>,
+    onBandGain: (Int, Float) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit,
     onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -205,10 +201,7 @@ private fun FloweryApp(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
-    onVolume: (Float) -> Unit,
-    onBass: (Float) -> Unit,
-    onMid: (Float) -> Unit,
-    onTreble: (Float) -> Unit
+    onVolume: (Float) -> Unit
 ) {
     MaterialTheme {
         Scaffold(topBar = { TopAppBar(title = { Text("Flowery") }) }) { padding ->
@@ -277,10 +270,28 @@ private fun FloweryApp(
                 }
                 Text("Software volume")
                 Slider(value = volume, onValueChange = onVolume)
-                Text("Equalizer · Bass ${bass.toInt()} dB · Mid ${mid.toInt()} dB · Treble ${treble.toInt()} dB")
-                Slider(value = bass, onValueChange = onBass, valueRange = -12f..12f)
-                Slider(value = mid, onValueChange = onMid, valueRange = -12f..12f)
-                Slider(value = treble, onValueChange = onTreble, valueRange = -12f..12f)
+                Text("31-band ISO graphic equalizer", style = MaterialTheme.typography.titleMedium)
+                Text("One-third-octave bands · ±12 dB", style = MaterialTheme.typography.bodySmall)
+                androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(ISO_BANDS.size) { index ->
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(vertical = 4.dp)
+                        ) {
+                            Text(ISO_BANDS[index], style = MaterialTheme.typography.labelSmall)
+                            Text("${equalizerGains[index].toInt()} dB", style = MaterialTheme.typography.labelSmall)
+                            Slider(
+                                value = equalizerGains[index],
+                                onValueChange = { onBandGain(index, it) },
+                                valueRange = -12f..12f,
+                                modifier = Modifier.padding(horizontal = 2.dp).width(104.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }
