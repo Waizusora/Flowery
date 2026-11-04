@@ -34,8 +34,6 @@ keystore.properties
 # Rust
 **/target/
 **/.rustc_info.json
-**/Cargo.lock
-
 # Native build outputs
 *.so
 *.dylib
