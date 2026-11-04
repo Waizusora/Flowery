@@ -27,7 +27,7 @@ Lofty 0.25.5 is used for metadata parsing and writing. The editor exposes title,
 
 Lofty supports metadata for AAC (ADTS), APE, AIFF, FLAC, MP3, MP4, MPC, Opus, Ogg Vorbis, Speex, WAV, and WavPack. The exact writable tag mapping depends on the container. Some tag/container combinations are read-only; Flowery checks Lofty's write support and refuses to write those combinations. Unsupported formats such as formats outside Lofty's supported list cannot be edited through this metadata path.
 
-The editor stages the selected file in the app's temporary directory, asks Lofty to update the tag, then writes the resulting bytes back through the user's Storage Access Framework document permission. A document provider must grant write access. The audio stream itself is not decoded and re-encoded when text tags are changed.
+The editor stages the selected file in the app-private cache directory, asks Lofty to update the tag, then writes the resulting bytes back through the user's Storage Access Framework document permission. A document provider must grant write access. The audio stream itself is not decoded and re-encoded when text tags are changed.
 
 ## Audio engine
 
@@ -72,7 +72,7 @@ Without signing secrets, CI builds an unsigned release APK. Never commit keystor
 
 ## Development status
 
-The current player decodes selected files into memory. Large files can require substantial memory; streaming decode, seeking, gapless playback, queue management, background playback, multichannel output, artwork replacement, and full USB DAC capability negotiation remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
+The current player decodes selected files into memory. Large files can require substantial memory; streaming decode, seeking, gapless playback, queue management, background playback, multichannel output, artwork replacement, exhaustive USB Audio Class descriptor enumeration, and hardware-verified exclusive transport remain future work. A successful CI build does not replace testing on physical Android devices and DAC hardware.
 
 ## Open-source licenses
 
