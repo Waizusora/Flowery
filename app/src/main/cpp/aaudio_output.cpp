@@ -95,8 +95,10 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     AAudioStreamBuilder_setChannelCount(builder, channels);
     AAudioStreamBuilder_setSharingMode(builder, sharing);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+#if __ANDROID_API__ >= 28
     AAudioStreamBuilder_setUsage(builder, AAUDIO_USAGE_MEDIA);
     AAudioStreamBuilder_setContentType(builder, AAUDIO_CONTENT_TYPE_MUSIC);
+#endif
     AAudioStreamBuilder_setDataCallback(builder, dataCallback, state);
     AAudioStreamBuilder_setErrorCallback(builder, errorCallback, state);
     result = AAudioStreamBuilder_openStream(builder, &g_stream);
