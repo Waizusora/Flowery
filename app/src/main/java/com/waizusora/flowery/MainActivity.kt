@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
                 onScan = ::scanLibrary,
                 onPlay = ::playTrack,
                 onInspect = ::inspectTrack,
-                onEdit = { editingTag = currentTag },
+                onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
                 onPause = { player.pause() },
                 onResume = { player.resume() },
                 onStop = { player.stop(); status = "Stopped" },
