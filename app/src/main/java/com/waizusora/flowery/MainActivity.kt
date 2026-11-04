@@ -197,7 +197,12 @@ class MainActivity : ComponentActivity() {
             pictureBase64 = json.optString("pictureBase64"),
             tagType = json.optString("tagType"),
             fileType = json.optString("fileType"),
-            writable = json.optBoolean("writable", true)
+            writable = json.optBoolean("writable", true),
+            sampleRate = json.optInt("sampleRate"),
+            bitDepth = json.optInt("bitDepth"),
+            channels = json.optInt("channels"),
+            bitrateKbps = json.optInt("bitrateKbps"),
+            durationMs = json.optLong("durationMs")
         )
     }
 
@@ -300,7 +305,12 @@ data class AudioTag(
     val pictureBase64: String,
     val tagType: String,
     val fileType: String,
-    val writable: Boolean
+    val writable: Boolean,
+    val sampleRate: Int,
+    val bitDepth: Int,
+    val channels: Int,
+    val bitrateKbps: Int,
+    val durationMs: Long
 )
 
 private val ISO_BANDS = listOf("20", "25", "31.5", "40", "50", "63", "80", "100", "125", "160", "200", "250", "315", "400", "500", "630", "800", "1k", "1.25k", "1.6k", "2k", "2.5k", "3.15k", "4k", "5k", "6.3k", "8k", "10k", "12.5k", "16k", "20k")
@@ -404,7 +414,7 @@ private fun FloweryApp(
                 Text(status, color = Color.White, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 if (currentTag != null) {
                     Text(
-                        listOf(currentTag.fileType, currentTag.tagType, currentTag.year, currentTag.track.takeIf { it.isNotBlank() }?.let { "Track $it" }).filterNotNull().filter { it.isNotBlank() }.joinToString("  ·  "),
+                        listOf(currentTag.bitDepth.takeIf { it > 0 }?.let { "$it BIT" }, currentTag.sampleRate.takeIf { it > 0 }?.let { "${it / 1000.0} KHZ" }, currentTag.bitrateKbps.takeIf { it > 0 }?.let { "$it KBPS" }, currentTag.fileType).filterNotNull().filter { it.isNotBlank() }.joinToString("  ·  "),
                         color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -475,7 +485,12 @@ private fun TagInfoDialog(tag: AudioTag, onDismiss: () -> Unit) {
                     "Composer" to tag.composer, "Comment" to tag.comment, "Tag type" to tag.tagType,
                     "Container" to tag.fileType, "Embedded lyrics" to tag.lyrics,
                     "Artwork" to if (tag.pictureBase64.isBlank()) "Not embedded" else tag.pictureMime,
-                    "Tag writing" to if (tag.writable) "Supported by Lofty" else "Read-only for this format"
+                    "Tag writing" to if (tag.writable) "Supported by Lofty" else "Read-only for this format",
+                    "Sample rate" to tag.sampleRate.takeIf { it > 0 }?.let { "$it Hz" }.orEmpty(),
+                    "Bit depth" to tag.bitDepth.takeIf { it > 0 }?.let { "$it bit" }.orEmpty(),
+                    "Channels" to tag.channels.takeIf { it > 0 }?.toString().orEmpty(),
+                    "Bitrate" to tag.bitrateKbps.takeIf { it > 0 }?.let { "$it kbps" }.orEmpty(),
+                    "Duration" to tag.durationMs.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60000, (it / 1000) % 60) }.orEmpty()
                 ).forEach { (label, value) ->
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium)
