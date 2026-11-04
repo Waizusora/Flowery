@@ -301,6 +301,11 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "pictureBase64": picture.map(|p| base64::Engine::encode(&base64::engine::general_purpose::STANDARD, p.data())).unwrap_or_default(),
             "tagType": format!("{:?}", tag.tag_type()),
             "fileType": format!("{:?}", tagged.file_type()),
+            "sampleRate": tagged.properties().sample_rate(),
+            "bitDepth": tagged.properties().bit_depth(),
+            "channels": tagged.properties().channels(),
+            "bitrateKbps": tagged.properties().overall_bitrate(),
+            "durationMs": tagged.properties().duration().as_millis(),
             "writable": tagged.tag_support(tagged.primary_tag_type()).is_writable(),
         })
     } else {
@@ -308,7 +313,10 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "title": "", "artist": "", "album": "", "albumArtist": "", "genre": "",
             "year": "", "track": "", "disc": "", "comment": "", "composer": "",
             "lyrics": "", "pictureMime": "", "pictureBase64": "",
-            "tagType": "None", "fileType": format!("{:?}", tagged.file_type()), "writable": true
+            "tagType": "None", "fileType": format!("{:?}", tagged.file_type()),
+            "sampleRate": tagged.properties().sample_rate(), "bitDepth": tagged.properties().bit_depth(),
+            "channels": tagged.properties().channels(), "bitrateKbps": tagged.properties().overall_bitrate(),
+            "durationMs": tagged.properties().duration().as_millis(), "writable": tagged.tag_support(tagged.primary_tag_type()).is_writable()
         })
     };
     serde_json::to_string(&value).map_err(|e| e.to_string())
