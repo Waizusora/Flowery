@@ -135,7 +135,7 @@ class UsbDacController(context: Context) {
                         "\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
                             "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
                             "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
-                            "${profile.maxPacketBytes}-byte max packet, ${profile.synchronization} sync."
+                            "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, ${profile.synchronization} sync."
                     } +
                     "\n  Sample rates remain unverified until UAC2 clock negotiation succeeds."
             }
