@@ -475,7 +475,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[27] = {};
+    jlong values[31] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -509,9 +509,16 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[10] = AAudioStream_getFormat(g_stream);
         values[11] = AAudioStream_getChannelCount(g_stream);
         values[12] = AAudioStream_getPerformanceMode(g_stream);
+        int64_t timestampFramePosition = 0;
+        int64_t timestampTimeNanoseconds = 0;
+        values[27] = AAudioStream_getTimestamp(
+            g_stream, CLOCK_MONOTONIC, &timestampFramePosition, &timestampTimeNanoseconds);
+        values[28] = timestampFramePosition;
+        values[29] = timestampTimeNanoseconds;
+        values[30] = AAudioStream_getFramesWritten(g_stream);
     }
-    jlongArray result = env->NewLongArray(27);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 27, values);
+    jlongArray result = env->NewLongArray(31);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 31, values);
     return result;
 }
 
