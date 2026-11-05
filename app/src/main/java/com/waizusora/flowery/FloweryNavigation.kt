@@ -585,13 +585,14 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAtt
     }
     val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
         .format(java.util.Date())
-    val openAttemptText = if (openAttempt != null && openAttempt.size >= 10) {
+    val openAttemptText = if (openAttempt != null && openAttempt.size >= 11) {
         "lastOpenRequestedDeviceId=${openAttempt[0]} " +
             "lastOpenRequestedMode=${modeName(openAttempt[1])} " +
             "lastOpenRequestedRate=${openAttempt[2]} lastOpenRequestedChannels=${openAttempt[3]} " +
             "lastOpenResult=${openAttempt[4]} lastOpenActualDeviceId=${openAttempt[5]} " +
             "lastOpenActualMode=${modeName(openAttempt[6])} lastOpenActualRate=${openAttempt[7]} " +
-            "lastOpenActualChannels=${openAttempt[8]} lastOpenActualFormat=${openAttempt[9]}"
+            "lastOpenActualChannels=${openAttempt[8]} lastOpenActualFormat=${openAttempt[9]} " +
+            "lastOpenFailureStage=${openAttempt[10]}"
     } else "lastOpenAttempt=unavailable"
     return "$wallTime sampleRate=${sample[7]} requestedDeviceId=${sample[33]} actualDeviceId=${sample[8]} " +
         "preferredSharingMode=${modeName(sample[31])} successfulOpenRequestMode=${modeName(sample[32])} " +
