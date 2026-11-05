@@ -261,8 +261,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
     auto append_transfer = [&](size_t batch_frames) -> bool {
         if (batch_frames == 0 || packet_frames.empty()) return true;
-        PendingTransfer pending;
-        pending.batch_index = transfers.size();
+        transfers.emplace_back();
+        auto& pending = transfers.back();
+        pending.batch_index = transfers.size() - 1;
         const size_t start_byte = (consumed_frames - batch_frames) * static_cast<size_t>(bytes_per_frame);
         const size_t transfer_bytes = batch_frames * static_cast<size_t>(bytes_per_frame);
         pending.buffer.assign(
@@ -271,7 +272,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
         const int packet_count = static_cast<int>(packet_frames.size());
         pending.transfer = libusb_alloc_transfer(packet_count);
-        if (pending.transfer == nullptr) return false;
+        if (pending.transfer == nullptr) {
+            transfers.pop_back();
+            return false;
+        }
         libusb_fill_iso_transfer(
             pending.transfer, session->handle, session->endpoint,
             pending.buffer.data(), static_cast<int>(transfer_bytes),
@@ -280,10 +284,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             pending.transfer->iso_packet_desc[i].length =
                 packet_frames[static_cast<size_t>(i)] * static_cast<unsigned int>(bytes_per_frame);
         }
-        transfers.push_back(std::move(pending));
         packet_frames.clear();
         return true;
-    };
+    }
 
     size_t batch_frames = 0;
     while (true) {
