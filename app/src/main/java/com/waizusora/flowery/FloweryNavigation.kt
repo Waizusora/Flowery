@@ -194,24 +194,26 @@ fun FloweryNavigation(
                                 Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A))
                             }
                         }
-                        Text("Your scanned folders", color = muted, style = MaterialTheme.typography.labelSmall)
+                        Text("SCANNED FOLDERS", color = muted, style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold)
                         folders.forEach { folder ->
                             val folderTracks = tracks.filter { it.folder == folder.name }
-                            Card(
-                                Modifier.fillMaxWidth().clickable { selectedFolder = folder },
-                                colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .08f)),
-                                shape = RoundedCornerShape(18.dp)
+                            Row(
+                                Modifier.fillMaxWidth().clickable { selectedFolder = folder }
+                                    .padding(horizontal = 4.dp, vertical = 13.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
-                                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                                        Text(folder.name, color = foreground, fontWeight = FontWeight.SemiBold)
-                                        Text("${folderTracks.size} songs", color = muted, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    Icon(Icons.Default.ChevronRight, null, tint = muted)
+                                Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A),
+                                    modifier = Modifier.size(27.dp))
+                                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                                    Text(folder.name, color = foreground, fontWeight = FontWeight.SemiBold,
+                                        style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                                    Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.bodySmall)
                                 }
+                                Icon(Icons.Default.MusicNote, null, tint = muted, modifier = Modifier.size(15.dp))
+                                Text("  ${folderTracks.size}", color = muted, style = MaterialTheme.typography.labelMedium)
                             }
+                            HorizontalDivider(color = muted.copy(alpha = .16f))
                         }
                         if (folders.isEmpty()) Text("No folders added. Add folders in Settings → Library.", color = muted)
                     } else {
@@ -327,53 +329,65 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
         }
         SettingsPage.LIBRARY -> {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Scanned music", color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
-                    Text("${tracks.size} songs saved in this device", color = muted, style = MaterialTheme.typography.bodySmall)
+            Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Text("Remove only removes a folder from Flowery's list. Original folders and audio files are never deleted.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = addFolder,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    shape = RoundedCornerShape(28.dp)
+                ) {
+                    Icon(Icons.Default.Add, null)
+                    Text(" ADD")
                 }
-                Button(onClick = scan, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                Button(
+                    onClick = scan,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    shape = RoundedCornerShape(28.dp)
+                ) {
                     Icon(Icons.Default.Refresh, null)
                     Text(" Scan")
                 }
             }
-            Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.titleSmall)
-            Text("Remove only removes a folder from Flowery's library list. Original folders and files are never deleted.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            Button(onClick = addFolder, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
-                modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Add, null)
-                Text(" ADD")
-            }
+            Text("${folders.size} folders · ${tracks.size} scanned songs", color = muted,
+                style = MaterialTheme.typography.labelSmall)
             folders.forEach { folder ->
                 Row(
-                    Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
+                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
                     Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                        Text(folder.name, color = color, fontWeight = FontWeight.Medium)
-                        Text("Included in library scan", color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text(folder.name, color = color, fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                        Text("Included in library", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     IconButton(onClick = { removeFolder(folder) }) {
-                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = color, modifier = Modifier.size(25.dp))
+                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = Color(0xFFD66B9A),
+                            modifier = Modifier.size(25.dp))
                     }
                 }
                 HorizontalDivider(color = muted.copy(alpha = .16f))
             }
-            if (folders.isEmpty()) Text("No folders added yet. Tap ADD to choose one or more folders.", color = muted)
+            if (folders.isEmpty()) Text("No folders added yet. Tap ADD to choose a folder. You can add more folders at any time.",
+                color = muted)
+            Text("SCANNED SONGS · ${tracks.size}", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
             if (tracks.isEmpty()) {
-                Text("Your scanned songs will appear here. The library index is saved, so opening this page will not start another scan.", color = muted)
+                Text("Scanned songs will appear here after you press Scan. The saved index is reused when you reopen this page.",
+                    color = muted)
             } else {
                 tracks.forEach { track ->
                     Row(
                         Modifier.fillMaxWidth().clickable { playTrack(track, tracks) }.padding(vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(Modifier.size(42.dp).background(color.copy(alpha = .09f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
-                            Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A))
-                        }
+                        Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A),
+                            modifier = Modifier.size(25.dp))
                         Column(Modifier.weight(1f).padding(start = 12.dp)) {
                             Text(track.title, color = color, fontWeight = FontWeight.Medium, maxLines = 1)
                             Text(track.folder, color = muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
