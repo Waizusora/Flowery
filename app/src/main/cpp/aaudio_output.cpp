@@ -33,9 +33,13 @@ struct OutputState {
     std::atomic<uint64_t> callbackLateIntervalCount{0};
     std::atomic<uint64_t> callbackMaxIntervalNs{0};
     std::atomic<uint64_t> callbackMaxDurationNs{0};
+    std::atomic<uint64_t> callbackLastIntervalNs{0};
+    std::atomic<uint64_t> callbackLastLatenessNs{0};
     std::atomic<int32_t> lastTunedXrunCount{0};
     int32_t exclusiveOpenResult = AAUDIO_ERROR_INVALID_STATE;
     int32_t sharedOpenResult = AAUDIO_ERROR_INVALID_STATE;
+    int32_t successfulOpenSharingMode = -1;
+    int32_t requestedDeviceId = 0;
     int32_t channels = 2;
     int32_t sampleRate = 0;
 };
@@ -76,11 +80,13 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
         static_cast<uint64_t>(std::max(frames, 0)), std::memory_order_relaxed);
     if (previousStartNs != 0 && callbackStartNs >= previousStartNs) {
         const uint64_t intervalNs = callbackStartNs - previousStartNs;
+        state->callbackLastIntervalNs.store(intervalNs, std::memory_order_relaxed);
         updateMaximum(state->callbackMaxIntervalNs, intervalNs);
         const uint64_t expectedNs = state->sampleRate > 0
             ? previousFrames * 1'000'000'000ULL / static_cast<uint64_t>(state->sampleRate)
             : 0;
         const uint64_t latenessNs = intervalNs > expectedNs ? intervalNs - expectedNs : 0;
+        state->callbackLastLatenessNs.store(latenessNs, std::memory_order_relaxed);
         updateMaximum(state->callbackMaxLatenessNs, latenessNs);
         if (latenessNs > 10'000'000ULL) {
             state->callbackLateIntervalCount.fetch_add(1, std::memory_order_relaxed);
@@ -197,6 +203,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
     state->sampleRate = AAudioStream_getSampleRate(g_stream);
+    state->successfulOpenSharingMode = static_cast<int32_t>(sharing);
     return AAUDIO_OK;
 }
 } // namespace
@@ -212,6 +219,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
 
     auto state = std::make_unique<OutputState>();
     state->channels = channels;
+    state->requestedDeviceId = deviceId;
     state->capacityFrames = capacity;
     state->mask = capacity - 1;
     state->ring.resize(static_cast<size_t>(capacity) * channels);
@@ -475,7 +483,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[31] = {};
+    jlong values[36] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -495,6 +503,11 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[23] = static_cast<jlong>(g_output->sampleRate);
         values[24] = static_cast<jlong>(g_output->callbackMaxLatenessNs.load(std::memory_order_acquire));
         values[25] = static_cast<jlong>(g_output->callbackLateIntervalCount.load(std::memory_order_acquire));
+        values[31] = static_cast<jlong>(AAUDIO_SHARING_MODE_EXCLUSIVE);
+        values[32] = static_cast<jlong>(g_output->successfulOpenSharingMode);
+        values[33] = static_cast<jlong>(g_output->requestedDeviceId);
+        values[34] = static_cast<jlong>(g_output->callbackLastIntervalNs.load(std::memory_order_acquire));
+        values[35] = static_cast<jlong>(g_output->callbackLastLatenessNs.load(std::memory_order_acquire));
     }
     if (g_stream) {
         const int32_t xruns = AAudioStream_getXRunCount(g_stream);
@@ -517,8 +530,8 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[29] = timestampTimeNanoseconds;
         values[30] = AAudioStream_getFramesWritten(g_stream);
     }
-    jlongArray result = env->NewLongArray(31);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 31, values);
+    jlongArray result = env->NewLongArray(36);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 36, values);
     return result;
 }
 
