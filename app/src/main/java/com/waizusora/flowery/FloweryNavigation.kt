@@ -118,10 +118,42 @@ fun FloweryNavigation(
                                 if (art != null) Image(art, "Album artwork", Modifier.fillMaxSize(),
                                     contentScale = androidx.compose.ui.layout.ContentScale.Fit)
                                 else Icon(Icons.Default.MusicNote, "No artwork", tint = muted, modifier = Modifier.size(80.dp))
+                                Column(
+                                    Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = Color(0xFFF2EAF5).copy(alpha = .94f),
+                                        shadowElevation = 4.dp
+                                    ) {
+                                        IconButton(
+                                            onClick = { selectedTrack?.let(onInspect) },
+                                            enabled = selectedTrack != null,
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6))
+                                        }
+                                    }
+                                    Surface(
+                                        shape = RoundedCornerShape(16.dp),
+                                        color = Color(0xFFF2EAF5).copy(alpha = .94f),
+                                        shadowElevation = 4.dp
+                                    ) {
+                                        IconButton(
+                                            onClick = onEdit,
+                                            enabled = selectedTrack != null,
+                                            modifier = Modifier.size(48.dp)
+                                        ) {
+                                            Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A))
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
-                    Column(Modifier.fillMaxWidth().clickable(onClick = onEdit).padding(8.dp),
+                    Column(Modifier.fillMaxWidth().padding(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing",
                             Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE), color = foreground,
