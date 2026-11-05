@@ -52,7 +52,6 @@ fun FloweryNavigation(
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var lyricsVisible by remember { mutableStateOf(false) }
-    val removeSelection = remember { mutableStateListOf<String>() }
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
     val systemDark = isSystemInDarkTheme()
@@ -185,40 +184,41 @@ fun FloweryNavigation(
                 }
                 Destination.FOLDERS -> {
                     if (selectedFolder == null) {
-                        Heading("Folders", foreground)
-                        Text("Remove only removes a folder from Flowery's list. Original files are never deleted.", color = muted)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = onAddFolder, Modifier.weight(1f)) { Icon(Icons.Default.Add, null); Text(" Add folder") }
-                            Button(onClick = onScan, Modifier.weight(1f)) { Icon(Icons.Default.Refresh, null); Text(" Scan") }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { destination = Destination.PLAYER; lyricsVisible = false }) {
+                                Icon(Icons.Default.ArrowBack, "Now playing", tint = foreground)
+                            }
+                            Heading("Folders", foreground)
+                            Spacer(Modifier.weight(1f))
+                            IconButton(onClick = onScan) {
+                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A))
+                            }
                         }
-                        if (removeSelection.isNotEmpty()) Button(onClick = {
-                            folders.filter { it.uri in removeSelection }.forEach(onRemoveFolder); removeSelection.clear()
-                        }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF9C3545))) {
-                            Icon(Icons.Default.Delete, null); Text(" Remove selected (${removeSelection.size})")
-                        }
+                        Text("Your scanned folders", color = muted, style = MaterialTheme.typography.labelSmall)
                         folders.forEach { folder ->
-                            Card(Modifier.fillMaxWidth().clickable { selectedFolder = folder },
-                                colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .09f)),
-                                shape = RoundedCornerShape(18.dp)) {
-                                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Checkbox(folder.uri in removeSelection, { checked ->
-                                        if (checked) removeSelection.add(folder.uri) else removeSelection.remove(folder.uri)
-                                    })
-                                    Icon(Icons.Default.Folder, null, tint = foreground)
-                                    Column(Modifier.weight(1f).padding(start = 10.dp)) {
+                            val folderTracks = tracks.filter { it.folder == folder.name }
+                            Card(
+                                Modifier.fillMaxWidth().clickable { selectedFolder = folder },
+                                colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .08f)),
+                                shape = RoundedCornerShape(18.dp)
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
+                                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
                                         Text(folder.name, color = foreground, fontWeight = FontWeight.SemiBold)
-                                        Text(if (folder.enabled) "Included in scan" else "Excluded from scan", color = muted,
-                                            style = MaterialTheme.typography.bodySmall)
+                                        Text("${folderTracks.size} songs", color = muted, style = MaterialTheme.typography.bodySmall)
                                     }
-                                    Checkbox(folder.enabled, { onToggleFolder(folder, it) })
-                                    Icon(Icons.Default.ChevronRight, null, tint = foreground)
+                                    Icon(Icons.Default.ChevronRight, null, tint = muted)
                                 }
                             }
                         }
-                        if (folders.isEmpty()) Text("No folders added yet.", color = muted)
+                        if (folders.isEmpty()) Text("No folders added. Add folders in Settings → Library.", color = muted)
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { selectedFolder = null }) { Icon(Icons.Default.ArrowBack, "Back", tint = foreground) }
+                            IconButton(onClick = { selectedFolder = null }) {
+                                Icon(Icons.Default.ArrowBack, "Back to folders", tint = foreground)
+                            }
                             Column(Modifier.weight(1f)) {
                                 Heading(selectedFolder!!.name, foreground)
                                 Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
@@ -228,11 +228,11 @@ fun FloweryNavigation(
                             }
                         }
                         val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
-                        Text("${folderTracks.size} songs indexed", color = muted)
+                        Text("${folderTracks.size} songs", color = muted)
                         folderTracks.forEach { track ->
                             Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.MusicNote, null, tint = foreground, modifier = Modifier.size(30.dp))
+                                Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                     Text(track.title, color = foreground, fontWeight = FontWeight.Medium)
                                     Text(track.mimeType ?: track.folder, color = muted, style = MaterialTheme.typography.bodySmall)
@@ -241,7 +241,7 @@ fun FloweryNavigation(
                             }
                             HorizontalDivider(color = muted.copy(alpha = .2f))
                         }
-                        if (folderTracks.isEmpty()) Text("No songs indexed yet. Use Scan library in Settings → Library, or tap Refresh to update this folder.", color = muted)
+                        if (folderTracks.isEmpty()) Text("No songs indexed yet. Use Refresh to update this folder.", color = muted)
                     }
                 }
                 Destination.DSP -> {
@@ -330,12 +330,12 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Text("Scanned music", color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
                     Text("${tracks.size} songs saved in this device", color = muted, style = MaterialTheme.typography.bodySmall)
                 }
-                Button(onClick = scan) {
+                Button(onClick = scan, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
                     Icon(Icons.Default.Refresh, null)
                     Text(" Scan")
                 }
             }
-            SettingCard("Manage folders", "${folders.size} folders · add, remove and include folders", color, muted, Icons.Default.Folder, openFolders)
+            SettingCard("Manage folders", "${folders.size} folders · add or remove folders from Flowery", color, muted, Icons.Default.Folder, openFolders)
             if (tracks.isEmpty()) {
                 Text("Your scanned songs will appear here. The library index is saved, so opening this page will not start another scan.", color = muted)
             } else {
