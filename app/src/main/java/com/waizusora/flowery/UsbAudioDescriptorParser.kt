@@ -132,6 +132,47 @@ internal object UsbAudioDescriptorParser {
             .filter { it.second >= 0 }
     }
 
+    /**
+     * Produces a bounded trace of audio descriptors for diagnosing clock-entity
+     * links without dumping unrelated device-specific descriptor data.
+     */
+    fun playbackDescriptorTrace(raw: ByteArray, streamingInterface: Int): String {
+        val lines = mutableListOf<String>()
+        var currentInterface = -1
+        var currentClass = -1
+        var currentSubclass = -1
+        var currentProtocol = -1
+        var offset = 0
+        while (offset + 2 <= raw.size && lines.size < 100) {
+            val length = raw[offset].toInt() and 0xff
+            val type = raw[offset + 1].toInt() and 0xff
+            if (length < 2 || offset + length > raw.size) {
+                lines += "offset=$offset malformed_length=$length remaining=${raw.size - offset}"
+                break
+            }
+            if (type == USB_DT_INTERFACE && length >= 9) {
+                currentInterface = raw[offset + 2].toInt() and 0xff
+                currentClass = raw[offset + 5].toInt() and 0xff
+                currentSubclass = raw[offset + 6].toInt() and 0xff
+                currentProtocol = raw[offset + 7].toInt() and 0xff
+                if (currentClass == USB_CLASS_AUDIO) {
+                    lines += "IF offset=$offset number=$currentInterface alt=${raw[offset + 3].toInt() and 0xff} subclass=$currentSubclass protocol=0x${currentProtocol.toString(16)}"
+                }
+            } else if (currentClass == USB_CLASS_AUDIO &&
+                (type == USB_DT_CS_INTERFACE || type == USB_DT_ENDPOINT)
+            ) {
+                val bytes = (offset until minOf(offset + length, offset + 24))
+                    .joinToString(" ") { raw[it].toUByte().toString(16).padStart(2, '0') }
+                val scope = if (currentInterface == streamingInterface) "SELECTED_STREAM" else "AUDIO"
+                lines += "$scope offset=$offset type=0x${type.toString(16)} subclass=$currentSubclass bytes=$bytes"
+            }
+            offset += length
+        }
+        if (lines.isEmpty()) return "No audio descriptors found in raw descriptor block (bytes=${raw.size})."
+        if (offset < raw.size && lines.size >= 100) lines += "Trace truncated at 100 entries."
+        return lines.joinToString("\n")
+    }
+
     fun report(
         raw: ByteArray,
         vid: Int,
