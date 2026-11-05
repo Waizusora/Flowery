@@ -126,9 +126,20 @@ class PlaybackService : Service() {
     private val progressUpdates = object : Runnable {
         override fun run() {
             if (::player.isInitialized) {
+                val position = player.positionMs()
+                val duration = player.durationMs()
+                if (::session.isInitialized && duration > 0L) {
+                    session.setMetadata(MediaMetadataCompat.Builder()
+                        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+                        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+                        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
+                        .build())
+                    publishSessionState(position)
+                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+                }
                 sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
-                    .putExtra(EXTRA_POSITION, player.positionMs())
-                    .putExtra(EXTRA_DURATION, player.durationMs())
+                    .putExtra(EXTRA_POSITION, position)
+                    .putExtra(EXTRA_DURATION, duration)
                     .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
                     .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
                     .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
@@ -485,14 +496,15 @@ class PlaybackService : Service() {
         }
     }
 
-    private fun publishSessionState() {
+    private fun publishSessionState(positionMs: Long = player.positionMs()) {
         if (!::session.isInitialized) return
         val actions = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT or PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or PlaybackStateCompat.ACTION_SEEK_TO
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(actions)
-            .setState(playbackState, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f)
+            .setState(playbackState, positionMs.coerceAtLeast(0L),
+                if (playbackState == PlaybackStateCompat.STATE_PLAYING) 1f else 0f)
             .build())
     }
 
