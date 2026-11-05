@@ -587,11 +587,19 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Text(libraryEncoding, color = color)
                     Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose text encoding", tint = color)
                 }
-                DropdownMenu(expanded = encodingExpanded, onDismissRequest = { encodingExpanded = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-                    Column(Modifier.verticalScroll(rememberScrollState())) {
-                        availableEncodings.forEach { encoding ->
-                            DropdownMenuItem(text = { Text(encoding) }, onClick = { changeEncoding(encoding); encodingExpanded = false })
-                        }
+                DropdownMenu(
+                    expanded = encodingExpanded,
+                    onDismissRequest = { encodingExpanded = false },
+                    modifier = Modifier.heightIn(max = 360.dp)
+                ) {
+                    availableEncodings.forEach { encoding ->
+                        DropdownMenuItem(
+                            text = { Text(encoding) },
+                            onClick = {
+                                changeEncoding(encoding)
+                                encodingExpanded = false
+                            }
+                        )
                     }
                 }
             }
