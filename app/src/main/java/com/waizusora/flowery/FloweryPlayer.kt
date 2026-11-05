@@ -245,10 +245,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val channels = (streamInfo and 0xffff_ffffL).toInt()
                 check(sourceRate > 0 && channels in 1..2) { "The decoder returned an invalid audio format" }
 
-                if (bitPerfectRequested && extension !in setOf("wav", "wave") &&
-                    segmentStartMs == 0L && segmentEndMs == null) {
+                if (bitPerfectRequested) {
                     usbPlaybackMode = true
-                    playUsbDecodedDirect(handle, sourceRate, channels, generation)
+                    playUsbDecodedDirect(
+                        handle, sourceRate, channels, generation, segmentStartMs, segmentEndMs
+                    )
                     return@thread
                 }
 
@@ -274,9 +275,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     softwareVolume = volumeController.usbVolume(usbKey)
                 }
                 val deviceId = selectedDevice?.id ?: 0
-                val mixerSelection = selectedDevice
-                    ?.takeIf { android.os.Build.VERSION.SDK_INT >= 34 }
-                    ?.let { configureAndroidUsbBitPerfect(audioManager, it, sourceRate, channels) }
+                // Android mixer BIT_PERFECT is not used as a fallback. When the user enables
+                // USB Bit-Perfect, playback has already taken the direct USB transport path.
+                val mixerSelection: UsbMixerSelection? = null
                 val outputFormat = mixerSelection?.aaudioFormat ?: 2 // AAUDIO_FORMAT_PCM_FLOAT
                 val preferredRate = mixerSelection?.sampleRate ?: if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { kotlin.math.abs(it - sourceRate) } ?: sourceRate
@@ -524,7 +525,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
      * mixer. Float samples are quantized to the DAC's 24-bit integer transport format;
      * this is not source-bit-perfect passthrough.
      */
-    private fun playUsbDecodedDirect(handle: Long, sourceRate: Int, channels: Int, generation: Int) {
+    private fun playUsbDecodedDirect(
+        handle: Long,
+        sourceRate: Int,
+        channels: Int,
+        generation: Int,
+        segmentStartMs: Long,
+        segmentEndMs: Long?
+    ) {
         var session: UsbDacSession? = null
         try {
             onState("USB exclusive: validating decoded source format…")
@@ -545,11 +553,22 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             onState("USB exclusive: configuring Symphonia decoder and DSP…")
             check(NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb) == 0) {
-                "Unable to configure the FLAC decoder and streaming DSP for direct USB output."
+                "Unable to configure the streaming decoder and DSP for direct USB output."
+            }
+            if (segmentStartMs > 0L) {
+                val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
+                check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = sourceRate
-            outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+            val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+            val segmentDurationMs = segmentEndMs?.let {
+                (it - segmentStartMs).coerceAtLeast(0L)
+            }
+            outputDurationMs = segmentDurationMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
+            var segmentRemainingFrames = segmentDurationMs?.let {
+                framesAtMilliseconds(it, sourceRate)
+            }
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
             softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
@@ -557,18 +576,30 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             while (!stopped.get() && playbackGeneration.get() == generation) {
                 if (paused) { Thread.sleep(10); continue }
                 pendingSeekMs.getAndSet(null)?.let { requested ->
-                    val actual = NativeAudio.nativeSeekStreamDecoder(handle, requested)
-                    check(actual >= 0L) { "The FLAC decoder could not seek to the requested position." }
-                    usbPositionFrames = actual * sourceRate / 1_000L
+                    val relativeMs = requested.coerceAtLeast(0L)
+                        .coerceAtMost(segmentDurationMs ?: Long.MAX_VALUE)
+                    val absoluteMs = segmentStartMs + relativeMs
+                    val actual = NativeAudio.nativeSeekStreamDecoder(handle, absoluteMs)
+                    check(actual >= 0L) { "The decoder could not seek to the requested position." }
+                    usbPositionFrames = (actual - segmentStartMs).coerceAtLeast(0L) * sourceRate / 1_000L
+                    segmentRemainingFrames = segmentEndMs?.let {
+                        framesAtMilliseconds((it - absoluteMs).coerceAtLeast(0L), sourceRate)
+                    }
                 }
+                if (segmentRemainingFrames == 0L) break
                 val samples = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
                 if (samples.isEmpty()) break
-                check(samples.size % channels == 0) { "The FLAC decoder returned an incomplete interleaved PCM frame." }
-                val frames = samples.size / channels
+                check(samples.size % channels == 0) { "The decoder returned an incomplete interleaved PCM frame." }
+                val decodedFrames = samples.size / channels
+                val frames = segmentRemainingFrames?.let { minOf(decodedFrames.toLong(), it).toInt() }
+                    ?: decodedFrames
+                if (frames <= 0) break
+                segmentRemainingFrames = segmentRemainingFrames?.minus(frames)
                 if (firstTransfer) onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
-                val pcm = ByteArray(samples.size * 3)
+                val pcm = ByteArray(frames * channels * 3)
                 var byteOffset = 0
-                for (sample in samples) {
+                for (sampleIndex in 0 until frames * channels) {
+                    val sample = samples[sampleIndex]
                     val value = if (sample <= -1f) -8_388_608 else (sample.coerceIn(-1f, 1f) * 8_388_607f).toInt()
                     pcm[byteOffset++] = value.toByte()
                     pcm[byteOffset++] = (value shr 8).toByte()
