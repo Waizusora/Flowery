@@ -54,6 +54,7 @@ class PlaybackService : Service() {
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
         const val EXTRA_CURRENT_URI = "current_uri"
+        const val EXTRA_CURRENT_CUE_START = "current_cue_start_ms"
         const val BROADCAST_STATE = "com.waizusora.flowery.PLAYBACK_STATE"
         const val EXTRA_STATUS = "status"
         const val EXTRA_IS_PLAYING = "is_playing"
@@ -420,6 +421,7 @@ class PlaybackService : Service() {
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
             .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
+            .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
             .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
             .putExtra(EXTRA_REPEAT_MODE, repeatMode)
