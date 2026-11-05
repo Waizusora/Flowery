@@ -255,6 +255,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     uint64_t next_phase = session->frame_phase;
     size_t consumed_frames = 0;
     std::vector<PendingTransfer> transfers;
+    transfers.reserve(1024);
     std::vector<unsigned int> packet_frames;
     packet_frames.reserve(kMaxIsoPacketsPerTransfer);
 
@@ -262,7 +263,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         if (batch_frames == 0 || packet_frames.empty()) return true;
         PendingTransfer pending;
         pending.batch_index = transfers.size();
-        const size_t start_byte = consumed_frames * static_cast<size_t>(bytes_per_frame);
+        const size_t start_byte = (consumed_frames - batch_frames) * static_cast<size_t>(bytes_per_frame);
         const size_t transfer_bytes = batch_frames * static_cast<size_t>(bytes_per_frame);
         pending.buffer.assign(
             session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(start_byte),
