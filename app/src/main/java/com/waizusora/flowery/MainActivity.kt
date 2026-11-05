@@ -486,11 +486,14 @@ class MainActivity : ComponentActivity() {
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
                     val queueUris = ArrayList(playbackTracks.map { it.uri.toString() })
                     val queueTitles = ArrayList(playbackTracks.map { item ->
-                        if (item.uri == track.uri) tag?.title?.ifBlank { item.title } ?: item.title else item.title
+                        if (item.cuePlaylist == null && item.uri == track.uri) {
+                            tag?.title?.ifBlank { item.title } ?: item.title
+                        } else item.title
                     })
-                    val queueArtists = ArrayList(folderTracks.map { item ->
-                        if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
-                        else "Local music"
+                    val queueArtists = ArrayList(playbackTracks.map { item ->
+                        if (item.cuePlaylist == null && item.uri == track.uri) {
+                            tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
+                        } else "Local music"
                     })
                     val queueIndex = playbackTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs }.coerceAtLeast(0)
                     val queueCueStarts = playbackTracks.map { it.cueStartMs ?: 0L }.toLongArray()
