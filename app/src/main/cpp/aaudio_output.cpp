@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cmath>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -42,6 +44,7 @@ struct OutputState {
     int32_t requestedDeviceId = 0;
     int32_t channels = 2;
     int32_t sampleRate = 0;
+    aaudio_format_t format = AAUDIO_FORMAT_PCM_FLOAT;
 };
 
 std::mutex g_mutex;
@@ -107,32 +110,74 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
             state->callbackLateIntervalCount.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    auto* output = static_cast<float*>(audioData);
+
     state->callbackCount.fetch_add(1, std::memory_order_relaxed);
     state->callbackFramesRequested.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
-    uint64_t previousMax = state->callbackMaxFrames.load(std::memory_order_relaxed);
-    while (previousMax < static_cast<uint64_t>(frames) &&
-           !state->callbackMaxFrames.compare_exchange_weak(
-               previousMax, static_cast<uint64_t>(frames), std::memory_order_relaxed)) {}
+    updateMaximum(state->callbackMaxFrames, static_cast<uint64_t>(frames));
+
     const uint64_t read = state->readFrame.load(std::memory_order_relaxed);
     const uint64_t write = state->writeFrame.load(std::memory_order_acquire);
     const uint64_t available = write >= read ? write - read : 0;
     const uint64_t count = std::min<uint64_t>(static_cast<uint64_t>(frames), available);
     const float gain = state->volume.load(std::memory_order_relaxed);
 
-    for (uint64_t frame = 0; frame < count; ++frame) {
+    auto sampleAt = [&](uint64_t frame, int32_t channel) -> float {
         const uint64_t ringFrame = (read + frame) & state->mask;
-        for (int32_t channel = 0; channel < state->channels; ++channel) {
-            const size_t ringIndex = static_cast<size_t>(ringFrame * state->channels + channel);
-            output[frame * state->channels + channel] =
-                std::clamp(state->ring[ringIndex] * gain, -1.0f, 1.0f);
+        const size_t ringIndex = static_cast<size_t>(ringFrame * state->channels + channel);
+        return std::clamp(state->ring[ringIndex] * gain, -1.0f, 1.0f);
+    };
+
+    if (state->format == AAUDIO_FORMAT_PCM_FLOAT) {
+        auto* output = static_cast<float*>(audioData);
+        for (uint64_t frame = 0; frame < count; ++frame) {
+            for (int32_t channel = 0; channel < state->channels; ++channel) {
+                output[frame * state->channels + channel] = sampleAt(frame, channel);
+            }
+        }
+    } else if (state->format == AAUDIO_FORMAT_PCM_I16) {
+        auto* output = static_cast<int16_t*>(audioData);
+        for (uint64_t frame = 0; frame < count; ++frame) {
+            for (int32_t channel = 0; channel < state->channels; ++channel) {
+                const float sample = sampleAt(frame, channel);
+                output[frame * state->channels + channel] = static_cast<int16_t>(
+                    std::lrint(sample * (sample < 0.0f ? 32768.0f : 32767.0f)));
+            }
+        }
+    } else if (state->format == AAUDIO_FORMAT_PCM_I24_PACKED) {
+        auto* output = static_cast<uint8_t*>(audioData);
+        for (uint64_t frame = 0; frame < count; ++frame) {
+            for (int32_t channel = 0; channel < state->channels; ++channel) {
+                const float sample = sampleAt(frame, channel);
+                const int32_t value = static_cast<int32_t>(
+                    std::llround(sample * (sample < 0.0f ? 8388608.0 : 8388607.0)));
+                const size_t index = static_cast<size_t>((frame * state->channels + channel) * 3);
+                output[index] = static_cast<uint8_t>(value & 0xff);
+                output[index + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
+                output[index + 2] = static_cast<uint8_t>((value >> 16) & 0xff);
+            }
+        }
+    } else if (state->format == AAUDIO_FORMAT_PCM_I32) {
+        auto* output = static_cast<int32_t*>(audioData);
+        for (uint64_t frame = 0; frame < count; ++frame) {
+            for (int32_t channel = 0; channel < state->channels; ++channel) {
+                const float sample = sampleAt(frame, channel);
+                const double scaled = static_cast<double>(sample) *
+                    (sample < 0.0f ? 2147483648.0 : 2147483647.0);
+                output[frame * state->channels + channel] = static_cast<int32_t>(
+                    std::llround(std::clamp(scaled, -2147483648.0, 2147483647.0)));
+            }
         }
     }
 
     const uint64_t remaining = static_cast<uint64_t>(frames) - count;
     if (remaining > 0) {
-        std::fill(output + count * state->channels,
-                  output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
+        const size_t bytesPerSample =
+            state->format == AAUDIO_FORMAT_PCM_I16 ? sizeof(int16_t) :
+            state->format == AAUDIO_FORMAT_PCM_I24_PACKED ? 3 :
+            state->format == AAUDIO_FORMAT_PCM_I32 ? sizeof(int32_t) : sizeof(float);
+        std::memset(static_cast<uint8_t*>(audioData) +
+                        count * state->channels * bytesPerSample,
+                    0, remaining * state->channels * bytesPerSample);
         if (!state->eof.load(std::memory_order_acquire)) {
             state->underrunCount.fetch_add(1, std::memory_order_relaxed);
             state->callbackUnexpectedSilenceFrames.fetch_add(remaining, std::memory_order_relaxed);
@@ -196,7 +241,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
 #else
     (void)deviceId;
 #endif
-    AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
+    AAudioStreamBuilder_setFormat(builder, state->format);
     AAudioStreamBuilder_setSampleRate(builder, rate);
     AAudioStreamBuilder_setChannelCount(builder, channels);
     AAudioStreamBuilder_setSharingMode(builder, sharing);
@@ -226,7 +271,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
         g_stream = nullptr;
         return -10001; // FLOWERY_ERROR_EXCLUSIVE_MODE_UNAVAILABLE
     }
-    if (AAudioStream_getFormat(g_stream) != AAUDIO_FORMAT_PCM_FLOAT ||
+    if (AAudioStream_getFormat(g_stream) != state->format ||
         (rate > 0 && AAudioStream_getSampleRate(g_stream) != rate) ||
         AAudioStream_getChannelCount(g_stream) != channels) {
         g_lastOpenDiagnostics.failureStage = 4; // Negotiated PCM format mismatch.
@@ -243,8 +288,10 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
-    JNIEnv*, jobject, jint rate, jint channels, jfloat volume, jint deviceId, jboolean requireExclusive, jint capacityFrames) {
-    if (rate <= 0 || (channels != 1 && channels != 2) || capacityFrames < 2048) {
+    JNIEnv*, jobject, jint rate, jint channels, jfloat volume, jint deviceId, jboolean requireExclusive, jint outputFormat, jint capacityFrames) {
+    if (rate <= 0 || (channels != 1 && channels != 2) || capacityFrames < 2048 ||
+        (outputFormat != AAUDIO_FORMAT_PCM_FLOAT && outputFormat != AAUDIO_FORMAT_PCM_I16 &&
+         outputFormat != AAUDIO_FORMAT_PCM_I24_PACKED && outputFormat != AAUDIO_FORMAT_PCM_I32)) {
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
     uint64_t capacity = 1;
@@ -252,6 +299,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
 
     auto state = std::make_unique<OutputState>();
     state->channels = channels;
+    state->format = static_cast<aaudio_format_t>(outputFormat);
     state->requestedDeviceId = deviceId;
     state->capacityFrames = capacity;
     state->mask = capacity - 1;
@@ -630,12 +678,16 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputError(JNIEnv*, jobject) {
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(
-    JNIEnv*, jobject, jint requestedRate, jint channels, jint deviceId) {
-    if (requestedRate <= 0 || (channels != 1 && channels != 2)) return AAUDIO_ERROR_INVALID_FORMAT;
+    JNIEnv*, jobject, jint requestedRate, jint channels, jint deviceId, jint outputFormat) {
+    if (requestedRate <= 0 || (channels != 1 && channels != 2) ||
+        (outputFormat != AAUDIO_FORMAT_PCM_FLOAT && outputFormat != AAUDIO_FORMAT_PCM_I16 &&
+         outputFormat != AAUDIO_FORMAT_PCM_I24_PACKED && outputFormat != AAUDIO_FORMAT_PCM_I32))
+        return AAUDIO_ERROR_INVALID_FORMAT;
     std::lock_guard<std::mutex> lock(g_mutex);
     stopLocked();
     OutputState probe;
     probe.channels = channels;
+    probe.format = static_cast<aaudio_format_t>(outputFormat);
     auto tryRate = [&](int32_t rate) -> int32_t {
         auto result = openStream(&probe, rate, channels, AAUDIO_SHARING_MODE_EXCLUSIVE, deviceId);
         if (result != AAUDIO_OK) result = openStream(&probe, rate, channels, AAUDIO_SHARING_MODE_SHARED, deviceId);
