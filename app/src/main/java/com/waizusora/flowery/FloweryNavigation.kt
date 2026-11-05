@@ -85,6 +85,34 @@ fun FloweryNavigation(
         label = "folder-refresh-rotation"
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
+    var aaudioLogRecording by remember { mutableStateOf(false) }
+    var aaudioPreviousSample by remember { mutableStateOf<LongArray?>(null) }
+    var aaudioPendingLog by remember { mutableStateOf("") }
+    val aaudioLogLines = remember { mutableStateListOf<String>() }
+    val aaudioSaveLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri ->
+        if (uri != null) runCatching {
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(aaudioPendingLog) }
+        }
+    }
+    LaunchedEffect(aaudioLogRecording) {
+        while (aaudioLogRecording) {
+            val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
+            if (sample != null && sample.size >= 31) {
+                val previous = aaudioPreviousSample
+                aaudioLogLines.add(createAaudioLogLine(sample, previous))
+                if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
+                aaudioPreviousSample = sample
+            } else {
+                val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                    .format(java.util.Date())
+                aaudioLogLines.add("$wallTime diagnostics=unavailable")
+                if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
+            }
+            kotlinx.coroutines.delay(1000)
+        }
+    }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
@@ -395,7 +423,22 @@ fun FloweryNavigation(
                         }
                     }
                 }
-                Destination.SETTINGS -> SettingsContent(context, settingsPage, foreground, muted, theme,
+                Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
+                    aaudioLogRecording = aaudioLogRecording,
+                    aaudioLogCount = aaudioLogLines.size,
+                    onToggleAaudioLog = {
+                        if (aaudioLogRecording) aaudioLogRecording = false
+                        else { aaudioPreviousSample = null; aaudioLogRecording = true }
+                    },
+                    onSaveAaudioLog = {
+                        aaudioPendingLog = buildString {
+                            appendLine("# Flowery AAudio diagnostic log")
+                            appendLine("# Sampling interval: approximately 1 second")
+                            appendLine("# Samples: ${aaudioLogLines.size}")
+                            aaudioLogLines.forEach { appendLine(it) }
+                        }
+                        aaudioSaveLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
+                    },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO, SettingsPage.AUDIO_DIAGNOSTICS -> SettingsPage.AUDIO
@@ -511,8 +554,42 @@ private fun PermissionInfoRow(
     }
 }
 
+
+private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String {
+    val timestampValid = sample[27] == 0L && sample[29] > 0L
+    val deltaText = if (timestampValid && previous != null &&
+        previous[27] == 0L && previous[29] > 0L) {
+        val elapsedNs = sample[29] - previous[29]
+        val presentedFrames = sample[28] - previous[28]
+        val writtenFrames = sample[30] - previous[30]
+        val expectedFrames = if (elapsedNs > 0L && sample[23] > 0L)
+            elapsedNs.toDouble() * sample[23].toDouble() / 1_000_000_000.0 else Double.NaN
+        val driftFrames = if (expectedFrames.isFinite()) presentedFrames - expectedFrames else Double.NaN
+        "timestampDeltaNs=$elapsedNs presentedDeltaFrames=$presentedFrames " +
+            "expectedDeltaFrames=${"%.2f".format(Locale.ROOT, expectedFrames)} " +
+            "clockDriftFrames=${"%.2f".format(Locale.ROOT, driftFrames)} " +
+            "writtenDeltaFrames=$writtenFrames writtenMinusPresentedDelta=${writtenFrames - presentedFrames}"
+    } else "timestampDelta=unavailable"
+    val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+        .format(java.util.Date())
+    return "$wallTime sampleRate=${sample[7]} deviceId=${sample[8]} " +
+        "sharingMode=${if (sample[9] == 0L) "EXCLUSIVE" else if (sample[9] == 1L) "SHARED" else "UNKNOWN"} " +
+        "streamState=${sample[6]} timestampStatus=${sample[27]} " +
+        "hardwareFramePosition=${sample[28]} hardwareTimestampNs=${sample[29]} " +
+        "framesWritten=${sample[30]} ringUnderruns=${sample[0]} hardwareXruns=${sample[1]} " +
+        "queuedFrames=${sample[2]} bufferSizeFrames=${sample[4]} bufferCapacityFrames=${sample[26]} " +
+        "callbackCount=${sample[13]} callbackFramesRequested=${sample[14]} " +
+        "callbackFramesDelivered=${sample[15]} silenceFrames=${sample[16]} " +
+        "unexpectedSilenceFrames=${sample[18]} maxCallbackDurationNs=${sample[21]} " +
+        "maxCallbackIntervalNs=${sample[22]} maxCallbackLatenessNs=${sample[24]} " +
+        "lateCallbackIntervals=${sample[25]} exclusiveOpenResult=${sample[19]} " +
+        "sharedOpenResult=${sample[20]} $deltaText"
+}
+
 @Composable
-private fun SettingsContent(context: Context, page: SettingsPage, color: Color, muted: Color, theme: String,
+private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
+    aaudioLogRecording: Boolean, aaudioLogCount: Int,
+    onToggleAaudioLog: () -> Unit, onSaveAaudioLog: () -> Unit,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
     libraryEncoding: String, availableEncodings: List<String>, changeEncoding: (String) -> Unit,
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
@@ -551,95 +628,23 @@ private fun SettingsContent(context: Context, page: SettingsPage, color: Color, 
         }
         SettingsPage.AUDIO_DIAGNOSTICS -> {
             var metrics by remember(page) { mutableStateOf<LongArray?>(null) }
-            var logging by remember(page) { mutableStateOf(false) }
-            var previousSample by remember(page) { mutableStateOf<LongArray?>(null) }
-            var pendingLog by remember(page) { mutableStateOf("") }
-            val logLines = remember(page) { mutableStateListOf<String>() }
-            val saveLogLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.CreateDocument("text/plain")
-            ) { uri ->
-                if (uri != null) runCatching {
-                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(pendingLog) }
-                }
-            }
-            LaunchedEffect(logging) {
-                while (logging) {
-                    val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
-                    if (sample != null && sample.size >= 31) {
-                        metrics = sample
-                        val previous = previousSample
-                        val timestampValid = sample[27] == 0L && sample[29] > 0L
-                        val deltaText = if (timestampValid && previous != null &&
-                            previous[27] == 0L && previous[29] > 0L) {
-                            val elapsedNs = sample[29] - previous[29]
-                            val presentedFrames = sample[28] - previous[28]
-                            val writtenFrames = sample[30] - previous[30]
-                            val expectedFrames = if (elapsedNs > 0L && sample[23] > 0L)
-                                elapsedNs.toDouble() * sample[23].toDouble() / 1_000_000_000.0 else Double.NaN
-                            val driftFrames = if (expectedFrames.isFinite()) presentedFrames - expectedFrames else Double.NaN
-                            "timestampDeltaNs=$elapsedNs presentedDeltaFrames=$presentedFrames " +
-                                "expectedDeltaFrames=${"%.2f".format(Locale.ROOT, expectedFrames)} " +
-                                "clockDriftFrames=${"%.2f".format(Locale.ROOT, driftFrames)} " +
-                                "writtenDeltaFrames=$writtenFrames writtenMinusPresentedDelta=${writtenFrames - presentedFrames}"
-                        } else {
-                            "timestampDelta=unavailable"
-                        }
-                        val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
-                            .format(java.util.Date())
-                        val line = "$wallTime sampleRate=${sample[7]} deviceId=${sample[8]} " +
-                            "sharingMode=${if (sample[9] == 0L) "EXCLUSIVE" else if (sample[9] == 1L) "SHARED" else "UNKNOWN"} " +
-                            "streamState=${sample[6]} timestampStatus=${sample[27]} " +
-                            "hardwareFramePosition=${sample[28]} hardwareTimestampNs=${sample[29]} " +
-                            "framesWritten=${sample[30]} ringUnderruns=${sample[0]} hardwareXruns=${sample[1]} " +
-                            "queuedFrames=${sample[2]} bufferSizeFrames=${sample[4]} bufferCapacityFrames=${sample[26]} " +
-                            "callbackCount=${sample[13]} callbackFramesRequested=${sample[14]} " +
-                            "callbackFramesDelivered=${sample[15]} silenceFrames=${sample[16]} " +
-                            "unexpectedSilenceFrames=${sample[18]} maxCallbackDurationNs=${sample[21]} " +
-                            "maxCallbackIntervalNs=${sample[22]} maxCallbackLatenessNs=${sample[24]} " +
-                            "lateCallbackIntervals=${sample[25]} exclusiveOpenResult=${sample[19]} " +
-                            "sharedOpenResult=${sample[20]} $deltaText"
-                        if (logLines.size >= 7200) logLines.removeAt(0)
-                        logLines.add(line)
-                        previousSample = sample
-                    } else {
-                        val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
-                            .format(java.util.Date())
-                        logLines.add("$wallTime diagnostics=unavailable")
-                    }
-                    kotlinx.coroutines.delay(1000)
-                }
-            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    if (logging) {
-                        logging = false
-                    } else {
-                        previousSample = null
-                        logging = true
-                    }
-                }, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (logging) Color(0xFFB44758) else Color(0xFF7452A6))) {
-                    Icon(if (logging) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
-                    Text(if (logging) "  Stop Log" else "  Start Log")
+                Button(onClick = onToggleAaudioLog, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (aaudioLogRecording) Color(0xFFB44758) else Color(0xFF7452A6))) {
+                    Icon(if (aaudioLogRecording) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
+                    Text(if (aaudioLogRecording) "  Stop Log" else "  Start Log")
                 }
-                Button(onClick = {
-                    pendingLog = buildString {
-                        appendLine("# Flowery AAudio diagnostic log")
-                        appendLine("# Sampling interval: approximately 1 second")
-                        appendLine("# Samples: ${logLines.size}")
-                        logLines.forEach { appendLine(it) }
-                    }
-                    saveLogLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
-                }, enabled = !logging && logLines.isNotEmpty(), modifier = Modifier.weight(1f),
+                Button(onClick = onSaveAaudioLog, enabled = !aaudioLogRecording && aaudioLogCount > 0,
+                    modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Text("  Save Log")
                 }
             }
-            Text(if (logging) "Recording every second. Start this log, play the problem track, then stop and save the log."
-                else "Start Log before playback. Flowery samples AAudio automatically every second; stop logging before saving.",
+            Text(if (aaudioLogRecording) "Recording every second in the background. You can leave Settings, play the problem track, then return here to stop and save."
+                else "Start Log before playback. Sampling continues while you navigate to Now Playing; stop logging before saving.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
-            Text("Captured samples: ${logLines.size}", color = muted, style = MaterialTheme.typography.labelSmall)
+            Text("Captured samples: $aaudioLogCount", color = muted, style = MaterialTheme.typography.labelSmall)
             Button(onClick = { metrics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
