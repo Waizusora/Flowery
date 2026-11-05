@@ -82,7 +82,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val generation = playbackGeneration.incrementAndGet()
         worker = thread(name = "FloweryStreamPlayer") {
             runCatching {
-                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+                // Keep decoding below the real-time AAudio callback thread to reduce scheduler contention.
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
             }
             var descriptor: ParcelFileDescriptor? = null
             var handle = 0L
