@@ -82,18 +82,17 @@ object CuePlaylistParser {
             }
         }
 
-        val tracks = parsed.mapNotNull { itTrack ->
-            val start = itTrack.start ?: return@mapNotNull null
-            CueTrack(itTrack.number, itTrack.title ?: "Track ${itTrack.number}",
-                itTrack.performer ?: albumPerformer, itTrack.fileName, start, null)
-        }.mapIndexed { index, track ->
-            val next = tracksafe(parsed, index + 1)
-            track.copy(endFrame = next?.start)
+        val valid = parsed.mapNotNull { item ->
+            val start = item.start ?: return@mapNotNull null
+            CueTrack(item.number, item.title ?: "Track ${item.number}",
+                item.performer ?: albumPerformer, item.fileName, start, null)
+        }
+        val tracks = valid.mapIndexed { index, track ->
+            val next = valid.getOrNull(index + 1)?.takeIf { it.fileName == track.fileName }
+            track.copy(endFrame = next?.startFrame)
         }
         return CueSheet(albumTitle, albumPerformer, tracks)
     }
-
-    private fun tracksafe(items: List<Any>, index: Int): Nothing? = null
 
     fun parseM3u(text: String): List<PlaylistEntry> {
         var nextTitle: String? = null
