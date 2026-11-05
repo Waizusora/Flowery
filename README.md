@@ -17,7 +17,7 @@ The repository is under active development. Features described as limitations be
 | Compressed audio decoding | Symphonia 0.5.4 (Rust) |
 | Streaming sample-rate conversion | Rubato 5.0.1 (Rust) |
 | Equalizer | Native Rust 31-band ISO graphic EQ |
-| Audio output | C++ and Android AAudio |
+| Audio output | C++ and Android AAudio; native libusb UAC2 transport API |
 | PCM buffering | Fixed-capacity single-producer/single-consumer ring buffer |
 | Audio tags | Lofty 0.25.5 |
 | Folder access | Storage Access Framework (SAF) |
@@ -76,7 +76,7 @@ A filename being recognized by the scanner does not guarantee that its codec can
 
 The equalizer's center frequencies are 20 Hz, 25 Hz, 31.5 Hz, 40 Hz, 50 Hz, 63 Hz, 80 Hz, 100 Hz, 125 Hz, 160 Hz, 200 Hz, 250 Hz, 315 Hz, 400 Hz, 500 Hz, 630 Hz, 800 Hz, 1 kHz, 1.25 kHz, 1.6 kHz, 2 kHz, 2.5 kHz, 3.15 kHz, 4 kHz, 5 kHz, 6.3 kHz, 8 kHz, 10 kHz, 12.5 kHz, 16 kHz, and 20 kHz.
 
-**USB and bit-perfect limitations:** USB device selection currently relies on Android's reported output-device information and AAudio device binding where supported. The implementation does not provide exhaustive USB Audio Class descriptor enumeration, guaranteed exclusive USB transport, DAC hardware-volume integration, or hardware verification of bit-perfect output. AAudio shared mode may mix or resample audio. The current floating-point DSP path, active equalizer, software gain, or sample-rate conversion can alter sample data; bit-perfect playback is therefore not claimed.
+**USB and bit-perfect limitations:** The app inspects USB Audio Class descriptors and includes a native libusb UAC2 transport API for claiming an interface, setting/verifying the clock, and sending packed integer PCM through isochronous transfers. This low-level API is not yet connected to the current float-based playback decoder and PlaybackService. Hardware-verified bit-perfect playback, physical DAC volume control, and end-to-end device validation are not yet available. AAudio shared mode may mix or resample audio. The current floating-point DSP path, active equalizer, software gain, or sample-rate conversion can alter sample data; bit-perfect playback is therefore not claimed.
 
 ### Metadata and tag editing
 
@@ -119,7 +119,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 .
 ├── app/
 │   └── src/main/
-│       ├── cpp/                 # AAudio output and CMake configuration
+│       ├── cpp/                 # AAudio output, libusb UAC2 transport and CMake configuration
 │       ├── java/.../flowery/    # Android UI, service, SAF library, JNI bridge
 │       └── AndroidManifest.xml
 ├── native/
