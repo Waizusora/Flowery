@@ -15,6 +15,8 @@ import android.media.AudioManager
 import android.media.AudioDeviceInfo
 import android.media.AudioDeviceCallback
 import android.net.Uri
+import android.media.MediaMetadataRetriever
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.os.Handler
@@ -56,6 +58,8 @@ class PlaybackService : Service() {
         const val EXTRA_VALUE = "value"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_ARTIST = "media_artist"
+        const val EXTRA_CURRENT_TITLE = "current_title"
+        const val EXTRA_CURRENT_ARTIST = "current_artist"
         const val EXTRA_GAINS = "gains"
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
@@ -126,6 +130,13 @@ class PlaybackService : Service() {
                     .putExtra(EXTRA_POSITION, player.positionMs())
                     .putExtra(EXTRA_DURATION, player.durationMs())
                     .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
+                    .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
+                    .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
+                    .putExtra(EXTRA_CURRENT_CUE_PLAYLIST, queueCuePlaylists.getOrNull(queueIndex).orEmpty())
+                    .putExtra(EXTRA_CURRENT_PLAYLIST_NAME, queuePlaylistNames.getOrNull(queueIndex).orEmpty())
+                    .putExtra(EXTRA_CURRENT_PLAYLIST_ORDER, queuePlaylistOrders.getOrNull(queueIndex) ?: -1)
+                    .putExtra(EXTRA_CURRENT_TITLE, currentTitle)
+                    .putExtra(EXTRA_CURRENT_ARTIST, currentArtist)
                     .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
                     .putExtra(EXTRA_REPEAT_MODE, repeatMode))
             }
@@ -223,6 +234,7 @@ class PlaybackService : Service() {
                     .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
                     .build())
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+                publishState("Metadata updated")
             }
         }
         return START_NOT_STICKY
@@ -313,12 +325,26 @@ class PlaybackService : Service() {
         currentTitle = queueTitles.getOrNull(queueIndex)
             ?.takeIf { it.isNotBlank() }
             ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
-        currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() } ?: "Local music"
-        session.setMetadata(MediaMetadataCompat.Builder()
+        currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
+        val embeddedArtwork = runCatching {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(this, uri)
+                val embeddedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                val embeddedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                val virtualEntry = !queueCuePlaylists.getOrNull(queueIndex).isNullOrBlank() ||
+                    !queuePlaylistNames.getOrNull(queueIndex).isNullOrBlank()
+                if (!virtualEntry) currentTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: currentTitle
+                if (currentArtist == "Unknown artist") currentArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: currentArtist
+                retriever.embeddedPicture?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+            } finally { retriever.release() }
+        }.getOrNull()
+        val metadataBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
-            .build())
+        if (embeddedArtwork != null) metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, embeddedArtwork)
+        session.setMetadata(metadataBuilder.build())
         startForeground(NOTIFICATION_ID, buildNotification())
         io.execute {
             try {
@@ -446,6 +472,8 @@ class PlaybackService : Service() {
             .putExtra(EXTRA_CURRENT_CUE_PLAYLIST, queueCuePlaylists.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_CURRENT_PLAYLIST_NAME, queuePlaylistNames.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_CURRENT_PLAYLIST_ORDER, queuePlaylistOrders.getOrNull(queueIndex) ?: -1)
+            .putExtra(EXTRA_CURRENT_TITLE, currentTitle)
+            .putExtra(EXTRA_CURRENT_ARTIST, currentArtist)
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
             .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
             .putExtra(EXTRA_REPEAT_MODE, repeatMode)
