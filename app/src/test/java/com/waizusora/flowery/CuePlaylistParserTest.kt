@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import java.nio.charset.StandardCharsets
+import java.nio.charset.Charset
 
 class CuePlaylistParserTest {
     @Test fun parsesCueMetadataAndTrackBoundaries() {
