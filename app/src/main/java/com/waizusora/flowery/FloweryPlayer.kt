@@ -166,6 +166,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 var eofSignalled = false
                 var appliedEqualizerRevision = equalizerRevision
                 while (!stopped.get() && playbackGeneration.get() == generation) {
+                    val tuningResult = NativeAudio.nativeTuneOutputBuffer()
+                    check(tuningResult == 0) {
+                        "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
+                    }
                     pendingSeekMs.getAndSet(null)?.let { requested ->
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = framesAtMilliseconds(target, targetRate)
@@ -233,6 +237,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         reachedEnd = true
                     }
                     while (!stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                        val tuningResult = NativeAudio.nativeTuneOutputBuffer()
+                        check(tuningResult == 0) {
+                            "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
+                        }
                         check(NativeAudio.nativeIsOutputActive()) {
                             "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
                         }
