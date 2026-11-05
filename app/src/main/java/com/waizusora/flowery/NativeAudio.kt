@@ -17,6 +17,7 @@ object NativeAudio {
     external fun nativeGetStreamBufferedFrames(): Int
     external fun nativeGetOutputError(): Int
     external fun nativeGetOutputUnderrunCount(): Int
+    external fun nativeGetOutputDiagnostics(): LongArray
     external fun nativeTuneOutputBuffer(): Int
     external fun nativeDecode(encodedAudio: ByteArray): ByteArray
     external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int): Int
