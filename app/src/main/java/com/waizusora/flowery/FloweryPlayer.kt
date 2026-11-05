@@ -161,13 +161,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = ringCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
-                    targetRate, channels, softwareVolume, deviceId, outputRingCapacityFrames
+                    targetRate, channels, softwareVolume, deviceId,
+                    requireExclusive = deviceId != 0,
+                    capacityFrames = outputRingCapacityFrames
                 )
                 check(opened == 0) {
-                    if (opened == -10001) {
-                        "USB/system output requires AAudio EXCLUSIVE mode, but Android negotiated SHARED. Playback was stopped; no Shared fallback was used."
+                    if (opened == -10001 && deviceId != 0) {
+                        "USB DAC requires AAudio EXCLUSIVE mode, but Android negotiated SHARED. Playback was stopped; no Shared fallback was used."
+                    } else if (deviceId != 0) {
+                        "AAudio could not open the required USB DAC EXCLUSIVE output stream (error $opened)"
                     } else {
-                        "AAudio could not open the required EXCLUSIVE output stream (error $opened)"
+                        "AAudio could not open the Android system SHARED output stream (error $opened)"
                     }
                 }
                 outputSampleRate = targetRate
