@@ -170,7 +170,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val segmentFrameLimit = segmentLengthMs?.let { framesAtMilliseconds(it, targetRate) }
 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
-                onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
+                val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
+                val sharingName = when (outputInfo.getOrNull(9)?.toInt()) {
+                    0 -> "EXCLUSIVE"
+                    1 -> "SHARED"
+                    else -> "unknown sharing mode"
+                }
+                val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
+                onState("Playing · AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
                 // Keep at least 1.5 seconds of decoded PCM queued to tolerate scheduler and decoder delays.
                 val lowWatermarkFrames = (targetRate.toLong() * 3L / 2L)
