@@ -93,7 +93,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     return@thread
                 }
 
-                val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
+                val extension = resolveAudioExtension(uri)
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
@@ -249,6 +249,36 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (playbackGeneration.get() == generation) activeUsbDeviceKey = null
                 descriptor?.close()
             }
+        }
+    }
+
+    private fun resolveAudioExtension(uri: Uri): String {
+        val displayName = runCatching {
+            context.contentResolver.query(
+                uri,
+                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull().orEmpty()
+        val nameExtension = displayName.substringAfterLast('.', "").lowercase()
+        if (nameExtension.isNotBlank()) return nameExtension
+
+        val uriExtension = Uri.decode(uri.lastPathSegment.orEmpty())
+            .substringAfterLast('.', "").lowercase()
+        if (uriExtension.isNotBlank()) return uriExtension
+
+        return when (context.contentResolver.getType(uri)?.lowercase()) {
+            "audio/mp4", "video/mp4", "audio/x-m4a" -> "m4a"
+            "audio/aac" -> "aac"
+            "audio/flac" -> "flac"
+            "audio/wav", "audio/x-wav" -> "wav"
+            "audio/ogg", "application/ogg" -> "ogg"
+            "audio/mpeg" -> "mp3"
+            else -> ""
         }
     }
 
