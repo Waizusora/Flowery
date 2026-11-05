@@ -75,8 +75,7 @@ fun FloweryNavigation(
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
                 lyricsVisible = !lyricsVisible
             }
-            val usbExclusiveActive = status.contains("USB exclusive") ||
-                status.contains("USB exclusive bit-perfect")
+            val usbExclusiveActive = status.contains("USB exclusive")
             IconButton(onClick = onUsbDacClick) {
                 Icon(
                     Icons.Default.Usb,
