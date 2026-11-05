@@ -252,9 +252,14 @@ fun FloweryNavigation(
                         IconButton(onClick = onRepeat) { Icon(if (repeatMode == 2) Icons.Default.RepeatOne else Icons.Default.Repeat,
                             "Repeat", tint = if (repeatMode == 0) foreground else Color(0xFF1E90FF)) }
                     }
-                    if (durationMs > 0) {
-                        Slider(value = positionMs.coerceIn(0L, durationMs).toFloat(), onValueChange = { onSeek(it.toLong()) },
-                            valueRange = 0f..durationMs.toFloat())
+                    if (selectedTrack != null) {
+                        val seekDurationMs = durationMs.coerceAtLeast(1L)
+                        Slider(
+                            value = positionMs.coerceIn(0L, seekDurationMs).toFloat(),
+                            onValueChange = { if (durationMs > 0L) onSeek(it.toLong()) },
+                            valueRange = 0f..seekDurationMs.toFloat(),
+                            enabled = durationMs > 0L
+                        )
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
