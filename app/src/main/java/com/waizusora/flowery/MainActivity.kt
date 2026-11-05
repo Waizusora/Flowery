@@ -339,7 +339,12 @@ class MainActivity : ComponentActivity() {
 
     private fun inspectUsbDevice(device: android.hardware.usb.UsbDevice) {
         io.execute {
-            val report = usbDacController.inspectDescriptors(device)
+            val report = usbDacController.inspectDescriptors(device) +
+                "\n\nUSB permission status: granted. Permission authorizes USB device access; it does not select an audio mode." +
+                "\n\nPlayback mode by source:" +
+                "\n• Supported PCM WAV on the configured KT Micro DAC: Flowery can attempt direct USB exclusive bit-perfect. The mode becomes active only after the USB interface and DAC clock negotiation succeed." +
+                "\n• FLAC, ALAC, MP3 and other decoded formats: Symphonia/DSP output through Android AAudio. Check Settings → Audio → AAudio Diagnostics for the actual EXCLUSIVE or SHARED mode and device ID." +
+                "\n• If AAudio cannot open EXCLUSIVE, Flowery retries with SHARED mode."
             runOnUiThread { usbDacMessage = report }
         }
     }
