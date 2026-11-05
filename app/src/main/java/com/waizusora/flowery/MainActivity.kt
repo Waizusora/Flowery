@@ -105,6 +105,7 @@ class MainActivity : ComponentActivity() {
     private val tracks = mutableStateListOf<AudioTrackItem>()
     private var status by mutableStateOf("Choose a music folder to begin")
     private var isPlaying by mutableStateOf(false)
+    private var hasPlaybackSession by mutableStateOf(false)
     private var shuffleEnabled by mutableStateOf(false)
     private var repeatMode by mutableStateOf(0)
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
@@ -152,6 +153,8 @@ class MainActivity : ComponentActivity() {
             if (intent.hasExtra(PlaybackService.EXTRA_IS_PLAYING)) {
                 isPlaying = intent.getBooleanExtra(PlaybackService.EXTRA_IS_PLAYING, false)
             }
+            val reportedStatus = intent.getStringExtra(PlaybackService.EXTRA_STATUS)
+            if (reportedStatus == "Stopped" || reportedStatus == "Playback finished") hasPlaybackSession = false
             if (intent.hasExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED)) {
                 shuffleEnabled = intent.getBooleanExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED, false)
             }
@@ -170,6 +173,10 @@ class MainActivity : ComponentActivity() {
                 it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart &&
                     it.cuePlaylist == currentCuePlaylist && it.playlistName == currentPlaylistName &&
                     it.playlistOrder == currentPlaylistOrder
+            }
+            if (nextTrack != null) {
+                hasPlaybackSession = true
+                persistLastPlayedTrack(nextTrack)
             }
             if (nextTrack != null && (selectedTrack?.uri != nextTrack.uri || selectedTrack?.cueStartMs != nextTrack.cueStartMs ||
                     selectedTrack?.cuePlaylist != nextTrack.cuePlaylist || selectedTrack?.playlistName != nextTrack.playlistName ||
@@ -202,6 +209,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         restoreFolders()
         restoreScannedTracks()
+        restoreLastPlayedTrack()
         volume = OutputVolumeController(this).systemVolumeFraction()
         setContent {
             FloweryNavigation(
@@ -238,8 +246,15 @@ class MainActivity : ComponentActivity() {
                 onInspect = ::inspectTrack,
                 onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
                 onTogglePlayback = {
-                    if (isPlaying) sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
-                    else sendPlaybackCommand(PlaybackService.ACTION_RESUME)
+                    if (isPlaying) {
+                        sendPlaybackCommand(PlaybackService.ACTION_PAUSE)
+                    } else if (!hasPlaybackSession) {
+                        val lastTrack = selectedTrack ?: findLastPlayedTrack()
+                        if (lastTrack != null) playTrack(lastTrack, tracks.toList())
+                        else sendPlaybackCommand(PlaybackService.ACTION_RESUME)
+                    } else {
+                        sendPlaybackCommand(PlaybackService.ACTION_RESUME)
+                    }
                 },
                 onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
                 onPrevious = { sendPlaybackCommand(PlaybackService.ACTION_PREVIOUS) },
@@ -453,6 +468,51 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun persistLastPlayedTrack(track: AudioTrackItem) {
+        getSharedPreferences("library", MODE_PRIVATE).edit()
+            .putString("last_played_uri", track.uri.toString())
+            .putLong("last_played_cue_start_ms", track.cueStartMs ?: 0L)
+            .putString("last_played_cue_playlist", track.cuePlaylist.orEmpty())
+            .putString("last_played_playlist_name", track.playlistName.orEmpty())
+            .putInt("last_played_playlist_order", track.playlistOrder ?: -1)
+            .apply()
+    }
+
+    private fun findLastPlayedTrack(): AudioTrackItem? {
+        val preferences = getSharedPreferences("library", MODE_PRIVATE)
+        val uri = preferences.getString("last_played_uri", null) ?: return null
+        val cueStart = preferences.getLong("last_played_cue_start_ms", 0L)
+        val cuePlaylist = preferences.getString("last_played_cue_playlist", "").orEmpty().ifBlank { null }
+        val playlistName = preferences.getString("last_played_playlist_name", "").orEmpty().ifBlank { null }
+        val playlistOrder = preferences.getInt("last_played_playlist_order", -1).takeIf { it >= 0 }
+        return tracks.firstOrNull { track ->
+            track.uri.toString() == uri &&
+                (track.cueStartMs ?: 0L) == cueStart &&
+                track.cuePlaylist == cuePlaylist &&
+                track.playlistName == playlistName &&
+                track.playlistOrder == playlistOrder
+        } ?: tracks.firstOrNull { it.uri.toString() == uri && (it.cueStartMs ?: 0L) == cueStart }
+    }
+
+    private fun restoreLastPlayedTrack() {
+        val track = findLastPlayedTrack() ?: return
+        selectedTrack = track
+        io.execute {
+            val tag = runCatching { readTag(track) }.getOrNull()
+            val parsedLyrics = track.sidecarLyricsUri?.let { lyricUri ->
+                runCatching {
+                    contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) }
+                }.getOrNull()
+            }.orEmpty()
+            runOnUiThread {
+                if (selectedTrack == track && !hasPlaybackSession) {
+                    currentTag = tag
+                    lyrics = parsedLyrics
+                    status = "Ready to resume · ${track.title}"
+                }
+            }
+        }
+    }
     private fun extensionOf(track: AudioTrackItem): String =
         Uri.decode(track.uri.lastPathSegment.orEmpty()).substringAfterLast('.', "")
 
@@ -494,6 +554,8 @@ class MainActivity : ComponentActivity() {
             else -> folderTracks.filter { it.cuePlaylist == null && it.playlistName == null }
         }
         selectedTrack = track
+        persistLastPlayedTrack(track)
+        hasPlaybackSession = false
         currentTag = null
         lyrics = emptyList()
         status = "Reading tags and preparing ${track.title}…"
