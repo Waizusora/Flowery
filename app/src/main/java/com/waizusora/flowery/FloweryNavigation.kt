@@ -10,6 +10,9 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -64,6 +67,21 @@ fun FloweryNavigation(
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
     var lyricsVisible by remember { mutableStateOf(false) }
+    val lyricListState = rememberLazyListState()
+    val activeLyricIndex = remember(lyrics, positionMs) { lyrics.indexOfLast { it.timeMs <= positionMs } }
+    LaunchedEffect(lyricsVisible, activeLyricIndex) {
+        if (lyricsVisible && activeLyricIndex >= 0) {
+            lyricListState.animateScrollToItem(activeLyricIndex + 1)
+        }
+    }
+    val libraryScanActive = status.startsWith("Scanning selected folders") || status.startsWith("Refreshing ")
+    val refreshTransition = rememberInfiniteTransition(label = "folder-refresh")
+    val refreshRotation by refreshTransition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
+        label = "folder-refresh-rotation"
+    )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
@@ -121,14 +139,42 @@ fun FloweryNavigation(
                         colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .08f))) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             if (lyricsVisible) {
-                                Column(Modifier.fillMaxSize().clickable { lyricsVisible = false }
-                                    .verticalScroll(rememberScrollState()).padding(18.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally) {
                                     Text("LYRICS · LRC", color = foreground, fontWeight = FontWeight.Bold)
-                                    if (lyrics.isEmpty()) Text("No synchronized LRC lyrics found.", color = muted)
-                                    else lyrics.take(14).forEach { Text(it.text, color = foreground, textAlign = TextAlign.Center,
-                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) }
-                                    Text("Tap to show album artwork", color = muted, style = MaterialTheme.typography.labelSmall)
+                                    if (lyrics.isEmpty()) {
+                                        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                            Text("No synchronized LRC lyrics found.", color = muted, textAlign = TextAlign.Center)
+                                        }
+                                    } else {
+                                        LazyColumn(
+                                            state = lyricListState,
+                                            modifier = Modifier.weight(1f).fillMaxWidth(),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            contentPadding = PaddingValues(vertical = 18.dp)
+                                        ) {
+                                            item(key = "lyrics-spacer-top") { Spacer(Modifier.height(24.dp)) }
+                                            itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
+                                                val active = index == activeLyricIndex
+                                                Text(
+                                                    line.text.ifBlank { "♪" },
+                                                    color = if (active) Color(0xFFD66B9A) else muted,
+                                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                                    fontSize = if (active) 21.sp else 16.sp,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.fillMaxWidth()
+                                                        .padding(horizontal = 8.dp, vertical = 9.dp)
+                                                        .then(if (active) Modifier.background(
+                                                            Color(0xFFD66B9A).copy(alpha = .13f), RoundedCornerShape(12.dp)
+                                                        ) else Modifier)
+                                                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                )
+                                            }
+                                            item(key = "lyrics-spacer-bottom") { Spacer(Modifier.height(32.dp)) }
+                                        }
+                                    }
+                                    Text("Synced lyrics · tap to return to artwork", color = muted,
+                                        style = MaterialTheme.typography.labelSmall)
                                 }
                             } else {
                                 val art = remember(currentTag?.pictureBase64) {
@@ -214,8 +260,9 @@ fun FloweryNavigation(
                             }
                             Heading("Folders", foreground)
                             Spacer(Modifier.weight(1f))
-                            IconButton(onClick = onScan) {
-                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A))
+                            IconButton(onClick = onScan, enabled = !libraryScanActive) {
+                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A),
+                                    modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
                         Text("SCANNED FOLDERS", color = muted, style = MaterialTheme.typography.labelSmall,
@@ -292,8 +339,9 @@ fun FloweryNavigation(
                                 Heading(selectedFolder!!.name, foreground)
                                 Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
                             }
-                            IconButton(onClick = { onRefreshFolder(selectedFolder!!) }) {
-                                Icon(Icons.Default.Refresh, "Refresh folder", tint = Color(0xFFD66B9A))
+                            IconButton(onClick = { onRefreshFolder(selectedFolder!!) }, enabled = !libraryScanActive) {
+                                Icon(Icons.Default.Refresh, "Refresh folder", tint = Color(0xFFD66B9A),
+                                    modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
                         val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
