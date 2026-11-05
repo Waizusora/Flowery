@@ -195,6 +195,14 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     AAudioStreamBuilder_delete(builder);
     if (result != AAUDIO_OK) return result;
 
+    // AAudio may accept the builder request but negotiate a different sharing mode.
+    // Strict mode requires the actual stream mode to match the requested mode.
+    const auto actualSharing = AAudioStream_getSharingMode(g_stream);
+    if (actualSharing != sharing) {
+        AAudioStream_close(g_stream);
+        g_stream = nullptr;
+        return -10001; // FLOWERY_ERROR_EXCLUSIVE_MODE_UNAVAILABLE
+    }
     if (AAudioStream_getFormat(g_stream) != AAUDIO_FORMAT_PCM_FLOAT ||
         (rate > 0 && AAudioStream_getSampleRate(g_stream) != rate) ||
         AAudioStream_getChannelCount(g_stream) != channels) {
@@ -203,7 +211,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
     state->sampleRate = AAudioStream_getSampleRate(g_stream);
-    state->successfulOpenSharingMode = static_cast<int32_t>(sharing);
+    state->successfulOpenSharingMode = static_cast<int32_t>(actualSharing);
     return AAUDIO_OK;
 }
 } // namespace
@@ -228,14 +236,12 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
     std::lock_guard<std::mutex> lock(g_mutex);
     stopLocked();
     g_output = std::move(state);
-    auto result = openStream(g_output.get(), rate, channels, AAUDIO_SHARING_MODE_EXCLUSIVE, deviceId);
+    // Strict Exclusive policy: never retry with SHARED. If Android downgrades
+    // the requested mode, openStream rejects and closes that stream.
+    const auto result = openStream(
+        g_output.get(), rate, channels, AAUDIO_SHARING_MODE_EXCLUSIVE, deviceId);
     g_output->exclusiveOpenResult = result;
-    if (result != AAUDIO_OK) {
-        result = openStream(g_output.get(), rate, channels, AAUDIO_SHARING_MODE_SHARED, deviceId);
-        g_output->sharedOpenResult = result;
-    } else {
-        g_output->sharedOpenResult = AAUDIO_ERROR_INVALID_STATE;
-    }
+    g_output->sharedOpenResult = AAUDIO_ERROR_INVALID_STATE; // Shared fallback is intentionally disabled.
     if (result != AAUDIO_OK) {
         stopLocked();
         return result;
