@@ -690,7 +690,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputError(JNIEnv*, jobject) {
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(
-    JNIEnv*, jobject, jint requestedRate, jint channels, jint deviceId, jint outputFormat) {
+    JNIEnv*, jobject, jint requestedRate, jint channels, jint deviceId, jint outputFormat, jboolean requireExactRate) {
     if (requestedRate <= 0 || (channels != 1 && channels != 2) ||
         (outputFormat != AAUDIO_FORMAT_PCM_FLOAT && outputFormat != AAUDIO_FORMAT_PCM_I16 &&
          outputFormat != AAUDIO_FORMAT_PCM_I24_PACKED && outputFormat != AAUDIO_FORMAT_PCM_I32))
@@ -710,6 +710,6 @@ Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(
         return actual;
     };
     int32_t selected = tryRate(requestedRate);
-    if (selected == 0) selected = tryRate(0);
+    if (selected == 0 && requireExactRate != JNI_TRUE) selected = tryRate(0);
     return selected > 0 ? selected : AAUDIO_ERROR_UNAVAILABLE;
 }
