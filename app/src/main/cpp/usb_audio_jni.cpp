@@ -239,134 +239,214 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         return -1;
     }
 
-    // Android's USBFS backend has a practical per-URB isochronous packet limit.
-    // Keep each submitted transfer bounded and drain the queued PCM in batches.
+    // Android USBFS limits practical isochronous URB sizes. Submit multiple
+    // bounded URBs together so the host controller can schedule them ahead.
     constexpr size_t kMaxIsoPacketsPerTransfer = 128;
-    while (true) {
-        const size_t available_frames =
-            session->pending_pcm.size() / static_cast<size_t>(bytes_per_frame);
-        uint64_t next_phase = session->frame_phase;
-        size_t consumed_frames = 0;
-        std::vector<unsigned int> packet_frames;
-        packet_frames.reserve(kMaxIsoPacketsPerTransfer);
+    struct PendingTransfer {
+        std::vector<unsigned char> buffer;
+        libusb_transfer* transfer = nullptr;
+        TransferCompletion completion;
+        bool submitted = false;
+        size_t batch_index = 0;
+    };
 
-        while (packet_frames.size() < kMaxIsoPacketsPerTransfer) {
-            const uint64_t accumulated =
-                next_phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
-            const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
-            if (frames == 0 || consumed_frames + frames > available_frames) break;
+    const size_t available_frames =
+        session->pending_pcm.size() / static_cast<size_t>(bytes_per_frame);
+    uint64_t next_phase = session->frame_phase;
+    size_t consumed_frames = 0;
+    std::vector<PendingTransfer> transfers;
+    std::vector<unsigned int> packet_frames;
+    packet_frames.reserve(kMaxIsoPacketsPerTransfer);
 
-            const unsigned int packet_bytes = frames * static_cast<unsigned int>(bytes_per_frame);
-            if (packet_bytes > session->max_packet_bytes) {
-                jclass exception = env->FindClass("java/lang/IllegalArgumentException");
-                if (exception != nullptr) env->ThrowNew(exception, "Calculated isochronous packet exceeds the endpoint maximum packet size");
-                return -1;
-            }
-
-            packet_frames.push_back(frames);
-            consumed_frames += frames;
-            next_phase = accumulated % 1000000ULL;
-        }
-
-        if (packet_frames.empty()) break;
+    auto append_transfer = [&](size_t batch_frames) -> bool {
+        if (batch_frames == 0 || packet_frames.empty()) return true;
+        PendingTransfer pending;
+        pending.batch_index = transfers.size();
+        const size_t start_byte = consumed_frames * static_cast<size_t>(bytes_per_frame);
+        const size_t transfer_bytes = batch_frames * static_cast<size_t>(bytes_per_frame);
+        pending.buffer.assign(
+            session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(start_byte),
+            session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(start_byte + transfer_bytes));
 
         const int packet_count = static_cast<int>(packet_frames.size());
-        const int transfer_bytes = static_cast<int>(consumed_frames * bytes_per_frame);
-        std::vector<unsigned char> transfer_buffer(
-            session->pending_pcm.begin(),
-            session->pending_pcm.begin() + transfer_bytes);
-
-        auto* transfer = libusb_alloc_transfer(packet_count);
-        if (transfer == nullptr) return LIBUSB_ERROR_NO_MEM;
-
-        TransferCompletion completion;
+        pending.transfer = libusb_alloc_transfer(packet_count);
+        if (pending.transfer == nullptr) return false;
         libusb_fill_iso_transfer(
-            transfer, session->handle, session->endpoint, transfer_buffer.data(), transfer_bytes,
-            packet_count, on_transfer_complete, &completion, 3000);
-
+            pending.transfer, session->handle, session->endpoint,
+            pending.buffer.data(), static_cast<int>(transfer_bytes),
+            packet_count, on_transfer_complete, &pending.completion, 3000);
         for (int i = 0; i < packet_count; ++i) {
-            transfer->iso_packet_desc[i].length =
+            pending.transfer->iso_packet_desc[i].length =
                 packet_frames[static_cast<size_t>(i)] * static_cast<unsigned int>(bytes_per_frame);
         }
+        transfers.push_back(std::move(pending));
+        packet_frames.clear();
+        return true;
+    };
 
-        int result = libusb_submit_transfer(transfer);
-        const bool submitted = result == LIBUSB_SUCCESS;
-        if (submitted) {
-            while (!completion.completed) {
-                timeval timeout{0, 50000};
-                result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
-                if (result != LIBUSB_SUCCESS) break;
+    size_t batch_frames = 0;
+    while (true) {
+        const uint64_t accumulated =
+            next_phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
+        const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
+        if (frames == 0 || consumed_frames + frames > available_frames) break;
+
+        const unsigned int packet_bytes = frames * static_cast<unsigned int>(bytes_per_frame);
+        if (packet_bytes > session->max_packet_bytes) {
+            for (auto& pending : transfers) {
+                if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
             }
-            if (result == LIBUSB_SUCCESS) {
-                if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
-                    result = LIBUSB_ERROR_IO;
-                } else {
-                    for (int i = 0; i < packet_count; ++i) {
-                        if (transfer->iso_packet_desc[i].status != LIBUSB_TRANSFER_COMPLETED ||
-                            transfer->iso_packet_desc[i].actual_length != transfer->iso_packet_desc[i].length) {
-                            result = LIBUSB_ERROR_IO;
-                            break;
-                        }
-                    }
-                }
-            }
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            if (exception != nullptr) env->ThrowNew(exception, "Calculated isochronous packet exceeds the endpoint maximum packet size");
+            return -1;
         }
 
-        if (submitted && result != LIBUSB_SUCCESS && !completion.completed) {
-            const int cancel_result = libusb_cancel_transfer(transfer);
-            if (cancel_result == LIBUSB_SUCCESS || cancel_result == LIBUSB_ERROR_NOT_FOUND) {
-                while (!completion.completed) {
-                    timeval timeout{0, 50000};
-                    libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
-                }
-            } else {
-                result = cancel_result;
-            }
-        }
+        packet_frames.push_back(frames);
+        batch_frames += frames;
+        consumed_frames += frames;
+        next_phase = accumulated % 1000000ULL;
 
-        if (result != LIBUSB_SUCCESS) {
-            int failed_packet = -1;
-            unsigned int packet_status = 0;
-            unsigned int actual_length = 0;
-            unsigned int requested_length = 0;
-            for (int i = 0; i < packet_count; ++i) {
-                const auto& packet = transfer->iso_packet_desc[i];
-                if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
-                    packet.actual_length != packet.length) {
-                    failed_packet = i;
-                    packet_status = static_cast<unsigned int>(packet.status);
-                    actual_length = packet.actual_length;
-                    requested_length = packet.length;
+        if (packet_frames.size() == kMaxIsoPacketsPerTransfer) {
+            if (!append_transfer(batch_frames)) {
+                for (auto& pending : transfers) {
+                    if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
+                }
+                jclass exception = env->FindClass("java/lang/OutOfMemoryError");
+                if (exception != nullptr) env->ThrowNew(exception, "Unable to allocate USB isochronous transfer");
+                return -1;
+            }
+            batch_frames = 0;
+        }
+    }
+
+    if (!append_transfer(batch_frames)) {
+        for (auto& pending : transfers) {
+            if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
+        }
+        jclass exception = env->FindClass("java/lang/OutOfMemoryError");
+        if (exception != nullptr) env->ThrowNew(exception, "Unable to allocate USB isochronous transfer");
+        return -1;
+    }
+
+    if (transfers.empty()) return frame_count;
+
+    int result = LIBUSB_SUCCESS;
+    for (auto& pending : transfers) {
+        result = libusb_submit_transfer(pending.transfer);
+        if (result != LIBUSB_SUCCESS) break;
+        pending.submitted = true;
+    }
+
+    if (result == LIBUSB_SUCCESS) {
+        while (true) {
+            bool all_completed = true;
+            for (const auto& pending : transfers) {
+                if (pending.submitted && !pending.completion.completed) {
+                    all_completed = false;
                     break;
                 }
             }
-            const unsigned int transfer_status = static_cast<unsigned int>(transfer->status);
-            libusb_free_transfer(transfer);
+            if (all_completed) break;
 
-            char message[512];
-            std::snprintf(
-                message, sizeof(message),
-                "USB isochronous PCM transfer failed: %s (%d); transfer_status=%u; "
-                "packets=%d; failed_packet=%d; packet_status=%u; actual_length=%u; "
-                "requested_length=%u; interval_us=%u; sample_rate=%d; endpoint=0x%02X",
-                libusb_error_name(result), result, transfer_status, packet_count,
-                failed_packet, packet_status, actual_length, requested_length,
-                session->interval_us, session->sample_rate, session->endpoint);
-            jclass exception = env->FindClass("java/lang/IllegalStateException");
-            if (exception != nullptr) env->ThrowNew(exception, message);
-            return result;
+            timeval timeout{0, 5000};
+            result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
+            if (result != LIBUSB_SUCCESS) break;
         }
-
-        libusb_free_transfer(transfer);
-        session->pending_pcm.erase(
-            session->pending_pcm.begin(),
-            session->pending_pcm.begin() + transfer_bytes);
-        session->frame_phase = next_phase;
     }
 
+    bool transfer_failed = result != LIBUSB_SUCCESS;
+    size_t failed_batch = 0;
+    int failed_packet = -1;
+    unsigned int packet_status = 0;
+    unsigned int actual_length = 0;
+    unsigned int requested_length = 0;
+    unsigned int transfer_status = 0;
+
+    if (result == LIBUSB_SUCCESS) {
+        for (size_t batch = 0; batch < transfers.size(); ++batch) {
+            const auto& pending = transfers[batch];
+            const auto* transfer = pending.transfer;
+            if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
+                transfer_failed = true;
+                failed_batch = batch;
+                transfer_status = static_cast<unsigned int>(transfer->status);
+                break;
+            }
+            for (int packet_index = 0; packet_index < transfer->num_iso_packets; ++packet_index) {
+                const auto& packet = transfer->iso_packet_desc[packet_index];
+                if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
+                    packet.actual_length != packet.length) {
+                    transfer_failed = true;
+                    failed_batch = batch;
+                    failed_packet = packet_index;
+                    packet_status = static_cast<unsigned int>(packet.status);
+                    actual_length = packet.actual_length;
+                    requested_length = packet.length;
+                    transfer_status = static_cast<unsigned int>(transfer->status);
+                    break;
+                }
+            }
+            if (transfer_failed) break;
+        }
+    }
+
+    if (transfer_failed) {
+        for (auto& pending : transfers) {
+            if (pending.submitted && !pending.completion.completed) {
+                libusb_cancel_transfer(pending.transfer);
+            }
+        }
+        bool outstanding = true;
+        while (outstanding) {
+            outstanding = false;
+            for (const auto& pending : transfers) {
+                if (pending.submitted && !pending.completion.completed) {
+                    outstanding = true;
+                    break;
+                }
+            }
+            if (outstanding) {
+                timeval timeout{0, 50000};
+                libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
+            }
+        }
+
+        if (result == LIBUSB_SUCCESS) result = LIBUSB_ERROR_IO;
+        if (failed_batch < transfers.size() && failed_packet < 0) {
+            transfer_status = static_cast<unsigned int>(transfers[failed_batch].transfer->status);
+        }
+        for (auto& pending : transfers) {
+            if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
+        }
+
+        char message[640];
+        std::snprintf(
+            message, sizeof(message),
+            "USB isochronous PCM transfer failed: %s (%d); transfer_status=%u; "
+            "batch=%zu; batches=%zu; failed_packet=%d; packet_status=%u; "
+            "actual_length=%u; requested_length=%u; interval_us=%u; "
+            "sample_rate=%d; endpoint=0x%02X",
+            libusb_error_name(result), result, transfer_status, failed_batch,
+            transfers.size(), failed_packet, packet_status, actual_length,
+            requested_length, session->interval_us, session->sample_rate,
+            session->endpoint);
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, message);
+        return result;
+    }
+
+    for (auto& pending : transfers) {
+        if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
+    }
+
+    const size_t consumed_bytes =
+        consumed_frames * static_cast<size_t>(bytes_per_frame);
+    session->pending_pcm.erase(
+        session->pending_pcm.begin(),
+        session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(consumed_bytes));
+    session->frame_phase = next_phase;
     return frame_count;
 }
-
 extern "C" JNIEXPORT void JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeClose(
     JNIEnv*, jobject, jlong handle) {
