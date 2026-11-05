@@ -91,6 +91,7 @@ struct StreamDecoder {
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
     discard_output_frames: u64,
+    consecutive_decode_errors: u32,
 }
 
 impl StreamDecoder {
@@ -119,7 +120,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0,
         })
     }
 
@@ -147,6 +148,7 @@ impl StreamDecoder {
         self.input_pending.clear();
         self.output_pending.clear();
         self.eof = false;
+        self.consecutive_decode_errors = 0;
         let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
         let actual_ms = actual_time
             .map(|t| (t.seconds as f64 + t.frac) * 1000.0)
@@ -194,6 +196,7 @@ impl StreamDecoder {
             if packet.track_id() != self.track_id { continue; }
             match self.decoder.decode(&packet) {
                 Ok(decoded) => {
+                    self.consecutive_decode_errors = 0;
                     let spec = *decoded.spec();
                     if spec.channels.count() != self.channels {
                         return Err("The audio stream changed channel layout mid-track".into());
@@ -211,7 +214,16 @@ impl StreamDecoder {
                     self.input_pending.extend_from_slice(&samples);
                     return Ok(true);
                 }
-                Err(Error::DecodeError(_)) => continue,
+                Err(Error::DecodeError(reason)) => {
+                    self.consecutive_decode_errors = self.consecutive_decode_errors.saturating_add(1);
+                    if self.consecutive_decode_errors >= 8 {
+                        return Err(format!(
+                            "Audio decoder rejected 8 consecutive packets (codec {:?}); last error: {reason}",
+                            self.decoder.codec_params().codec
+                        ));
+                    }
+                    continue;
+                }
                 Err(e) => return Err(format!("Audio packet decode failed: {e}")),
             }
         }
