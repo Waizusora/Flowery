@@ -60,7 +60,7 @@ jlong throw_usb_error(JNIEnv* env, const char* operation, int code) {
     return 0;
 }
 
-uint32_t service_interval_us(libusb_speed speed, uint8_t b_interval) {
+uint32_t service_interval_us(int speed, uint8_t b_interval) {
     const uint8_t exponent = static_cast<uint8_t>(std::clamp<int>(b_interval, 1, 16) - 1);
     if (speed == LIBUSB_SPEED_HIGH || speed == LIBUSB_SPEED_SUPER ||
         speed == LIBUSB_SPEED_SUPER_PLUS) {
