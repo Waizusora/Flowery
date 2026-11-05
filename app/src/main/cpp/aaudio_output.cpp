@@ -517,6 +517,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(JNIEnv* env, jobject) {
+    std::lock_guard<std::mutex> lock(g_mutex);
     const jlong values[10] = {
         g_lastOpenDiagnostics.requestedDeviceId,
         g_lastOpenDiagnostics.requestedSharingMode,
