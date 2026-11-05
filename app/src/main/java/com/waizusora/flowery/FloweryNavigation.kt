@@ -326,7 +326,7 @@ fun FloweryNavigation(
                     availableEncodings = availableEncodings,
                     changeEncoding = { libraryEncoding = it; prefs.edit().putString("library_text_encoding", it).apply() },
                     battery = onBatterySettings, update = onCheckUpdate,
-                    openFolders = { destination = Destination.FOLDERS; selectedFolder = null },
+                    openFolders = { destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false },
                     addFolder = onAddFolder, removeFolder = onRemoveFolder,
                     folders = folders, tracks = tracks, scan = onScan,
                     playTrack = onPlay)
