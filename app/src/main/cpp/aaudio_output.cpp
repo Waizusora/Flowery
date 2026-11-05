@@ -218,7 +218,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
-    JNIEnv*, jobject, jint rate, jint channels, jfloat volume, jint deviceId, jint capacityFrames) {
+    JNIEnv*, jobject, jint rate, jint channels, jfloat volume, jint deviceId, jboolean requireExclusive, jint capacityFrames) {
     if (rate <= 0 || (channels != 1 && channels != 2) || capacityFrames < 2048) {
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
@@ -236,10 +236,13 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
     std::lock_guard<std::mutex> lock(g_mutex);
     stopLocked();
     g_output = std::move(state);
-    // Strict Exclusive policy: never retry with SHARED. If Android downgrades
-    // the requested mode, openStream rejects and closes that stream.
+    // USB DAC output requires verified EXCLUSIVE mode. Android system routes
+    // use SHARED mode so speaker, wired and Bluetooth playback remain available.
+    const auto requestedSharing = requireExclusive == JNI_TRUE
+        ? AAUDIO_SHARING_MODE_EXCLUSIVE
+        : AAUDIO_SHARING_MODE_SHARED;
     const auto result = openStream(
-        g_output.get(), rate, channels, AAUDIO_SHARING_MODE_EXCLUSIVE, deviceId);
+        g_output.get(), rate, channels, requestedSharing, deviceId);
     g_output->exclusiveOpenResult = result;
     g_output->sharedOpenResult = AAUDIO_ERROR_INVALID_STATE; // Shared fallback is intentionally disabled.
     if (result != AAUDIO_OK) {
