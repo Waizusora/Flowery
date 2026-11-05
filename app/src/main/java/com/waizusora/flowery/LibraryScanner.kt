@@ -38,7 +38,7 @@ class LibraryScanner(private val context: Context) {
         val lyricFiles = children.filter { it.isFile && it.name?.endsWith(".lrc", ignoreCase = true) == true }
             .associateBy { it.name?.substringBeforeLast('.')?.lowercase().orEmpty() }
         val cueFiles = children.filter { it.isFile && it.name?.endsWith(".cue", ignoreCase = true) == true }
-        val playlistFiles = children.filter { it.isFile && it.name?.substringAfterLast(".", "").lowercase() in setOf("m3u", "m3u8", "pls") }
+        val playlistFiles = children.filter { it.isFile && it.name?.substringAfterLast(".", "")?.lowercase() in setOf("m3u", "m3u8", "pls") }
         children.forEach { file ->
             if (file.isDirectory) {
                 visit(file, rootName, output, pathStack + file)
@@ -79,7 +79,7 @@ class LibraryScanner(private val context: Context) {
                 val audioFile = resolvePlaylistPath(pathStack, entry.path) ?: return@entryLoop
                 if (audioFile.isDirectory) return@entryLoop
                 val audioExtension = audioFile.name?.substringAfterLast(".", "")?.lowercase()
-                if (audioExtension !in extensions) return@entryLoop
+                if (audioExtension == null || audioExtension !in extensions) return@entryLoop
                 val item = AudioTrackItem(
                     uri = audioFile.uri,
                     title = entry.title?.takeIf { it.isNotBlank() } ?: audioFile.name?.substringBeforeLast(".") ?: "Track " + (index + 1),
