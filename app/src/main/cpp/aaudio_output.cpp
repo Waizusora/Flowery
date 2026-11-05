@@ -377,6 +377,29 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
     return xrunCount < 0 ? 0 : xrunCount;
 }
 
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
+    jlong values[8] = {};
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_output) {
+        values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
+        values[2] = static_cast<jlong>(g_output->writeFrame.load(std::memory_order_acquire) -
+                                      g_output->readFrame.load(std::memory_order_acquire));
+        values[3] = static_cast<jlong>(g_output->capacityFrames);
+    }
+    if (g_stream) {
+        const int32_t xruns = AAudioStream_getXRunCount(g_stream);
+        values[1] = xruns >= 0 ? xruns : -1;
+        values[4] = AAudioStream_getBufferSizeInFrames(g_stream);
+        values[5] = AAudioStream_getFramesPerBurst(g_stream);
+        values[6] = static_cast<jlong>(AAudioStream_getState(g_stream));
+        values[7] = AAudioStream_getSampleRate(g_stream);
+    }
+    jlongArray result = env->NewLongArray(8);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 8, values);
+    return result;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
