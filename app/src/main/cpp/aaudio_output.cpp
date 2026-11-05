@@ -28,6 +28,9 @@ struct OutputState {
     std::atomic<uint64_t> callbackUnexpectedSilenceFrames{0};
     std::atomic<uint64_t> callbackMaxFrames{0};
     std::atomic<uint64_t> lastCallbackStartNs{0};
+    std::atomic<uint64_t> lastCallbackFrames{0};
+    std::atomic<uint64_t> callbackMaxLatenessNs{0};
+    std::atomic<uint64_t> callbackLateIntervalCount{0};
     std::atomic<uint64_t> callbackMaxIntervalNs{0};
     std::atomic<uint64_t> callbackMaxDurationNs{0};
     std::atomic<int32_t> lastTunedXrunCount{0};
@@ -64,8 +67,19 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
     const uint64_t callbackStartNs = monotonicTimeNs();
     auto* state = static_cast<OutputState*>(userData);
     const uint64_t previousStartNs = state->lastCallbackStartNs.exchange(callbackStartNs, std::memory_order_relaxed);
+    const uint64_t previousFrames = state->lastCallbackFrames.exchange(
+        static_cast<uint64_t>(std::max(frames, 0)), std::memory_order_relaxed);
     if (previousStartNs != 0 && callbackStartNs >= previousStartNs) {
-        updateMaximum(state->callbackMaxIntervalNs, callbackStartNs - previousStartNs);
+        const uint64_t intervalNs = callbackStartNs - previousStartNs;
+        updateMaximum(state->callbackMaxIntervalNs, intervalNs);
+        const uint64_t expectedNs = state->sampleRate > 0
+            ? previousFrames * 1'000'000'000ULL / static_cast<uint64_t>(state->sampleRate)
+            : 0;
+        const uint64_t latenessNs = intervalNs > expectedNs ? intervalNs - expectedNs : 0;
+        updateMaximum(state->callbackMaxLatenessNs, latenessNs);
+        if (latenessNs > 10'000'000ULL) {
+            state->callbackLateIntervalCount.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     auto* output = static_cast<float*>(audioData);
     state->callbackCount.fetch_add(1, std::memory_order_relaxed);
@@ -448,7 +462,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[24] = {};
+    jlong values[27] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -466,11 +480,14 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[21] = static_cast<jlong>(g_output->callbackMaxDurationNs.load(std::memory_order_acquire));
         values[22] = static_cast<jlong>(g_output->callbackMaxIntervalNs.load(std::memory_order_acquire));
         values[23] = static_cast<jlong>(g_output->sampleRate);
+        values[24] = static_cast<jlong>(g_output->callbackMaxLatenessNs.load(std::memory_order_acquire));
+        values[25] = static_cast<jlong>(g_output->callbackLateIntervalCount.load(std::memory_order_acquire));
     }
     if (g_stream) {
         const int32_t xruns = AAudioStream_getXRunCount(g_stream);
         values[1] = xruns >= 0 ? xruns : -1;
         values[4] = AAudioStream_getBufferSizeInFrames(g_stream);
+        values[26] = AAudioStream_getBufferCapacityInFrames(g_stream);
         values[5] = AAudioStream_getFramesPerBurst(g_stream);
         values[6] = static_cast<jlong>(AAudioStream_getState(g_stream));
         values[7] = AAudioStream_getSampleRate(g_stream);
@@ -480,8 +497,8 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[11] = AAudioStream_getChannelCount(g_stream);
         values[12] = AAudioStream_getPerformanceMode(g_stream);
     }
-    jlongArray result = env->NewLongArray(24);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 24, values);
+    jlongArray result = env->NewLongArray(27);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 27, values);
     return result;
 }
 
