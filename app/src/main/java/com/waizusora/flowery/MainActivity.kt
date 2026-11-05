@@ -495,7 +495,7 @@ class MainActivity : ComponentActivity() {
                         } else item.title
                     })
                     val queueArtists = ArrayList(playbackTracks.map { item ->
-                        if (item.cuePlaylist == null && item.uri == track.uri) {
+                        if (item.cuePlaylist == null && item.playlistName == null && item.uri == track.uri) {
                             tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         } else "Local music"
                     })
