@@ -417,6 +417,29 @@ fun FloweryNavigation(
 }
 
 @Composable
+private fun aaudioResultName(code: Int): String = when (code) {
+    0 -> "OK"
+    -899 -> "Error invalid state"
+    -898 -> "Error invalid handle"
+    -897 -> "Error invalid parameter"
+    -896 -> "Error internal"
+    -895 -> "Error resource invalidated"
+    -894 -> "Error resource unavailable"
+    -893 -> "Error no free handles"
+    -892 -> "Error unavailable"
+    -891 -> "Error disconnected"
+    -890 -> "Error illegal argument"
+    -889 -> "Error timeout"
+    -888 -> "Error would block"
+    -887 -> "Error null"
+    -886 -> "Error in use"
+    -885 -> "Error policy"
+    -884 -> "Error no service"
+    -883 -> "Error invalid format"
+    -882 -> "Error stale"
+    else -> "Other AAudio status"
+}
+
 private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, active: Boolean, tint: Color, action: () -> Unit) {
     IconButton(onClick = action, modifier = Modifier.size(52.dp)) {
         Icon(icon, label, tint = if (active) Color(0xFF1E90FF) else tint, modifier = Modifier.size(27.dp))
@@ -566,7 +589,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Text("Values are sampled on demand. Keep playback running while refreshing to observe live counters.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
             val data = metrics
-            if (data == null || data.size < 19) {
+            if (data == null || data.size < 21) {
                 Detail("Output", "No diagnostics sampled yet. Start playback, then refresh.", color, muted)
             } else {
                 Detail("Ring-buffer underruns", data[0].toString(), color, muted)
@@ -588,6 +611,8 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Detail("Silence frames inserted", data[16].toString(), color, muted)
                 Detail("Largest callback", "${data[17]} frames", color, muted)
                 Detail("Unexpected silence frames", data[18].toString(), color, muted)
+                Detail("Exclusive open result", "${data[19]} (${aaudioResultName(data[19].toInt())})", color, muted)
+                Detail("Shared open result", "${data[20]} (${aaudioResultName(data[20].toInt())})", color, muted)
             }
             Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
