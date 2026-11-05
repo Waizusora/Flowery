@@ -181,7 +181,9 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
 
     const uint64_t read = g_output->readFrame.load(std::memory_order_acquire);
     const uint64_t write = g_output->writeFrame.load(std::memory_order_relaxed);
-    const uint64_t freeFrames = g_output->capacityFrames - (write - read);
+    const uint64_t queuedFrames = write >= read ? write - read : g_output->capacityFrames;
+    const uint64_t freeFrames = queuedFrames >= g_output->capacityFrames
+        ? 0 : g_output->capacityFrames - queuedFrames;
     const uint64_t count = std::min<uint64_t>(static_cast<uint64_t>(frameCount), freeFrames);
     if (count == 0) return 0;
 
@@ -244,23 +246,6 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     g_output->playedFrames.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->eof.store(false, std::memory_order_release);
     g_output->active.store(true, std::memory_order_release);
-    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
-        g_output->active.store(false, std::memory_order_release);
-        return AAUDIO_ERROR_DISCONNECTED;
-    }
-    if (state == AAUDIO_STREAM_STATE_STOPPING || state == AAUDIO_STREAM_STATE_PAUSING) {
-        aaudio_stream_state_t nextState = state;
-        const auto waitResult = AAudioStream_waitForStateChange(g_stream, state, &nextState, 1000000000LL);
-        if (waitResult != AAUDIO_OK) {
-            g_output->active.store(false, std::memory_order_release);
-            return waitResult;
-        }
-        state = nextState;
-    }
-    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) {
-        g_output->active.store(false, std::memory_order_release);
-        return AAUDIO_ERROR_DISCONNECTED;
-    }
     if (shouldStart != JNI_TRUE) {
         if (state == AAUDIO_STREAM_STATE_STARTED) {
             const auto pauseResult = AAudioStream_requestPause(g_stream);
@@ -346,6 +331,8 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_output || !g_stream) return AAUDIO_ERROR_INVALID_STATE;
+    if (!g_output->active.load(std::memory_order_acquire) ||
+        AAudioStream_getState(g_stream) != AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
     const int32_t xrunCount = AAudioStream_getXRunCount(g_stream);
     if (xrunCount < 0) return xrunCount;
     const int32_t previous = g_output->lastTunedXrunCount.load(std::memory_order_relaxed);
