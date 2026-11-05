@@ -490,7 +490,7 @@ class MainActivity : ComponentActivity() {
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
                     val queueUris = ArrayList(playbackTracks.map { it.uri.toString() })
                     val queueTitles = ArrayList(playbackTracks.map { item ->
-                        if (item.cuePlaylist == null && item.uri == track.uri) {
+                        if (item.cuePlaylist == null && item.playlistName == null && item.uri == track.uri) {
                             tag?.title?.ifBlank { item.title } ?: item.title
                         } else item.title
                     })
@@ -499,7 +499,7 @@ class MainActivity : ComponentActivity() {
                             tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         } else "Local music"
                     })
-                    val queueIndex = playbackTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs }.coerceAtLeast(0)
+                    val queueIndex = playbackTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs && it.playlistOrder == track.playlistOrder }.coerceAtLeast(0)
                     val queueCueStarts = playbackTracks.map { it.cueStartMs ?: 0L }.toLongArray()
                     val queueCueEnds = playbackTracks.map { it.cueEndMs ?: 0L }.toLongArray()
                     val command = Intent(this, PlaybackService::class.java)
