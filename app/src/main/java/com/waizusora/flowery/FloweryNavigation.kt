@@ -566,7 +566,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Text("Values are sampled on demand. Keep playback running while refreshing to observe live counters.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
             val data = metrics
-            if (data == null || data.size < 18) {
+            if (data == null || data.size < 19) {
                 Detail("Output", "No diagnostics sampled yet. Start playback, then refresh.", color, muted)
             } else {
                 Detail("Ring-buffer underruns", data[0].toString(), color, muted)
@@ -587,6 +587,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Detail("PCM frames delivered", data[15].toString(), color, muted)
                 Detail("Silence frames inserted", data[16].toString(), color, muted)
                 Detail("Largest callback", "${data[17]} frames", color, muted)
+                Detail("Unexpected silence frames", data[18].toString(), color, muted)
             }
             Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
