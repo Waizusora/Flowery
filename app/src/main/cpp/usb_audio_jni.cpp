@@ -24,6 +24,7 @@ struct UsbAudioSession {
     int sample_rate = 0;
     uint64_t frame_phase = 0;
     uint32_t interval_us = 1000;
+    std::vector<unsigned char> pending_pcm;
     bool claimed = false;
 };
 
@@ -185,48 +186,65 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         return -1;
     }
 
-    std::vector<unsigned char> input(static_cast<size_t>(byte_count));
-    env->GetByteArrayRegion(pcm, 0, byte_count, reinterpret_cast<jbyte*>(input.data()));
-    if (env->ExceptionCheck()) return -1;
+    const size_t maximum_pending_bytes =
+        static_cast<size_t>(session->sample_rate) * 2U * static_cast<size_t>(bytes_per_frame);
+    if (session->pending_pcm.size() + static_cast<size_t>(byte_count) > maximum_pending_bytes) {
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, "USB PCM queue is full; the producer is faster than the DAC transport");
+        return -1;
+    }
 
+    const size_t previous_size = session->pending_pcm.size();
+    session->pending_pcm.resize(previous_size + static_cast<size_t>(byte_count));
+    env->GetByteArrayRegion(
+        pcm, 0, byte_count,
+        reinterpret_cast<jbyte*>(session->pending_pcm.data() + previous_size));
+    if (env->ExceptionCheck()) {
+        session->pending_pcm.resize(previous_size);
+        return -1;
+    }
+
+    uint64_t next_phase = session->frame_phase;
+    size_t available_frames = session->pending_pcm.size() / static_cast<size_t>(bytes_per_frame);
+    size_t consumed_frames = 0;
     std::vector<unsigned int> packet_frames;
-    uint64_t phase = session->frame_phase;
-    int remaining_frames = frame_count;
-    while (remaining_frames > 0) {
-        phase += static_cast<uint64_t>(session->sample_rate) * session->interval_us;
-        unsigned int frames = static_cast<unsigned int>(phase / 1000000ULL);
-        phase %= 1000000ULL;
-        if (frames == 0) continue;
-        frames = std::min<unsigned int>(frames, static_cast<unsigned int>(remaining_frames));
-        const unsigned int packet_bytes = frames * bytes_per_frame;
+    packet_frames.reserve(256);
+
+    while (packet_frames.size() < 256) {
+        const uint64_t accumulated =
+            next_phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
+        const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
+        if (frames == 0 || consumed_frames + frames > available_frames) break;
+        const unsigned int packet_bytes = frames * static_cast<unsigned int>(bytes_per_frame);
         if (packet_bytes > session->max_packet_bytes) {
             jclass exception = env->FindClass("java/lang/IllegalArgumentException");
             if (exception != nullptr) env->ThrowNew(exception, "Calculated isochronous packet exceeds the endpoint maximum packet size");
             return -1;
         }
         packet_frames.push_back(frames);
-        remaining_frames -= static_cast<int>(frames);
-        if (packet_frames.size() > 1024) {
-            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
-            if (exception != nullptr) env->ThrowNew(exception, "PCM write exceeds the supported isochronous transfer packet count");
-            return -1;
-        }
+        consumed_frames += frames;
+        next_phase = accumulated % 1000000ULL;
     }
 
+    if (packet_frames.empty()) return frame_count;
+
     const int packet_count = static_cast<int>(packet_frames.size());
-    const int total_bytes = byte_count;
+    const int transfer_bytes = static_cast<int>(consumed_frames * bytes_per_frame);
+    std::vector<unsigned char> transfer_buffer(
+        session->pending_pcm.begin(),
+        session->pending_pcm.begin() + transfer_bytes);
+
     auto* transfer = libusb_alloc_transfer(packet_count);
     if (transfer == nullptr) return LIBUSB_ERROR_NO_MEM;
 
     TransferCompletion completion;
-    std::vector<unsigned char> transfer_buffer = std::move(input);
     libusb_fill_iso_transfer(
-        transfer, session->handle, session->endpoint, transfer_buffer.data(), total_bytes,
+        transfer, session->handle, session->endpoint, transfer_buffer.data(), transfer_bytes,
         packet_count, on_transfer_complete, &completion, 3000);
 
     for (int i = 0; i < packet_count; ++i) {
-        const unsigned int packet_bytes = packet_frames[i] * bytes_per_frame;
-        transfer->iso_packet_desc[i].length = packet_bytes;
+        transfer->iso_packet_desc[i].length =
+            packet_frames[static_cast<size_t>(i)] * static_cast<unsigned int>(bytes_per_frame);
     }
 
     int result = libusb_submit_transfer(transfer);
@@ -264,7 +282,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         throw_usb_error(env, "USB isochronous PCM transfer", result);
         return result;
     }
-    session->frame_phase = phase;
+
+    session->pending_pcm.erase(
+        session->pending_pcm.begin(),
+        session->pending_pcm.begin() + transfer_bytes);
+    session->frame_phase = next_phase;
     return frame_count;
 }
 
