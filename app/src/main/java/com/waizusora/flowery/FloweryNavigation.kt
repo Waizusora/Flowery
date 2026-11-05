@@ -566,7 +566,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Text("Values are sampled on demand. Keep playback running while refreshing to observe live counters.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
             val data = metrics
-            if (data == null || data.size < 8) {
+            if (data == null || data.size < 18) {
                 Detail("Output", "No diagnostics sampled yet. Start playback, then refresh.", color, muted)
             } else {
                 Detail("Ring-buffer underruns", data[0].toString(), color, muted)
@@ -577,8 +577,18 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Detail("Frames per burst", if (data[5] > 0) data[5].toString() else "Unavailable", color, muted)
                 Detail("Stream state", data[6].toString(), color, muted)
                 Detail("Output sample rate", if (data[7] > 0) "${data[7]} Hz" else "Unavailable", color, muted)
+                Detail("Actual AAudio device ID", data[8].toString(), color, muted)
+                Detail("Sharing mode", when (data[9].toInt()) { 0 -> "EXCLUSIVE"; 1 -> "SHARED"; else -> "Unavailable" }, color, muted)
+                Detail("PCM format", when (data[10].toInt()) { 2 -> "PCM_FLOAT"; 1 -> "PCM_I16"; 3 -> "PCM_I24_PACKED"; 4 -> "PCM_I32"; else -> "Unknown (${data[10]})" }, color, muted)
+                Detail("Output channels", data[11].toString(), color, muted)
+                Detail("Performance mode", when (data[12].toInt()) { 10 -> "LOW_LATENCY"; 11 -> "POWER_SAVING"; else -> "None / unknown (${data[12]})" }, color, muted)
+                Detail("Data callbacks", data[13].toString(), color, muted)
+                Detail("Callback frames requested", data[14].toString(), color, muted)
+                Detail("PCM frames delivered", data[15].toString(), color, muted)
+                Detail("Silence frames inserted", data[16].toString(), color, muted)
+                Detail("Largest callback", "${data[17]} frames", color, muted)
             }
-            Text("Ring-buffer underruns count callback requests that needed silence because PCM data was unavailable. Hardware XRuns are reported separately by AAudio. Counters reset when the output stream is recreated.",
+            Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.LIBRARY -> {
