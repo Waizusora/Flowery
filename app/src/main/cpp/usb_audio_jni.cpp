@@ -2,6 +2,8 @@
 #include <libusb.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <sys/time.h>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -222,11 +224,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         transfer, session->handle, session->endpoint, transfer_buffer.data(), total_bytes,
         packet_count, on_transfer_complete, &completion, 3000);
 
-    int offset = 0;
     for (int i = 0; i < packet_count; ++i) {
         const unsigned int packet_bytes = packet_frames[i] * bytes_per_frame;
         transfer->iso_packet_desc[i].length = packet_bytes;
-        offset += static_cast<int>(packet_bytes);
     }
 
     int result = libusb_submit_transfer(transfer);
