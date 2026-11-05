@@ -584,7 +584,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=24 sampleRate=${sourceRate} channels=${channels}")
             val usbSession = controller.openExclusivePlaybackSession(device, 24, sourceRate)
             session = usbSession
-            recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} sampleRate=${usbSession.sampleRate}")
+            recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
             check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == 24 &&
                 usbSession.sampleRate == sourceRate) {
                 "The DAC profile does not match stereo 24-bit PCM at $sourceRate Hz."
