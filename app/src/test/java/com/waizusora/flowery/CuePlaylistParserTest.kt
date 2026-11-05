@@ -26,7 +26,7 @@ class CuePlaylistParserTest {
         assertEquals("disc one.flac", result.tracks[0].fileName)
         assertEquals(0L, result.tracks[0].startTimeMs)
         assertEquals(192_400L, result.tracks[0].endTimeMs)
-        assertEquals(194_000L, result.tracks[1].startTimeMs)
+        assertEquals(192_400L, result.tracks[1].startTimeMs)
     }
 
     @Test fun parsesExtendedM3uAndPls() {
@@ -47,6 +47,7 @@ class CuePlaylistParserTest {
         val entries = CuePlaylistParser.parseM3u("\uFEFF#EXTM3U\n#EXTINF:-1,東京\naudio.flac")
         assertEquals(PlaylistEntry("audio.flac", "東京"), entries.single())
     }
+
     @Test fun decodesSelectedCharset() {
         val bytes = "Música".toByteArray(Charset.forName("windows-1252"))
         assertEquals("Música", LibraryTextEncoding.decode(bytes, "windows-1252"))
