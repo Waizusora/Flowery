@@ -29,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 
-private enum class Destination { PLAYER, FOLDERS, DSP, SETTINGS }
+private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
 private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -46,9 +46,13 @@ fun FloweryNavigation(
     onInspect: (AudioTrackItem) -> Unit, onEdit: () -> Unit, onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
-    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit
+    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit,
+    onRequestNotificationPermission: () -> Unit
 ) {
-    var destination by remember { mutableStateOf(Destination.PLAYER) }
+    var destination by remember(context) {
+        mutableStateOf(if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
+            .getBoolean("welcome_complete", false)) Destination.PLAYER else Destination.WELCOME)
+    }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
@@ -69,7 +73,7 @@ fun FloweryNavigation(
     })
 
     Scaffold(containerColor = Color.Transparent, bottomBar = {
-        Row(Modifier.fillMaxWidth().background(Color.Transparent).padding(vertical = 6.dp),
+        if (destination != Destination.WELCOME) Row(Modifier.fillMaxWidth().background(Color.Transparent).padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             NavIcon(Icons.Default.Folder, "Folders", destination == Destination.FOLDERS, foreground) {
                 destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false
@@ -96,6 +100,20 @@ fun FloweryNavigation(
             .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             when (destination) {
+                Destination.WELCOME -> WelcomeContent(
+                    foreground = foreground,
+                    muted = muted,
+                    onAddFolder = {
+                        prefs.edit().putBoolean("welcome_complete", true).apply()
+                        destination = Destination.FOLDERS
+                        onAddFolder()
+                    },
+                    onRequestNotificationPermission = onRequestNotificationPermission,
+                    onContinue = {
+                        prefs.edit().putBoolean("welcome_complete", true).apply()
+                        destination = Destination.PLAYER
+                    }
+                )
                 Destination.PLAYER -> {
                     Card(Modifier.fillMaxWidth().aspectRatio(1f), shape = RoundedCornerShape(28.dp),
                         colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .08f))) {
@@ -344,6 +362,105 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
     }
 }
 @Composable private fun Heading(text: String, color: Color) { Text(text, color = color, fontSize = 25.sp, fontWeight = FontWeight.SemiBold) }
+
+
+@Composable
+private fun WelcomeContent(
+    foreground: Color,
+    muted: Color,
+    onAddFolder: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onContinue: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(18.dp))
+        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = Color(0xFFD66B9A), modifier = Modifier.size(76.dp))
+        Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text("Your local Hi-Fi music player. Start by choosing the folders that contain your music.",
+            color = muted, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .07f)),
+            shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("ADD YOUR MUSIC FOLDER", color = foreground, fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("1. Tap Add folder", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("Choose a music folder in Android's folder picker, then tap Use this folder / Allow.",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("2. Select Scan", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("Flowery indexes supported audio files and playlists in the folders you selected.",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("3. Play your music", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("Open Folders, choose a song, and playback controls will appear in Now Playing.",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Button(onClick = onAddFolder, modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    shape = RoundedCornerShape(28.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text("  ADD MUSIC FOLDER")
+                }
+            }
+        }
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .07f)),
+            shape = RoundedCornerShape(22.dp)) {
+            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                Text("APP PERMISSIONS", color = foreground, fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium)
+                PermissionInfoRow(Icons.Default.FolderOpen, "Music folder access",
+                    "Granted only to folders you choose. You can add or remove folders later.", foreground, muted)
+                PermissionInfoRow(Icons.Default.Notifications, "Notifications",
+                    "Optional on Android 13 and newer. Allows playback controls to appear in the notification shade and lockscreen.", foreground, muted)
+                PermissionInfoRow(Icons.Default.Usb, "USB DAC access",
+                    "Android asks separately when you connect and enable a compatible USB DAC.", foreground, muted)
+                PermissionInfoRow(Icons.Default.BatteryFull, "Battery optimization",
+                    "Optional. You can review it in Settings if background playback is interrupted.", foreground, muted)
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    OutlinedButton(onClick = onRequestNotificationPermission, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.NotificationsActive, contentDescription = null)
+                        Text("  ALLOW NOTIFICATIONS")
+                    }
+                }
+            }
+        }
+        TextButton(onClick = onContinue) { Text("CONTINUE WITHOUT ADDING A FOLDER", color = muted) }
+    }
+}
+
+@Composable
+private fun PermissionInfoRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    description: String,
+    foreground: Color,
+    muted: Color
+) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Icon(icon, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(24.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, color = foreground, fontWeight = FontWeight.SemiBold)
+            Text(description, color = muted, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
 
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
