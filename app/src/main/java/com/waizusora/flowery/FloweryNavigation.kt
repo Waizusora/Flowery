@@ -276,6 +276,7 @@ fun FloweryNavigation(
                     changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
                     battery = onBatterySettings, update = onCheckUpdate,
                     openFolders = { destination = Destination.FOLDERS; selectedFolder = null },
+                    addFolder = onAddFolder, removeFolder = onRemoveFolder,
                     folders = folders, tracks = tracks, scan = onScan,
                     playTrack = onPlay)
             }
@@ -295,7 +296,8 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
-    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit, status: String,
+    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
+    addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit) {
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -335,7 +337,32 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Text(" Scan")
                 }
             }
-            SettingCard("Manage folders", "${folders.size} folders · add or remove folders from Flowery", color, muted, Icons.Default.Folder, openFolders)
+            Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Text("Remove only removes a folder from Flowery's library list. Original folders and files are never deleted.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            Button(onClick = addFolder, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Add, null)
+                Text(" ADD")
+            }
+            folders.forEach { folder ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
+                    Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                        Text(folder.name, color = color, fontWeight = FontWeight.Medium)
+                        Text("Included in library scan", color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    IconButton(onClick = { removeFolder(folder) }) {
+                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = color, modifier = Modifier.size(25.dp))
+                    }
+                }
+                HorizontalDivider(color = muted.copy(alpha = .16f))
+            }
+            if (folders.isEmpty()) Text("No folders added yet. Tap ADD to choose one or more folders.", color = muted)
             if (tracks.isEmpty()) {
                 Text("Your scanned songs will appear here. The library index is saved, so opening this page will not start another scan.", color = muted)
             } else {
