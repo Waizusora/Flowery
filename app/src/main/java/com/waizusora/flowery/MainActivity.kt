@@ -478,12 +478,16 @@ class MainActivity : ComponentActivity() {
                         if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         else "Local music"
                     })
-                    val queueIndex = folderTracks.indexOfFirst { it.uri == track.uri }.coerceAtLeast(0)
+                    val queueIndex = folderTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs }.coerceAtLeast(0)
+                    val queueCueStarts = folderTracks.map { it.cueStartMs ?: 0L }.toLongArray()
+                    val queueCueEnds = folderTracks.map { it.cueEndMs ?: 0L }.toLongArray()
                     val command = Intent(this, PlaybackService::class.java)
                         .setAction(PlaybackService.ACTION_PLAY)
                         .putStringArrayListExtra(PlaybackService.EXTRA_QUEUE, queueUris)
                         .putStringArrayListExtra(PlaybackService.EXTRA_TITLES, queueTitles)
                         .putStringArrayListExtra(PlaybackService.EXTRA_ARTISTS, queueArtists)
+                        .putLongArrayExtra(PlaybackService.EXTRA_CUE_STARTS, queueCueStarts)
+                        .putLongArrayExtra(PlaybackService.EXTRA_CUE_ENDS, queueCueEnds)
                         .putExtra(PlaybackService.EXTRA_INDEX, queueIndex)
                     androidx.core.content.ContextCompat.startForegroundService(this, command)
                 }
