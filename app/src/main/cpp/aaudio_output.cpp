@@ -592,7 +592,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(JNIEnv
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[36] = {};
+    jlong values[39] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -638,9 +638,18 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[28] = timestampFramePosition;
         values[29] = timestampTimeNanoseconds;
         values[30] = AAudioStream_getFramesWritten(g_stream);
+#if __ANDROID_API__ >= 34
+        values[36] = AAudioStream_getHardwareFormat(g_stream);
+        values[37] = AAudioStream_getHardwareSampleRate(g_stream);
+        values[38] = AAudioStream_getHardwareChannelCount(g_stream);
+#else
+        values[36] = -1;
+        values[37] = -1;
+        values[38] = -1;
+#endif
     }
-    jlongArray result = env->NewLongArray(36);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 36, values);
+    jlongArray result = env->NewLongArray(39);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 39, values);
     return result;
 }
 
