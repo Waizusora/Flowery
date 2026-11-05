@@ -141,7 +141,13 @@ fun FloweryNavigation(
                             if (lyricsVisible) {
                                 Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("LYRICS · LRC", color = foreground, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "LYRICS LRC",
+                                        color = foreground,
+                                        fontWeight = FontWeight.Bold,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     if (lyrics.isEmpty()) {
                                         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                                             Text("No synchronized LRC lyrics found.", color = muted, textAlign = TextAlign.Center)
@@ -173,8 +179,13 @@ fun FloweryNavigation(
                                             item(key = "lyrics-spacer-bottom") { Spacer(Modifier.height(32.dp)) }
                                         }
                                     }
-                                    Text("Synced lyrics · tap to return to artwork", color = muted,
-                                        style = MaterialTheme.typography.labelSmall)
+                                    Text(
+                                        "Synced Lyric",
+                                        color = muted,
+                                        textAlign = TextAlign.Center,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                 }
                             } else {
                                 val art = remember(currentTag?.pictureBase64) {
