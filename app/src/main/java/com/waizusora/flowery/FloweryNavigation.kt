@@ -51,6 +51,7 @@ fun FloweryNavigation(
     var destination by remember { mutableStateOf(Destination.PLAYER) }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
+    var virtualCueFolder by remember { mutableStateOf(false) }
     var lyricsVisible by remember { mutableStateOf(false) }
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
@@ -71,7 +72,7 @@ fun FloweryNavigation(
         Row(Modifier.fillMaxWidth().background(Color.Transparent).padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             NavIcon(Icons.Default.Folder, "Folders", destination == Destination.FOLDERS, foreground) {
-                destination = Destination.FOLDERS; selectedFolder = null
+                destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false
             }
             NavIcon(Icons.Default.Lyrics, "Lyrics", lyricsVisible, foreground) {
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
@@ -185,7 +186,7 @@ fun FloweryNavigation(
                     }
                 }
                 Destination.FOLDERS -> {
-                    if (selectedFolder == null) {
+                    if (selectedFolder == null && !virtualCueFolder) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { destination = Destination.PLAYER; lyricsVisible = false }) {
                                 Icon(Icons.Default.ArrowBack, "Now playing", tint = foreground)
@@ -198,10 +199,24 @@ fun FloweryNavigation(
                         }
                         Text("SCANNED FOLDERS", color = muted, style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold)
+                        val cueVirtualTracks = tracks.filter { it.cuePlaylist != null }
+                        val playlistVirtualTracks = tracks.filter { it.playlistName != null }
+                        if (cueVirtualTracks.isNotEmpty() || playlistVirtualTracks.isNotEmpty()) {
+                            Row(Modifier.fillMaxWidth().clickable { virtualCueFolder = true; selectedFolder = null }
+                                .padding(horizontal = 4.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.FolderSpecial, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
+                                Column(Modifier.weight(1f).padding(start = 14.dp)) {
+                                    Text("CUE & PLAYLISTS", color = foreground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
+                                    Text("Virtual playlists · CUE, M3U, M3U8, PLS", color = muted, style = MaterialTheme.typography.bodySmall)
+                                }
+                                Text((cueVirtualTracks.size + playlistVirtualTracks.size).toString(), color = muted)
+                            }
+                            HorizontalDivider(color = muted.copy(alpha = .16f))
+                        }
                         folders.forEach { folder ->
                             val folderTracks = tracks.filter { it.folder == folder.name }
                             Row(
-                                Modifier.fillMaxWidth().clickable { selectedFolder = folder }
+                                Modifier.fillMaxWidth().clickable { selectedFolder = folder; virtualCueFolder = false }
                                     .padding(horizontal = 4.dp, vertical = 13.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -218,6 +233,35 @@ fun FloweryNavigation(
                             HorizontalDivider(color = muted.copy(alpha = .16f))
                         }
                         if (folders.isEmpty()) Text("No folders added. Add folders in Settings → Library.", color = muted)
+                    } else if (virtualCueFolder) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            IconButton(onClick = { virtualCueFolder = false }) { Icon(Icons.Default.ArrowBack, "Back to folders", tint = foreground) }
+                            Heading("CUE & PLAYLISTS", foreground)
+                        }
+                        val cueTracks = tracks.filter { it.cuePlaylist != null }
+                        val m3uTracks = tracks.filter { it.playlistName != null }
+                        cueTracks.groupBy { it.cuePlaylist }.forEach { (name, entries) ->
+                            Text(name ?: "CUE playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
+                            entries.sortedBy { it.cueStartMs ?: 0L }.forEach { item ->
+                                Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
+                                    Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
+                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
+                                }
+                                HorizontalDivider(color = muted.copy(alpha = .16f))
+                            }
+                        }
+                        m3uTracks.groupBy { it.playlistName }.forEach { (name, entries) ->
+                            Text(name ?: "Playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
+                            entries.sortedBy { it.playlistOrder ?: Int.MAX_VALUE }.forEach { item ->
+                                Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.QueueMusic, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
+                                    Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
+                                }
+                                HorizontalDivider(color = muted.copy(alpha = .16f))
+                            }
+                        }
+                        if (cueTracks.isEmpty() && m3uTracks.isEmpty()) Text("No CUE or playlist files were indexed.", color = muted)
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { selectedFolder = null }) {
