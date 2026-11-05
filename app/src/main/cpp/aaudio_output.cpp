@@ -78,8 +78,18 @@ void stopLocked() {
             current != AAUDIO_STREAM_STATE_STOPPED &&
             current != AAUDIO_STREAM_STATE_CLOSED) {
             if (AAudioStream_requestStop(g_stream) == AAUDIO_OK) {
-                aaudio_stream_state_t next = current;
-                AAudioStream_waitForStateChange(g_stream, current, &next, 1'000'000'000LL);
+                aaudio_stream_state_t observed = current;
+                for (int attempt = 0; attempt < 4 &&
+                     observed != AAUDIO_STREAM_STATE_STOPPED &&
+                     observed != AAUDIO_STREAM_STATE_DISCONNECTED &&
+                     observed != AAUDIO_STREAM_STATE_CLOSED; ++attempt) {
+                    aaudio_stream_state_t next = observed;
+                    if (AAudioStream_waitForStateChange(
+                            g_stream, observed, &next, 1'000'000'000LL) != AAUDIO_OK) {
+                        break;
+                    }
+                    observed = next;
+                }
             }
         }
         AAudioStream_close(g_stream);
@@ -345,7 +355,10 @@ Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(JNIEnv*, jobject) 
     const int32_t currentSize = AAudioStream_getBufferSizeInFrames(g_stream);
     const int32_t capacity = AAudioStream_getBufferCapacityInFrames(g_stream);
     if (currentSize > 0 && capacity > currentSize) {
-        const int32_t requested = std::min(capacity, currentSize + burst);
+        const int32_t missedBursts = std::max(1, xrunCount - previous);
+        const int64_t growth = static_cast<int64_t>(burst) * missedBursts;
+        const int32_t requested = static_cast<int32_t>(
+            std::min<int64_t>(capacity, static_cast<int64_t>(currentSize) + growth));
         const int32_t adjusted = AAudioStream_setBufferSizeInFrames(g_stream, requested);
         if (adjusted < 0) return adjusted;
     }
