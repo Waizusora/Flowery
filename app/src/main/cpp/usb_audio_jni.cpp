@@ -26,6 +26,8 @@ struct UsbAudioSession {
     uint32_t interval_us = 1000;
     std::vector<unsigned char> pending_pcm;
     bool claimed = false;
+    bool control_claimed = false;
+    int control_interface = -1;
 };
 
 struct TransferCompletion {
@@ -41,9 +43,12 @@ void close_session(UsbAudioSession* session) {
     if (session == nullptr) return;
     if (session->handle != nullptr) {
         if (session->claimed) {
-            // Restore the zero-bandwidth alternate setting before releasing the interface.
+            // Restore the zero-bandwidth alternate setting before releasing the streaming interface.
             libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
             libusb_release_interface(session->handle, session->interface_number);
+        }
+        if (session->control_claimed) {
+            libusb_release_interface(session->handle, session->control_interface);
         }
         libusb_close(session->handle);
     }
@@ -81,6 +86,7 @@ bool set_and_verify_clock(UsbAudioSession* session, int clock_id,
         static_cast<unsigned char>((sample_rate >> 16) & 0xff),
         static_cast<unsigned char>((sample_rate >> 24) & 0xff)
     };
+    session->control_interface = control_interface;
     const uint16_t index = static_cast<uint16_t>((clock_id << 8) | control_interface);
     int result = libusb_control_transfer(
         session->handle, 0x21, 0x01, 0x0100, index, rate_bytes, sizeof(rate_bytes), 1500);
@@ -167,6 +173,15 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_NOT_SUPPORTED) {
         close_session(session);
         return throw_usb_error(env, "Detaching the system USB audio driver", result);
+    }
+
+    if (control_interface != interface_number) {
+        result = libusb_claim_interface(session->handle, control_interface);
+        if (result != LIBUSB_SUCCESS) {
+            close_session(session);
+            return throw_usb_error(env, "Claiming USB Audio Control interface for clock negotiation", result);
+        }
+        session->control_claimed = true;
     }
 
     result = libusb_claim_interface(session->handle, interface_number);
