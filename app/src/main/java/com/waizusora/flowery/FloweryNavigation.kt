@@ -99,9 +99,10 @@ fun FloweryNavigation(
     LaunchedEffect(aaudioLogRecording) {
         while (aaudioLogRecording) {
             val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
+            val openAttempt = runCatching { NativeAudio.nativeGetLastOutputOpenDiagnostics() }.getOrNull()
             if (sample != null && sample.size >= 36) {
                 val previous = aaudioPreviousSample
-                aaudioLogLines.add(createAaudioLogLine(sample, previous))
+                aaudioLogLines.add(createAaudioLogLine(sample, previous, openAttempt))
                 if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
                 aaudioPreviousSample = sample
             } else {
@@ -560,7 +561,7 @@ private fun PermissionInfoRow(
 }
 
 
-private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String {
+private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAttempt: LongArray?): String {
     val timestampValid = sample[27] == 0L && sample[29] > 0L
     val callbackDeltaText = if (previous != null && previous.size >= 36) {
         "callbackCountDelta=${sample[13] - previous[13]} " +
@@ -584,6 +585,14 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String
     }
     val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
         .format(java.util.Date())
+    val openAttemptText = if (openAttempt != null && openAttempt.size >= 10) {
+        "lastOpenRequestedDeviceId=${openAttempt[0]} " +
+            "lastOpenRequestedMode=${modeName(openAttempt[1])} " +
+            "lastOpenRequestedRate=${openAttempt[2]} lastOpenRequestedChannels=${openAttempt[3]} " +
+            "lastOpenResult=${openAttempt[4]} lastOpenActualDeviceId=${openAttempt[5]} " +
+            "lastOpenActualMode=${modeName(openAttempt[6])} lastOpenActualRate=${openAttempt[7]} " +
+            "lastOpenActualChannels=${openAttempt[8]} lastOpenActualFormat=${openAttempt[9]}"
+    } else "lastOpenAttempt=unavailable"
     return "$wallTime sampleRate=${sample[7]} requestedDeviceId=${sample[33]} actualDeviceId=${sample[8]} " +
         "preferredSharingMode=${modeName(sample[31])} successfulOpenRequestMode=${modeName(sample[32])} " +
         "actualSharingMode=${modeName(sample[9])} " +
@@ -597,7 +606,7 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String
         "lastCallbackIntervalNs=${sample[34]} lastCallbackLatenessNs=${sample[35]} " +
         "maxCallbackIntervalNs=${sample[22]} maxCallbackLatenessNs=${sample[24]} " +
         "lateCallbackIntervals=${sample[25]} exclusiveOpenResult=${sample[19]} " +
-        "sharedOpenResult=${sample[20]} $callbackDeltaText $timestampDeltaText"
+        "sharedOpenResult=${sample[20]} $callbackDeltaText $timestampDeltaText $openAttemptText"
 }
 
 @Composable
