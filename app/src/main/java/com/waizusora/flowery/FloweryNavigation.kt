@@ -581,10 +581,13 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Detail("Unexpected silence frames", data[18].toString(), color, muted)
                 Detail("Exclusive open result", data[19].toString(), color, muted)
                 Detail("Shared open result", data[20].toString(), color, muted)
-                if (data.size >= 24) {
+                if (data.size >= 27) {
                     Detail("Maximum callback processing time", "${data[21] / 1_000_000.0} ms", color, muted)
                     Detail("Maximum callback interval", "${data[22] / 1_000_000.0} ms", color, muted)
                     Detail("Negotiated stream sample rate", "${data[23]} Hz", color, muted)
+                    Detail("Maximum callback scheduling lateness", "${data[24] / 1_000_000.0} ms", color, muted)
+                    Detail("Callback intervals over 10 ms late", data[25].toString(), color, muted)
+                    Detail("AAudio buffer capacity", "${data[26]} frames", color, muted)
                 }
             }
             Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
