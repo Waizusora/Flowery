@@ -466,12 +466,7 @@ fun FloweryNavigation(
                     openFolders = { destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false },
                     addFolder = onAddFolder, removeFolder = onRemoveFolder,
                     folders = folders, tracks = tracks, scan = onScan,
-                    playTrack = onPlay,
-                    usbBitPerfectEnabled = usbBitPerfectEnabled,
-                    onUsbBitPerfectChanged = { enabled ->
-                        usbBitPerfectEnabled = enabled
-                        prefs.edit().putBoolean("usb_bit_perfect_enabled", enabled).apply()
-                    })
+                    playTrack = onPlay)
             }
             Spacer(Modifier.height(8.dp))
         }
