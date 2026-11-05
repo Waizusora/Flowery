@@ -228,7 +228,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     return@thread
                 }
                 if (bitPerfectRequested && !directPcmSupported) {
-                    onState("Direct USB bit-perfect is not available for .$extension yet; Android USB mixer BIT_PERFECT will be requested for the decoded PCM path.")
+                    val mixerNotice = if (android.os.Build.VERSION.SDK_INT >= 34)
+                        "Android USB mixer BIT_PERFECT will be requested for decoded PCM."
+                    else
+                        "Android USB mixer BIT_PERFECT requires Android 14 (API 34); strict AAudio EXCLUSIVE will be attempted."
+                    onState("Direct USB bit-perfect is not available for .$extension yet; $mixerNotice")
                 }
 
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
@@ -263,9 +267,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     softwareVolume = volumeController.usbVolume(usbKey)
                 }
                 val deviceId = selectedDevice?.id ?: 0
-                val mixerSelection = selectedDevice?.let {
-                    configureAndroidUsbBitPerfect(audioManager, it, sourceRate, channels)
-                }
+                val mixerSelection = selectedDevice
+                    ?.takeIf { android.os.Build.VERSION.SDK_INT >= 34 }
+                    ?.let { configureAndroidUsbBitPerfect(audioManager, it, sourceRate, channels) }
                 val outputFormat = mixerSelection?.aaudioFormat ?: 2 // AAUDIO_FORMAT_PCM_FLOAT
                 val preferredRate = mixerSelection?.sampleRate ?: if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { kotlin.math.abs(it - sourceRate) } ?: sourceRate
