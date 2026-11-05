@@ -124,6 +124,9 @@ class MainActivity : ComponentActivity() {
                         inspectUsbDevice(device)
                         "USB access granted for ${usbDacController.describeDevice(device)}. USB exclusive bit-perfect mode is enabled for supported PCM WAV tracks. Other formats will be stopped with an explanation."
                     } else {
+                        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                            .putBoolean("usb_bit_perfect_enabled", false)
+                            .apply()
                         inspectUsbDevice(device)
                         "USB access granted for ${usbDacController.describeDevice(device)}. Descriptor inspection is available, but exclusive bit-perfect playback is currently configured for the KT Micro KT-384/32 HIFI."
                     }
