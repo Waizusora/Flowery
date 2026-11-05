@@ -12,6 +12,7 @@ val signingKeyPassword = System.getenv("KEY_PASSWORD")
 android {
     namespace = "com.waizusora.flowery"
     compileSdk = 35
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.waizusora.flowery"
