@@ -44,6 +44,7 @@ struct OutputState {
     int32_t requestedDeviceId = 0;
     int32_t channels = 2;
     int32_t sampleRate = 0;
+    int32_t requestedSharingMode = -1;
     aaudio_format_t format = AAUDIO_FORMAT_PCM_FLOAT;
 };
 
@@ -309,11 +310,13 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
     std::lock_guard<std::mutex> lock(g_mutex);
     stopLocked();
     g_output = std::move(state);
-    // USB DAC output requires verified EXCLUSIVE mode. Android system routes
-    // use SHARED mode so speaker, wired and Bluetooth playback remain available.
+    // Android USB mixer BIT_PERFECT is configured through AudioManager and can
+    // use an AAudio SHARED client stream. Callers may still explicitly require
+    // EXCLUSIVE mode for routes that do not use the mixer-bypass API.
     const auto requestedSharing = requireExclusive == JNI_TRUE
         ? AAUDIO_SHARING_MODE_EXCLUSIVE
         : AAUDIO_SHARING_MODE_SHARED;
+    g_output->requestedSharingMode = static_cast<int32_t>(requestedSharing);
     g_lastOpenDiagnostics = {};
     g_lastOpenDiagnostics.requestedDeviceId = deviceId;
     g_lastOpenDiagnostics.requestedSharingMode = static_cast<int32_t>(requestedSharing);
@@ -612,7 +615,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[23] = static_cast<jlong>(g_output->sampleRate);
         values[24] = static_cast<jlong>(g_output->callbackMaxLatenessNs.load(std::memory_order_acquire));
         values[25] = static_cast<jlong>(g_output->callbackLateIntervalCount.load(std::memory_order_acquire));
-        values[31] = static_cast<jlong>(AAUDIO_SHARING_MODE_EXCLUSIVE);
+        values[31] = static_cast<jlong>(g_output->requestedSharingMode);
         values[32] = static_cast<jlong>(g_output->successfulOpenSharingMode);
         values[33] = static_cast<jlong>(g_output->requestedDeviceId);
         values[34] = static_cast<jlong>(g_output->callbackLastIntervalNs.load(std::memory_order_acquire));
