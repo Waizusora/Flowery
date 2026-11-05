@@ -207,32 +207,28 @@ class PlaybackService : Service() {
             .build()
         val listener = AudioManager.OnAudioFocusChangeListener { change ->
             when (change) {
-                AudioManager.AUDIOFOCUS_LOSS -> {
+                AudioManager.AUDIOFOCUS_LOSS,
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    // Ordinary app audio must not interrupt Flowery. A call is identified
+                    // separately through the communication/ringtone audio mode.
                     hasAudioFocus = false
-                    resumeAfterFocus = false
-                    pausePlayback()
-                }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    hasAudioFocus = false
-                    if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
-                        resumeAfterFocus = true
-                        player.pause()
-                        playbackState = PlaybackStateCompat.STATE_PAUSED
-                        publishSessionState()
-                        publishState("Paused")
+                    if (isCallAudioMode()) {
+                        scheduleCallModeCheck()
                     }
                 }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> player.setDucked(true)
                 AudioManager.AUDIOFOCUS_GAIN -> {
                     hasAudioFocus = true
-                    player.setDucked(false)
-                    if (resumeAfterFocus) {
-                        resumeAfterFocus = false
-                        player.resume()
-                        playbackState = PlaybackStateCompat.STATE_PLAYING
-                        publishSessionState()
-                        publishState("Playing")
-                    }
+                    mainHandler.postDelayed({
+                        if (resumeAfterFocus && !isCallAudioMode()) {
+                            resumeAfterFocus = false
+                            player.setDucked(false)
+                            player.resume()
+                            playbackState = PlaybackStateCompat.STATE_PLAYING
+                            publishSessionState()
+                            publishState("Playing · call ended")
+                        }
+                    }, 400L)
                 }
             }
         }
@@ -250,7 +246,27 @@ class PlaybackService : Service() {
             audioManager.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
         }
         hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        return hasAudioFocus
+        // Continue playback even when another app owns audio focus; Flowery intentionally
+        // mixes with ordinary app audio and only pauses for detected call audio modes.
+        return true
+    }
+
+    private fun isCallAudioMode(): Boolean {
+        return audioManager.mode == AudioManager.MODE_IN_CALL ||
+            audioManager.mode == AudioManager.MODE_IN_COMMUNICATION ||
+            audioManager.mode == AudioManager.MODE_RINGTONE
+    }
+
+    private fun scheduleCallModeCheck() {
+        mainHandler.postDelayed({
+            if (isCallAudioMode() && playbackState == PlaybackStateCompat.STATE_PLAYING) {
+                resumeAfterFocus = true
+                player.pause()
+                playbackState = PlaybackStateCompat.STATE_PAUSED
+                publishSessionState()
+                publishState("Paused · phone or app call")
+            }
+        }, 500L)
     }
 
     private fun playCurrent() {
