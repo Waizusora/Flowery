@@ -82,4 +82,22 @@ class UsbAudioDescriptorParserTest {
         assertTrue(UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(descriptors).isEmpty())
     }
 
+
+    @Test
+    fun resolvesOnlyClockSourceLinkedToStereoPlaybackTerminal() {
+        val descriptors = byteArrayOf(
+            9, 4, 0, 0, 0, 1, 1, 0x20, 0,
+            17, 0x24, 0x02, 5, 1, 1, 0, 3, 2, 0, 0, 0, 0, 0, 0, 0, 0,
+            8, 0x24, 0x0A, 3, 1, 0, 0, 0,
+            8, 0x24, 0x0A, 6, 1, 0, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0x20, 0,
+            16, 0x24, 0x01, 5, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0
+        )
+
+        assertEquals(
+            listOf(3 to 0),
+            UsbAudioDescriptorParser.playbackClockSources(descriptors, streamingInterface = 2)
+        )
+    }
+
 }
