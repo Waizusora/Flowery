@@ -589,8 +589,14 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Detail("Callback intervals over 10 ms late", data[25].toString(), color, muted)
                     Detail("AAudio buffer capacity", "${data[26]} frames", color, muted)
                 }
+                if (data.size >= 31) {
+                    Detail("AAudio timestamp result", if (data[27] == 0L) "Available (AAUDIO_OK)" else "Unavailable (error ${data[27]})", color, muted)
+                    Detail("Hardware timestamp frame position", data[28].toString(), color, muted)
+                    Detail("Hardware timestamp time", if (data[29] > 0L) "${data[29]} ns · CLOCK_MONOTONIC" else "Unavailable", color, muted)
+                    Detail("Frames written to AAudio", data[30].toString(), color, muted)
+                }
             }
-            Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
+            Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. Hardware timestamps are queried on demand using CLOCK_MONOTONIC; the timestamp result must be AAUDIO_OK before its frame position and time are interpreted. Frames written is the stream's cumulative submitted-frame count. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.LIBRARY -> {
