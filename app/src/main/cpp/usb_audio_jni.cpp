@@ -321,7 +321,34 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     libusb_free_transfer(transfer);
 
     if (result != LIBUSB_SUCCESS) {
-        throw_usb_error(env, "USB isochronous PCM transfer", result);
+        int failed_packet = -1;
+        unsigned int packet_status = 0;
+        unsigned int actual_length = 0;
+        unsigned int requested_length = 0;
+        for (int i = 0; i < packet_count; ++i) {
+            const auto& packet = transfer->iso_packet_desc[i];
+            if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
+                packet.actual_length != packet.length) {
+                failed_packet = i;
+                packet_status = static_cast<unsigned int>(packet.status);
+                actual_length = packet.actual_length;
+                requested_length = packet.length;
+                break;
+            }
+        }
+
+        char message[512];
+        std::snprintf(
+            message, sizeof(message),
+            "USB isochronous PCM transfer failed: %s (%d); transfer_status=%u; "
+            "packets=%d; failed_packet=%d; packet_status=%u; actual_length=%u; "
+            "requested_length=%u; interval_us=%u; sample_rate=%d; endpoint=0x%02X",
+            libusb_error_name(result), result,
+            static_cast<unsigned int>(transfer->status), packet_count,
+            failed_packet, packet_status, actual_length, requested_length,
+            session->interval_us, session->sample_rate, session->endpoint);
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, message);
         return result;
     }
 
