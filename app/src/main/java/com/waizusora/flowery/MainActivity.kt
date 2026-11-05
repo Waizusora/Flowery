@@ -334,6 +334,8 @@ class MainActivity : ComponentActivity() {
             )
         }
         if (folders.none { it.uri == uri.toString() }) {
+            getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                .putBoolean("welcome_complete", true).apply()
             val name = DocumentFile.fromTreeUri(this, uri)?.name ?: uri.lastPathSegment ?: "Folder"
             folders += LibraryFolder(uri.toString(), name, true)
             persistFolders()
