@@ -158,10 +158,17 @@ class MainActivity : ComponentActivity() {
             if (reportedDuration > 0L) playbackDurationMs = reportedDuration
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
             val currentCueStart = intent.getLongExtra(PlaybackService.EXTRA_CURRENT_CUE_START, 0L)
+            val currentCuePlaylist = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_CUE_PLAYLIST).orEmpty().ifBlank { null }
+            val currentPlaylistName = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_PLAYLIST_NAME).orEmpty().ifBlank { null }
+            val currentPlaylistOrder = intent.getIntExtra(PlaybackService.EXTRA_CURRENT_PLAYLIST_ORDER, -1).takeIf { it >= 0 }
             val nextTrack = tracks.firstOrNull {
-                it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart
+                it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart &&
+                    it.cuePlaylist == currentCuePlaylist && it.playlistName == currentPlaylistName &&
+                    it.playlistOrder == currentPlaylistOrder
             }
-            if (nextTrack != null && (selectedTrack?.uri != nextTrack.uri || selectedTrack?.cueStartMs != nextTrack.cueStartMs)) {
+            if (nextTrack != null && (selectedTrack?.uri != nextTrack.uri || selectedTrack?.cueStartMs != nextTrack.cueStartMs ||
+                    selectedTrack?.cuePlaylist != nextTrack.cuePlaylist || selectedTrack?.playlistName != nextTrack.playlistName ||
+                    selectedTrack?.playlistOrder != nextTrack.playlistOrder)) {
                 selectedTrack = nextTrack
                 playbackDurationMs = 0L
                 currentTag = null
@@ -175,7 +182,9 @@ class MainActivity : ComponentActivity() {
                         currentTag = tag
                         lyrics = parsed
                         sendPlaybackCommand(PlaybackService.ACTION_UPDATE_METADATA) {
-                            putExtra(PlaybackService.EXTRA_TITLE, tag?.title?.ifBlank { nextTrack.title } ?: nextTrack.title)
+                            val virtualTitle = nextTrack.cuePlaylist != null || nextTrack.playlistName != null
+                            putExtra(PlaybackService.EXTRA_TITLE,
+                                if (virtualTitle) nextTrack.title else tag?.title?.ifBlank { nextTrack.title } ?: nextTrack.title)
                             putExtra(PlaybackService.EXTRA_ARTIST, tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist")
                         }
                     }
@@ -509,6 +518,9 @@ class MainActivity : ComponentActivity() {
                         .putStringArrayListExtra(PlaybackService.EXTRA_ARTISTS, queueArtists)
                         .putLongArrayExtra(PlaybackService.EXTRA_CUE_STARTS, queueCueStarts)
                         .putLongArrayExtra(PlaybackService.EXTRA_CUE_ENDS, queueCueEnds)
+                        .putStringArrayListExtra(PlaybackService.EXTRA_CUE_PLAYLISTS, ArrayList(playbackTracks.map { it.cuePlaylist.orEmpty() }))
+                        .putStringArrayListExtra(PlaybackService.EXTRA_PLAYLIST_NAMES, ArrayList(playbackTracks.map { it.playlistName.orEmpty() }))
+                        .putIntegerArrayListExtra(PlaybackService.EXTRA_PLAYLIST_ORDERS, ArrayList(playbackTracks.map { it.playlistOrder ?: -1 }))
                         .putExtra(PlaybackService.EXTRA_INDEX, queueIndex)
                     androidx.core.content.ContextCompat.startForegroundService(this, command)
                 }
