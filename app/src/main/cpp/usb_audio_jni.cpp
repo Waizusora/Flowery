@@ -335,9 +335,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     if (transfers.empty()) return frame_count;
 
     int result = LIBUSB_SUCCESS;
-    for (auto& pending : transfers) {
+    size_t failed_batch = 0;
+    for (size_t batch = 0; batch < transfers.size(); ++batch) {
+        auto& pending = transfers[batch];
         result = libusb_submit_transfer(pending.transfer);
-        if (result != LIBUSB_SUCCESS) break;
+        if (result != LIBUSB_SUCCESS) {
+            failed_batch = batch;
+            break;
+        }
         pending.submitted = true;
     }
 
@@ -359,7 +364,6 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     }
 
     bool transfer_failed = result != LIBUSB_SUCCESS;
-    size_t failed_batch = 0;
     int failed_packet = -1;
     unsigned int packet_status = 0;
     unsigned int actual_length = 0;
