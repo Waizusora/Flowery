@@ -54,7 +54,7 @@ object CuePlaylistParser {
 
         StringReader(text).useLines { lines ->
             lines.forEach { raw ->
-                val line = raw.trim()
+                val line = raw.trim().removePrefix("\uFEFF")
                 val command = line.substringBefore(' ').uppercase()
                 val value = line.substringAfter(' ', "").trim()
                 when (command) {
