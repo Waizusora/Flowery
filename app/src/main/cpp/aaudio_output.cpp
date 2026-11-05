@@ -24,6 +24,7 @@ struct OutputState {
     std::atomic<uint64_t> callbackFramesRequested{0};
     std::atomic<uint64_t> callbackFramesDelivered{0};
     std::atomic<uint64_t> callbackSilenceFrames{0};
+    std::atomic<uint64_t> callbackUnexpectedSilenceFrames{0};
     std::atomic<uint64_t> callbackMaxFrames{0};
     std::atomic<int32_t> lastTunedXrunCount{0};
     int32_t channels = 2;
@@ -69,6 +70,7 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
                   output + static_cast<uint64_t>(frames) * state->channels, 0.0f);
         if (!state->eof.load(std::memory_order_acquire)) {
             state->underrunCount.fetch_add(1, std::memory_order_relaxed);
+            state->callbackUnexpectedSilenceFrames.fetch_add(remaining, std::memory_order_relaxed);
         }
     }
 
@@ -411,7 +413,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[18] = {};
+    jlong values[19] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -423,6 +425,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[15] = static_cast<jlong>(g_output->callbackFramesDelivered.load(std::memory_order_acquire));
         values[16] = static_cast<jlong>(g_output->callbackSilenceFrames.load(std::memory_order_acquire));
         values[17] = static_cast<jlong>(g_output->callbackMaxFrames.load(std::memory_order_acquire));
+        values[18] = static_cast<jlong>(g_output->callbackUnexpectedSilenceFrames.load(std::memory_order_acquire));
     }
     if (g_stream) {
         const int32_t xruns = AAudioStream_getXRunCount(g_stream);
@@ -437,8 +440,8 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[11] = AAudioStream_getChannelCount(g_stream);
         values[12] = AAudioStream_getPerformanceMode(g_stream);
     }
-    jlongArray result = env->NewLongArray(18);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 18, values);
+    jlongArray result = env->NewLongArray(19);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 19, values);
     return result;
 }
 
