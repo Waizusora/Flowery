@@ -75,8 +75,14 @@ fun FloweryNavigation(
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
                 lyricsVisible = !lyricsVisible
             }
+            val usbExclusiveActive = status.contains("USB exclusive") ||
+                status.contains("USB exclusive bit-perfect")
             IconButton(onClick = onUsbDacClick) {
-                Icon(Icons.Default.Usb, contentDescription = "USB DAC", tint = foreground)
+                Icon(
+                    Icons.Default.Usb,
+                    contentDescription = if (usbExclusiveActive) "USB DAC bit-perfect active" else "USB DAC",
+                    tint = if (usbExclusiveActive) Color(0xFF1E90FF) else foreground
+                )
             }
             NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
             NavIcon(Icons.Default.Settings, "Settings", destination == Destination.SETTINGS, foreground) {
