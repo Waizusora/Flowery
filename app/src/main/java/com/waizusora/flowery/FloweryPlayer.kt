@@ -142,13 +142,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 val preferredRate = if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { abs(it - sourceRate) } ?: sourceRate
-                var deviceId = selectedDevice?.id ?: 0
-                var targetRate = NativeAudio.nativeSelectOutputSampleRate(preferredRate, channels, deviceId)
-                if (targetRate <= 0 && deviceId != 0) {
-                    deviceId = 0
-                    targetRate = NativeAudio.nativeSelectOutputSampleRate(sourceRate, channels, 0)
+                val deviceId = selectedDevice?.id ?: 0
+                val targetRate = NativeAudio.nativeSelectOutputSampleRate(preferredRate, channels, deviceId)
+                check(targetRate > 0) {
+                    "Unable to negotiate the selected USB DAC sample rate. " +
+                        "device=${selectedDevice?.productName ?: "unknown"}, deviceId=$deviceId, " +
+                        "sourceRate=$sourceRate, preferredRate=$preferredRate, channels=$channels. " +
+                        "The app did not fall back to the phone output."
                 }
-                check(targetRate > 0) { "Unable to negotiate an AAudio output sample rate" }
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
