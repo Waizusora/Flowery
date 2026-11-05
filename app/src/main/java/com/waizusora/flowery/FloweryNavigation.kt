@@ -54,6 +54,8 @@ fun FloweryNavigation(
     var lyricsVisible by remember { mutableStateOf(false) }
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
+    val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
+    var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
     val lightTheme = theme == "Light" || (theme == "Auto" && !systemDark)
     val foreground = if (lightTheme) Color(0xFF20212A) else Color.White
@@ -276,6 +278,9 @@ fun FloweryNavigation(
                     } },
                     navigate = { settingsPage = it },
                     changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
+                    libraryEncoding = libraryEncoding,
+                    availableEncodings = availableEncodings,
+                    changeEncoding = { libraryEncoding = it; prefs.edit().putString("library_text_encoding", it).apply() },
                     battery = onBatterySettings, update = onCheckUpdate,
                     openFolders = { destination = Destination.FOLDERS; selectedFolder = null },
                     addFolder = onAddFolder, removeFolder = onRemoveFolder,
@@ -298,10 +303,12 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
+    libraryEncoding: String, availableEncodings: List<String>, changeEncoding: (String) -> Unit,
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit) {
+    var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
@@ -412,6 +419,23 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Text("System default · English · Bahasa Indonesia", color = muted)
         }
         SettingsPage.OTHER -> {
+            Text("TEXT ENCODING", color = color, fontWeight = FontWeight.SemiBold)
+            Text("Choose the character encoding used to read CUE, M3U and PLS files. M3U8 is always decoded as UTF-8.", color = muted)
+            Box {
+                OutlinedButton(onClick = { encodingExpanded = true }) {
+                    Text(libraryEncoding, color = color)
+                    Icon(Icons.Default.ArrowDropDown, contentDescription = "Choose text encoding", tint = color)
+                }
+                DropdownMenu(expanded = encodingExpanded, onDismissRequest = { encodingExpanded = false }, modifier = Modifier.heightIn(max = 360.dp)) {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        availableEncodings.forEach { encoding ->
+                            DropdownMenuItem(text = { Text(encoding) }, onClick = { changeEncoding(encoding); encodingExpanded = false })
+                        }
+                    }
+                }
+            }
+            Text("Run Scan again after changing this setting to re-read playlist names and labels.", color = muted, style = MaterialTheme.typography.bodySmall)
+            HorizontalDivider(color = muted.copy(alpha = .25f))
             SettingCard("Battery optimization", "Open Android battery optimization settings", color, muted, Icons.Default.BatteryFull, battery)
         }
         SettingsPage.ABOUT -> {
