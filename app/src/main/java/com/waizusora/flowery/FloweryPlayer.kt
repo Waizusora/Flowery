@@ -19,6 +19,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     companion object {
         private const val MIN_OUTPUT_RING_CAPACITY_FRAMES = 32_768
         private const val DECODE_CHUNK_FRAMES = 8_192
+        private const val USB_DECODE_CHUNK_FRAMES = 32_768
         private val USB_DIAGNOSTIC_LOCK = Any()
     }
 
@@ -628,7 +629,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                 }
                 if (segmentRemainingFrames == 0L) break
-                val samples = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
+                val samples = NativeAudio.nativeReadStreamChunk(handle, USB_DECODE_CHUNK_FRAMES)
                 if (samples.isEmpty()) {
                     recordUsbDiagnostic("DECODER_EOF chunks=${chunkCount} totalFramesSent=${totalFramesSent}")
                     break
@@ -649,8 +650,24 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     pcm[byteOffset++] = (value shr 8).toByte()
                     pcm[byteOffset++] = (value shr 16).toByte()
                 }
+                val writeStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
                 val acceptedFrames = usbSession.writePcm(pcm, frames)
-                recordUsbDiagnostic("USB_WRITE chunk=${chunkCount + 1} requestedFrames=${frames} acceptedFrames=${acceptedFrames} pcmBytes=${pcm.size}")
+                val transportDurationNs =
+                    (android.os.SystemClock.elapsedRealtimeNanos() - writeStartedNs).coerceAtLeast(0L)
+                val audioDurationMs = frames * 1_000.0 / sourceRate
+                val transportDurationMs = transportDurationNs / 1_000_000.0
+                val throughputRatio = if (transportDurationNs > 0L) {
+                    frames.toDouble() * 1_000_000_000.0 / (sourceRate * transportDurationNs)
+                } else {
+                    Double.POSITIVE_INFINITY
+                }
+                recordUsbDiagnostic(
+                    "USB_WRITE chunk=${chunkCount + 1} requestedFrames=${frames} " +
+                        "acceptedFrames=${acceptedFrames} pcmBytes=${pcm.size} " +
+                        "audioMs=${"%.2f".format(java.util.Locale.US, audioDurationMs)} " +
+                        "transportMs=${"%.2f".format(java.util.Locale.US, transportDurationMs)} " +
+                        "throughputRatio=${"%.3f".format(java.util.Locale.US, throughputRatio)}"
+                )
                 check(acceptedFrames == frames) {
                     "The USB DAC transport accepted ${acceptedFrames} of ${frames} frames."
                 }
@@ -723,7 +740,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     usbPositionFrames = pcmSource.seekToFrame(targetFrame)
                 }
 
-                val pcm = pcmSource.readFrames(DECODE_CHUNK_FRAMES)
+                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES)
                 if (pcm.isEmpty()) break
                 val frameBytes = usbSession.profile.channels * usbSession.profile.subslotBytes
                 check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
