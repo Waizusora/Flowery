@@ -5,9 +5,11 @@
 #include <cstdio>
 #include <sys/time.h>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
