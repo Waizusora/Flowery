@@ -153,5 +153,72 @@ class UsbDacController(context: Context) {
             ((bytes[offset + 2].toLong() and 0xffL) shl 16) or
             ((bytes[offset + 3].toLong() and 0xffL) shl 24)
 
+    /**
+     * Opens the descriptor-selected UAC2 stereo output using native libusb.
+     *
+     * This claims the streaming interface and verifies the requested clock
+     * frequency. It does not connect the current Rust decoder to this session;
+     * callers must supply matching integer PCM through UsbDacSession.writePcm.
+     */
+    fun openExclusivePlaybackSession(
+        device: UsbDevice,
+        bitResolution: Int,
+        sampleRate: Int
+    ): UsbDacSession {
+        require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
+        require(bitResolution in setOf(16, 24, 32)) { "Only 16-, 24-, and 32-bit PCM are supported." }
+        require(sampleRate > 0) { "Sample rate must be positive." }
+
+        val connection = manager.openDevice(device)
+            ?: throw IllegalStateException("Android could not open the USB DAC connection.")
+        try {
+            val descriptors = connection.rawDescriptors
+            val profile = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(
+                descriptors,
+                requestedBitResolution = bitResolution
+            ).firstOrNull { it.interfaceNumber == 2 && it.endpointAddress == 0x04 }
+                ?: throw IllegalStateException(
+                    "No matching stereo UAC2 OUT profile was found for interface 2, endpoint 0x04."
+                )
+            val clocks = UsbAudioDescriptorParser.clockSources(descriptors)
+            if (clocks.isEmpty()) {
+                throw IllegalStateException("No UAC2 clock source descriptor was found.")
+            }
+
+            var lastError: Throwable? = null
+            for ((clockId, controlInterface) in clocks) {
+                try {
+                    val nativeHandle = UsbDacNative.nativeOpen(
+                        connection.fileDescriptor,
+                        profile.interfaceNumber,
+                        profile.alternateSetting,
+                        profile.endpointAddress,
+                        profile.maxPacketBytes,
+                        profile.interval,
+                        profile.channels,
+                        profile.subslotBytes,
+                        sampleRate,
+                        clockId,
+                        controlInterface
+                    )
+                    if (nativeHandle != 0L) {
+                        return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                    }
+                    lastError = IllegalStateException("Native USB transport returned an invalid session.")
+                } catch (error: Throwable) {
+                    lastError = error
+                }
+            }
+            throw IllegalStateException(
+                "The DAC did not accept and confirm the requested UAC2 clock rate. " +
+                    "No USB playback session was started.",
+                lastError
+            )
+        } catch (error: Throwable) {
+            connection.close()
+            throw error
+        }
+    }
+
     fun permissionGranted(device: UsbDevice): Boolean = manager.hasPermission(device)
 }
