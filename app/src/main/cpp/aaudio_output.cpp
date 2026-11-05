@@ -336,7 +336,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(JNIEnv*, jobject) 
     const int32_t xrunCount = AAudioStream_getXRunCount(g_stream);
     if (xrunCount < 0) return xrunCount;
     const int32_t previous = g_output->lastTunedXrunCount.load(std::memory_order_relaxed);
-    if (xrunCount <= previous) return AAudio_OK;
+    if (xrunCount <= previous) return AAUDIO_OK;
 
     const int32_t burst = std::max(AAudioStream_getFramesPerBurst(g_stream), 1);
     const int32_t currentSize = AAudioStream_getBufferSizeInFrames(g_stream);
