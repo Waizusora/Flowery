@@ -1,8 +1,11 @@
 package com.waizusora.flowery
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFormat
 import android.media.AudioManager
+import android.media.AudioMixerAttributes
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
@@ -41,6 +44,110 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private var worker: Thread? = null
     private val volumeController = OutputVolumeController(context)
+    @Volatile private var activeBitPerfectDevice: AudioDeviceInfo? = null
+    @Volatile private var activeBitPerfectAudioAttributes: AudioAttributes? = null
+
+    private data class UsbMixerSelection(
+        val sampleRate: Int,
+        val aaudioFormat: Int,
+        val mixerAttributes: AudioMixerAttributes,
+        val audioAttributes: AudioAttributes,
+        val formatDescription: String
+    )
+
+    private fun configureAndroidUsbBitPerfect(
+        audioManager: AudioManager,
+        device: AudioDeviceInfo,
+        sourceRate: Int,
+        channels: Int
+    ): UsbMixerSelection {
+        check(android.os.Build.VERSION.SDK_INT >= 34) {
+            "Android USB BIT_PERFECT mixer mode requires Android 14 (API 34) or later. " +
+                "This device cannot use the Android mixer-bypass route."
+        }
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+        val supported = runCatching { audioManager.getSupportedMixerAttributes(device) }
+            .getOrElse { failure ->
+                throw IllegalStateException(
+                    "Unable to query USB DAC mixer formats for Android BIT_PERFECT: \${failure.message}"
+                )
+            }
+        val encodingOptions = mapOf(
+            AudioFormat.ENCODING_PCM_24BIT_PACKED to (3 to 0),
+            AudioFormat.ENCODING_PCM_32BIT to (4 to 1),
+            AudioFormat.ENCODING_PCM_16BIT to (1 to 2),
+            AudioFormat.ENCODING_PCM_FLOAT to (2 to 3)
+        )
+        val candidates = supported.mapNotNull { mixer ->
+            val format = mixer.format
+            val encoding = encodingOptions[format.encoding] ?: return@mapNotNull null
+            if (mixer.mixerBehavior != AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT ||
+                format.channelCount != channels || format.sampleRate <= 0) return@mapNotNull null
+            Triple(mixer, encoding.first, encoding.second)
+        }.sortedWith(
+            compareBy<Triple<AudioMixerAttributes, Int, Int>>(
+                { kotlin.math.abs(it.first.format.sampleRate - sourceRate) },
+                { it.third }
+            )
+        )
+        val supportedSummary = supported.joinToString(separator = "; ") { mixer ->
+            "behavior=\${mixer.mixerBehavior},rate=\${mixer.format.sampleRate}," +
+                "channels=\${mixer.format.channelCount},encoding=\${mixer.format.encoding}"
+        }
+        val selected = candidates.firstOrNull() ?: throw IllegalStateException(
+            "USB DAC does not expose a compatible Android BIT_PERFECT mixer format " +
+                "for $channels channel(s). Supported mixer attributes: " +
+                (supportedSummary.ifBlank { "none" })
+        )
+        val mixerAttributes = selected.first
+        check(audioManager.setPreferredMixerAttributes(audioAttributes, device, mixerAttributes)) {
+            "Android rejected USB BIT_PERFECT mixer attributes. " +
+                "device=\${device.productName}, rate=\${mixerAttributes.format.sampleRate}, " +
+                "channels=$channels, encoding=\${mixerAttributes.format.encoding}"
+        }
+        val applied = audioManager.getPreferredMixerAttributes(audioAttributes, device)
+        check(applied != null &&
+            applied.mixerBehavior == AudioMixerAttributes.MIXER_BEHAVIOR_BIT_PERFECT &&
+            applied.format.sampleRate == mixerAttributes.format.sampleRate &&
+            applied.format.channelCount == channels &&
+            applied.format.encoding == mixerAttributes.format.encoding) {
+            "Android did not retain the requested USB BIT_PERFECT mixer attributes. " +
+                "requested=$mixerAttributes, applied=$applied"
+        }
+        activeBitPerfectDevice = device
+        activeBitPerfectAudioAttributes = audioAttributes
+        val encodingName = when (mixerAttributes.format.encoding) {
+            AudioFormat.ENCODING_PCM_24BIT_PACKED -> "PCM_24_PACKED"
+            AudioFormat.ENCODING_PCM_32BIT -> "PCM_32"
+            AudioFormat.ENCODING_PCM_16BIT -> "PCM_16"
+            AudioFormat.ENCODING_PCM_FLOAT -> "PCM_FLOAT"
+            else -> "UNKNOWN"
+        }
+        return UsbMixerSelection(
+            sampleRate = mixerAttributes.format.sampleRate,
+            aaudioFormat = selected.second,
+            mixerAttributes = mixerAttributes,
+            audioAttributes = audioAttributes,
+            formatDescription = encodingName
+        )
+    }
+
+    private fun clearAndroidUsbBitPerfect() {
+        val device = activeBitPerfectDevice
+        val attributes = activeBitPerfectAudioAttributes
+        if (device != null && attributes != null &&
+            android.os.Build.VERSION.SDK_INT >= 34) {
+            runCatching {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                audioManager.clearPreferredMixerAttributes(attributes, device)
+            }
+        }
+        activeBitPerfectDevice = null
+        activeBitPerfectAudioAttributes = null
+    }
     @Volatile private var activeUsbDeviceKey: String? = null
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
@@ -63,8 +170,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setVolume(value: Float) {
-        if (usbPlaybackMode) {
-            onState("USB exclusive bit-perfect is active; digital volume is fixed at unity. Use the DAC hardware volume control.")
+        if (usbPlaybackMode || activeBitPerfectDevice != null) {
+            onState("USB BIT_PERFECT mixer mode keeps digital gain at unity. Use the DAC hardware volume control.")
             return
         }
         val normalized = value.coerceIn(0f, 1f)
@@ -86,6 +193,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     private fun applyOutputVolume() {
+        if (activeBitPerfectDevice != null) {
+            NativeAudio.nativeSetOutputVolume(1f)
+            return
+        }
         val duckGain = if (outputDucked) 0.25f else 1f
         NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
@@ -155,10 +266,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     // A DAC without an exposed hardware-volume interface starts at 20%.
                     softwareVolume = volumeController.usbVolume(usbKey)
                 }
-                val preferredRate = if (sourceRate in supportedRates) sourceRate
-                    else supportedRates.minByOrNull { abs(it - sourceRate) } ?: sourceRate
                 val deviceId = selectedDevice?.id ?: 0
-                val targetRate = NativeAudio.nativeSelectOutputSampleRate(preferredRate, channels, deviceId)
+                val mixerSelection = selectedDevice?.let {
+                    configureAndroidUsbBitPerfect(audioManager, it, sourceRate, channels)
+                }
+                val outputFormat = mixerSelection?.aaudioFormat ?: 2 // AAUDIO_FORMAT_PCM_FLOAT
+                val preferredRate = mixerSelection?.sampleRate ?: if (sourceRate in supportedRates) sourceRate
+                    else supportedRates.minByOrNull { kotlin.math.abs(it - sourceRate) } ?: sourceRate
+                val targetRate = NativeAudio.nativeSelectOutputSampleRate(
+                    preferredRate, channels, deviceId, outputFormat
+                )
                 check(targetRate > 0) {
                     "Unable to negotiate the selected USB DAC sample rate. " +
                         "device=${selectedDevice?.productName ?: "unknown"}, deviceId=$deviceId, " +
@@ -177,8 +294,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = ringCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
-                    targetRate, channels, softwareVolume, deviceId,
-                    requireExclusive = deviceId != 0,
+                    targetRate, channels,
+                    if (mixerSelection != null) 1f else softwareVolume,
+                    deviceId,
+                    requireExclusive = deviceId != 0 && mixerSelection == null,
+                    outputFormat = outputFormat,
                     capacityFrames = outputRingCapacityFrames
                 )
                 if (opened != 0) {
@@ -208,10 +328,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "rates=${it.sampleRates?.joinToString() ?: "unknown"}"
                     } ?: "no USB output device selected"
                     val usbHost = usbHostDeviceSummary()
-                    val reason = if (opened == -10001 && deviceId != 0) {
+                    val reason = if (opened == -10001 && deviceId != 0 && mixerSelection == null) {
                         "Android did not provide the required USB DAC EXCLUSIVE mode."
                     } else if (deviceId != 0) {
-                        "Unable to open the required USB DAC EXCLUSIVE output (error $opened)."
+                        "Unable to open the Android USB BIT_PERFECT mixer output (error $opened)."
                     } else {
                         "Unable to open Android system SHARED output (error $opened)."
                     }
@@ -231,7 +351,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     else -> "unknown sharing mode"
                 }
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
-                onState("Playing · AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
+                val mixerMode = mixerSelection?.let {
+                    " · Android BIT_PERFECT mixer · ${it.formatDescription}"
+                }.orEmpty()
+                onState("Playing · AAudio $sharingName$mixerMode · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
                 // Keep at least 1.5 seconds of decoded PCM queued to tolerate scheduler and decoder delays.
                 val lowWatermarkFrames = (targetRate.toLong() * 3L / 2L)
@@ -350,7 +473,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     NativeAudio.nativeCloseStreamDecoder(handle)
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
-                if (playbackGeneration.get() == generation) activeUsbDeviceKey = null
+                if (playbackGeneration.get() == generation) {
+                    clearAndroidUsbBitPerfect()
+                    activeUsbDeviceKey = null
+                }
                 descriptor?.close()
             }
         }
@@ -507,6 +633,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         NativeAudio.nativeStopOutput()
+        clearAndroidUsbBitPerfect()
         worker?.interrupt()
         worker = null
         outputDurationMs = 0L
