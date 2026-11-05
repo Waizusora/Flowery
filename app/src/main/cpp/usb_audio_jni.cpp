@@ -41,6 +41,8 @@ void close_session(UsbAudioSession* session) {
     if (session == nullptr) return;
     if (session->handle != nullptr) {
         if (session->claimed) {
+            // Restore the zero-bandwidth alternate setting before releasing the interface.
+            libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
             libusb_release_interface(session->handle, session->interface_number);
         }
         libusb_close(session->handle);
