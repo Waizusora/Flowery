@@ -57,7 +57,7 @@ class LibraryScanner(private val context: Context) {
         val preferences = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
         val selectedEncoding = preferences.getString("library_text_encoding", "UTF-8") ?: "UTF-8"
         cueFiles.forEach cueLoop@{ cueFile ->
-            val cueName = cueFile.name ?: "CUE playlist"
+            val cueName = (pathStack.drop(1).mapNotNull { it.name } + (cueFile.name ?: "CUE playlist")).joinToString("/")
             val cueText = readText(cueFile, selectedEncoding) ?: return@cueLoop
             val sheet = CuePlaylistParser.parseCue(cueText)
             sheet.tracks.forEach trackLoop@{ cueTrack ->
@@ -71,7 +71,7 @@ class LibraryScanner(private val context: Context) {
             }
         }
         playlistFiles.forEach playlistLoop@{ playlistFile ->
-            val playlistName = playlistFile.name ?: "Playlist"
+            val playlistName = (pathStack.drop(1).mapNotNull { it.name } + (playlistFile.name ?: "Playlist")).joinToString("/")
             val extension = playlistName.substringAfterLast(".", "").lowercase()
             val playlistText = readText(playlistFile, if (extension == "m3u8") "UTF-8" else selectedEncoding) ?: return@playlistLoop
             val entries = if (extension == "pls") CuePlaylistParser.parsePls(playlistText) else CuePlaylistParser.parseM3u(playlistText)
