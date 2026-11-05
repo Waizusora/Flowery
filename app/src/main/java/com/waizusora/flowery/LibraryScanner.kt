@@ -9,7 +9,9 @@ data class AudioTrackItem(
     val title: String,
     val folder: String,
     val mimeType: String?,
-    val sidecarLyricsUri: Uri? = null
+    val sidecarLyricsUri: Uri? = null,
+    val cueStartMs: Long? = null,
+    val cueEndMs: Long? = null
 )
 
 class LibraryScanner(private val context: Context) {
