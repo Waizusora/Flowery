@@ -118,7 +118,7 @@ class UsbDacController(context: Context) {
                     }
                 }
             }
-            UsbAudioDescriptorParser.report(
+            val descriptorReport = UsbAudioDescriptorParser.report(
                 raw = descriptors,
                 vid = device.vendorId,
                 pid = device.productId,
@@ -126,6 +126,20 @@ class UsbDacController(context: Context) {
                 manufacturer = device.manufacturerName,
                 clockRangeReports = clockReports
             )
+            val playbackProfiles = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(descriptors)
+            val profileReport = if (playbackProfiles.isEmpty()) {
+                "\\nStereo UAC2 OUT playback profiles: none could be validated from the descriptors."
+            } else {
+                "\\nDescriptor-derived stereo UAC2 OUT playback profiles:" +
+                    playbackProfiles.joinToString(separator = "") { profile ->
+                        "\\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
+                            "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
+                            "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
+                            "${profile.maxPacketBytes}-byte max packet, ${profile.synchronization} sync."
+                    } +
+                    "\\n  Sample rates remain unverified until UAC2 clock negotiation succeeds."
+            }
+            descriptorReport + profileReport
         } catch (error: Throwable) {
             "USB descriptor inspection failed: ${error.message ?: error.javaClass.simpleName}"
         } finally {
