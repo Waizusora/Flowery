@@ -266,7 +266,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     }
 
     int result = libusb_submit_transfer(transfer);
-    if (result == LIBUSB_SUCCESS) {
+    const bool submitted = result == LIBUSB_SUCCESS;
+    if (submitted) {
         while (!completion.completed) {
             timeval timeout{0, 50000};
             result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
@@ -287,11 +288,17 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         }
     }
 
-    if (result != LIBUSB_SUCCESS && !completion.completed) {
-        libusb_cancel_transfer(transfer);
-        while (!completion.completed) {
-            timeval timeout{0, 50000};
-            libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
+    // A transfer rejected by libusb_submit_transfer has no completion callback.
+    // Only submitted transfers may be cancelled and awaited.
+    if (submitted && result != LIBUSB_SUCCESS && !completion.completed) {
+        const int cancel_result = libusb_cancel_transfer(transfer);
+        if (cancel_result == LIBUSB_SUCCESS) {
+            while (!completion.completed) {
+                timeval timeout{0, 50000};
+                libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
+            }
+        } else if (cancel_result != LIBUSB_ERROR_NOT_FOUND) {
+            result = cancel_result;
         }
     }
     libusb_free_transfer(transfer);
