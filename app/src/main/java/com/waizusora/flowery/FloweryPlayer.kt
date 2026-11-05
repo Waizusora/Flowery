@@ -13,9 +13,10 @@ import kotlin.math.abs
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
-        private const val OUTPUT_RING_CAPACITY_FRAMES = 16_384
+        private const val OUTPUT_RING_CAPACITY_FRAMES = 65_536
         private const val DECODE_CHUNK_FRAMES = 2_048
-        private const val LOW_WATERMARK_FRAMES = 4_096
+        private const val MIN_LOW_WATERMARK_FRAMES = 8_192
+        private const val MAX_LOW_WATERMARK_FRAMES = OUTPUT_RING_CAPACITY_FRAMES / 2
     }
 
     private var worker: Thread? = null
@@ -162,6 +163,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
                 onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
 
+                val lowWatermarkFrames = (targetRate / 5)
+                    .coerceIn(MIN_LOW_WATERMARK_FRAMES, MAX_LOW_WATERMARK_FRAMES)
                 var reachedEnd = false
                 var eofSignalled = false
                 var appliedEqualizerRevision = equalizerRevision
@@ -236,7 +239,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         NativeAudio.nativeGetStreamBufferedFrames().coerceAtLeast(0) >= segmentFrameLimit) {
                         reachedEnd = true
                     }
-                    while (!stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
+                    while (!stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > lowWatermarkFrames) {
                         val tuningResult = NativeAudio.nativeTuneOutputBuffer()
                         check(tuningResult == 0) {
                             "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
