@@ -597,6 +597,9 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAtt
     return "$wallTime sampleRate=${sample[7]} requestedDeviceId=${sample[33]} actualDeviceId=${sample[8]} " +
         "preferredSharingMode=${modeName(sample[31])} successfulOpenRequestMode=${modeName(sample[32])} " +
         "actualSharingMode=${modeName(sample[9])} " +
+        "hardwareFormat=${sample.getOrElse(36) { -1L }} " +
+        "hardwareSampleRate=${sample.getOrElse(37) { -1L }} " +
+        "hardwareChannels=${sample.getOrElse(38) { -1L }} " +
         "streamState=${sample[6]} timestampStatus=${sample[27]} " +
         "hardwareFramePosition=${sample[28]} hardwareTimestampNs=${sample[29]} " +
         "framesWritten=${sample[30]} ringUnderruns=${sample[0]} hardwareXruns=${sample[1]} " +
