@@ -262,6 +262,11 @@ fun FloweryNavigation(
                             valueRange = 0f..seekDurationMs.toFloat(),
                             enabled = durationMs > 0L
                         )
+                        if (status.contains("USB exclusive") || status.startsWith("Playback error")) {
+                            Text(status, color = if (status.startsWith("Playback error")) Color(0xFFFF8A80) else muted,
+                                style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                        }
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
