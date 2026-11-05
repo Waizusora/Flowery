@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.IntentFilter
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.media.MediaMetadataRetriever
 import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.util.Base64
@@ -196,6 +197,7 @@ class MainActivity : ComponentActivity() {
                     runOnUiThread {
                         currentTag = tag
                         lyrics = parsed
+                        if (playbackDurationMs <= 0L) playbackDurationMs = resolveTrackDurationMs(nextTrack, tag)
                         sendPlaybackCommand(PlaybackService.ACTION_UPDATE_METADATA) {
                             val virtualTitle = nextTrack.cuePlaylist != null || nextTrack.playlistName != null
                             putExtra(PlaybackService.EXTRA_TITLE,
@@ -559,6 +561,19 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+
+    private fun resolveTrackDurationMs(track: AudioTrackItem, tag: AudioTag?): Long {
+        val sourceDuration = tag?.durationMs?.takeIf { it > 0L } ?: runCatching {
+            MediaMetadataRetriever().use { retriever ->
+                retriever.setDataSource(this, track.uri)
+                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            }
+        }.getOrDefault(0L)
+        val start = (track.cueStartMs ?: 0L).coerceAtLeast(0L)
+        val end = (track.cueEndMs ?: sourceDuration).takeIf { it > 0L } ?: sourceDuration
+        return (end - start).coerceAtLeast(0L)
+    }
+
     private fun playTrack(track: AudioTrackItem, folderTracks: List<AudioTrackItem> = tracks.toList()) {
         val playbackTracks = when {
             track.cuePlaylist != null -> folderTracks.filter { it.cuePlaylist == track.cuePlaylist }.sortedBy { it.cueStartMs ?: 0L }
@@ -580,6 +595,8 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     currentTag = tag
                     lyrics = parsedLyrics
+                    playbackPositionMs = 0L
+                    playbackDurationMs = resolveTrackDurationMs(track, tag)
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
                     val queueUris = ArrayList(playbackTracks.map { it.uri.toString() })
                     val queueTitles = ArrayList(playbackTracks.map { item ->
