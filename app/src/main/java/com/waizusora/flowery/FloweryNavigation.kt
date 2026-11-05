@@ -51,7 +51,7 @@ fun FloweryNavigation(
 ) {
     var destination by remember(context) {
         mutableStateOf(if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-            .getBoolean("welcome_complete", false)) Destination.PLAYER else Destination.WELCOME)
+            .getBoolean("welcome_complete", false) || folders.isNotEmpty()) Destination.PLAYER else Destination.WELCOME)
     }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
@@ -104,7 +104,6 @@ fun FloweryNavigation(
                     foreground = foreground,
                     muted = muted,
                     onAddFolder = {
-                        prefs.edit().putBoolean("welcome_complete", true).apply()
                         destination = Destination.FOLDERS
                         onAddFolder()
                     },
