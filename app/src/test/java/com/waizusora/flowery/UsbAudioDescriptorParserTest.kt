@@ -48,4 +48,38 @@ class UsbAudioDescriptorParserTest {
 
         assertEquals(listOf(5 to 0), UsbAudioDescriptorParser.clockSources(descriptors))
     }
+
+    @Test
+    fun selectsStereoUac2PlaybackAlternateForRequestedBitDepth() {
+        val descriptors = byteArrayOf(
+            9, 4, 2, 2, 1, 1, 2, 0x20, 0,
+            16, 0x24, 1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0,
+            6, 0x24, 2, 1, 3, 24,
+            7, 5, 0x04, 0x09, 0x26, 1, 1
+        )
+
+        val profiles = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(
+            descriptors,
+            requestedBitResolution = 24
+        )
+
+        assertEquals(1, profiles.size)
+        assertEquals(2, profiles.single().channels)
+        assertEquals(24, profiles.single().bitResolution)
+        assertEquals(0x04, profiles.single().endpointAddress)
+        assertEquals(294, profiles.single().maxPacketBytes)
+    }
+
+    @Test
+    fun doesNotTreatMonoInputEndpointAsPlayback() {
+        val descriptors = byteArrayOf(
+            9, 4, 1, 1, 1, 1, 2, 0x20, 0,
+            16, 0x24, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0,
+            6, 0x24, 2, 1, 2, 16,
+            7, 5, 0x04.toByte(), 1, 98, 0, 1
+        )
+
+        assertTrue(UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(descriptors).isEmpty())
+    }
+
 }
