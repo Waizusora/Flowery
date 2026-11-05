@@ -48,6 +48,20 @@ std::mutex g_mutex;
 AAudioStream* g_stream = nullptr;
 std::unique_ptr<OutputState> g_output;
 
+struct LastOpenDiagnostics {
+    int32_t requestedDeviceId = 0;
+    int32_t requestedSharingMode = -1;
+    int32_t requestedSampleRate = 0;
+    int32_t requestedChannels = 0;
+    int32_t openResult = AAUDIO_ERROR_INVALID_STATE;
+    int32_t actualDeviceId = 0;
+    int32_t actualSharingMode = -1;
+    int32_t actualSampleRate = 0;
+    int32_t actualChannels = 0;
+    int32_t actualFormat = -1;
+};
+LastOpenDiagnostics g_lastOpenDiagnostics;
+
 void errorCallback(AAudioStream*, void* userData, aaudio_result_t error) {
     auto* state = static_cast<OutputState*>(userData);
     state->errorCode.store(error, std::memory_order_release);
@@ -198,6 +212,11 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     // AAudio may accept the builder request but negotiate a different sharing mode.
     // Strict mode requires the actual stream mode to match the requested mode.
     const auto actualSharing = AAudioStream_getSharingMode(g_stream);
+    g_lastOpenDiagnostics.actualDeviceId = AAudioStream_getDeviceId(g_stream);
+    g_lastOpenDiagnostics.actualSharingMode = static_cast<int32_t>(actualSharing);
+    g_lastOpenDiagnostics.actualSampleRate = AAudioStream_getSampleRate(g_stream);
+    g_lastOpenDiagnostics.actualChannels = AAudioStream_getChannelCount(g_stream);
+    g_lastOpenDiagnostics.actualFormat = static_cast<int32_t>(AAudioStream_getFormat(g_stream));
     if (actualSharing != sharing) {
         AAudioStream_close(g_stream);
         g_stream = nullptr;
@@ -241,8 +260,14 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
     const auto requestedSharing = requireExclusive == JNI_TRUE
         ? AAUDIO_SHARING_MODE_EXCLUSIVE
         : AAUDIO_SHARING_MODE_SHARED;
+    g_lastOpenDiagnostics = {};
+    g_lastOpenDiagnostics.requestedDeviceId = deviceId;
+    g_lastOpenDiagnostics.requestedSharingMode = static_cast<int32_t>(requestedSharing);
+    g_lastOpenDiagnostics.requestedSampleRate = rate;
+    g_lastOpenDiagnostics.requestedChannels = channels;
     const auto result = openStream(
         g_output.get(), rate, channels, requestedSharing, deviceId);
+    g_lastOpenDiagnostics.openResult = result;
     g_output->exclusiveOpenResult = result;
     g_output->sharedOpenResult = AAUDIO_ERROR_INVALID_STATE; // Shared fallback is intentionally disabled.
     if (result != AAUDIO_OK) {
@@ -488,6 +513,25 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
     if (!g_output) return 0;
     const uint64_t count = g_output->underrunCount.load(std::memory_order_acquire);
     return count > static_cast<uint64_t>(INT32_MAX) ? INT32_MAX : static_cast<jint>(count);
+}
+
+extern "C" JNIEXPORT jlongArray JNICALL
+Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(JNIEnv* env, jobject) {
+    const jlong values[10] = {
+        g_lastOpenDiagnostics.requestedDeviceId,
+        g_lastOpenDiagnostics.requestedSharingMode,
+        g_lastOpenDiagnostics.requestedSampleRate,
+        g_lastOpenDiagnostics.requestedChannels,
+        g_lastOpenDiagnostics.openResult,
+        g_lastOpenDiagnostics.actualDeviceId,
+        g_lastOpenDiagnostics.actualSharingMode,
+        g_lastOpenDiagnostics.actualSampleRate,
+        g_lastOpenDiagnostics.actualChannels,
+        g_lastOpenDiagnostics.actualFormat
+    };
+    jlongArray result = env->NewLongArray(10);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 10, values);
+    return result;
 }
 
 extern "C" JNIEXPORT jlongArray JNICALL
