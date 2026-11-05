@@ -118,38 +118,7 @@ fun FloweryNavigation(
                                 if (art != null) Image(art, "Album artwork", Modifier.fillMaxSize(),
                                     contentScale = androidx.compose.ui.layout.ContentScale.Fit)
                                 else Icon(Icons.Default.MusicNote, "No artwork", tint = muted, modifier = Modifier.size(80.dp))
-                                Column(
-                                    Modifier.align(Alignment.CenterEnd).padding(end = 10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = Color(0xFFF2EAF5).copy(alpha = .94f),
-                                        shadowElevation = 4.dp
-                                    ) {
-                                        IconButton(
-                                            onClick = { selectedTrack?.let(onInspect) },
-                                            enabled = selectedTrack != null,
-                                            modifier = Modifier.size(48.dp)
-                                        ) {
-                                            Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6))
-                                        }
-                                    }
-                                    Surface(
-                                        shape = RoundedCornerShape(16.dp),
-                                        color = Color(0xFFF2EAF5).copy(alpha = .94f),
-                                        shadowElevation = 4.dp
-                                    ) {
-                                        IconButton(
-                                            onClick = onEdit,
-                                            enabled = selectedTrack != null,
-                                            modifier = Modifier.size(48.dp)
-                                        ) {
-                                            Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A))
-                                        }
-                                    }
-                                }
+
                             }
                         }
                     }
@@ -176,8 +145,34 @@ fun FloweryNavigation(
                     if (durationMs > 0) {
                         Slider(value = positionMs.coerceIn(0L, durationMs).toFloat(), onValueChange = { onSeek(it.toLong()) },
                             valueRange = 0f..durationMs.toFloat())
-                        Text("${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}", color = foreground,
-                            modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            IconButton(
+                                onClick = { selectedTrack?.let(onInspect) },
+                                enabled = selectedTrack != null,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6),
+                                    modifier = Modifier.size(30.dp))
+                            }
+                            Text(
+                                "${formatPlaybackTime(positionMs)} / ${formatPlaybackTime(durationMs)}",
+                                color = foreground,
+                                modifier = Modifier.weight(1f),
+                                textAlign = TextAlign.Center
+                            )
+                            IconButton(
+                                onClick = onEdit,
+                                enabled = selectedTrack != null,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A),
+                                    modifier = Modifier.size(30.dp))
+                            }
+                        }
                     }
                     currentTag?.let { tag ->
                         val details = listOfNotNull(tag.bitDepth.takeIf { it > 0 }?.let { "Bit depth: $it-bit" },
