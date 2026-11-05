@@ -36,7 +36,7 @@ internal object UsbDacNative {
  * streaming interface. Writes are synchronous and must be called off the UI
  * thread. Closing the session releases the interface and native resources.
  */
-class UsbDacSession internal constructor(
+internal class UsbDacSession internal constructor(
     private val connection: UsbDeviceConnection,
     private val nativeHandle: Long,
     val profile: UsbDacPlaybackProfile,
