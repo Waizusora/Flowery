@@ -443,11 +443,18 @@ fun FloweryNavigation(
                         else { aaudioLogLines.clear(); aaudioPreviousSample = null; aaudioLogRecording = true }
                     },
                     onSaveAaudioLog = {
+                        val usbDirectLog = prefs.getString("usb_direct_diagnostics", "").orEmpty()
                         aaudioPendingLog = buildString {
-                            appendLine("# Flowery AAudio diagnostic log")
-                            appendLine("# Sampling interval: approximately 1 second")
-                            appendLine("# Samples: ${aaudioLogLines.size}")
+                            appendLine("# Flowery combined audio diagnostic log")
+                            appendLine("# AAudio samples: ${aaudioLogLines.size}")
+                            appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
+                            appendLine()
+                            appendLine("===== AAudio diagnostics =====")
                             aaudioLogLines.forEach { appendLine(it) }
+                            appendLine()
+                            appendLine("===== Direct USB/libusb diagnostics =====")
+                            if (usbDirectLog.isBlank()) appendLine("No direct USB diagnostic events were recorded.")
+                            else appendLine(usbDirectLog)
                         }
                         aaudioSaveLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
                     },
