@@ -389,6 +389,9 @@ class MainActivity : ComponentActivity() {
                 put("folder", track.folder)
                 put("mimeType", track.mimeType ?: JSONObject.NULL)
                 put("lyricsUri", track.sidecarLyricsUri?.toString() ?: JSONObject.NULL)
+                put("cueStartMs", track.cueStartMs ?: JSONObject.NULL)
+                put("cueEndMs", track.cueEndMs ?: JSONObject.NULL)
+                put("cuePlaylist", track.cuePlaylist ?: JSONObject.NULL)
             })
         }
         getSharedPreferences("library", MODE_PRIVATE).edit()
@@ -410,7 +413,10 @@ class MainActivity : ComponentActivity() {
                     title = item.optString("title"),
                     folder = item.optString("folder"),
                     mimeType = item.optString("mimeType").takeIf { it.isNotBlank() && it != "null" },
-                    sidecarLyricsUri = lyrics
+                    sidecarLyricsUri = lyrics,
+                    cueStartMs = if (item.has("cueStartMs") && !item.isNull("cueStartMs")) item.optLong("cueStartMs") else null,
+                    cueEndMs = if (item.has("cueEndMs") && !item.isNull("cueEndMs")) item.optLong("cueEndMs") else null,
+                    cuePlaylist = item.optString("cuePlaylist").takeIf { it.isNotBlank() && it != "null" }
                 )
             }
             status = if (tracks.isEmpty()) "Choose a music folder to begin"
@@ -456,6 +462,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playTrack(track: AudioTrackItem, folderTracks: List<AudioTrackItem> = tracks.toList()) {
+        val playbackTracks = if (track.cuePlaylist != null) {
+            folderTracks.filter { it.cuePlaylist == track.cuePlaylist }.sortedBy { it.cueStartMs ?: 0L }
+        } else {
+            folderTracks.filter { it.cuePlaylist == null }
+        }
         selectedTrack = track
         currentTag = null
         lyrics = emptyList()
@@ -470,17 +481,17 @@ class MainActivity : ComponentActivity() {
                     currentTag = tag
                     lyrics = parsedLyrics
                     if (tag == null) status = "Tags unavailable for this format · playback continues"
-                    val queueUris = ArrayList(folderTracks.map { it.uri.toString() })
-                    val queueTitles = ArrayList(folderTracks.map { item ->
+                    val queueUris = ArrayList(playbackTracks.map { it.uri.toString() })
+                    val queueTitles = ArrayList(playbackTracks.map { item ->
                         if (item.uri == track.uri) tag?.title?.ifBlank { item.title } ?: item.title else item.title
                     })
                     val queueArtists = ArrayList(folderTracks.map { item ->
                         if (item.uri == track.uri) tag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist"
                         else "Local music"
                     })
-                    val queueIndex = folderTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs }.coerceAtLeast(0)
-                    val queueCueStarts = folderTracks.map { it.cueStartMs ?: 0L }.toLongArray()
-                    val queueCueEnds = folderTracks.map { it.cueEndMs ?: 0L }.toLongArray()
+                    val queueIndex = playbackTracks.indexOfFirst { it.uri == track.uri && it.cueStartMs == track.cueStartMs }.coerceAtLeast(0)
+                    val queueCueStarts = playbackTracks.map { it.cueStartMs ?: 0L }.toLongArray()
+                    val queueCueEnds = playbackTracks.map { it.cueEndMs ?: 0L }.toLongArray()
                     val command = Intent(this, PlaybackService::class.java)
                         .setAction(PlaybackService.ACTION_PLAY)
                         .putStringArrayListExtra(PlaybackService.EXTRA_QUEUE, queueUris)
@@ -777,8 +788,29 @@ private fun FloweryApp(
                         IconButton(onClick = { onRemoveFolder(folder) }) { Icon(Icons.Default.Delete, "Remove folder", tint = Color.White) }
                     }
                 }
-                Text("LIBRARY · ${tracks.size} TRACKS", color = Color.White, fontWeight = FontWeight.Bold)
-                tracks.forEach { track ->
+                val cueTracks = tracks.filter { it.cuePlaylist != null }
+                if (cueTracks.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder, null, tint = Color.White)
+                        Text("CUE PLAYLISTS · ${cueTracks.mapNotNull { it.cuePlaylist }.distinct().size}", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp))
+                    }
+                    cueTracks.groupBy { it.cuePlaylist }.forEach { (playlistName, entries) ->
+                        Text(playlistName ?: "CUE playlist", color = Gold, fontWeight = FontWeight.SemiBold)
+                        entries.sortedBy { it.cueStartMs ?: 0L }.forEach { track ->
+                            Row(
+                                Modifier.fillMaxWidth().combinedClickable(onClick = { onPlay(track) }, onLongClick = { onInspect(track) }).padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.MusicNote, null, tint = Color.White)
+                                Text(track.title, color = Color.White, modifier = Modifier.weight(1f).padding(start = 10.dp))
+                                if (selectedTrack?.uri == track.uri && selectedTrack?.cueStartMs == track.cueStartMs) Icon(Icons.Default.PlayArrow, "Selected", tint = Gold)
+                            }
+                        }
+                    }
+                }
+                val regularTracks = tracks.filter { it.cuePlaylist == null }
+                Text("LIBRARY · ${regularTracks.size} TRACKS", color = Color.White, fontWeight = FontWeight.Bold)
+                regularTracks.forEach { track ->
                     Row(
                         Modifier.fillMaxWidth().combinedClickable(onClick = { onPlay(track) }, onLongClick = { onInspect(track) }).padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
