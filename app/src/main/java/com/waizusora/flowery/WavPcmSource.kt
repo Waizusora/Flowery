@@ -12,7 +12,6 @@ import java.nio.ByteOrder
  * normalize, resample, change volume, or apply DSP to the sample payload.
  */
 internal class WavPcmSource private constructor(
-    private val descriptor: ParcelFileDescriptor,
     private val input: ParcelFileDescriptor.AutoCloseInputStream,
     val sampleRate: Int,
     val bitDepth: Int,
@@ -50,8 +49,6 @@ internal class WavPcmSource private constructor(
         framesRead = target
         return target
     }
-
-    fun positionFrames(): Long = framesRead
 
     override fun close() {
         input.close()
@@ -123,7 +120,7 @@ internal class WavPcmSource private constructor(
                     "The WAV data chunk is not aligned to complete PCM frames."
                 }
                 return WavPcmSource(
-                    duplicate, input, sampleRate, bitDepth, channels,
+                    input, sampleRate, bitDepth, channels,
                     dataOffset, dataBytes
                 )
             } catch (error: Throwable) {
