@@ -148,7 +148,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     session->subslot_bytes = subslot_bytes;
     session->sample_rate = sample_rate;
 
-    const libusb_speed speed = libusb_get_device_speed(libusb_get_device(session->handle));
+    const int speed = libusb_get_device_speed(libusb_get_device(session->handle));
     session->interval_us = service_interval_us(speed, session->interval);
     const uint64_t maximum_interval_frames =
         (static_cast<uint64_t>(sample_rate) * session->interval_us + 999999ULL) / 1000000ULL;
