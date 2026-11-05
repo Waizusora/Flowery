@@ -117,8 +117,16 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
                 granted -> {
-                    inspectUsbDevice(device)
-                    "USB access granted for ${usbDacController.describeDevice(device)}. Reading USB Audio Class descriptors…"
+                    if (usbDacController.isReferenceKtmicro(device)) {
+                        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                            .putBoolean("usb_bit_perfect_enabled", true)
+                            .apply()
+                        inspectUsbDevice(device)
+                        "USB access granted for ${usbDacController.describeDevice(device)}. USB exclusive bit-perfect mode is enabled for supported PCM WAV tracks. Other formats will be stopped with an explanation."
+                    } else {
+                        inspectUsbDevice(device)
+                        "USB access granted for ${usbDacController.describeDevice(device)}. Descriptor inspection is available, but exclusive bit-perfect playback is currently configured for the KT Micro KT-384/32 HIFI."
+                    }
                 }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
@@ -264,11 +272,22 @@ class MainActivity : ComponentActivity() {
                     ""
                 }
                 if (usbDacController.hasPermission(device)) {
-                    usbDacMessage = "USB permission is already granted. Reading descriptors for ${detected.displayName}.$referenceNote"
+                    if (detected.isReferenceKtmicro) {
+                        val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+                        val enabled = preferences.getBoolean("usb_bit_perfect_enabled", false)
+                        preferences.edit().putBoolean("usb_bit_perfect_enabled", !enabled).apply()
+                        usbDacMessage = if (enabled) {
+                            "USB exclusive bit-perfect mode disabled. Playback will use the regular Flowery DSP and AAudio path."
+                        } else {
+                            "USB exclusive bit-perfect mode enabled for supported PCM WAV tracks. Digital volume remains at unity; use the DAC's physical volume control. Other formats will stop with an explanation."
+                        }
+                    } else {
+                        usbDacMessage = "USB access is already granted for ${detected.displayName}. Exclusive bit-perfect playback is currently configured for the KT Micro KT-384/32 HIFI only."
+                    }
                     inspectUsbDevice(device)
                 } else {
                     usbDacController.requestPermission(device)
-                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote Granting USB access allows descriptor inspection; it does not enable bit-perfect playback."
+                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote Granting access enables the configured exclusive mode only for the supported KT Micro DAC."
                 }
             }
         }
