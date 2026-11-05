@@ -270,7 +270,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val preferredRate = mixerSelection?.sampleRate ?: if (sourceRate in supportedRates) sourceRate
                     else supportedRates.minByOrNull { kotlin.math.abs(it - sourceRate) } ?: sourceRate
                 val targetRate = NativeAudio.nativeSelectOutputSampleRate(
-                    preferredRate, channels, deviceId, outputFormat
+                    preferredRate, channels, deviceId, outputFormat, mixerSelection != null
                 )
                 check(targetRate > 0) {
                     "Unable to negotiate the selected USB DAC sample rate. " +
