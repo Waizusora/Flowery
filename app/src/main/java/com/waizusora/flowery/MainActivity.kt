@@ -89,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
 import org.json.JSONObject
+import org.json.JSONArray
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
@@ -183,6 +184,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         restoreFolders()
+        restoreScannedTracks()
         volume = OutputVolumeController(this).systemVolumeFraction()
         setContent {
             FloweryNavigation(
@@ -211,6 +213,7 @@ class MainActivity : ComponentActivity() {
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
                 onScan = ::scanLibrary,
+                onRefreshFolder = ::refreshFolder,
                 onPlay = { track, folderTracks -> playTrack(track, folderTracks) },
                 onInspect = ::inspectTrack,
                 onEdit = { currentTag?.let { if (it.writable) editingTag = it else infoTag = it } },
@@ -332,6 +335,8 @@ class MainActivity : ComponentActivity() {
             )
         }
         persistFolders()
+        tracks.removeAll { it.folder == folder.name }
+        persistScannedTracks()
         status = "Folder removed"
     }
 
@@ -349,11 +354,70 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     tracks.clear()
                     tracks.addAll(found)
+                    persistScannedTracks()
                     status = "Scan complete · ${found.size} audio files"
                 }
             } catch (error: Throwable) {
                 runOnUiThread { status = "Scan failed: ${error.message}" }
             }
+        }
+    }
+
+    private fun refreshFolder(folder: LibraryFolder) {
+        status = "Refreshing ${folder.name}…"
+        io.execute {
+            try {
+                val refreshed = LibraryScanner(this).scan(listOf(folder))
+                runOnUiThread {
+                    tracks.removeAll { it.folder == folder.name }
+                    tracks.addAll(refreshed)
+                    persistScannedTracks()
+                    status = "Folder refreshed · ${refreshed.size} audio files"
+                }
+            } catch (error: Throwable) {
+                runOnUiThread { status = "Refresh failed: ${error.message}" }
+            }
+        }
+    }
+
+    private fun persistScannedTracks() {
+        val array = JSONArray()
+        tracks.forEach { track ->
+            array.put(JSONObject().apply {
+                put("uri", track.uri.toString())
+                put("title", track.title)
+                put("folder", track.folder)
+                put("mimeType", track.mimeType ?: JSONObject.NULL)
+                put("lyricsUri", track.sidecarLyricsUri?.toString() ?: JSONObject.NULL)
+            })
+        }
+        getSharedPreferences("library", MODE_PRIVATE).edit()
+            .putString("scanned_tracks", array.toString())
+            .putLong("last_scan_time", System.currentTimeMillis())
+            .apply()
+    }
+
+    private fun restoreScannedTracks() {
+        val stored = getSharedPreferences("library", MODE_PRIVATE).getString("scanned_tracks", null) ?: return
+        runCatching {
+            val array = JSONArray(stored)
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                val uri = Uri.parse(item.getString("uri"))
+                val lyrics = item.optString("lyricsUri").takeIf { it.isNotBlank() && it != "null" }?.let(Uri::parse)
+                tracks += AudioTrackItem(
+                    uri = uri,
+                    title = item.optString("title"),
+                    folder = item.optString("folder"),
+                    mimeType = item.optString("mimeType").takeIf { it.isNotBlank() && it != "null" },
+                    sidecarLyricsUri = lyrics
+                )
+            }
+            status = if (tracks.isEmpty()) "Choose a music folder to begin"
+                else "Library restored · ${tracks.size} indexed audio files"
+        }.onFailure {
+            tracks.clear()
+            status = "Saved library index could not be restored"
         }
     }
 
