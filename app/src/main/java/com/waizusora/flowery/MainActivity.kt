@@ -222,6 +222,9 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onAddFolder = { folderPicker.launch(null) },
+                onRequestNotificationPermission = {
+                    if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                },
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
                 onScan = ::scanLibrary,
