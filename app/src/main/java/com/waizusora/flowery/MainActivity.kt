@@ -178,6 +178,7 @@ class MainActivity : ComponentActivity() {
                 hasPlaybackSession = true
                 persistLastPlayedTrack(nextTrack)
             }
+            if (reportedStatus == "Stopped" || reportedStatus == "Playback finished") hasPlaybackSession = false
             if (nextTrack != null && (selectedTrack?.uri != nextTrack.uri || selectedTrack?.cueStartMs != nextTrack.cueStartMs ||
                     selectedTrack?.cuePlaylist != nextTrack.cuePlaylist || selectedTrack?.playlistName != nextTrack.playlistName ||
                     selectedTrack?.playlistOrder != nextTrack.playlistOrder)) {
