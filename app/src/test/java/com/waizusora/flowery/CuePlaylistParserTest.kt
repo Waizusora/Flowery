@@ -36,6 +36,17 @@ class CuePlaylistParserTest {
         assertEquals(listOf(PlaylistEntry("a.flac"), PlaylistEntry("b.flac", "Second")), pls)
     }
 
+    @Test fun parsesBomPrefixedCueAndQuotedPlsPaths() {
+        val cue = "\uFEFFTITLE \"Álbum\"\nFILE \"disc one.flac\" WAVE\nTRACK 01 AUDIO\nTITLE \"Café\"\nINDEX 01 00:00:00"
+        assertEquals("Álbum", CuePlaylistParser.parseCue(cue).title)
+        val pls = CuePlaylistParser.parsePls("[playlist]\nFile10=ten.flac\nFile2=two.flac\nTitle2=Second")
+        assertEquals(listOf(PlaylistEntry("two.flac", "Second"), PlaylistEntry("ten.flac")), pls)
+    }
+
+    @Test fun parsesUtf8M3uBom() {
+        val entries = CuePlaylistParser.parseM3u("\uFEFF#EXTM3U\n#EXTINF:-1,東京\naudio.flac")
+        assertEquals(PlaylistEntry("audio.flac", "東京"), entries.single())
+    }
     @Test fun decodesSelectedCharset() {
         val bytes = "Música".toByteArray(Charset.forName("windows-1252"))
         assertEquals("Música", LibraryTextEncoding.decode(bytes, "windows-1252"))
