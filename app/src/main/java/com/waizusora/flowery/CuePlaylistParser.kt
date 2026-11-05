@@ -97,7 +97,7 @@ object CuePlaylistParser {
     fun parseM3u(text: String): List<PlaylistEntry> {
         var nextTitle: String? = null
         val entries = mutableListOf<PlaylistEntry>()
-        text.lineSequence().map(String::trim).forEach { line ->
+        text.lineSequence().map { it.trim().removePrefix("\uFEFF") }.forEach { line ->
             when {
                 line.isEmpty() -> Unit
                 line.startsWith("#EXTINF:", true) -> nextTitle = line.substringAfter(',', "").trim().ifBlank { null }
@@ -114,13 +114,16 @@ object CuePlaylistParser {
     fun parsePls(text: String): List<PlaylistEntry> {
         val values = sortedMapOf<Int, String>()
         val titles = mutableMapOf<Int, String>()
-        text.lineSequence().forEach { line ->
-            val key = line.substringBefore('=', "").trim()
-            val value = line.substringAfter('=', "").trim()
-            val index = key.substringAfterLast(Regex("\\d+").find(key)?.value.orEmpty(), "").toIntOrNull()
+        text.lineSequence().map { it.trim() }.forEach { line ->
+            if (line.isEmpty() || line.startsWith(";") || line.startsWith("[")) return@forEach
+            val separator = line.indexOf('=')
+            if (separator <= 0) return@forEach
+            val key = line.substring(0, separator).trim()
+            val value = line.substring(separator + 1).trim().removeSurrounding("\"")
+            val index = key.takeLastWhile { it.isDigit() }.toIntOrNull() ?: return@forEach
             when {
-                key.startsWith("File", true) && index != null -> values[index] = value
-                key.startsWith("Title", true) && index != null -> titles[index] = value
+                key.startsWith("File", true) -> values[index] = value
+                key.startsWith("Title", true) -> titles[index] = value
             }
         }
         return values.map { (index, path) -> PlaylistEntry(path, titles[index]) }
