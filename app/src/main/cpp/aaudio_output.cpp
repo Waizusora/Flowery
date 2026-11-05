@@ -59,6 +59,7 @@ struct LastOpenDiagnostics {
     int32_t actualSampleRate = 0;
     int32_t actualChannels = 0;
     int32_t actualFormat = -1;
+    int32_t failureStage = 0;
 };
 LastOpenDiagnostics g_lastOpenDiagnostics;
 
@@ -184,6 +185,7 @@ void stopLocked() {
 
 aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
                            aaudio_sharing_mode_t sharing, int32_t deviceId) {
+    g_lastOpenDiagnostics.failureStage = 1; // Stream builder creation.
     AAudioStreamBuilder* builder = nullptr;
     auto result = AAudio_createStreamBuilder(&builder);
     if (result != AAUDIO_OK) return result;
@@ -205,6 +207,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
 #endif
     AAudioStreamBuilder_setDataCallback(builder, dataCallback, state);
     AAudioStreamBuilder_setErrorCallback(builder, errorCallback, state);
+    g_lastOpenDiagnostics.failureStage = 2; // AAudio stream open.
     result = AAudioStreamBuilder_openStream(builder, &g_stream);
     AAudioStreamBuilder_delete(builder);
     if (result != AAUDIO_OK) return result;
@@ -218,6 +221,7 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     g_lastOpenDiagnostics.actualChannels = AAudioStream_getChannelCount(g_stream);
     g_lastOpenDiagnostics.actualFormat = static_cast<int32_t>(AAudioStream_getFormat(g_stream));
     if (actualSharing != sharing) {
+        g_lastOpenDiagnostics.failureStage = 3; // Sharing mode negotiation mismatch.
         AAudioStream_close(g_stream);
         g_stream = nullptr;
         return -10001; // FLOWERY_ERROR_EXCLUSIVE_MODE_UNAVAILABLE
@@ -225,10 +229,12 @@ aaudio_result_t openStream(OutputState* state, int32_t rate, int32_t channels,
     if (AAudioStream_getFormat(g_stream) != AAUDIO_FORMAT_PCM_FLOAT ||
         (rate > 0 && AAudioStream_getSampleRate(g_stream) != rate) ||
         AAudioStream_getChannelCount(g_stream) != channels) {
+        g_lastOpenDiagnostics.failureStage = 4; // Negotiated PCM format mismatch.
         AAudioStream_close(g_stream);
         g_stream = nullptr;
         return AAUDIO_ERROR_INVALID_FORMAT;
     }
+    g_lastOpenDiagnostics.failureStage = 0;
     state->sampleRate = AAudioStream_getSampleRate(g_stream);
     state->successfulOpenSharingMode = static_cast<int32_t>(actualSharing);
     return AAUDIO_OK;
@@ -518,7 +524,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(JNIEnv* env, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    const jlong values[10] = {
+    const jlong values[11] = {
         g_lastOpenDiagnostics.requestedDeviceId,
         g_lastOpenDiagnostics.requestedSharingMode,
         g_lastOpenDiagnostics.requestedSampleRate,
@@ -528,10 +534,11 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(JNIEnv
         g_lastOpenDiagnostics.actualSharingMode,
         g_lastOpenDiagnostics.actualSampleRate,
         g_lastOpenDiagnostics.actualChannels,
-        g_lastOpenDiagnostics.actualFormat
+        g_lastOpenDiagnostics.actualFormat,
+        g_lastOpenDiagnostics.failureStage
     };
-    jlongArray result = env->NewLongArray(10);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 10, values);
+    jlongArray result = env->NewLongArray(11);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 11, values);
     return result;
 }
 
