@@ -13,10 +13,15 @@ import kotlin.math.abs
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
-        private const val OUTPUT_RING_CAPACITY_FRAMES = 131_072
-        private const val DECODE_CHUNK_FRAMES = 4_096
-        private const val MIN_LOW_WATERMARK_FRAMES = 16_384
-        private const val MAX_LOW_WATERMARK_FRAMES = OUTPUT_RING_CAPACITY_FRAMES / 2
+        private const val MIN_OUTPUT_RING_CAPACITY_FRAMES = 32_768
+        private const val DECODE_CHUNK_FRAMES = 8_192
+    }
+
+    private fun ringCapacityFrames(sampleRate: Int): Int {
+        val required = maxOf(sampleRate.toLong() * 2L, MIN_OUTPUT_RING_CAPACITY_FRAMES.toLong())
+        var capacity = 1L
+        while (capacity < required) capacity = capacity shl 1
+        return capacity.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     private var worker: Thread? = null
@@ -76,6 +81,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stopped.set(false)
         val generation = playbackGeneration.incrementAndGet()
         worker = thread(name = "FloweryStreamPlayer") {
+            runCatching {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+            }
             var descriptor: ParcelFileDescriptor? = null
             var handle = 0L
             try {
@@ -150,8 +158,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
+                val outputRingCapacityFrames = ringCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
-                    targetRate, channels, softwareVolume, deviceId, OUTPUT_RING_CAPACITY_FRAMES
+                    targetRate, channels, softwareVolume, deviceId, outputRingCapacityFrames
                 )
                 check(opened == 0) { "AAudio could not open the bounded output stream (error $opened)" }
                 outputSampleRate = targetRate
@@ -163,8 +172,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
                 onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
 
-                val lowWatermarkFrames = (targetRate / 2)
-                    .coerceIn(MIN_LOW_WATERMARK_FRAMES, MAX_LOW_WATERMARK_FRAMES)
+                // Keep at least 1.5 seconds of decoded PCM queued to tolerate scheduler and decoder delays.
+                val lowWatermarkFrames = (targetRate.toLong() * 3L / 2L)
+                    .coerceAtLeast(MIN_OUTPUT_RING_CAPACITY_FRAMES.toLong() / 2L)
+                    .coerceAtMost((outputRingCapacityFrames * 3L) / 4L)
+                    .toInt()
                 var outputStarted = false
                 var reachedEnd = false
                 var eofSignalled = false
