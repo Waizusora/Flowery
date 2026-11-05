@@ -218,6 +218,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stop()
         stopped.set(false)
         val generation = playbackGeneration.incrementAndGet()
+        if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
+                .getBoolean("usb_bit_perfect_enabled", false)) {
+            context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE).edit()
+                .putString("usb_direct_diagnostics", "").apply()
+        }
         worker = thread(name = "FloweryStreamPlayer") {
             runCatching {
                 // Keep decoding below the real-time AAudio callback thread to reduce scheduler contention.
