@@ -25,7 +25,7 @@ class CuePlaylistParserTest {
         assertEquals("First", result.tracks[0].title)
         assertEquals("disc one.flac", result.tracks[0].fileName)
         assertEquals(0L, result.tracks[0].startTimeMs)
-        assertEquals(194_000L, result.tracks[0].endTimeMs)
+        assertEquals(192_400L, result.tracks[0].endTimeMs)
         assertEquals(194_000L, result.tracks[1].startTimeMs)
     }
 
