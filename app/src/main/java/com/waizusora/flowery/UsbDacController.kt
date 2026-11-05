@@ -160,7 +160,7 @@ class UsbDacController(context: Context) {
      * frequency. It does not connect the current Rust decoder to this session;
      * callers must supply matching integer PCM through UsbDacSession.writePcm.
      */
-    fun openExclusivePlaybackSession(
+    internal fun openExclusivePlaybackSession(
         device: UsbDevice,
         bitResolution: Int,
         sampleRate: Int
