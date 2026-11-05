@@ -47,6 +47,12 @@ class PlaybackService : Service() {
         const val EXTRA_INDEX = "queue_index"
         const val EXTRA_CUE_STARTS = "queue_cue_starts_ms"
         const val EXTRA_CUE_ENDS = "queue_cue_ends_ms"
+        const val EXTRA_CUE_PLAYLISTS = "queue_cue_playlists"
+        const val EXTRA_PLAYLIST_NAMES = "queue_playlist_names"
+        const val EXTRA_PLAYLIST_ORDERS = "queue_playlist_orders"
+        const val EXTRA_CURRENT_CUE_PLAYLIST = "current_cue_playlist"
+        const val EXTRA_CURRENT_PLAYLIST_NAME = "current_playlist_name"
+        const val EXTRA_CURRENT_PLAYLIST_ORDER = "current_playlist_order"
         const val EXTRA_VALUE = "value"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_ARTIST = "media_artist"
@@ -77,6 +83,9 @@ class PlaybackService : Service() {
     private val queueArtists = mutableListOf<String>()
     private val queueCueStarts = mutableListOf<Long>()
     private val queueCueEnds = mutableListOf<Long>()
+    private val queueCuePlaylists = mutableListOf<String>()
+    private val queuePlaylistNames = mutableListOf<String>()
+    private val queuePlaylistOrders = mutableListOf<Int>()
     private var queueIndex = -1
     private var repeatMode = 0 // 0 off, 1 all, 2 one
     private var shuffle = false
@@ -164,6 +173,12 @@ class PlaybackService : Service() {
                     queueCueStarts.addAll(intent.getLongArrayExtra(EXTRA_CUE_STARTS)?.toList().orEmpty())
                     queueCueEnds.clear()
                     queueCueEnds.addAll(intent.getLongArrayExtra(EXTRA_CUE_ENDS)?.toList().orEmpty())
+                    queueCuePlaylists.clear()
+                    queueCuePlaylists.addAll(intent.getStringArrayListExtra(EXTRA_CUE_PLAYLISTS).orEmpty())
+                    queuePlaylistNames.clear()
+                    queuePlaylistNames.addAll(intent.getStringArrayListExtra(EXTRA_PLAYLIST_NAMES).orEmpty())
+                    queuePlaylistOrders.clear()
+                    queuePlaylistOrders.addAll(intent.getIntegerArrayListExtra(EXTRA_PLAYLIST_ORDERS).orEmpty())
                     queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(queue.indices)
                 } else {
                     val uri = intent.getStringExtra(EXTRA_URI)
@@ -181,6 +196,12 @@ class PlaybackService : Service() {
                 queueCueStarts.addAll(intent.getLongArrayExtra(EXTRA_CUE_STARTS)?.toList().orEmpty())
                 queueCueEnds.clear()
                 queueCueEnds.addAll(intent.getLongArrayExtra(EXTRA_CUE_ENDS)?.toList().orEmpty())
+                queueCuePlaylists.clear()
+                queueCuePlaylists.addAll(intent.getStringArrayListExtra(EXTRA_CUE_PLAYLISTS).orEmpty())
+                queuePlaylistNames.clear()
+                queuePlaylistNames.addAll(intent.getStringArrayListExtra(EXTRA_PLAYLIST_NAMES).orEmpty())
+                queuePlaylistOrders.clear()
+                queuePlaylistOrders.addAll(intent.getIntegerArrayListExtra(EXTRA_PLAYLIST_ORDERS).orEmpty())
                 queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(0, (queue.size - 1).coerceAtLeast(0))
                 if (queue.isNotEmpty()) playCurrent()
             }
@@ -422,6 +443,9 @@ class PlaybackService : Service() {
             .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
+            .putExtra(EXTRA_CURRENT_CUE_PLAYLIST, queueCuePlaylists.getOrNull(queueIndex).orEmpty())
+            .putExtra(EXTRA_CURRENT_PLAYLIST_NAME, queuePlaylistNames.getOrNull(queueIndex).orEmpty())
+            .putExtra(EXTRA_CURRENT_PLAYLIST_ORDER, queuePlaylistOrders.getOrNull(queueIndex) ?: -1)
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
             .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
             .putExtra(EXTRA_REPEAT_MODE, repeatMode)
