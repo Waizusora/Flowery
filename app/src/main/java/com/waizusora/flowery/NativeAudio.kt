@@ -10,7 +10,7 @@ object NativeAudio {
     external fun nativeReadStreamChunk(handle: Long, maxFrames: Int): FloatArray
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
-    external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, capacityFrames: Int): Int
+    external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeWriteStreamFrames(samples: FloatArray, sourceFrameOffset: Int, frameCount: Int): Int
     external fun nativeFlushStreamOutput(positionFrames: Long, shouldStart: Boolean): Int
@@ -22,7 +22,7 @@ object NativeAudio {
     external fun nativeGetLastOutputOpenDiagnostics(): LongArray
     external fun nativeTuneOutputBuffer(): Int
     external fun nativeDecode(encodedAudio: ByteArray): ByteArray
-    external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int): Int
+    external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int, outputFormat: Int): Int
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeWriteTags(encodedAudio: ByteArray, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): ByteArray
     external fun nativeResample(samples: FloatArray, inputRate: Int, outputRate: Int, channels: Int): FloatArray
