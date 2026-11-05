@@ -170,8 +170,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setVolume(value: Float) {
-        if (usbPlaybackMode || activeBitPerfectDevice != null) {
-            onState("USB BIT_PERFECT mixer mode keeps digital gain at unity. Use the DAC hardware volume control.")
+        if (usbPlaybackMode) {
+            onState("Direct USB bit-perfect playback keeps digital gain at unity. Use the DAC hardware volume control.")
             return
         }
         val normalized = value.coerceIn(0f, 1f)
@@ -193,10 +193,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     private fun applyOutputVolume() {
-        if (activeBitPerfectDevice != null) {
-            NativeAudio.nativeSetOutputVolume(1f)
-            return
-        }
         val duckGain = if (outputDucked) 0.25f else 1f
         NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
@@ -232,7 +228,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     return@thread
                 }
                 if (bitPerfectRequested && !directPcmSupported) {
-                    onState("Direct USB bit-perfect is not available for .$extension yet; using the standard decoded playback path.")
+                    onState("Direct USB bit-perfect is not available for .$extension yet; Android USB mixer BIT_PERFECT will be requested for the decoded PCM path.")
                 }
 
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
@@ -295,7 +291,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val outputRingCapacityFrames = ringCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
                     targetRate, channels,
-                    if (mixerSelection != null) 1f else softwareVolume,
+                    softwareVolume,
                     deviceId,
                     requireExclusive = deviceId != 0 && mixerSelection == null,
                     outputFormat = outputFormat,
