@@ -12,6 +12,8 @@ import android.content.IntentFilter
 import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
+import android.media.AudioDeviceInfo
+import android.media.AudioDeviceCallback
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -77,6 +79,27 @@ class PlaybackService : Service() {
     private var currentArtist = "Local music"
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var lastOutputDeviceSnapshot: List<String> = emptyList()
+    private val outputRouteCheck = Runnable {
+        val current = outputDeviceSnapshot()
+        if (current != lastOutputDeviceSnapshot) {
+            lastOutputDeviceSnapshot = current
+            if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
+                pauseForOutputChange()
+            } else {
+                publishState("Audio output changed · press Play when ready")
+            }
+        }
+    }
+    private val outputDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            scheduleOutputRouteCheck()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            scheduleOutputRouteCheck()
+        }
+    }
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pausePlayback()
@@ -117,6 +140,8 @@ class PlaybackService : Service() {
         publishSessionState()
         mainHandler.post(progressUpdates)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
+        lastOutputDeviceSnapshot = outputDeviceSnapshot()
+        audioManager.registerAudioDeviceCallback(outputDeviceCallback, mainHandler)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -254,6 +279,40 @@ class PlaybackService : Service() {
                 publishState("Unable to load file: ${error.message}")
             }
         }
+    }
+
+    private fun outputDeviceSnapshot(): List<String> {
+        val monitoredTypes = setOf(
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET,
+            AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
+            AudioDeviceInfo.TYPE_LINE_ANALOG,
+            AudioDeviceInfo.TYPE_LINE_DIGITAL,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
+            AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_HDMI,
+            AudioDeviceInfo.TYPE_HDMI_ARC,
+            AudioDeviceInfo.TYPE_HDMI_EARC
+        )
+        return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .filter { it.type in monitoredTypes }
+            .map { "${it.type}:${it.id}:${it.productName}" }
+            .sorted()
+    }
+
+    private fun scheduleOutputRouteCheck() {
+        mainHandler.removeCallbacks(outputRouteCheck)
+        mainHandler.postDelayed(outputRouteCheck, 350L)
+    }
+
+    private fun pauseForOutputChange() {
+        resumeAfterFocus = false
+        player.pause()
+        playbackState = PlaybackStateCompat.STATE_PAUSED
+        publishSessionState()
+        publishState("Paused · audio output changed. Press Play to resume.")
     }
 
     private fun pausePlayback() {
@@ -400,6 +459,8 @@ class PlaybackService : Service() {
         focusRequest = null
         focusListener = null
         runCatching { unregisterReceiver(noisyReceiver) }
+        runCatching { audioManager.unregisterAudioDeviceCallback(outputDeviceCallback) }
+        mainHandler.removeCallbacks(outputRouteCheck)
         session.isActive = false
         session.release()
         io.shutdownNow()
