@@ -163,7 +163,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val opened = NativeAudio.nativeStartStreamOutput(
                     targetRate, channels, softwareVolume, deviceId, outputRingCapacityFrames
                 )
-                check(opened == 0) { "AAudio could not open the bounded output stream (error $opened)" }
+                check(opened == 0) {
+                    if (opened == -10001) {
+                        "USB/system output requires AAudio EXCLUSIVE mode, but Android negotiated SHARED. Playback was stopped; no Shared fallback was used."
+                    } else {
+                        "AAudio could not open the required EXCLUSIVE output stream (error $opened)"
+                    }
+                }
                 outputSampleRate = targetRate
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
