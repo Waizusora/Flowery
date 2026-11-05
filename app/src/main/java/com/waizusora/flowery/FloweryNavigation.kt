@@ -417,8 +417,6 @@ fun FloweryNavigation(
 }
 
 @Composable
-
-@Composable
 private fun WelcomeContent(
     foreground: Color,
     muted: Color,
@@ -742,5 +740,48 @@ private fun SettingCard(title: String, subtitle: String, color: Color, muted: Co
 private fun Detail(title: String, value: String, color: Color, muted: Color) {
     Column(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(title, color = color, fontWeight = FontWeight.SemiBold); Text(value, color = muted)
+    }
+}
+
+
+@Composable
+private fun Heading(title: String, color: Color) {
+    Text(
+        text = title,
+        color = color,
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.SemiBold,
+        maxLines = 1
+    )
+}
+
+@Composable
+private fun NavIcon(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    foreground: Color,
+    onClick: () -> Unit
+) {
+    val accent = Color(0xFFD66B9A)
+    Column(
+        modifier = Modifier
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = if (selected) accent else foreground,
+            modifier = Modifier.size(24.dp)
+        )
+        Text(
+            text = label,
+            color = if (selected) accent else foreground.copy(alpha = 0.78f),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
+        )
     }
 }
