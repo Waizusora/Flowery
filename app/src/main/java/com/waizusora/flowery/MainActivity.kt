@@ -157,8 +157,11 @@ class MainActivity : ComponentActivity() {
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
             if (reportedDuration > 0L) playbackDurationMs = reportedDuration
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
-            val nextTrack = tracks.firstOrNull { it.uri.toString() == currentUri }
-            if (nextTrack != null && selectedTrack?.uri != nextTrack.uri) {
+            val currentCueStart = intent.getLongExtra(PlaybackService.EXTRA_CURRENT_CUE_START, 0L)
+            val nextTrack = tracks.firstOrNull {
+                it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart
+            }
+            if (nextTrack != null && (selectedTrack?.uri != nextTrack.uri || selectedTrack?.cueStartMs != nextTrack.cueStartMs)) {
                 selectedTrack = nextTrack
                 playbackDurationMs = 0L
                 currentTag = null
