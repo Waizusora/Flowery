@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -15,6 +16,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     companion object {
         private const val MIN_OUTPUT_RING_CAPACITY_FRAMES = 32_768
         private const val DECODE_CHUNK_FRAMES = 8_192
+    }
+
+    private fun usbHostDeviceSummary(): String {
+        val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return "usbHostDevices=unavailable"
+        val devices = runCatching { manager.deviceList.values.toList() }.getOrDefault(emptyList())
+        if (devices.isEmpty()) return "usbHostDevices=none"
+        return devices.joinToString(prefix = "usbHostDevices=[", postfix = "]") { device ->
+            val vendor = "%04X".format(java.util.Locale.ROOT, device.vendorId)
+            val product = "%04X".format(java.util.Locale.ROOT, device.productId)
+            "vid=$vendor,pid=$product,name=${device.productName ?: "unknown"}," +
+                "manufacturer=${device.manufacturerName ?: "unknown"}," +
+                "interfaces=${device.interfaceCount},path=${device.deviceName}"
+        }
     }
 
     private fun ringCapacityFrames(sampleRate: Int): Int {
@@ -171,17 +186,28 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val modeName: (Long) -> String = { mode ->
                         when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "UNKNOWN($mode)" }
                     }
-                    val details = if (attempt.size >= 10) {
+                    val failureStage = when (attempt.getOrNull(10)?.toInt()) {
+                        0 -> "none"
+                        1 -> "create_stream_builder"
+                        2 -> "open_stream"
+                        3 -> "sharing_mode_mismatch"
+                        4 -> "pcm_format_mismatch"
+                        else -> "unknown"
+                    }
+                    val details = if (attempt.size >= 11) {
                         "requestedDeviceId=${attempt[0]}, requestedMode=${modeName(attempt[1])}, " +
                             "requestedRate=${attempt[2]}, requestedChannels=${attempt[3]}, " +
                             "openResult=${attempt[4]}, actualDeviceId=${attempt[5]}, " +
                             "actualMode=${modeName(attempt[6])}, actualRate=${attempt[7]}, " +
-                            "actualChannels=${attempt[8]}, actualFormat=${attempt[9]}"
+                            "actualChannels=${attempt[8]}, actualFormat=${attempt[9]}, " +
+                            "failureStage=$failureStage"
                     } else "native open diagnostics unavailable"
                     val device = selectedDevice?.let {
                         "product=${it.productName}, id=${it.id}, type=${it.type}, " +
+                            "address=${runCatching { it.address }.getOrNull() ?: "unknown"}, " +
                             "rates=${it.sampleRates?.joinToString() ?: "unknown"}"
                     } ?: "no USB output device selected"
+                    val usbHost = usbHostDeviceSummary()
                     val reason = if (opened == -10001 && deviceId != 0) {
                         "Android did not provide the required USB DAC EXCLUSIVE mode."
                     } else if (deviceId != 0) {
@@ -189,7 +215,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     } else {
                         "Unable to open Android system SHARED output (error $opened)."
                     }
-                    throw IllegalStateException("$reason $device; $details")
+                    throw IllegalStateException("$reason $device; $usbHost; $details")
                 }
                 outputSampleRate = targetRate
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
