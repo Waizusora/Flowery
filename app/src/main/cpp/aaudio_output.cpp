@@ -20,6 +20,11 @@ struct OutputState {
     std::atomic<int32_t> errorCode{0};
     std::atomic<uint64_t> playedFrames{0};
     std::atomic<uint64_t> underrunCount{0};
+    std::atomic<uint64_t> callbackCount{0};
+    std::atomic<uint64_t> callbackFramesRequested{0};
+    std::atomic<uint64_t> callbackFramesDelivered{0};
+    std::atomic<uint64_t> callbackSilenceFrames{0};
+    std::atomic<uint64_t> callbackMaxFrames{0};
     std::atomic<int32_t> lastTunedXrunCount{0};
     int32_t channels = 2;
 };
@@ -37,6 +42,12 @@ void errorCallback(AAudioStream*, void* userData, aaudio_result_t error) {
 aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* audioData, int32_t frames) {
     auto* state = static_cast<OutputState*>(userData);
     auto* output = static_cast<float*>(audioData);
+    state->callbackCount.fetch_add(1, std::memory_order_relaxed);
+    state->callbackFramesRequested.fetch_add(static_cast<uint64_t>(frames), std::memory_order_relaxed);
+    uint64_t previousMax = state->callbackMaxFrames.load(std::memory_order_relaxed);
+    while (previousMax < static_cast<uint64_t>(frames) &&
+           !state->callbackMaxFrames.compare_exchange_weak(
+               previousMax, static_cast<uint64_t>(frames), std::memory_order_relaxed)) {}
     const uint64_t read = state->readFrame.load(std::memory_order_relaxed);
     const uint64_t write = state->writeFrame.load(std::memory_order_acquire);
     const uint64_t available = write >= read ? write - read : 0;
@@ -63,6 +74,8 @@ aaudio_data_callback_result_t dataCallback(AAudioStream*, void* userData, void* 
 
     state->readFrame.store(read + count, std::memory_order_release);
     state->playedFrames.fetch_add(count, std::memory_order_relaxed);
+    state->callbackFramesDelivered.fetch_add(count, std::memory_order_relaxed);
+    state->callbackSilenceFrames.fetch_add(remaining, std::memory_order_relaxed);
 
     if (remaining > 0 && state->eof.load(std::memory_order_acquire) &&
         state->writeFrame.load(std::memory_order_acquire) == read + count) {
@@ -398,13 +411,18 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[8] = {};
+    jlong values[18] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
         values[2] = static_cast<jlong>(g_output->writeFrame.load(std::memory_order_acquire) -
                                       g_output->readFrame.load(std::memory_order_acquire));
         values[3] = static_cast<jlong>(g_output->capacityFrames);
+        values[13] = static_cast<jlong>(g_output->callbackCount.load(std::memory_order_acquire));
+        values[14] = static_cast<jlong>(g_output->callbackFramesRequested.load(std::memory_order_acquire));
+        values[15] = static_cast<jlong>(g_output->callbackFramesDelivered.load(std::memory_order_acquire));
+        values[16] = static_cast<jlong>(g_output->callbackSilenceFrames.load(std::memory_order_acquire));
+        values[17] = static_cast<jlong>(g_output->callbackMaxFrames.load(std::memory_order_acquire));
     }
     if (g_stream) {
         const int32_t xruns = AAudioStream_getXRunCount(g_stream);
@@ -413,9 +431,14 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[5] = AAudioStream_getFramesPerBurst(g_stream);
         values[6] = static_cast<jlong>(AAudioStream_getState(g_stream));
         values[7] = AAudioStream_getSampleRate(g_stream);
+        values[8] = AAudioStream_getDeviceId(g_stream);
+        values[9] = AAudioStream_getSharingMode(g_stream);
+        values[10] = AAudioStream_getFormat(g_stream);
+        values[11] = AAudioStream_getChannelCount(g_stream);
+        values[12] = AAudioStream_getPerformanceMode(g_stream);
     }
-    jlongArray result = env->NewLongArray(8);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 8, values);
+    jlongArray result = env->NewLongArray(18);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 18, values);
     return result;
 }
 
