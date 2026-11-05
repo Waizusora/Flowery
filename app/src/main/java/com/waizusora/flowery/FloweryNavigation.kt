@@ -23,6 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -502,17 +509,31 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Icon(Icons.Default.Add, null)
                     Text(" ADD")
                 }
+                val scanInProgress = status.startsWith("Scanning selected folders") ||
+                    status.startsWith("Refreshing ")
+                val scanTransition = rememberInfiniteTransition(label = "library-scan")
+                val scanRotation by scanTransition.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(durationMillis = 900, easing = LinearEasing),
+                        repeatMode = RepeatMode.Restart
+                    ),
+                    label = "scan-rotation"
+                )
                 Button(
                     onClick = scan,
+                    enabled = !scanInProgress,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
                     shape = RoundedCornerShape(28.dp)
                 ) {
-                    Icon(Icons.Default.Refresh, null)
-                    Text(" Scan")
+                    Icon(Icons.Default.Refresh, null,
+                        modifier = Modifier.graphicsLayer { rotationZ = if (scanInProgress) scanRotation else 0f })
+                    Text(if (scanInProgress) " Scanning…" else " Scan")
                 }
             }
-            Text("${folders.size} folders · ${tracks.size} scanned songs", color = muted,
+            Text("${folders.size} folders in library", color = muted,
                 style = MaterialTheme.typography.labelSmall)
             folders.forEach { folder ->
                 Row(
@@ -534,28 +555,6 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             }
             if (folders.isEmpty()) Text("No folders added yet. Tap ADD to choose a folder. You can add more folders at any time.",
                 color = muted)
-            Text("SCANNED SONGS · ${tracks.size}", color = color, fontWeight = FontWeight.SemiBold,
-                style = MaterialTheme.typography.titleSmall)
-            if (tracks.isEmpty()) {
-                Text("Scanned songs will appear here after you press Scan. The saved index is reused when you reopen this page.",
-                    color = muted)
-            } else {
-                tracks.forEach { track ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { playTrack(track, tracks) }.padding(vertical = 9.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A),
-                            modifier = Modifier.size(25.dp))
-                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                            Text(track.title, color = color, fontWeight = FontWeight.Medium, maxLines = 1)
-                            Text(track.folder, color = muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                        }
-                        Icon(Icons.Default.PlayArrow, "Play", tint = color.copy(alpha = .7f))
-                    }
-                    HorizontalDivider(color = muted.copy(alpha = .16f))
-                }
-            }
             Text(status, color = muted, style = MaterialTheme.typography.labelSmall)
         }
         SettingsPage.APPEARANCE -> {
