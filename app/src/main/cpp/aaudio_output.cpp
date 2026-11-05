@@ -57,6 +57,11 @@ uint64_t monotonicTimeNs() {
            static_cast<uint64_t>(value.tv_nsec);
 }
 
+void resetCallbackTimingBaseline(OutputState* state) {
+    state->lastCallbackStartNs.store(0, std::memory_order_relaxed);
+    state->lastCallbackFrames.store(0, std::memory_order_relaxed);
+}
+
 void updateMaximum(std::atomic<uint64_t>& target, uint64_t value) {
     uint64_t previous = target.load(std::memory_order_relaxed);
     while (previous < value &&
@@ -243,6 +248,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(JNIEnv*, jobjec
     if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
     if (state != AAUDIO_STREAM_STATE_OPEN && state != AAUDIO_STREAM_STATE_PAUSED &&
         state != AAUDIO_STREAM_STATE_STOPPED) return AAUDIO_ERROR_INVALID_STATE;
+    resetCallbackTimingBaseline(g_output.get());
     const auto result = AAudioStream_requestStart(g_stream);
     if (result != AAUDIO_OK) g_output->active.store(false, std::memory_order_release);
     return result;
@@ -328,6 +334,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(JNIEnv*, jobject,
     g_output->writeFrame.store(0, std::memory_order_relaxed);
     g_output->playedFrames.store(static_cast<uint64_t>(positionFrames), std::memory_order_release);
     g_output->eof.store(false, std::memory_order_release);
+    resetCallbackTimingBaseline(g_output.get());
     g_output->active.store(true, std::memory_order_release);
     if (shouldStart != JNI_TRUE) {
         if (state == AAUDIO_STREAM_STATE_STARTED) {
@@ -410,10 +417,15 @@ Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(JNIEnv*, jobject) {
         if (result != AAUDIO_OK) return result;
         state = AAudioStream_getState(g_stream);
     }
-    if (state == AAUDIO_STREAM_STATE_PAUSED) return AAUDIO_OK;
+    if (state == AAUDIO_STREAM_STATE_PAUSED) {
+        if (g_output) resetCallbackTimingBaseline(g_output.get());
+        return AAUDIO_OK;
+    }
     if (state == AAUDIO_STREAM_STATE_PAUSING) {
-        return waitForStreamState(
+        const auto result = waitForStreamState(
             g_stream, AAUDIO_STREAM_STATE_PAUSING, AAUDIO_STREAM_STATE_PAUSED);
+        if (result == AAUDIO_OK && g_output) resetCallbackTimingBaseline(g_output.get());
+        return result;
     }
     return AAUDIO_ERROR_INVALID_STATE;
 }
@@ -427,6 +439,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(JNIEnv*, jobject) {
     if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
     if (state == AAUDIO_STREAM_STATE_DISCONNECTED) return AAUDIO_ERROR_DISCONNECTED;
     if (state == AAUDIO_STREAM_STATE_PAUSED) {
+        if (g_output) resetCallbackTimingBaseline(g_output.get());
         const auto result = AAudioStream_requestStart(g_stream);
         if (result != AAUDIO_OK) return result;
         state = AAudioStream_getState(g_stream);
