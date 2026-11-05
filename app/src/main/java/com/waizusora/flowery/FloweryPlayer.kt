@@ -85,15 +85,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Opening audio stream…")
                 descriptor = context.contentResolver.openFileDescriptor(uri, "r")
                     ?: throw IllegalStateException("Unable to open the selected audio document")
+                val extension = resolveAudioExtension(uri)
                 val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
-                if (bitPerfectRequested && segmentStartMs == 0L && segmentEndMs == null) {
+                val directPcmSupported = extension == "wav" || extension == "wave"
+                if (bitPerfectRequested && directPcmSupported &&
+                    segmentStartMs == 0L && segmentEndMs == null) {
                     usbPlaybackMode = true
                     playUsbBitPerfect(descriptor, generation)
                     return@thread
                 }
+                if (bitPerfectRequested && !directPcmSupported) {
+                    onState("Direct USB bit-perfect is not available for .$extension yet; using the standard decoded playback path.")
+                }
 
-                val extension = resolveAudioExtension(uri)
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
