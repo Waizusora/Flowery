@@ -163,12 +163,24 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
         stopLocked();
         return result;
     }
+    // Keep the stream open while the producer fills the ring buffer.
+    // Playback starts only after Kotlin confirms that the prebuffer target is met.
     g_output->active.store(true, std::memory_order_release);
-    result = AAudioStream_requestStart(g_stream);
-    if (result != AAUDIO_OK) {
-        g_output->active.store(false, std::memory_order_release);
-        stopLocked();
+    return AAUDIO_OK;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(JNIEnv*, jobject) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (!g_output || !g_stream || !g_output->active.load(std::memory_order_acquire)) {
+        return AAUDIO_ERROR_INVALID_STATE;
     }
+    const auto state = AAudioStream_getState(g_stream);
+    if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
+    if (state != AAUDIO_STREAM_STATE_OPEN && state != AAUDIO_STREAM_STATE_PAUSED &&
+        state != AAUDIO_STREAM_STATE_STOPPED) return AAUDIO_ERROR_INVALID_STATE;
+    const auto result = AAudioStream_requestStart(g_stream);
+    if (result != AAUDIO_OK) g_output->active.store(false, std::memory_order_release);
     return result;
 }
 
