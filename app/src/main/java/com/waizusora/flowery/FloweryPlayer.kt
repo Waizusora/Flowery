@@ -3,7 +3,6 @@ package com.waizusora.flowery
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -32,7 +31,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var usbPlaybackMode = false
-    @Volatile private var usbBitPerfectActive = false
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
@@ -45,7 +43,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun setVolume(value: Float) {
         if (usbPlaybackMode) {
-            onState("USB bit-perfect mode keeps digital volume at unity. Use the DAC hardware volume control.")
+            onState("USB exclusive bit-perfect is active; digital volume is fixed at unity. Use the DAC hardware volume control.")
             return
         }
         val normalized = value.coerceIn(0f, 1f)
@@ -278,7 +276,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    usbBitPerfectActive = true
                     onState("USB exclusive bit-perfect · PCM ${source.bitDepth}-bit · ${source.sampleRate} Hz")
                 }
             }
@@ -287,7 +284,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Playback finished")
             }
         } finally {
-            usbBitPerfectActive = false
             usbPlaybackMode = false
             try {
                 session?.close()
@@ -353,7 +349,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         pendingSeekMs.set(null)
         paused = false
         usbPlaybackMode = false
-        usbBitPerfectActive = false
         usbPositionFrames = 0L
         activeUsbDeviceKey = null
     }
