@@ -581,7 +581,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Detail("Sharing mode", when (data[9].toInt()) { 0 -> "EXCLUSIVE"; 1 -> "SHARED"; else -> "Unavailable" }, color, muted)
                 Detail("PCM format", when (data[10].toInt()) { 2 -> "PCM_FLOAT"; 1 -> "PCM_I16"; 3 -> "PCM_I24_PACKED"; 4 -> "PCM_I32"; else -> "Unknown (${data[10]})" }, color, muted)
                 Detail("Output channels", data[11].toString(), color, muted)
-                Detail("Performance mode", when (data[12].toInt()) { 10 -> "LOW_LATENCY"; 11 -> "POWER_SAVING"; else -> "None / unknown (${data[12]})" }, color, muted)
+                Detail("Performance mode", when (data[12].toInt()) { 12 -> "LOW_LATENCY"; 11 -> "POWER_SAVING"; 10 -> "NONE"; else -> "Unknown (${data[12]})" }, color, muted)
                 Detail("Data callbacks", data[13].toString(), color, muted)
                 Detail("Callback frames requested", data[14].toString(), color, muted)
                 Detail("PCM frames delivered", data[15].toString(), color, muted)
