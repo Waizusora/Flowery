@@ -72,7 +72,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val supported = runCatching { audioManager.getSupportedMixerAttributes(device) }
             .getOrElse { failure ->
                 throw IllegalStateException(
-                    "Unable to query USB DAC mixer formats for Android BIT_PERFECT: \${failure.message}"
+                    "Unable to query USB DAC mixer formats for Android BIT_PERFECT: ${failure.message}"
                 )
             }
         val encodingOptions = mapOf(
@@ -94,8 +94,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             )
         )
         val supportedSummary = supported.joinToString(separator = "; ") { mixer ->
-            "behavior=\${mixer.mixerBehavior},rate=\${mixer.format.sampleRate}," +
-                "channels=\${mixer.format.channelCount},encoding=\${mixer.format.encoding}"
+            "behavior=${mixer.mixerBehavior},rate=${mixer.format.sampleRate}," +
+                "channels=${mixer.format.channelCount},encoding=${mixer.format.encoding}"
         }
         val selected = candidates.firstOrNull() ?: throw IllegalStateException(
             "USB DAC does not expose a compatible Android BIT_PERFECT mixer format " +
@@ -105,8 +105,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val mixerAttributes = selected.first
         check(audioManager.setPreferredMixerAttributes(audioAttributes, device, mixerAttributes)) {
             "Android rejected USB BIT_PERFECT mixer attributes. " +
-                "device=\${device.productName}, rate=\${mixerAttributes.format.sampleRate}, " +
-                "channels=$channels, encoding=\${mixerAttributes.format.encoding}"
+                "device=${device.productName}, rate=${mixerAttributes.format.sampleRate}, " +
+                "channels=$channels, encoding=${mixerAttributes.format.encoding}"
         }
         val applied = audioManager.getPreferredMixerAttributes(audioAttributes, device)
         check(applied != null &&
