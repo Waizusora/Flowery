@@ -57,7 +57,7 @@ class LibraryScanner(private val context: Context) {
         val preferences = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
         val selectedEncoding = preferences.getString("library_text_encoding", "UTF-8") ?: "UTF-8"
         cueFiles.forEach cueLoop@{ cueFile ->
-            val cueName = (pathStack.drop(1).mapNotNull { it.name } + (cueFile.name ?: "CUE playlist")).joinToString("/")
+            val cueName = (listOf(rootName) + pathStack.drop(1).mapNotNull { it.name } + (cueFile.name ?: "CUE playlist")).joinToString("/")
             val cueText = readText(cueFile, selectedEncoding) ?: return@cueLoop
             val sheet = CuePlaylistParser.parseCue(cueText)
             sheet.tracks.forEach trackLoop@{ cueTrack ->
@@ -71,7 +71,7 @@ class LibraryScanner(private val context: Context) {
             }
         }
         playlistFiles.forEach playlistLoop@{ playlistFile ->
-            val playlistName = (pathStack.drop(1).mapNotNull { it.name } + (playlistFile.name ?: "Playlist")).joinToString("/")
+            val playlistName = (listOf(rootName) + pathStack.drop(1).mapNotNull { it.name } + (playlistFile.name ?: "Playlist")).joinToString("/")
             val extension = playlistName.substringAfterLast(".", "").lowercase()
             val playlistText = readText(playlistFile, if (extension == "m3u8") "UTF-8" else selectedEncoding) ?: return@playlistLoop
             val entries = if (extension == "pls") CuePlaylistParser.parsePls(playlistText) else CuePlaylistParser.parseM3u(playlistText)
@@ -95,7 +95,7 @@ class LibraryScanner(private val context: Context) {
     }.getOrNull()
 
     private fun resolvePlaylistPath(pathStack: List<DocumentFile>, rawPath: String): DocumentFile? {
-        val path = rawPath.trim().removeSurrounding("\"").replace(92.toChar(), '/')
+        val path = Uri.decode(rawPath.trim().removeSurrounding("\"").replace(92.toChar(), '/'))
         if (path.startsWith("content://", ignoreCase = true)) {
             return runCatching { DocumentFile.fromSingleUri(context, Uri.parse(path)) }.getOrNull()
         }
@@ -103,12 +103,26 @@ class LibraryScanner(private val context: Context) {
         val segments = path.split('/').filter { it.isNotBlank() && it != "." }
         if (segments.isEmpty()) return null
         val stack = pathStack.toMutableList()
-        segments.forEachIndexed { index, segment ->
-            if (segment == "..") { if (stack.size > 1) stack.removeAt(stack.lastIndex); return@forEachIndexed }
-            val parent = stack.lastOrNull() ?: return null
-            val next = parent.findFile(segment) ?: parent.listFiles().firstOrNull { it.name.equals(segment, ignoreCase = true) } ?: return null
-            if (index < segments.lastIndex) { if (!next.isDirectory) return null; stack += next } else return next
+        var resolved: DocumentFile? = null
+        for ((index, segment) in segments.withIndex()) {
+            if (segment == "..") { if (stack.size > 1) stack.removeAt(stack.lastIndex); continue }
+            val parent = stack.lastOrNull() ?: break
+            val next = parent.findFile(segment) ?: parent.listFiles().firstOrNull { it.name.equals(segment, ignoreCase = true) } ?: break
+            if (index < segments.lastIndex) {
+                if (!next.isDirectory) break
+                stack += next
+            } else resolved = next
         }
-        return stack.lastOrNull()
+        if (resolved != null) return resolved
+        val targetName = segments.last()
+        val matches = mutableListOf<DocumentFile>()
+        fun search(directory: DocumentFile) {
+            directory.listFiles().forEach { child ->
+                if (child.isDirectory) search(child)
+                else if (child.name.equals(targetName, ignoreCase = true)) matches += child
+            }
+        }
+        pathStack.firstOrNull()?.let(::search)
+        return matches.singleOrNull()
     }
 }
