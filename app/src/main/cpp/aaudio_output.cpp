@@ -372,9 +372,9 @@ Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(JNIEnv*, jobject) {
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (!g_output || !g_stream) return 0;
-    const int32_t xrunCount = AAudioStream_getXRunCount(g_stream);
-    return xrunCount < 0 ? 0 : xrunCount;
+    if (!g_output) return 0;
+    const uint64_t count = g_output->underrunCount.load(std::memory_order_acquire);
+    return count > static_cast<uint64_t>(INT32_MAX) ? INT32_MAX : static_cast<jint>(count);
 }
 
 extern "C" JNIEXPORT jlongArray JNICALL
