@@ -40,7 +40,6 @@ Application ID: `com.waizusora.flowery`
 - Update opens the project's GitHub Releases page in the browser.
 - Open Source lists the direct application and native dependencies with their declared versions and applicable upstream license identifiers. It is not an inventory of transitive dependencies; consult the exact packaged notices and upstream license texts before redistribution.
 
-
 ### Playback
 
 - Play audio documents selected from configured folders.
@@ -186,7 +185,3 @@ CI success confirms that the configured build and automated tests completed. It 
 ## License and third-party components
 
 Review the repository's license file and the license terms of all bundled dependencies before redistributing the application. Lofty and Rubato are available under MIT OR Apache-2.0; Symphonia and transitive dependencies retain their respective upstream licenses.
-
-## Attribution
-
-AI-assisted development tools have been used during parts of the development process. Maintainers remain responsible for reviewing, testing, and maintaining project changes.
