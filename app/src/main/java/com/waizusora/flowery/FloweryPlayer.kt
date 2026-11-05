@@ -228,7 +228,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         var session: UsbDacSession? = null
         try {
             onState("Opening direct USB bit-perfect path…")
-            source = WavPcmSource.open(descriptor)
+            val pcmSource = WavPcmSource.open(descriptor)
+            source = pcmSource
             val controller = UsbDacController(context)
             val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
             check(candidates.size == 1) {
@@ -239,17 +240,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 "USB permission is unavailable. Tap the USB DAC control and grant access first."
             }
 
-            session = controller.openExclusivePlaybackSession(
+            val usbSession = controller.openExclusivePlaybackSession(
                 device,
-                source.bitDepth,
-                source.sampleRate
+                pcmSource.bitDepth,
+                pcmSource.sampleRate
             )
-            check(session.profile.channels == 2 && session.profile.bitResolution == source.bitDepth) {
+            session = usbSession
+            check(usbSession.profile.channels == 2 && usbSession.profile.bitResolution == pcmSource.bitDepth) {
                 "The selected DAC alternate setting does not match the source PCM format."
             }
 
-            outputSampleRate = source.sampleRate
-            outputDurationMs = source.totalFrames * 1_000L / source.sampleRate
+            outputSampleRate = pcmSource.sampleRate
+            outputDurationMs = pcmSource.totalFrames * 1_000L / pcmSource.sampleRate
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
             var firstTransfer = true
@@ -261,22 +263,22 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 pendingSeekMs.getAndSet(null)?.let { requested ->
-                    val targetFrame = framesAtMilliseconds(requested, source.sampleRate)
-                    usbPositionFrames = source.seekToFrame(targetFrame)
+                    val targetFrame = framesAtMilliseconds(requested, pcmSource.sampleRate)
+                    usbPositionFrames = pcmSource.seekToFrame(targetFrame)
                 }
 
-                val pcm = source.readFrames(DECODE_CHUNK_FRAMES)
+                val pcm = pcmSource.readFrames(DECODE_CHUNK_FRAMES)
                 if (pcm.isEmpty()) break
-                val frameBytes = session.profile.channels * session.profile.subslotBytes
+                val frameBytes = usbSession.profile.channels * usbSession.profile.subslotBytes
                 check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
                 val frames = pcm.size / frameBytes
-                check(session.writePcm(pcm, frames) == frames) {
+                check(usbSession.writePcm(pcm, frames) == frames) {
                     "The USB transport did not accept the complete PCM chunk."
                 }
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    onState("USB exclusive bit-perfect · PCM ${source.bitDepth}-bit · ${source.sampleRate} Hz")
+                    onState("USB exclusive bit-perfect · PCM ${pcmSource.bitDepth}-bit · ${pcmSource.sampleRate} Hz")
                 }
             }
 
