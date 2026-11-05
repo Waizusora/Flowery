@@ -148,6 +148,24 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
 
     const libusb_speed speed = libusb_get_device_speed(libusb_get_device(session->handle));
     session->interval_us = service_interval_us(speed, session->interval);
+    const uint64_t maximum_interval_frames =
+        (static_cast<uint64_t>(sample_rate) * session->interval_us + 999999ULL) / 1000000ULL;
+    const uint64_t maximum_interval_bytes =
+        maximum_interval_frames * static_cast<uint64_t>(channels) *
+        static_cast<uint64_t>(subslot_bytes);
+    if (maximum_interval_bytes > session->max_packet_bytes) {
+        close_session(session);
+        jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+        if (exception != nullptr) env->ThrowNew(
+            exception, "Requested sample rate and PCM format exceed the endpoint packet capacity");
+        return 0;
+    }
+
+    result = libusb_set_auto_detach_kernel_driver(session->handle, 1);
+    if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_NOT_SUPPORTED) {
+        close_session(session);
+        return throw_usb_error(env, "Detaching the system USB audio driver", result);
+    }
 
     result = libusb_claim_interface(session->handle, interface_number);
     if (result != LIBUSB_SUCCESS) {
