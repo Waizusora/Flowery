@@ -192,17 +192,24 @@ Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(
     const uint64_t sampleCount = count * g_output->channels;
     if (sourceStart + sampleCount > static_cast<uint64_t>(arrayLength)) return -1;
 
-    std::vector<float> staging(static_cast<size_t>(sampleCount));
-    env->GetFloatArrayRegion(input, static_cast<jsize>(sourceStart),
-                             static_cast<jsize>(sampleCount), staging.data());
+    const uint64_t ringFrame = write & g_output->mask;
+    const uint64_t firstSampleCount = std::min<uint64_t>(
+        sampleCount, (g_output->capacityFrames - ringFrame) * g_output->channels);
+    env->GetFloatArrayRegion(
+        input,
+        static_cast<jsize>(sourceStart),
+        static_cast<jsize>(firstSampleCount),
+        g_output->ring.data() + ringFrame * g_output->channels);
     if (env->ExceptionCheck()) return -1;
 
-    for (uint64_t frame = 0; frame < count; ++frame) {
-        const uint64_t ringFrame = (write + frame) & g_output->mask;
-        for (int32_t channel = 0; channel < g_output->channels; ++channel) {
-            g_output->ring[ringFrame * g_output->channels + channel] =
-                staging[frame * g_output->channels + channel];
-        }
+    const uint64_t remainingSampleCount = sampleCount - firstSampleCount;
+    if (remainingSampleCount > 0) {
+        env->GetFloatArrayRegion(
+            input,
+            static_cast<jsize>(sourceStart + firstSampleCount),
+            static_cast<jsize>(remainingSampleCount),
+            g_output->ring.data());
+        if (env->ExceptionCheck()) return -1;
     }
     g_output->writeFrame.store(write + count, std::memory_order_release);
     return static_cast<jint>(count);
