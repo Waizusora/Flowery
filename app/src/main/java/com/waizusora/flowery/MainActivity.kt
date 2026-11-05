@@ -96,6 +96,11 @@ class MainActivity : ComponentActivity() {
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) addFolder(uri)
     }
+    private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+            .putBoolean("notification_permission_requested", true).apply()
+        status = if (granted) "Notifications enabled" else "Notifications are disabled; playback still works while Flowery is open"
+    }
     private val folders = mutableStateListOf<LibraryFolder>()
     private val tracks = mutableStateListOf<AudioTrackItem>()
     private var status by mutableStateOf("Choose a music folder to begin")
