@@ -226,9 +226,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     size_t available_frames = session->pending_pcm.size() / static_cast<size_t>(bytes_per_frame);
     size_t consumed_frames = 0;
     std::vector<unsigned int> packet_frames;
-    packet_frames.reserve(256);
+    packet_frames.reserve(1024);
 
-    while (packet_frames.size() < 256) {
+    while (packet_frames.size() < 1024) {
         const uint64_t accumulated =
             next_phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
         const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
