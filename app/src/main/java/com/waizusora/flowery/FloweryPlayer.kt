@@ -69,7 +69,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
 
-    fun play(uri: Uri) {
+    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null) {
         val previousWorker = worker
         stop()
         stopped.set(false)
@@ -139,13 +139,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
                     "Unable to configure the streaming resampler and equalizer"
                 }
+                if (segmentStartMs > 0L) {
+                    val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
+                    check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
+                }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val started = NativeAudio.nativeStartStreamOutput(
                     targetRate, channels, softwareVolume, deviceId, OUTPUT_RING_CAPACITY_FRAMES
                 )
                 check(started == 0) { "AAudio could not start the bounded output stream (error $started)" }
                 outputSampleRate = targetRate
-                outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+                val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+                val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
+                outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
+                val segmentFrameLimit = segmentLengthMs?.let { framesAtMilliseconds(it, targetRate) }
 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
                 onState("Playing · streaming · ${targetRate} Hz · ${channels} ch · $routeName")
@@ -158,9 +165,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = framesAtMilliseconds(target, targetRate)
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame, !paused) == 0) { "Unable to flush or restart the AAudio output stream" }
-                        val actual = NativeAudio.nativeSeekStreamDecoder(handle, target)
+                        val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
-                        reachedEnd = false
+                        reachedEnd = segmentFrameLimit?.let { targetFrame >= it } ?: false
                         eofSignalled = false
                         appliedEqualizerRevision = equalizerRevision
                         onState("Seeking · ${actual / 1000}s")
@@ -187,11 +194,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         reachedEnd = true
                         continue
                     }
-                    val frames = chunk.size / channels
+                    var frames = chunk.size / channels
+                    var outputChunk = chunk
+                    if (segmentFrameLimit != null) {
+                        val queuedFrames = NativeAudio.nativeGetOutputPositionFrames() +
+                            NativeAudio.nativeGetStreamBufferedFrames().coerceAtLeast(0)
+                        val remainingFrames = (segmentFrameLimit - queuedFrames).coerceAtLeast(0L)
+                        if (remainingFrames == 0L) {
+                            reachedEnd = true
+                            continue
+                        }
+                        if (frames.toLong() > remainingFrames) {
+                            frames = remainingFrames.toInt()
+                            outputChunk = chunk.copyOf(frames * channels)
+                        }
+                    }
                     var offsetFrames = 0
                     while (!stopped.get() && playbackGeneration.get() == generation && offsetFrames < frames && pendingSeekMs.get() == null) {
                         val written = NativeAudio.nativeWriteStreamFrames(
-                            chunk, offsetFrames, frames - offsetFrames
+                            outputChunk, offsetFrames, frames - offsetFrames
                         )
                         if (written < 0) throw IllegalStateException("AAudio ring-buffer write failed")
                         if (written == 0) {
@@ -202,7 +223,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                         else offsetFrames += written
                     }
-                    outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+                    if (segmentFrameLimit != null && NativeAudio.nativeGetOutputPositionFrames() +
+                        NativeAudio.nativeGetStreamBufferedFrames().coerceAtLeast(0) >= segmentFrameLimit) {
+                        reachedEnd = true
+                    }
                     while (!stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > LOW_WATERMARK_FRAMES) {
                         check(NativeAudio.nativeIsOutputActive()) {
                             "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
