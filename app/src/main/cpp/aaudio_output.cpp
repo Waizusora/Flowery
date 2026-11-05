@@ -294,16 +294,64 @@ Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(JNIEnv*, jobject, j
     if (g_output) g_output->volume.store(std::clamp(volume, 0.0f, 1.0f));
 }
 
+namespace {
+aaudio_result_t waitForStreamState(AAudioStream* stream,
+                                   aaudio_stream_state_t transientState,
+                                   aaudio_stream_state_t targetState) {
+    auto state = AAudioStream_getState(stream);
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        if (state == targetState) return AAUDIO_OK;
+        if (state == AAUDIO_STREAM_STATE_DISCONNECTED) return AAUDIO_ERROR_DISCONNECTED;
+        if (state != transientState) return AAUDIO_ERROR_INVALID_STATE;
+
+        aaudio_stream_state_t nextState = state;
+        const auto result = AAudioStream_waitForStateChange(
+            stream, state, &nextState, 1'000'000'000LL);
+        if (result != AAUDIO_OK) return result;
+        state = nextState;
+    }
+    return state == targetState ? AAUDIO_OK : AAUDIO_ERROR_TIMEOUT;
+}
+} // namespace
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    return g_stream ? AAudioStream_requestPause(g_stream) : AAUDIO_ERROR_INVALID_STATE;
+    if (!g_stream) return AAUDIO_ERROR_INVALID_STATE;
+
+    auto state = AAudioStream_getState(g_stream);
+    if (state == AAUDIO_STREAM_STATE_PAUSED) return AAUDIO_OK;
+    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) return AAUDIO_ERROR_DISCONNECTED;
+    if (state == AAUDIO_STREAM_STATE_STARTED) {
+        const auto result = AAudioStream_requestPause(g_stream);
+        if (result != AAUDIO_OK) return result;
+        state = AAudioStream_getState(g_stream);
+    }
+    if (state == AAUDIO_STREAM_STATE_PAUSING) {
+        return waitForStreamState(
+            g_stream, AAUDIO_STREAM_STATE_PAUSING, AAUDIO_STREAM_STATE_PAUSED);
+    }
+    return AAUDIO_ERROR_INVALID_STATE;
 }
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(JNIEnv*, jobject) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    return g_stream ? AAudioStream_requestStart(g_stream) : AAUDIO_ERROR_INVALID_STATE;
+    if (!g_stream) return AAUDIO_ERROR_INVALID_STATE;
+
+    auto state = AAudioStream_getState(g_stream);
+    if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
+    if (state == AAUDIO_STREAM_STATE_DISCONNECTED) return AAUDIO_ERROR_DISCONNECTED;
+    if (state == AAUDIO_STREAM_STATE_PAUSED) {
+        const auto result = AAudioStream_requestStart(g_stream);
+        if (result != AAUDIO_OK) return result;
+        state = AAudioStream_getState(g_stream);
+    }
+    if (state == AAUDIO_STREAM_STATE_STARTING) {
+        return waitForStreamState(
+            g_stream, AAUDIO_STREAM_STATE_STARTING, AAUDIO_STREAM_STATE_STARTED);
+    }
+    return AAUDIO_ERROR_INVALID_STATE;
 }
 
 extern "C" JNIEXPORT void JNICALL
