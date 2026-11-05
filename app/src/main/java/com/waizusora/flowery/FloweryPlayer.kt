@@ -623,6 +623,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val absoluteMs = segmentStartMs + relativeMs
                     val actual = NativeAudio.nativeSeekStreamDecoder(handle, absoluteMs)
                     check(actual >= 0L) { "The decoder could not seek to the requested position." }
+                    usbSession.flush()
                     usbPositionFrames = (actual - segmentStartMs).coerceAtLeast(0L) * sourceRate / 1_000L
                     segmentRemainingFrames = segmentEndMs?.let {
                         framesAtMilliseconds((it - absoluteMs).coerceAtLeast(0L), sourceRate)
@@ -682,6 +683,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         if (dspActive) " · EQ/DSP active" else " · EQ flat")
                 }
             }
+            if (!stopped.get() && playbackGeneration.get() == generation) usbSession.drain()
             recordUsbDiagnostic("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
             if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
         } catch (error: Throwable) {
@@ -738,6 +740,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 pendingSeekMs.getAndSet(null)?.let { requested ->
                     val targetFrame = framesAtMilliseconds(requested, pcmSource.sampleRate)
                     usbPositionFrames = pcmSource.seekToFrame(targetFrame)
+                    usbSession.flush()
                 }
 
                 val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES)
@@ -756,6 +759,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
 
             if (!stopped.get() && playbackGeneration.get() == generation) {
+                usbSession.drain()
                 onState("Playback finished")
             }
         } finally {

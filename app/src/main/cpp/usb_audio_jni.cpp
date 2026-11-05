@@ -2,17 +2,43 @@
 #include <libusb.h>
 
 #include <algorithm>
-#include <cstdio>
-#include <sys/time.h>
+#include <chrono>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <sys/time.h>
 #include <utility>
 #include <vector>
 
 namespace {
+
+// Isochronous transport tuning.
+//
+// The transport keeps a bounded sliding window of small URBs queued on the
+// endpoint instead of submitting a whole decoded block at once. Each URB carries
+// at most kPacketsPerUrb service intervals; at a 125 us interval this is 8 ms of
+// audio. Up to kMaxUrbsInFlight URBs are queued, which yields roughly 128 ms of
+// look-ahead at a 125 us interval. The window is replenished as URBs complete
+// and is intentionally left queued between JNI writes, so the endpoint does not
+// run dry while the producer decodes the next block.
+constexpr size_t kPacketsPerUrb = 64;
+constexpr size_t kMaxUrbsInFlight = 16;
+// No URB completion for this long while URBs are queued is treated as a stalled
+// endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
+// because it cancels queued isochronous URBs and breaks the scheduling chain.
+constexpr int kStallTimeoutMs = 1500;
+// Upper bound on how long teardown waits for cancelled URBs to be reaped.
+constexpr int kTeardownTimeoutMs = 2000;
+
+struct InFlightTransfer {
+    std::vector<unsigned char> buffer;
+    libusb_transfer* transfer = nullptr;
+    bool completed = false;
+    uint64_t sequence = 0;
+};
 
 struct UsbAudioSession {
     libusb_context* context = nullptr;
@@ -26,24 +52,135 @@ struct UsbAudioSession {
     int sample_rate = 0;
     uint64_t frame_phase = 0;
     uint32_t interval_us = 1000;
+    // PCM that has been accepted from the caller but not yet submitted. The
+    // region [pending_offset, size) is live; the prefix is compacted lazily.
     std::vector<unsigned char> pending_pcm;
+    size_t pending_offset = 0;
+    // Transfers currently queued on the endpoint, in submission order.
+    std::vector<std::unique_ptr<InFlightTransfer>> in_flight;
+    uint64_t next_sequence = 0;
+    std::chrono::steady_clock::time_point last_progress{};
     bool claimed = false;
     bool control_claimed = false;
     int control_interface = -1;
 };
 
-struct TransferCompletion {
-    bool completed = false;
+// Describes the first failure observed on the transport.
+struct TransportFailure {
+    bool failed = false;
+    const char* reason = "none";
+    int code = LIBUSB_SUCCESS;
+    uint64_t sequence = 0;
+    unsigned int transfer_status = 0;
+    int failed_packet = -1;
+    unsigned int packet_status = 0;
+    unsigned int actual_length = 0;
+    unsigned int requested_length = 0;
 };
 
 void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
-    auto* completion = static_cast<TransferCompletion*>(transfer->user_data);
-    if (completion != nullptr) completion->completed = true;
+    auto* entry = static_cast<InFlightTransfer*>(transfer->user_data);
+    if (entry != nullptr) entry->completed = true;
+}
+
+const char* transfer_status_name(unsigned int status) {
+    switch (status) {
+        case LIBUSB_TRANSFER_COMPLETED: return "COMPLETED";
+        case LIBUSB_TRANSFER_ERROR: return "ERROR";
+        case LIBUSB_TRANSFER_TIMED_OUT: return "TIMED_OUT";
+        case LIBUSB_TRANSFER_CANCELLED: return "CANCELLED";
+        case LIBUSB_TRANSFER_STALL: return "STALL";
+        case LIBUSB_TRANSFER_NO_DEVICE: return "NO_DEVICE";
+        case LIBUSB_TRANSFER_OVERFLOW: return "OVERFLOW";
+        default: return "UNKNOWN";
+    }
+}
+
+void record_failure(TransportFailure* failure, const char* reason, int code) {
+    if (failure->failed) return;
+    failure->failed = true;
+    failure->reason = reason;
+    failure->code = code;
+}
+
+// Runs the libusb event loop once and reports an unrecoverable loop error.
+bool pump_events(UsbAudioSession* session, long timeout_us, TransportFailure* failure) {
+    timeval timeout{0, timeout_us};
+    const int result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
+    if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
+        record_failure(failure, "event_loop_error", result);
+        return false;
+    }
+    return true;
+}
+
+// Releases every completed transfer and records the first transport failure.
+void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
+    auto& queue = session->in_flight;
+    size_t write_index = 0;
+    for (size_t read_index = 0; read_index < queue.size(); ++read_index) {
+        std::unique_ptr<InFlightTransfer>& entry = queue[read_index];
+        if (!entry->completed) {
+            if (write_index != read_index) queue[write_index] = std::move(entry);
+            ++write_index;
+            continue;
+        }
+        session->last_progress = std::chrono::steady_clock::now();
+        const libusb_transfer* transfer = entry->transfer;
+        if (!failure->failed) {
+            if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
+                record_failure(failure, "transfer_error", LIBUSB_ERROR_IO);
+                failure->sequence = entry->sequence;
+                failure->transfer_status = static_cast<unsigned int>(transfer->status);
+            } else {
+                for (int i = 0; i < transfer->num_iso_packets; ++i) {
+                    const auto& packet = transfer->iso_packet_desc[i];
+                    if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
+                        packet.actual_length != packet.length) {
+                        record_failure(failure, "packet_error", LIBUSB_ERROR_IO);
+                        failure->sequence = entry->sequence;
+                        failure->transfer_status = static_cast<unsigned int>(transfer->status);
+                        failure->failed_packet = i;
+                        failure->packet_status = static_cast<unsigned int>(packet.status);
+                        failure->actual_length = packet.actual_length;
+                        failure->requested_length = packet.length;
+                        break;
+                    }
+                }
+            }
+        }
+        libusb_free_transfer(entry->transfer);
+        entry.reset();
+    }
+    queue.resize(write_index);
+}
+
+// Cancels all queued transfers and waits (bounded) for them to be reaped. A
+// transfer that cannot be reaped within the bound is intentionally leaked rather
+// than freed, because the kernel may still reference its buffer.
+void abort_in_flight(UsbAudioSession* session) {
+    for (auto& entry : session->in_flight) {
+        if (!entry->completed) libusb_cancel_transfer(entry->transfer);
+    }
+    TransportFailure ignored;
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(kTeardownTimeoutMs);
+    while (!session->in_flight.empty() && std::chrono::steady_clock::now() < deadline) {
+        reap_completed(session, &ignored);
+        if (session->in_flight.empty()) break;
+        if (!pump_events(session, 20000, &ignored)) break;
+    }
+    reap_completed(session, &ignored);
+    for (auto& entry : session->in_flight) {
+        (void)entry.release();
+    }
+    session->in_flight.clear();
 }
 
 void close_session(UsbAudioSession* session) {
     if (session == nullptr) return;
     if (session->handle != nullptr) {
+        abort_in_flight(session);
         if (session->claimed) {
             // Restore the zero-bandwidth alternate setting before releasing the streaming interface.
             libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
@@ -114,6 +251,98 @@ bool set_and_verify_clock(UsbAudioSession* session, int clock_id,
         return false;
     }
     return true;
+}
+
+// Raises an IllegalStateException describing the transport failure, including
+// symbolic transfer and packet status names for diagnostics.
+void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
+                             const TransportFailure& failure) {
+    // Transfer and packet statuses are only meaningful for completion failures.
+    const bool has_status = std::strcmp(failure.reason, "transfer_error") == 0 ||
+                            std::strcmp(failure.reason, "packet_error") == 0;
+    const char* transfer_name = has_status ? transfer_status_name(failure.transfer_status) : "n/a";
+    const char* packet_name = failure.failed_packet >= 0 ? transfer_status_name(failure.packet_status) : "n/a";
+    char message[768];
+    std::snprintf(
+        message, sizeof(message),
+        "USB isochronous PCM transfer failed: reason=%s; %s (%d); "
+        "transfer_status=%u (%s); sequence=%llu; in_flight=%zu; failed_packet=%d; "
+        "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
+        "interval_us=%u; sample_rate=%d; endpoint=0x%02X",
+        failure.reason, libusb_error_name(failure.code), failure.code,
+        failure.transfer_status, transfer_name,
+        static_cast<unsigned long long>(failure.sequence), session->in_flight.size(),
+        failure.failed_packet, failure.packet_status,
+        packet_name, failure.actual_length,
+        failure.requested_length, session->interval_us, session->sample_rate,
+        session->endpoint);
+    jclass exception = env->FindClass("java/lang/IllegalStateException");
+    if (exception != nullptr) env->ThrowNew(exception, message);
+}
+
+// Queues one isochronous URB whose packets have the given byte lengths. The
+// payload is consumed from the front of the pending PCM region.
+bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
+                size_t total_bytes, TransportFailure* failure) {
+    auto entry = std::make_unique<InFlightTransfer>();
+    entry->sequence = session->next_sequence;
+    entry->buffer.assign(
+        session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(session->pending_offset),
+        session->pending_pcm.begin() +
+            static_cast<std::ptrdiff_t>(session->pending_offset + total_bytes));
+
+    const int packet_count = static_cast<int>(packet_bytes.size());
+    entry->transfer = libusb_alloc_transfer(packet_count);
+    if (entry->transfer == nullptr) {
+        record_failure(failure, "alloc_failed", LIBUSB_ERROR_NO_MEM);
+        return false;
+    }
+    // Timeout 0: the stall watchdog in the caller supervises progress instead.
+    libusb_fill_iso_transfer(
+        entry->transfer, session->handle, session->endpoint, entry->buffer.data(),
+        static_cast<int>(total_bytes), packet_count, on_transfer_complete, entry.get(), 0);
+    for (int i = 0; i < packet_count; ++i) {
+        entry->transfer->iso_packet_desc[i].length = packet_bytes[static_cast<size_t>(i)];
+    }
+
+    if (session->in_flight.empty()) session->last_progress = std::chrono::steady_clock::now();
+    const int result = libusb_submit_transfer(entry->transfer);
+    if (result != LIBUSB_SUCCESS) {
+        libusb_free_transfer(entry->transfer);
+        record_failure(failure, "submit_failed", result);
+        failure->sequence = entry->sequence;
+        return false;
+    }
+    session->pending_offset += total_bytes;
+    ++session->next_sequence;
+    session->in_flight.push_back(std::move(entry));
+    return true;
+}
+
+// Waits for queue progress and enforces the stall watchdog. Returns false and
+// records a failure when the endpoint stops completing URBs.
+bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
+    if (!pump_events(session, 5000, failure)) return false;
+    reap_completed(session, failure);
+    if (failure->failed) return false;
+    if (!session->in_flight.empty()) {
+        const auto idle = std::chrono::steady_clock::now() - session->last_progress;
+        if (idle > std::chrono::milliseconds(kStallTimeoutMs)) {
+            record_failure(failure, "stalled", LIBUSB_ERROR_TIMEOUT);
+            failure->sequence = session->in_flight.front()->sequence;
+            return false;
+        }
+    }
+    return true;
+}
+
+// Drops the consumed prefix of the pending PCM region.
+void compact_pending(UsbAudioSession* session) {
+    if (session->pending_offset == 0) return;
+    session->pending_pcm.erase(
+        session->pending_pcm.begin(),
+        session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(session->pending_offset));
+    session->pending_offset = 0;
 }
 
 } // namespace
@@ -215,22 +444,25 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (session == nullptr || pcm == nullptr || frame_count <= 0) return -1;
 
-    const int bytes_per_frame = session->channels * session->subslot_bytes;
+    const size_t bytes_per_frame =
+        static_cast<size_t>(session->channels) * static_cast<size_t>(session->subslot_bytes);
     const jsize byte_count = env->GetArrayLength(pcm);
-    if (byte_count != frame_count * bytes_per_frame) {
+    if (static_cast<size_t>(byte_count) != static_cast<size_t>(frame_count) * bytes_per_frame) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "PCM byte count does not match frame count and DAC subslot format");
         return -1;
     }
 
     const size_t maximum_pending_bytes =
-        static_cast<size_t>(session->sample_rate) * 2U * static_cast<size_t>(bytes_per_frame);
-    if (session->pending_pcm.size() + static_cast<size_t>(byte_count) > maximum_pending_bytes) {
+        static_cast<size_t>(session->sample_rate) * 2U * bytes_per_frame;
+    const size_t live_pending = session->pending_pcm.size() - session->pending_offset;
+    if (live_pending + static_cast<size_t>(byte_count) > maximum_pending_bytes) {
         jclass exception = env->FindClass("java/lang/IllegalStateException");
         if (exception != nullptr) env->ThrowNew(exception, "USB PCM queue is full; the producer is faster than the DAC transport");
         return -1;
     }
 
+    compact_pending(session);
     const size_t previous_size = session->pending_pcm.size();
     session->pending_pcm.resize(previous_size + static_cast<size_t>(byte_count));
     env->GetByteArrayRegion(
@@ -241,222 +473,107 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         return -1;
     }
 
-    // Android USBFS limits practical isochronous URB sizes. Submit multiple
-    // bounded URBs together so the host controller can schedule them ahead.
-    constexpr size_t kMaxIsoPacketsPerTransfer = 128;
-    struct PendingTransfer {
-        std::vector<unsigned char> buffer;
-        libusb_transfer* transfer = nullptr;
-        TransferCompletion completion;
-        bool submitted = false;
-        size_t batch_index = 0;
-    };
+    TransportFailure failure;
+    std::vector<unsigned int> packet_bytes;
+    packet_bytes.reserve(kPacketsPerUrb);
 
-    const size_t available_frames =
-        session->pending_pcm.size() / static_cast<size_t>(bytes_per_frame);
-    uint64_t next_phase = session->frame_phase;
-    size_t consumed_frames = 0;
-    std::vector<PendingTransfer> transfers;
-    transfers.reserve(1024);
-    std::vector<unsigned int> packet_frames;
-    packet_frames.reserve(kMaxIsoPacketsPerTransfer);
-
-    auto append_transfer = [&](size_t batch_frames) -> bool {
-        if (batch_frames == 0 || packet_frames.empty()) return true;
-        transfers.emplace_back();
-        auto& pending = transfers.back();
-        pending.batch_index = transfers.size() - 1;
-        const size_t start_byte = (consumed_frames - batch_frames) * static_cast<size_t>(bytes_per_frame);
-        const size_t transfer_bytes = batch_frames * static_cast<size_t>(bytes_per_frame);
-        pending.buffer.assign(
-            session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(start_byte),
-            session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(start_byte + transfer_bytes));
-
-        const int packet_count = static_cast<int>(packet_frames.size());
-        pending.transfer = libusb_alloc_transfer(packet_count);
-        if (pending.transfer == nullptr) {
-            transfers.pop_back();
-            return false;
-        }
-        libusb_fill_iso_transfer(
-            pending.transfer, session->handle, session->endpoint,
-            pending.buffer.data(), static_cast<int>(transfer_bytes),
-            packet_count, on_transfer_complete, &pending.completion, 3000);
-        for (int i = 0; i < packet_count; ++i) {
-            pending.transfer->iso_packet_desc[i].length =
-                packet_frames[static_cast<size_t>(i)] * static_cast<unsigned int>(bytes_per_frame);
-        }
-        packet_frames.clear();
-        return true;
-    };
-
-    size_t batch_frames = 0;
     while (true) {
-        const uint64_t accumulated =
-            next_phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
-        const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
-        if (frames == 0 || consumed_frames + frames > available_frames) break;
+        reap_completed(session, &failure);
+        if (failure.failed) break;
 
-        const unsigned int packet_bytes = frames * static_cast<unsigned int>(bytes_per_frame);
-        if (packet_bytes > session->max_packet_bytes) {
-            for (auto& pending : transfers) {
-                if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
-            }
-            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
-            if (exception != nullptr) env->ThrowNew(exception, "Calculated isochronous packet exceeds the endpoint maximum packet size");
-            return -1;
-        }
-
-        packet_frames.push_back(frames);
-        batch_frames += frames;
-        consumed_frames += frames;
-        next_phase = accumulated % 1000000ULL;
-
-        if (packet_frames.size() == kMaxIsoPacketsPerTransfer) {
-            if (!append_transfer(batch_frames)) {
-                for (auto& pending : transfers) {
-                    if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
-                }
-                jclass exception = env->FindClass("java/lang/OutOfMemoryError");
-                if (exception != nullptr) env->ThrowNew(exception, "Unable to allocate USB isochronous transfer");
-                return -1;
-            }
-            batch_frames = 0;
-        }
-    }
-
-    if (!append_transfer(batch_frames)) {
-        for (auto& pending : transfers) {
-            if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
-        }
-        jclass exception = env->FindClass("java/lang/OutOfMemoryError");
-        if (exception != nullptr) env->ThrowNew(exception, "Unable to allocate USB isochronous transfer");
-        return -1;
-    }
-
-    if (transfers.empty()) return frame_count;
-
-    int result = LIBUSB_SUCCESS;
-    size_t failed_batch = 0;
-    for (size_t batch = 0; batch < transfers.size(); ++batch) {
-        auto& pending = transfers[batch];
-        result = libusb_submit_transfer(pending.transfer);
-        if (result != LIBUSB_SUCCESS) {
-            failed_batch = batch;
-            break;
-        }
-        pending.submitted = true;
-    }
-
-    if (result == LIBUSB_SUCCESS) {
-        while (true) {
-            bool all_completed = true;
-            for (const auto& pending : transfers) {
-                if (pending.submitted && !pending.completion.completed) {
-                    all_completed = false;
-                    break;
-                }
-            }
-            if (all_completed) break;
-
-            timeval timeout{0, 5000};
-            result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
-            if (result != LIBUSB_SUCCESS) break;
-        }
-    }
-
-    bool transfer_failed = result != LIBUSB_SUCCESS;
-    int failed_packet = -1;
-    unsigned int packet_status = 0;
-    unsigned int actual_length = 0;
-    unsigned int requested_length = 0;
-    unsigned int transfer_status = 0;
-
-    if (result == LIBUSB_SUCCESS) {
-        for (size_t batch = 0; batch < transfers.size(); ++batch) {
-            const auto& pending = transfers[batch];
-            const auto* transfer = pending.transfer;
-            if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
-                transfer_failed = true;
-                failed_batch = batch;
-                transfer_status = static_cast<unsigned int>(transfer->status);
+        // Plan the next URB from whole service intervals only; a trailing
+        // partial interval stays staged until the next write or drain.
+        const size_t available_frames =
+            (session->pending_pcm.size() - session->pending_offset) / bytes_per_frame;
+        packet_bytes.clear();
+        uint64_t phase = session->frame_phase;
+        size_t planned_frames = 0;
+        while (packet_bytes.size() < kPacketsPerUrb) {
+            const uint64_t accumulated =
+                phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
+            const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
+            if (frames == 0 || planned_frames + frames > available_frames) break;
+            const unsigned int packet_size = static_cast<unsigned int>(frames * bytes_per_frame);
+            if (packet_size > session->max_packet_bytes) {
+                record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
                 break;
             }
-            for (int packet_index = 0; packet_index < transfer->num_iso_packets; ++packet_index) {
-                const auto& packet = transfer->iso_packet_desc[packet_index];
-                if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
-                    packet.actual_length != packet.length) {
-                    transfer_failed = true;
-                    failed_batch = batch;
-                    failed_packet = packet_index;
-                    packet_status = static_cast<unsigned int>(packet.status);
-                    actual_length = packet.actual_length;
-                    requested_length = packet.length;
-                    transfer_status = static_cast<unsigned int>(transfer->status);
-                    break;
-                }
-            }
-            if (transfer_failed) break;
+            packet_bytes.push_back(packet_size);
+            planned_frames += frames;
+            phase = accumulated % 1000000ULL;
         }
+        if (failure.failed || packet_bytes.empty()) break;
+
+        // Back-pressure: block until the window has room for another URB.
+        if (session->in_flight.size() >= kMaxUrbsInFlight) {
+            if (!wait_for_progress(session, &failure)) break;
+            continue;
+        }
+
+        if (!submit_urb(session, packet_bytes, planned_frames * bytes_per_frame, &failure)) break;
+        session->frame_phase = phase;
     }
 
-    if (transfer_failed) {
-        for (auto& pending : transfers) {
-            if (pending.submitted && !pending.completion.completed) {
-                libusb_cancel_transfer(pending.transfer);
-            }
-        }
-        bool outstanding = true;
-        while (outstanding) {
-            outstanding = false;
-            for (const auto& pending : transfers) {
-                if (pending.submitted && !pending.completion.completed) {
-                    outstanding = true;
-                    break;
-                }
-            }
-            if (outstanding) {
-                timeval timeout{0, 50000};
-                libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
-            }
-        }
-
-        if (result == LIBUSB_SUCCESS) result = LIBUSB_ERROR_IO;
-        if (failed_batch < transfers.size() && failed_packet < 0) {
-            transfer_status = static_cast<unsigned int>(transfers[failed_batch].transfer->status);
-        }
-        for (auto& pending : transfers) {
-            if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
-        }
-
-        char message[640];
-        std::snprintf(
-            message, sizeof(message),
-            "USB isochronous PCM transfer failed: %s (%d); transfer_status=%u; "
-            "batch=%zu; batches=%zu; failed_packet=%d; packet_status=%u; "
-            "actual_length=%u; requested_length=%u; interval_us=%u; "
-            "sample_rate=%d; endpoint=0x%02X",
-            libusb_error_name(result), result, transfer_status, failed_batch,
-            transfers.size(), failed_packet, packet_status, actual_length,
-            requested_length, session->interval_us, session->sample_rate,
-            session->endpoint);
-        jclass exception = env->FindClass("java/lang/IllegalStateException");
-        if (exception != nullptr) env->ThrowNew(exception, message);
-        return result;
+    if (failure.failed) {
+        abort_in_flight(session);
+        throw_transport_failure(env, session, failure);
+        return -1;
     }
-
-    for (auto& pending : transfers) {
-        if (pending.transfer != nullptr) libusb_free_transfer(pending.transfer);
-    }
-
-    const size_t consumed_bytes =
-        consumed_frames * static_cast<size_t>(bytes_per_frame);
-    session->pending_pcm.erase(
-        session->pending_pcm.begin(),
-        session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(consumed_bytes));
-    session->frame_phase = next_phase;
     return frame_count;
 }
+
+// Submits any staged partial service interval as a short final packet and waits
+// until every queued URB has completed. Called at natural end of playback so the
+// tail of the stream is not truncated by session teardown.
+extern "C" JNIEXPORT jint JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
+    JNIEnv* env, jobject, jlong handle) {
+    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    if (session == nullptr) return -1;
+
+    TransportFailure failure;
+    reap_completed(session, &failure);
+
+    const size_t remaining = session->pending_pcm.size() - session->pending_offset;
+    if (!failure.failed && remaining > 0) {
+        while (session->in_flight.size() >= kMaxUrbsInFlight) {
+            if (!wait_for_progress(session, &failure)) break;
+        }
+        if (!failure.failed) {
+            const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
+            if (remaining <= session->max_packet_bytes) {
+                submit_urb(session, tail, remaining, &failure);
+            } else {
+                record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
+            }
+        }
+    }
+    while (!failure.failed && !session->in_flight.empty()) {
+        wait_for_progress(session, &failure);
+    }
+
+    if (failure.failed) {
+        abort_in_flight(session);
+        throw_transport_failure(env, session, failure);
+        return -1;
+    }
+    compact_pending(session);
+    return 0;
+}
+
+// Discards staged PCM and cancels queued URBs. Called on seek so that audio
+// from the previous position is not played after the new position is selected.
+extern "C" JNIEXPORT void JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
+    JNIEnv*, jobject, jlong handle) {
+    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    if (session == nullptr) return;
+    abort_in_flight(session);
+    session->pending_pcm.clear();
+    session->pending_offset = 0;
+    session->frame_phase = 0;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeClose(
     JNIEnv*, jobject, jlong handle) {
