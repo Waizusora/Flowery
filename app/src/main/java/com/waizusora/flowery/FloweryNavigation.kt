@@ -1,6 +1,8 @@
 package com.waizusora.flowery
 
 import android.content.Context
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
@@ -393,7 +395,7 @@ fun FloweryNavigation(
                         }
                     }
                 }
-                Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
+                Destination.SETTINGS -> SettingsContent(context, settingsPage, foreground, muted, theme,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO, SettingsPage.AUDIO_DIAGNOSTICS -> SettingsPage.AUDIO
@@ -510,7 +512,7 @@ private fun PermissionInfoRow(
 }
 
 @Composable
-private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
+private fun SettingsContent(context: Context, page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
     libraryEncoding: String, availableEncodings: List<String>, changeEncoding: (String) -> Unit,
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
@@ -549,12 +551,101 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
         }
         SettingsPage.AUDIO_DIAGNOSTICS -> {
             var metrics by remember(page) { mutableStateOf<LongArray?>(null) }
+            var logging by remember(page) { mutableStateOf(false) }
+            var previousSample by remember(page) { mutableStateOf<LongArray?>(null) }
+            var pendingLog by remember(page) { mutableStateOf("") }
+            val logLines = remember(page) { mutableStateListOf<String>() }
+            val saveLogLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.CreateDocument("text/plain")
+            ) { uri ->
+                if (uri != null) runCatching {
+                    context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(pendingLog) }
+                }
+            }
+            LaunchedEffect(logging) {
+                while (logging) {
+                    val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
+                    if (sample != null && sample.size >= 31) {
+                        metrics = sample
+                        val previous = previousSample
+                        val timestampValid = sample[27] == 0L && sample[29] > 0L
+                        val deltaText = if (timestampValid && previous != null &&
+                            previous[27] == 0L && previous[29] > 0L) {
+                            val elapsedNs = sample[29] - previous[29]
+                            val presentedFrames = sample[28] - previous[28]
+                            val writtenFrames = sample[30] - previous[30]
+                            val expectedFrames = if (elapsedNs > 0L && sample[23] > 0L)
+                                elapsedNs.toDouble() * sample[23].toDouble() / 1_000_000_000.0 else Double.NaN
+                            val driftFrames = if (expectedFrames.isFinite()) presentedFrames - expectedFrames else Double.NaN
+                            "timestampDeltaNs=$elapsedNs presentedDeltaFrames=$presentedFrames " +
+                                "expectedDeltaFrames=${"%.2f".format(Locale.ROOT, expectedFrames)} " +
+                                "clockDriftFrames=${"%.2f".format(Locale.ROOT, driftFrames)} " +
+                                "writtenDeltaFrames=$writtenFrames writtenMinusPresentedDelta=${writtenFrames - presentedFrames}"
+                        } else {
+                            "timestampDelta=unavailable"
+                        }
+                        val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                            .format(java.util.Date())
+                        val line = "$wallTime sampleRate=${sample[7]} deviceId=${sample[8]} " +
+                            "sharingMode=${if (sample[9] == 0L) "EXCLUSIVE" else if (sample[9] == 1L) "SHARED" else "UNKNOWN"} " +
+                            "streamState=${sample[6]} timestampStatus=${sample[27]} " +
+                            "hardwareFramePosition=${sample[28]} hardwareTimestampNs=${sample[29]} " +
+                            "framesWritten=${sample[30]} ringUnderruns=${sample[0]} hardwareXruns=${sample[1]} " +
+                            "queuedFrames=${sample[2]} bufferSizeFrames=${sample[4]} bufferCapacityFrames=${sample[26]} " +
+                            "callbackCount=${sample[13]} callbackFramesRequested=${sample[14]} " +
+                            "callbackFramesDelivered=${sample[15]} silenceFrames=${sample[16]} " +
+                            "unexpectedSilenceFrames=${sample[18]} maxCallbackDurationNs=${sample[21]} " +
+                            "maxCallbackIntervalNs=${sample[22]} maxCallbackLatenessNs=${sample[24]} " +
+                            "lateCallbackIntervals=${sample[25]} exclusiveOpenResult=${sample[19]} " +
+                            "sharedOpenResult=${sample[20]} $deltaText"
+                        if (logLines.size >= 7200) logLines.removeAt(0)
+                        logLines.add(line)
+                        previousSample = sample
+                    } else {
+                        val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                            .format(java.util.Date())
+                        logLines.add("$wallTime diagnostics=unavailable")
+                    }
+                    kotlinx.coroutines.delay(1000)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    if (logging) {
+                        logging = false
+                    } else {
+                        previousSample = null
+                        logging = true
+                    }
+                }, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (logging) Color(0xFFB44758) else Color(0xFF7452A6))) {
+                    Icon(if (logging) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
+                    Text(if (logging) "  Stop Log" else "  Start Log")
+                }
+                Button(onClick = {
+                    pendingLog = buildString {
+                        appendLine("# Flowery AAudio diagnostic log")
+                        appendLine("# Sampling interval: approximately 1 second")
+                        appendLine("# Samples: ${logLines.size}")
+                        logLines.forEach { appendLine(it) }
+                    }
+                    saveLogLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
+                }, enabled = !logging && logLines.isNotEmpty(), modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                    Icon(Icons.Default.Save, contentDescription = null)
+                    Text("  Save Log")
+                }
+            }
+            Text(if (logging) "Recording every second. Start this log, play the problem track, then stop and save the log."
+                else "Start Log before playback. Flowery samples AAudio automatically every second; stop logging before saving.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            Text("Captured samples: ${logLines.size}", color = muted, style = MaterialTheme.typography.labelSmall)
             Button(onClick = { metrics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
                 Icon(Icons.Default.Refresh, contentDescription = null)
                 Text("  Refresh diagnostics")
             }
-            Text("Values are sampled on demand. Keep playback running while refreshing to observe live counters.",
+            Text("Values are also available as a live snapshot below. The log records timestamp progression and frame deltas so playback interruptions can be correlated with the hardware clock.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
             val data = metrics
             if (data == null || data.size < 21) {
