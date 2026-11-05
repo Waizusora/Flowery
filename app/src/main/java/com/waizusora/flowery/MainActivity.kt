@@ -173,6 +173,8 @@ class MainActivity : ComponentActivity() {
                 it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart &&
                     it.cuePlaylist == currentCuePlaylist && it.playlistName == currentPlaylistName &&
                     it.playlistOrder == currentPlaylistOrder
+            } ?: tracks.firstOrNull {
+                it.uri.toString() == currentUri && (it.cueStartMs ?: 0L) == currentCueStart
             }
             if (nextTrack != null) {
                 hasPlaybackSession = true
@@ -506,10 +508,14 @@ class MainActivity : ComponentActivity() {
                 }.getOrNull()
             }.orEmpty()
             runOnUiThread {
-                if (selectedTrack == track && !hasPlaybackSession) {
+                if (selectedTrack?.uri == track.uri &&
+                    selectedTrack?.cueStartMs == track.cueStartMs &&
+                    selectedTrack?.cuePlaylist == track.cuePlaylist &&
+                    selectedTrack?.playlistName == track.playlistName &&
+                    selectedTrack?.playlistOrder == track.playlistOrder) {
                     currentTag = tag
                     lyrics = parsedLyrics
-                    status = "Ready to resume · ${track.title}"
+                    if (!hasPlaybackSession) status = "Ready to resume · ${track.title}"
                 }
             }
         }
