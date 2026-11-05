@@ -228,11 +228,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     return@thread
                 }
                 if (bitPerfectRequested && !directPcmSupported) {
-                    val mixerNotice = if (android.os.Build.VERSION.SDK_INT >= 34)
-                        "Android USB mixer BIT_PERFECT will be requested for decoded PCM."
-                    else
-                        "Android USB mixer BIT_PERFECT requires Android 14 (API 34); strict AAudio EXCLUSIVE will be attempted."
-                    onState("Direct USB bit-perfect is not available for .$extension yet; $mixerNotice")
+                    onState("USB exclusive: preparing decoded PCM output for .$extension…")
                 }
 
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
@@ -612,7 +608,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (firstTransfer) {
                     firstTransfer = false
                     val dspActive = bandGainsDb.any { abs(it) > 0.001f }
-                    onState("USB exclusive · FLAC decoded to PCM 24-bit · " + sourceRate + " Hz" +
+                    onState("USB exclusive · decoded PCM 24-bit · " + sourceRate + " Hz" +
                         if (dspActive) " · EQ/DSP active" else " · EQ flat")
                 }
             }
