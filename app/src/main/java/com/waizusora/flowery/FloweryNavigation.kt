@@ -99,7 +99,7 @@ fun FloweryNavigation(
     LaunchedEffect(aaudioLogRecording) {
         while (aaudioLogRecording) {
             val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
-            if (sample != null && sample.size >= 31) {
+            if (sample != null && sample.size >= 36) {
                 val previous = aaudioPreviousSample
                 aaudioLogLines.add(createAaudioLogLine(sample, previous))
                 if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
@@ -557,7 +557,11 @@ private fun PermissionInfoRow(
 
 private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String {
     val timestampValid = sample[27] == 0L && sample[29] > 0L
-    val deltaText = if (timestampValid && previous != null &&
+    val callbackDeltaText = if (previous != null && previous.size >= 36) {
+        "callbackCountDelta=${sample[13] - previous[13]} " +
+            "lateCallbackIntervalsDelta=${sample[25] - previous[25]}"
+    } else "callbackDelta=unavailable"
+    val timestampDeltaText = if (timestampValid && previous != null &&
         previous[27] == 0L && previous[29] > 0L) {
         val elapsedNs = sample[29] - previous[29]
         val presentedFrames = sample[28] - previous[28]
@@ -570,10 +574,14 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String
             "clockDriftFrames=${"%.2f".format(Locale.ROOT, driftFrames)} " +
             "writtenDeltaFrames=$writtenFrames writtenMinusPresentedDelta=${writtenFrames - presentedFrames}"
     } else "timestampDelta=unavailable"
+    val modeName: (Long) -> String = { mode ->
+        when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "UNKNOWN($mode)" }
+    }
     val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
         .format(java.util.Date())
-    return "$wallTime sampleRate=${sample[7]} deviceId=${sample[8]} " +
-        "sharingMode=${if (sample[9] == 0L) "EXCLUSIVE" else if (sample[9] == 1L) "SHARED" else "UNKNOWN"} " +
+    return "$wallTime sampleRate=${sample[7]} requestedDeviceId=${sample[33]} actualDeviceId=${sample[8]} " +
+        "preferredSharingMode=${modeName(sample[31])} successfulOpenRequestMode=${modeName(sample[32])} " +
+        "actualSharingMode=${modeName(sample[9])} " +
         "streamState=${sample[6]} timestampStatus=${sample[27]} " +
         "hardwareFramePosition=${sample[28]} hardwareTimestampNs=${sample[29]} " +
         "framesWritten=${sample[30]} ringUnderruns=${sample[0]} hardwareXruns=${sample[1]} " +
@@ -581,9 +589,10 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?): String
         "callbackCount=${sample[13]} callbackFramesRequested=${sample[14]} " +
         "callbackFramesDelivered=${sample[15]} silenceFrames=${sample[16]} " +
         "unexpectedSilenceFrames=${sample[18]} maxCallbackDurationNs=${sample[21]} " +
+        "lastCallbackIntervalNs=${sample[34]} lastCallbackLatenessNs=${sample[35]} " +
         "maxCallbackIntervalNs=${sample[22]} maxCallbackLatenessNs=${sample[24]} " +
         "lateCallbackIntervals=${sample[25]} exclusiveOpenResult=${sample[19]} " +
-        "sharedOpenResult=${sample[20]} $deltaText"
+        "sharedOpenResult=${sample[20]} $callbackDeltaText $timestampDeltaText"
 }
 
 @Composable
@@ -690,6 +699,16 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Detail("Hardware timestamp frame position", data[28].toString(), color, muted)
                     Detail("Hardware timestamp time", if (data[29] > 0L) "${data[29]} ns · CLOCK_MONOTONIC" else "Unavailable", color, muted)
                     Detail("Frames written to AAudio", data[30].toString(), color, muted)
+                }
+                if (data.size >= 36) {
+                    val sharingName: (Long) -> String = { mode ->
+                        when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "Unavailable ($mode)" }
+                    }
+                    Detail("Preferred sharing mode", sharingName(data[31]), color, muted)
+                    Detail("Successful open request mode", sharingName(data[32]), color, muted)
+                    Detail("Requested device ID", data[33].toString(), color, muted)
+                    Detail("Last callback interval", "${data[34] / 1_000_000.0} ms", color, muted)
+                    Detail("Last callback lateness", "${data[35] / 1_000_000.0} ms", color, muted)
                 }
             }
             Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. Hardware timestamps are queried on demand using CLOCK_MONOTONIC; the timestamp result must be AAUDIO_OK before its frame position and time are interpreted. Frames written is the stream's cumulative submitted-frame count. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
