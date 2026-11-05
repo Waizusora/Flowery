@@ -103,10 +103,6 @@ fun FloweryNavigation(
                 Destination.WELCOME -> WelcomeContent(
                     foreground = foreground,
                     muted = muted,
-                    onAddFolder = {
-                        destination = Destination.FOLDERS
-                        onAddFolder()
-                    },
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onContinue = {
                         prefs.edit().putBoolean("welcome_complete", true).apply()
@@ -367,7 +363,6 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 private fun WelcomeContent(
     foreground: Color,
     muted: Color,
-    onAddFolder: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onContinue: () -> Unit
 ) {
@@ -380,25 +375,25 @@ private fun WelcomeContent(
         Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = Color(0xFFD66B9A), modifier = Modifier.size(76.dp))
         Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-        Text("Your local Hi-Fi music player. Start by choosing the folders that contain your music.",
+        Text("Your local Hi-Fi music player. Follow these steps to add your music folder.",
             color = muted, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
         Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .07f)),
             shape = RoundedCornerShape(22.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("ADD YOUR MUSIC FOLDER", color = foreground, fontWeight = FontWeight.Bold,
+                Text("HOW TO ADD A MUSIC FOLDER", color = foreground, fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("1. Tap Add folder", color = foreground, fontWeight = FontWeight.SemiBold)
-                        Text("Choose a music folder in Android's folder picker, then tap Use this folder / Allow.",
+                        Text("1. Open Settings → Library", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("In Flowery, open Settings, select Library, then tap ADD to choose a folder in Android's folder picker. Confirm with Use this folder / Allow.",
                             color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("2. Select Scan", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("2. Tap Scan", color = foreground, fontWeight = FontWeight.SemiBold)
                         Text("Flowery indexes supported audio files and playlists in the folders you selected.",
                             color = muted, style = MaterialTheme.typography.bodySmall)
                     }
@@ -406,16 +401,10 @@ private fun WelcomeContent(
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("3. Play your music", color = foreground, fontWeight = FontWeight.SemiBold)
-                        Text("Open Folders, choose a song, and playback controls will appear in Now Playing.",
+                        Text("3. Open Folders and play", color = foreground, fontWeight = FontWeight.SemiBold)
+                        Text("Choose a song to start playback. Your playback controls will appear in Now Playing.",
                             color = muted, style = MaterialTheme.typography.bodySmall)
                     }
-                }
-                Button(onClick = onAddFolder, modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
-                    shape = RoundedCornerShape(28.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Text("  ADD MUSIC FOLDER")
                 }
             }
         }
@@ -440,7 +429,9 @@ private fun WelcomeContent(
                 }
             }
         }
-        TextButton(onClick = onContinue) { Text("CONTINUE WITHOUT ADDING A FOLDER", color = muted) }
+        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+            shape = RoundedCornerShape(28.dp)) { Text("NEXT") }
     }
 }
 
