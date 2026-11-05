@@ -126,7 +126,8 @@ fun FloweryNavigation(
                     }
                     Column(Modifier.fillMaxWidth().padding(8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing",
+                        val virtualTrackTitle = selectedTrack?.takeIf { it.cuePlaylist != null || it.playlistName != null }?.title
+                        Text(virtualTrackTitle ?: currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing",
                             Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE), color = foreground,
                             style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
                             textAlign = TextAlign.Center, maxLines = 1)
