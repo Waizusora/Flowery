@@ -115,6 +115,7 @@ fun FloweryNavigation(
         }
     }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
+    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
@@ -445,6 +446,11 @@ fun FloweryNavigation(
                         }
                         aaudioSaveLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
                     },
+                    usbBitPerfectEnabled = usbBitPerfectEnabled,
+                    onUsbBitPerfectChanged = { enabled ->
+                        usbBitPerfectEnabled = enabled
+                        prefs.edit().putBoolean("usb_bit_perfect_enabled", enabled).apply()
+                    },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO, SettingsPage.AUDIO_DIAGNOSTICS -> SettingsPage.AUDIO
@@ -460,7 +466,12 @@ fun FloweryNavigation(
                     openFolders = { destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false },
                     addFolder = onAddFolder, removeFolder = onRemoveFolder,
                     folders = folders, tracks = tracks, scan = onScan,
-                    playTrack = onPlay)
+                    playTrack = onPlay,
+                    usbBitPerfectEnabled = usbBitPerfectEnabled,
+                    onUsbBitPerfectChanged = { enabled ->
+                        usbBitPerfectEnabled = enabled
+                        prefs.edit().putBoolean("usb_bit_perfect_enabled", enabled).apply()
+                    })
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -622,7 +633,8 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
-    playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit) {
+    playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
+    usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit) {
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
@@ -641,6 +653,18 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("USB Bit-Perfect", color = color, fontWeight = FontWeight.SemiBold)
+                            Text("Use the connected KT Micro DAC through the strict USB-exclusive path for supported files.", color = muted, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = usbBitPerfectEnabled, onCheckedChange = onUsbBitPerfectChanged)
+                    }
+                    Text("Decoded FLAC is converted to 24-bit PCM for direct USB transport. EQ/DSP processing means this is not source-bit-perfect passthrough. Playback stops if strict USB-exclusive setup fails; no Shared/AAudio fallback is used.", color = muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
             SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
             SettingCard("AAudio Diagnostics", "Ring-buffer underruns, hardware XRuns and output buffer metrics", color, muted) { navigate(SettingsPage.AUDIO_DIAGNOSTICS) }
         }
