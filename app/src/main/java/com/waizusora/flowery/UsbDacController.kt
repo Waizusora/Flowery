@@ -185,7 +185,11 @@ class UsbDacController(context: Context) {
                 )
             val clocks = UsbAudioDescriptorParser.playbackClockSources(descriptors, profile.interfaceNumber)
             if (clocks.isEmpty()) {
-                throw IllegalStateException("No UAC2 clock source descriptor was found.")
+                throw IllegalStateException(
+                    "No UAC2 clock source descriptor was linked to playback interface ${profile.interfaceNumber}. " +
+                        "Descriptor trace:\\n" +
+                        UsbAudioDescriptorParser.playbackDescriptorTrace(descriptors, profile.interfaceNumber)
+                )
             }
 
             var lastError: Throwable? = null
