@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,6 +31,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
+    @Volatile private var usbPlaybackMode = false
+    @Volatile private var usbBitPerfectActive = false
+    @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
 
@@ -40,6 +44,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setVolume(value: Float) {
+        if (usbPlaybackMode) {
+            onState("USB bit-perfect mode keeps digital volume at unity. Use the DAC hardware volume control.")
+            return
+        }
         val normalized = value.coerceIn(0f, 1f)
         val usbKey = activeUsbDeviceKey
         if (usbKey == null) {
@@ -74,6 +82,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Opening audio stream…")
                 descriptor = context.contentResolver.openFileDescriptor(uri, "r")
                     ?: throw IllegalStateException("Unable to open the selected audio document")
+                val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
+                    .getBoolean("usb_bit_perfect_enabled", false)
+                if (bitPerfectRequested) {
+                    usbPlaybackMode = true
+                    playUsbBitPerfect(descriptor, generation)
+                    return@thread
+                }
+
                 val extension = uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()
                 handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
                 decoderHandle = handle
@@ -209,13 +225,89 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
     }
 
+    private fun playUsbBitPerfect(descriptor: ParcelFileDescriptor, generation: Int) {
+        var source: WavPcmSource? = null
+        var session: UsbDacSession? = null
+        try {
+            onState("Opening direct USB bit-perfect path…")
+            source = WavPcmSource.open(descriptor)
+            val controller = UsbDacController(context)
+            val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
+            check(candidates.size == 1) {
+                "USB bit-perfect mode requires exactly one connected KT Micro KT-384/32 HIFI."
+            }
+            val device = candidates.single().usbDevice
+            check(controller.hasPermission(device)) {
+                "USB permission is unavailable. Tap the USB DAC control and grant access first."
+            }
+
+            session = controller.openExclusivePlaybackSession(
+                device,
+                source.bitDepth,
+                source.sampleRate
+            )
+            check(session.profile.channels == 2 && session.profile.bitResolution == source.bitDepth) {
+                "The selected DAC alternate setting does not match the source PCM format."
+            }
+
+            outputSampleRate = source.sampleRate
+            outputDurationMs = source.totalFrames * 1_000L / source.sampleRate
+            usbPositionFrames = 0L
+            activeUsbDeviceKey = controller.deviceIdentity(device)
+            var firstTransfer = true
+
+            while (!stopped.get() && playbackGeneration.get() == generation) {
+                if (paused) {
+                    Thread.sleep(10)
+                    continue
+                }
+
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    val targetFrame = framesAtMilliseconds(requested, source.sampleRate)
+                    usbPositionFrames = source.seekToFrame(targetFrame)
+                }
+
+                val pcm = source.readFrames(DECODE_CHUNK_FRAMES)
+                if (pcm.isEmpty()) break
+                val frameBytes = session.profile.channels * session.profile.subslotBytes
+                check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
+                val frames = pcm.size / frameBytes
+                check(session.writePcm(pcm, frames) == frames) {
+                    "The USB transport did not accept the complete PCM chunk."
+                }
+                usbPositionFrames += frames
+                if (firstTransfer) {
+                    firstTransfer = false
+                    usbBitPerfectActive = true
+                    onState("USB exclusive bit-perfect · PCM ${source.bitDepth}-bit · ${source.sampleRate} Hz")
+                }
+            }
+
+            if (!stopped.get() && playbackGeneration.get() == generation) {
+                onState("Playback finished")
+            }
+        } finally {
+            usbBitPerfectActive = false
+            usbPlaybackMode = false
+            try {
+                session?.close()
+            } finally {
+                source?.close()
+                activeUsbDeviceKey = null
+                outputSampleRate = 0
+            }
+        }
+    }
+
     fun positionMs(): Long =
-        if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate else 0L
+        if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
+        else if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate
+        else 0L
 
     fun durationMs(): Long = outputDurationMs
 
     fun seekTo(positionMs: Long) {
-        if (decoderHandle == 0L) return
+        if (decoderHandle == 0L && !usbPlaybackMode) return
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 
@@ -231,14 +323,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun pause() {
-        if (NativeAudio.nativePauseOutput() == 0) {
+        if (usbPlaybackMode) {
+            paused = true
+            onState("Paused · USB exclusive")
+        } else if (NativeAudio.nativePauseOutput() == 0) {
             paused = true
             onState("Paused")
         }
     }
 
     fun resume() {
-        if (NativeAudio.nativeResumeOutput() == 0) {
+        if (usbPlaybackMode) {
+            paused = false
+            onState("Playing · USB exclusive")
+        } else if (NativeAudio.nativeResumeOutput() == 0) {
             paused = false
             onState("Playing · AAudio streaming")
         }
@@ -254,6 +352,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputSampleRate = 0
         pendingSeekMs.set(null)
         paused = false
+        usbPlaybackMode = false
+        usbBitPerfectActive = false
+        usbPositionFrames = 0L
         activeUsbDeviceKey = null
     }
 }
