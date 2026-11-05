@@ -70,6 +70,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun play(uri: Uri) {
+        val previousWorker = worker
         stop()
         stopped.set(false)
         val generation = playbackGeneration.incrementAndGet()
@@ -77,6 +78,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var descriptor: ParcelFileDescriptor? = null
             var handle = 0L
             try {
+                previousWorker?.join(4_000L)
+                check(previousWorker?.isAlive != true) {
+                    "The previous playback session did not release its output device in time."
+                }
                 onState("Opening audio stream…")
                 descriptor = context.contentResolver.openFileDescriptor(uri, "r")
                     ?: throw IllegalStateException("Unable to open the selected audio document")
