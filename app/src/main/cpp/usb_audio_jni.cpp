@@ -288,7 +288,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         }
         packet_frames.clear();
         return true;
-    }
+    };
 
     size_t batch_frames = 0;
     while (true) {
