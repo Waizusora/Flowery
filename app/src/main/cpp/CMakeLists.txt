@@ -23,4 +23,4 @@ target_link_libraries(flowery_aaudio PRIVATE aaudio)
 
 add_library(flowery_usb SHARED usb_audio_jni.cpp)
 target_compile_features(flowery_usb PRIVATE cxx_std_17)
-target_link_libraries(flowery_usb PRIVATE libusb::usb-1.0 log)
+target_link_libraries(flowery_usb PRIVATE usb-1.0 log)
