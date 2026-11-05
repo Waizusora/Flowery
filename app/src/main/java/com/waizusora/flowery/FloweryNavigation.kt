@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
-private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, AUDIO_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -396,7 +396,7 @@ fun FloweryNavigation(
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
-                        SettingsPage.AUDIO_INFO -> SettingsPage.AUDIO
+                        SettingsPage.AUDIO_INFO, SettingsPage.AUDIO_DIAGNOSTICS -> SettingsPage.AUDIO
                         SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
@@ -530,7 +530,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
-            SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.LIBRARY -> "Library"
+            SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.AUDIO_DIAGNOSTICS -> "AAudio Diagnostics"; SettingsPage.LIBRARY -> "Library"
             SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
             SettingsPage.TRANSLATOR -> "Translator"; SettingsPage.CONTRIBUTORS -> "Contributor"; SettingsPage.ROOT -> "Settings"
         }, color)
@@ -543,7 +543,10 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("Other", "Battery optimization", color, muted) { navigate(SettingsPage.OTHER) }
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
-        SettingsPage.AUDIO -> SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
+        SettingsPage.AUDIO -> {
+            SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
+            SettingCard("AAudio Diagnostics", "Ring-buffer underruns, hardware XRuns and output buffer metrics", color, muted) { navigate(SettingsPage.AUDIO_DIAGNOSTICS) }
+        }
         SettingsPage.AUDIO_INFO -> {
             Detail("Decoder", "Symphonia · progressive packet decoding", color, muted)
             Detail("Resampler", "Rubato · persistent streaming state", color, muted)
@@ -552,6 +555,31 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Pipeline", "SAF file → Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring → AAudio", color, muted)
             Detail("Playback status", status, color, muted)
             Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
+        }
+        SettingsPage.AUDIO_DIAGNOSTICS -> {
+            var metrics by remember(page) { mutableStateOf<LongArray?>(null) }
+            Button(onClick = { metrics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Text("  Refresh diagnostics")
+            }
+            Text("Values are sampled on demand. Keep playback running while refreshing to observe live counters.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            val data = metrics
+            if (data == null || data.size < 8) {
+                Detail("Output", "No diagnostics sampled yet. Start playback, then refresh.", color, muted)
+            } else {
+                Detail("Ring-buffer underruns", data[0].toString(), color, muted)
+                Detail("AAudio hardware XRuns", if (data[1] < 0) "Unavailable" else data[1].toString(), color, muted)
+                Detail("Queued PCM frames", data[2].toString(), color, muted)
+                Detail("Ring capacity", "${data[3]} frames", color, muted)
+                Detail("AAudio buffer size", if (data[4] > 0) "${data[4]} frames" else "Unavailable", color, muted)
+                Detail("Frames per burst", if (data[5] > 0) data[5].toString() else "Unavailable", color, muted)
+                Detail("Stream state", data[6].toString(), color, muted)
+                Detail("Output sample rate", if (data[7] > 0) "${data[7]} Hz" else "Unavailable", color, muted)
+            }
+            Text("Ring-buffer underruns count callback requests that needed silence because PCM data was unavailable. Hardware XRuns are reported separately by AAudio. Counters reset when the output stream is recreated.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.LIBRARY -> {
             Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
