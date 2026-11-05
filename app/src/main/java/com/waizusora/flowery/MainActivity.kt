@@ -395,6 +395,8 @@ class MainActivity : ComponentActivity() {
                 put("cueStartMs", track.cueStartMs ?: JSONObject.NULL)
                 put("cueEndMs", track.cueEndMs ?: JSONObject.NULL)
                 put("cuePlaylist", track.cuePlaylist ?: JSONObject.NULL)
+                put("playlistName", track.playlistName ?: JSONObject.NULL)
+                put("playlistOrder", track.playlistOrder ?: JSONObject.NULL)
             })
         }
         getSharedPreferences("library", MODE_PRIVATE).edit()
@@ -419,7 +421,9 @@ class MainActivity : ComponentActivity() {
                     sidecarLyricsUri = lyrics,
                     cueStartMs = if (item.has("cueStartMs") && !item.isNull("cueStartMs")) item.optLong("cueStartMs") else null,
                     cueEndMs = if (item.has("cueEndMs") && !item.isNull("cueEndMs")) item.optLong("cueEndMs") else null,
-                    cuePlaylist = item.optString("cuePlaylist").takeIf { it.isNotBlank() && it != "null" }
+                    cuePlaylist = item.optString("cuePlaylist").takeIf { it.isNotBlank() && it != "null" },
+                    playlistName = item.optString("playlistName").takeIf { it.isNotBlank() && it != "null" },
+                    playlistOrder = if (item.has("playlistOrder") && !item.isNull("playlistOrder")) item.optInt("playlistOrder") else null
                 )
             }
             status = if (tracks.isEmpty()) "Choose a music folder to begin"
@@ -465,10 +469,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun playTrack(track: AudioTrackItem, folderTracks: List<AudioTrackItem> = tracks.toList()) {
-        val playbackTracks = if (track.cuePlaylist != null) {
-            folderTracks.filter { it.cuePlaylist == track.cuePlaylist }.sortedBy { it.cueStartMs ?: 0L }
-        } else {
-            folderTracks.filter { it.cuePlaylist == null }
+        val playbackTracks = when {
+            track.cuePlaylist != null -> folderTracks.filter { it.cuePlaylist == track.cuePlaylist }.sortedBy { it.cueStartMs ?: 0L }
+            track.playlistName != null -> folderTracks.filter { it.playlistName == track.playlistName }.sortedBy { it.playlistOrder ?: Int.MAX_VALUE }
+            else -> folderTracks.filter { it.cuePlaylist == null && it.playlistName == null }
         }
         selectedTrack = track
         currentTag = null
