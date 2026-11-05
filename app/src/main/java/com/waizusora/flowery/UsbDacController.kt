@@ -180,7 +180,7 @@ class UsbDacController(context: Context) {
                 ?: throw IllegalStateException(
                     "No matching stereo UAC2 OUT profile was found for interface 2, endpoint 0x04."
                 )
-            val clocks = UsbAudioDescriptorParser.clockSources(descriptors)
+            val clocks = UsbAudioDescriptorParser.playbackClockSources(descriptors, profile.interfaceNumber)
             if (clocks.isEmpty()) {
                 throw IllegalStateException("No UAC2 clock source descriptor was found.")
             }
