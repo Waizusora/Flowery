@@ -156,9 +156,10 @@ class UsbDacController(context: Context) {
     /**
      * Opens the descriptor-selected UAC2 stereo output using native libusb.
      *
-     * This claims the streaming interface and verifies the requested clock
-     * frequency. It does not connect the current Rust decoder to this session;
-     * callers must supply matching integer PCM through UsbDacSession.writePcm.
+     * This claims the streaming interface, verifies the requested UAC2 clock
+     * frequency, and returns a session for exact-format integer PCM writes.
+     * The current player supplies raw stereo PCM WAV data; other source formats
+     * are rejected while USB bit-perfect mode is enabled.
      */
     internal fun openExclusivePlaybackSession(
         device: UsbDevice,
