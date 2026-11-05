@@ -27,6 +27,8 @@ struct OutputState {
     std::atomic<uint64_t> callbackUnexpectedSilenceFrames{0};
     std::atomic<uint64_t> callbackMaxFrames{0};
     std::atomic<int32_t> lastTunedXrunCount{0};
+    int32_t exclusiveOpenResult = AAUDIO_ERROR_INVALID_STATE;
+    int32_t sharedOpenResult = AAUDIO_ERROR_INVALID_STATE;
     int32_t channels = 2;
 };
 
@@ -171,8 +173,12 @@ Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(
     stopLocked();
     g_output = std::move(state);
     auto result = openStream(g_output.get(), rate, channels, AAUDIO_SHARING_MODE_EXCLUSIVE, deviceId);
+    g_output->exclusiveOpenResult = result;
     if (result != AAUDIO_OK) {
         result = openStream(g_output.get(), rate, channels, AAUDIO_SHARING_MODE_SHARED, deviceId);
+        g_output->sharedOpenResult = result;
+    } else {
+        g_output->sharedOpenResult = AAUDIO_ERROR_INVALID_STATE;
     }
     if (result != AAUDIO_OK) {
         stopLocked();
@@ -413,7 +419,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(JNIEnv*, job
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, jobject) {
-    jlong values[19] = {};
+    jlong values[21] = {};
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_output) {
         values[0] = static_cast<jlong>(g_output->underrunCount.load(std::memory_order_acquire));
@@ -426,6 +432,8 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[16] = static_cast<jlong>(g_output->callbackSilenceFrames.load(std::memory_order_acquire));
         values[17] = static_cast<jlong>(g_output->callbackMaxFrames.load(std::memory_order_acquire));
         values[18] = static_cast<jlong>(g_output->callbackUnexpectedSilenceFrames.load(std::memory_order_acquire));
+        values[19] = static_cast<jlong>(g_output->exclusiveOpenResult);
+        values[20] = static_cast<jlong>(g_output->sharedOpenResult);
     }
     if (g_stream) {
         const int32_t xruns = AAudioStream_getXRunCount(g_stream);
@@ -440,8 +448,8 @@ Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(JNIEnv* env, j
         values[11] = AAudioStream_getChannelCount(g_stream);
         values[12] = AAudioStream_getPerformanceMode(g_stream);
     }
-    jlongArray result = env->NewLongArray(19);
-    if (result != nullptr) env->SetLongArrayRegion(result, 0, 19, values);
+    jlongArray result = env->NewLongArray(21);
+    if (result != nullptr) env->SetLongArrayRegion(result, 0, 21, values);
     return result;
 }
 
