@@ -10,8 +10,24 @@ import java.nio.charset.StandardCharsets
  * UTF-8 is the safe default; malformed input is replaced rather than crashing a scan.
  */
 object LibraryTextEncoding {
-    fun available(): List<Charset> = Charset.availableCharsets().values
-        .sortedBy { it.name().lowercase() }
+    private val commonCharsets = listOf(
+        StandardCharsets.UTF_8,
+        StandardCharsets.UTF_16LE,
+        StandardCharsets.UTF_16BE,
+        Charset.forName("windows-1252"),
+        Charset.forName("windows-1251"),
+        Charset.forName("ISO-8859-1"),
+        Charset.forName("ISO-8859-2"),
+        Charset.forName("Shift_JIS"),
+        Charset.forName("EUC-JP"),
+        Charset.forName("GBK"),
+        Charset.forName("GB18030"),
+        Charset.forName("Big5"),
+        Charset.forName("EUC-KR"),
+        Charset.forName("KOI8-R")
+    )
+
+    fun available(): List<Charset> = commonCharsets
 
     fun decode(bytes: ByteArray, charsetName: String?): String {
         val charset = charsetName?.let { runCatching { Charset.forName(it) }.getOrNull() }
