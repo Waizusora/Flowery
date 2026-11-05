@@ -174,12 +174,14 @@ class UsbDacController(context: Context) {
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
         try {
             val descriptors = connection.rawDescriptors
-            val profile = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(
+            val profiles = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(
                 descriptors,
                 requestedBitResolution = bitResolution
-            ).firstOrNull { it.interfaceNumber == 2 && it.endpointAddress == 0x04 }
+            )
+            val profile = profiles.firstOrNull()
                 ?: throw IllegalStateException(
-                    "No matching stereo UAC2 OUT profile was found for interface 2, endpoint 0x04."
+                    "No descriptor-validated stereo UAC2 OUT profile supports " +
+                        bitResolution + "-bit PCM."
                 )
             val clocks = UsbAudioDescriptorParser.playbackClockSources(descriptors, profile.interfaceNumber)
             if (clocks.isEmpty()) {
