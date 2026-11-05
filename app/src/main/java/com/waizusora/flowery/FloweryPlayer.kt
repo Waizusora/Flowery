@@ -245,6 +245,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val channels = (streamInfo and 0xffff_ffffL).toInt()
                 check(sourceRate > 0 && channels in 1..2) { "The decoder returned an invalid audio format" }
 
+                if (bitPerfectRequested && extension !in setOf("wav", "wave") &&
+                    segmentStartMs == 0L && segmentEndMs == null) {
+                    usbPlaybackMode = true
+                    playUsbDecodedDirect(handle, sourceRate, channels, generation)
+                    return@thread
+                }
+
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 val usbDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
                     it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
@@ -509,6 +516,75 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             "audio/ogg", "application/ogg" -> "ogg"
             "audio/mpeg" -> "mp3"
             else -> ""
+        }
+    }
+
+    /**
+     * Sends Symphonia-decoded PCM directly to USB without Android's AudioTrack/AAudio
+     * mixer. Float samples are quantized to the DAC's 24-bit integer transport format;
+     * this is not source-bit-perfect passthrough.
+     */
+    private fun playUsbDecodedDirect(handle: Long, sourceRate: Int, channels: Int, generation: Int) {
+        var session: UsbDacSession? = null
+        try {
+            check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
+            val controller = UsbDacController(context)
+            val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
+            check(candidates.size == 1) { "Direct USB playback requires exactly one connected KT Micro KT-384/32 HIFI." }
+            val device = candidates.single().usbDevice
+            check(controller.hasPermission(device)) { "USB permission is unavailable. Grant access to the connected DAC first." }
+            val usbSession = controller.openExclusivePlaybackSession(device, 24, sourceRate)
+            session = usbSession
+            check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == 24 &&
+                usbSession.sampleRate == sourceRate) {
+                "The DAC profile does not match stereo 24-bit PCM at $sourceRate Hz."
+            }
+            check(NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb) == 0) {
+                "Unable to configure the FLAC decoder and streaming DSP for direct USB output."
+            }
+            outputSampleRate = sourceRate
+            outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+            usbPositionFrames = 0L
+            activeUsbDeviceKey = controller.deviceIdentity(device)
+            softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
+            var firstTransfer = true
+            while (!stopped.get() && playbackGeneration.get() == generation) {
+                if (paused) { Thread.sleep(10); continue }
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    val actual = NativeAudio.nativeSeekStreamDecoder(handle, requested)
+                    check(actual >= 0L) { "The FLAC decoder could not seek to the requested position." }
+                    usbPositionFrames = actual * sourceRate / 1_000L
+                }
+                val samples = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
+                if (samples.isEmpty()) break
+                check(samples.size % channels == 0) { "The FLAC decoder returned an incomplete interleaved PCM frame." }
+                val frames = samples.size / channels
+                val pcm = ByteArray(samples.size * 3)
+                var byteOffset = 0
+                for (sample in samples) {
+                    val value = if (sample <= -1f) -8_388_608 else (sample.coerceIn(-1f, 1f) * 8_388_607f).toInt()
+                    pcm[byteOffset++] = value.toByte()
+                    pcm[byteOffset++] = (value shr 8).toByte()
+                    pcm[byteOffset++] = (value shr 16).toByte()
+                }
+                check(usbSession.writePcm(pcm, frames) == frames) {
+                    "The USB DAC transport did not accept the complete decoded PCM chunk."
+                }
+                usbPositionFrames += frames
+                if (firstTransfer) {
+                    firstTransfer = false
+                    val dspActive = bandGainsDb.any { abs(it) > 0.001f }
+                    onState("USB exclusive · FLAC decoded to PCM 24-bit · " + sourceRate + " Hz" +
+                        if (dspActive) " · EQ/DSP active" else " · EQ flat")
+                }
+            }
+            if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
+        } finally {
+            try { session?.close() } finally {
+                usbPlaybackMode = false
+                activeUsbDeviceKey = null
+                outputSampleRate = 0
+            }
         }
     }
 
