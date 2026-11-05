@@ -428,7 +428,7 @@ fun FloweryNavigation(
                     aaudioLogCount = aaudioLogLines.size,
                     onToggleAaudioLog = {
                         if (aaudioLogRecording) aaudioLogRecording = false
-                        else { aaudioPreviousSample = null; aaudioLogRecording = true }
+                        else { aaudioLogLines.clear(); aaudioPreviousSample = null; aaudioLogRecording = true }
                     },
                     onSaveAaudioLog = {
                         aaudioPendingLog = buildString {
