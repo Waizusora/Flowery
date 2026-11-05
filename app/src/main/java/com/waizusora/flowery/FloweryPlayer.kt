@@ -31,7 +31,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val lines = preferences.getString("usb_direct_diagnostics", "").orEmpty()
                 .lineSequence().filter { it.isNotBlank() }.toMutableList()
             lines.add(line)
-            preferences.edit().putString("usb_direct_diagnostics", lines.takeLast(300).joinToString("\n")).apply()
+            preferences.edit().putString("usb_direct_diagnostics", lines.takeLast(1200).joinToString("\n")).apply()
         }
         android.util.Log.i("FloweryUsbDiag", line)
     }
@@ -668,7 +668,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
             if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
         } catch (error: Throwable) {
-            recordUsbDiagnostic("DIRECT_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
+            recordUsbDiagnostic("DIRECT_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"} causeType=${error.cause?.javaClass?.simpleName ?: "none"} cause=${error.cause?.message ?: "none"}")
             throw error
         } finally {
             try { session?.close() } finally {
