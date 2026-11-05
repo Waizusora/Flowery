@@ -527,21 +527,27 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private fun playUsbDecodedDirect(handle: Long, sourceRate: Int, channels: Int, generation: Int) {
         var session: UsbDacSession? = null
         try {
+            onState("USB exclusive: validating decoded source format…")
             check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
             val controller = UsbDacController(context)
+            onState("USB exclusive: detecting KT Micro DAC…")
             val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
-            check(candidates.size == 1) { "Direct USB playback requires exactly one connected KT Micro KT-384/32 HIFI." }
+            check(candidates.size == 1) { "Direct USB playback requires exactly one connected KT Micro KT-384/32 HIFI (found " + candidates.size + ")." }
             val device = candidates.single().usbDevice
+            onState("USB exclusive: checking DAC permission…")
             check(controller.hasPermission(device)) { "USB permission is unavailable. Grant access to the connected DAC first." }
+            onState("USB exclusive: reading descriptors and negotiating " + sourceRate + " Hz clock…")
             val usbSession = controller.openExclusivePlaybackSession(device, 24, sourceRate)
             session = usbSession
             check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == 24 &&
                 usbSession.sampleRate == sourceRate) {
                 "The DAC profile does not match stereo 24-bit PCM at $sourceRate Hz."
             }
+            onState("USB exclusive: configuring Symphonia decoder and DSP…")
             check(NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb) == 0) {
                 "Unable to configure the FLAC decoder and streaming DSP for direct USB output."
             }
+            onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = sourceRate
             outputDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
             usbPositionFrames = 0L
@@ -559,6 +565,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (samples.isEmpty()) break
                 check(samples.size % channels == 0) { "The FLAC decoder returned an incomplete interleaved PCM frame." }
                 val frames = samples.size / channels
+                if (firstTransfer) onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
                 val pcm = ByteArray(samples.size * 3)
                 var byteOffset = 0
                 for (sample in samples) {
