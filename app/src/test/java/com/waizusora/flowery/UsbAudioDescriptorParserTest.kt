@@ -100,4 +100,22 @@ class UsbAudioDescriptorParserTest {
         )
     }
 
+    @Test
+    fun resolvesClockSourceForSelectedPlaybackInterfaceWhenClockDescriptorsAreEightBytes() {
+        val descriptors = byteArrayOf(
+            9, 4, 0, 0, 0, 1, 1, 0x20, 0,
+            8, 0x24, 0x0A, 3, 7, 7, 0, 0,
+            17, 0x24, 0x02, 1, 1, 2, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            8, 0x24, 0x0A, 6, 7, 7, 0, 0,
+            17, 0x24, 0x02, 5, 1, 1, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0x20, 0,
+            16, 0x24, 0x01, 5, 0, 1, 1, 0, 0, 0, 2, 3, 0, 0, 0, 0
+        )
+
+        assertEquals(
+            listOf(6 to 0),
+            UsbAudioDescriptorParser.playbackClockSources(descriptors, streamingInterface = 2)
+        )
+    }
+
 }
