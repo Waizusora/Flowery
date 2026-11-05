@@ -41,7 +41,8 @@ fun FloweryNavigation(
     equalizerGains: List<Float>, status: String,
     onBandGain: (Int, Float) -> Unit, onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
-    onScan: () -> Unit, onPlay: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
+    onScan: () -> Unit, onRefreshFolder: (LibraryFolder) -> Unit,
+    onPlay: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
     onInspect: (AudioTrackItem) -> Unit, onEdit: () -> Unit, onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
@@ -191,10 +192,16 @@ fun FloweryNavigation(
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { selectedFolder = null }) { Icon(Icons.Default.ArrowBack, "Back", tint = foreground) }
-                            Heading(selectedFolder!!.name, foreground)
+                            Column(Modifier.weight(1f)) {
+                                Heading(selectedFolder!!.name, foreground)
+                                Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
+                            }
+                            IconButton(onClick = { onRefreshFolder(selectedFolder!!) }) {
+                                Icon(Icons.Default.Refresh, "Refresh folder", tint = Color(0xFFD66B9A))
+                            }
                         }
                         val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
-                        Text("${folderTracks.size} tracks", color = muted)
+                        Text("${folderTracks.size} songs indexed", color = muted)
                         folderTracks.forEach { track ->
                             Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
@@ -207,7 +214,7 @@ fun FloweryNavigation(
                             }
                             HorizontalDivider(color = muted.copy(alpha = .2f))
                         }
-                        if (folderTracks.isEmpty()) Text("No tracks found. Run Scan to refresh.", color = muted)
+                        if (folderTracks.isEmpty()) Text("No songs indexed yet. Use Scan library in Settings → Library, or tap Refresh to update this folder.", color = muted)
                     }
                 }
                 Destination.DSP -> {
@@ -241,7 +248,9 @@ fun FloweryNavigation(
                     navigate = { settingsPage = it },
                     changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
                     battery = onBatterySettings, update = onCheckUpdate,
-                    openFolders = { destination = Destination.FOLDERS; selectedFolder = null })
+                    openFolders = { destination = Destination.FOLDERS; selectedFolder = null },
+                    folders = folders, tracks = tracks, scan = onScan,
+                    playTrack = onPlay)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -259,7 +268,9 @@ private fun NavIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
-    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit, status: String) {
+    battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit, status: String,
+    folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
+    playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit) {
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
@@ -273,7 +284,8 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("Audio", "Playback engine and processing", color, muted) { navigate(SettingsPage.AUDIO) }
             SettingCard("Appearance", "Theme and language", color, muted) { navigate(SettingsPage.APPEARANCE) }
             SettingCard("Library", "Folder management and scanning", color, muted) { navigate(SettingsPage.LIBRARY) }
-            SettingCard("Other", "Battery optimization and application information", color, muted) { navigate(SettingsPage.OTHER) }
+            SettingCard("Other", "Battery optimization", color, muted) { navigate(SettingsPage.OTHER) }
+            SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
         SettingsPage.AUDIO_INFO -> {
@@ -285,7 +297,40 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Playback status", status, color, muted)
             Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
         }
-        SettingsPage.LIBRARY -> SettingCard("Folder", "Add multiple folders, select folders for removal, and scan the library", color, muted, Icons.Default.Folder, openFolders)
+        SettingsPage.LIBRARY -> {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Scanned music", color = color, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleLarge)
+                    Text("${tracks.size} songs saved in this device", color = muted, style = MaterialTheme.typography.bodySmall)
+                }
+                Button(onClick = scan) {
+                    Icon(Icons.Default.Refresh, null)
+                    Text(" Scan")
+                }
+            }
+            SettingCard("Manage folders", "${folders.size} folders · add, remove and include folders", color, muted, Icons.Default.Folder, openFolders)
+            if (tracks.isEmpty()) {
+                Text("Your scanned songs will appear here. The library index is saved, so opening this page will not start another scan.", color = muted)
+            } else {
+                tracks.forEach { track ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { playTrack(track, tracks) }.padding(vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(Modifier.size(42.dp).background(color.copy(alpha = .09f), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                            Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A))
+                        }
+                        Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                            Text(track.title, color = color, fontWeight = FontWeight.Medium, maxLines = 1)
+                            Text(track.folder, color = muted, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        }
+                        Icon(Icons.Default.PlayArrow, "Play", tint = color.copy(alpha = .7f))
+                    }
+                    HorizontalDivider(color = muted.copy(alpha = .16f))
+                }
+            }
+            Text(status, color = muted, style = MaterialTheme.typography.labelSmall)
+        }
         SettingsPage.APPEARANCE -> {
             Text("Theme", color = color, fontWeight = FontWeight.SemiBold)
             listOf("Light", "Black", "Auto").forEach { option ->
@@ -300,7 +345,6 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
         }
         SettingsPage.OTHER -> {
             SettingCard("Battery optimization", "Open Android battery optimization settings", color, muted, Icons.Default.BatteryFull, battery)
-            SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.ABOUT -> {
             SettingCard("Open Source", "Libraries and licenses used by Flowery", color, muted, Icons.Default.Code) { navigate(SettingsPage.OPEN_SOURCE) }
