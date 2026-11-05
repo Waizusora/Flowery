@@ -57,79 +57,60 @@ internal object UsbAudioDescriptorParser {
         var currentInterface = -1
         var currentSubclass = -1
         val terminalClockIds = mutableMapOf<Int, Int>()
-        val clockSourceIds = linkedSetOf<Int>()
+        val clockSourceInterfaces = linkedMapOf<Int, Int>()
         val playbackTerminalLinks = linkedSetOf<Int>()
         var offset = 0
+
         while (offset + 2 <= raw.size) {
             val length = raw[offset].toInt() and 0xff
             val type = raw[offset + 1].toInt() and 0xff
             if (length < 2 || offset + length > raw.size) break
+
             if (type == USB_DT_INTERFACE && length >= 9) {
                 currentInterface = raw[offset + 2].toInt() and 0xff
                 currentSubclass = raw[offset + 6].toInt() and 0xff
             } else if (type == USB_DT_CS_INTERFACE && length >= 4) {
                 val subtype = raw[offset + 2].toInt() and 0xff
-                if (currentSubclass == 1) {
-                    when (subtype) {
+                when {
+                    currentSubclass == 1 -> when (subtype) {
+                        // UAC2 Input Terminal: bCSourceID is at offset 7.
                         0x02 -> if (length >= 8) {
                             val terminalId = raw[offset + 3].toInt() and 0xff
                             val clockId = raw[offset + 7].toInt() and 0xff
-                            terminalClockIds[terminalId] = clockId
+                            if (terminalId != 0 && clockId != 0) {
+                                terminalClockIds[terminalId] = clockId
+                            }
                         }
+                        // UAC2 Output Terminal: bCSourceID is at offset 8.
                         0x03 -> if (length >= 9) {
                             val terminalId = raw[offset + 3].toInt() and 0xff
                             val clockId = raw[offset + 8].toInt() and 0xff
-                            if (clockId != 0) terminalClockIds[terminalId] = clockId
+                            if (terminalId != 0 && clockId != 0) {
+                                terminalClockIds[terminalId] = clockId
+                            }
                         }
-                        0x0A -> clockSourceIds += raw[offset + 3].toInt() and 0xff
+                        // Keep the owning AudioControl interface while parsing.
+                        0x0A -> {
+                            val clockId = raw[offset + 3].toInt() and 0xff
+                            if (clockId != 0) clockSourceInterfaces[clockId] = currentInterface
+                        }
                     }
-                } else if (currentInterface == streamingInterface &&
-                    currentSubclass == USB_SUBCLASS_AUDIO_STREAMING &&
-                    subtype == 0x01 && length >= 4
-                ) {
-                    playbackTerminalLinks += raw[offset + 3].toInt() and 0xff
+                    currentInterface == streamingInterface &&
+                        currentSubclass == USB_SUBCLASS_AUDIO_STREAMING &&
+                        subtype == 0x01 -> if (length >= 4) {
+                            val terminalLink = raw[offset + 3].toInt() and 0xff
+                            if (terminalLink != 0) playbackTerminalLinks += terminalLink
+                        }
                 }
             }
             offset += length
         }
+
         return playbackTerminalLinks.mapNotNull { terminalId ->
-            val clockId = terminalClockIds[terminalId]
-            if (clockId != null && clockId in clockSourceIds) clockId to 0 else null
+            val clockId = terminalClockIds[terminalId] ?: return@mapNotNull null
+            val controlInterface = clockSourceInterfaces[clockId] ?: return@mapNotNull null
+            clockId to controlInterface
         }.distinct()
-            .map { (clockId, _) ->
-                var controlInterface = -1
-                var scan = 0
-                while (scan + 9 <= raw.size) {
-                    val descriptorLength = raw[scan].toInt() and 0xff
-                    if (descriptorLength < 9 || scan + descriptorLength > raw.size) break
-                    if ((raw[scan + 1].toInt() and 0xff) == USB_DT_INTERFACE &&
-                        (raw[scan + 5].toInt() and 0xff) == USB_CLASS_AUDIO &&
-                        (raw[scan + 6].toInt() and 0xff) == 1
-                    ) {
-                        controlInterface = raw[scan + 2].toInt() and 0xff
-                        var entityOffset = scan + descriptorLength
-                        while (entityOffset + 4 <= raw.size) {
-                            val entityLength = raw[entityOffset].toInt() and 0xff
-                            if (entityLength < 2 || entityOffset + entityLength > raw.size) break
-                            if ((raw[entityOffset + 1].toInt() and 0xff) == USB_DT_INTERFACE) break
-                            if ((raw[entityOffset + 1].toInt() and 0xff) == USB_DT_CS_INTERFACE &&
-                                entityLength >= 4 &&
-                                (raw[entityOffset + 2].toInt() and 0xff) == 0x0A &&
-                                (raw[entityOffset + 3].toInt() and 0xff) == clockId
-                            ) break
-                            entityOffset += entityLength
-                        }
-                        if (entityOffset + 4 <= raw.size &&
-                            (raw[entityOffset + 1].toInt() and 0xff) == USB_DT_CS_INTERFACE &&
-                            (raw[entityOffset + 2].toInt() and 0xff) == 0x0A &&
-                            (raw[entityOffset + 3].toInt() and 0xff) == clockId
-                        ) break
-                    }
-                    scan += descriptorLength
-                }
-                clockId to controlInterface
-            }
-            .filter { it.second >= 0 }
     }
 
     /**
