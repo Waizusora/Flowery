@@ -38,7 +38,7 @@ class LibraryScanner(private val context: Context) {
         val lyricFiles = children.filter { it.isFile && it.name?.endsWith(".lrc", ignoreCase = true) == true }
             .associateBy { it.name?.substringBeforeLast('.')?.lowercase().orEmpty() }
         val cueFiles = children.filter { it.isFile && it.name?.endsWith(".cue", ignoreCase = true) == true }
-        val playlistFiles = children.filter { it.isFile && it.name?.substringAfterLast(".", "")?.lowercase() in setOf("m3u", "m3u8", "pls") }
+        val playlistFiles = children.filter { it.isFile && (it.name?.substringAfterLast(".", "")?.lowercase() ?: "") in setOf("m3u", "m3u8", "pls") }
         children.forEach { file ->
             if (file.isDirectory) {
                 visit(file, rootName, output, pathStack + file)
