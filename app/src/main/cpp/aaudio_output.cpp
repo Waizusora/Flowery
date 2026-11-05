@@ -327,6 +327,7 @@ Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(JNIEnv*, jobject) {
         if (result != AAUDIO_OK) return result;
         state = AAudioStream_getState(g_stream);
     }
+    if (state == AAUDIO_STREAM_STATE_PAUSED) return AAUDIO_OK;
     if (state == AAUDIO_STREAM_STATE_PAUSING) {
         return waitForStreamState(
             g_stream, AAUDIO_STREAM_STATE_PAUSING, AAUDIO_STREAM_STATE_PAUSED);
@@ -347,6 +348,7 @@ Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(JNIEnv*, jobject) {
         if (result != AAUDIO_OK) return result;
         state = AAudioStream_getState(g_stream);
     }
+    if (state == AAUDIO_STREAM_STATE_STARTED) return AAUDIO_OK;
     if (state == AAUDIO_STREAM_STATE_STARTING) {
         return waitForStreamState(
             g_stream, AAUDIO_STREAM_STATE_STARTING, AAUDIO_STREAM_STATE_STARTED);
