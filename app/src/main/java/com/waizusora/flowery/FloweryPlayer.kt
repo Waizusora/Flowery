@@ -166,14 +166,30 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     requireExclusive = deviceId != 0,
                     capacityFrames = outputRingCapacityFrames
                 )
-                check(opened == 0) {
-                    if (opened == -10001 && deviceId != 0) {
-                        "USB DAC requires AAudio EXCLUSIVE mode, but Android negotiated SHARED. Playback was stopped; no Shared fallback was used."
-                    } else if (deviceId != 0) {
-                        "AAudio could not open the required USB DAC EXCLUSIVE output stream (error $opened)"
-                    } else {
-                        "AAudio could not open the Android system SHARED output stream (error $opened)"
+                if (opened != 0) {
+                    val attempt = NativeAudio.nativeGetLastOutputOpenDiagnostics()
+                    val modeName: (Long) -> String = { mode ->
+                        when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "UNKNOWN($mode)" }
                     }
+                    val details = if (attempt.size >= 10) {
+                        "requestedDeviceId=${attempt[0]}, requestedMode=${modeName(attempt[1])}, " +
+                            "requestedRate=${attempt[2]}, requestedChannels=${attempt[3]}, " +
+                            "openResult=${attempt[4]}, actualDeviceId=${attempt[5]}, " +
+                            "actualMode=${modeName(attempt[6])}, actualRate=${attempt[7]}, " +
+                            "actualChannels=${attempt[8]}, actualFormat=${attempt[9]}"
+                    } else "native open diagnostics unavailable"
+                    val device = selectedDevice?.let {
+                        "product=${it.productName}, id=${it.id}, type=${it.type}, " +
+                            "rates=${it.sampleRates?.joinToString() ?: "unknown"}"
+                    } ?: "no USB output device selected"
+                    val reason = if (opened == -10001 && deviceId != 0) {
+                        "Android did not provide the required USB DAC EXCLUSIVE mode."
+                    } else if (deviceId != 0) {
+                        "Unable to open the required USB DAC EXCLUSIVE output (error $opened)."
+                    } else {
+                        "Unable to open Android system SHARED output (error $opened)."
+                    }
+                    throw IllegalStateException("$reason $device; $details")
                 }
                 outputSampleRate = targetRate
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
