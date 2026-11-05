@@ -564,9 +564,12 @@ class MainActivity : ComponentActivity() {
 
     private fun resolveTrackDurationMs(track: AudioTrackItem, tag: AudioTag?): Long {
         val sourceDuration = tag?.durationMs?.takeIf { it > 0L } ?: runCatching {
-            MediaMetadataRetriever().use { retriever ->
+            val retriever = MediaMetadataRetriever()
+            try {
                 retriever.setDataSource(this, track.uri)
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            } finally {
+                retriever.release()
             }
         }.getOrDefault(0L)
         val start = (track.cueStartMs ?: 0L).coerceAtLeast(0L)
