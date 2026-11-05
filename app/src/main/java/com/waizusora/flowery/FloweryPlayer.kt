@@ -177,7 +177,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     pendingSeekMs.getAndSet(null)?.let { requested ->
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = framesAtMilliseconds(target, targetRate)
-                        check(NativeAudio.nativeFlushStreamOutput(targetFrame, !paused) == 0) { "Unable to flush or restart the AAudio output stream" }
+                        check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) { "Unable to flush the AAudio output stream for seeking" }
+                        outputStarted = false
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
                         reachedEnd = segmentFrameLimit?.let { targetFrame >= it } ?: false
@@ -186,7 +187,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         onState("Seeking · ${actual / 1000}s")
                     }
                     if (reachedEnd) {
-                        if (!outputStarted) {
+                        if (!outputStarted && !paused) {
                             check(NativeAudio.nativeStartStreamPlayback() == 0) {
                                 "AAudio could not start after PCM prebuffering"
                             }
@@ -242,7 +243,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                         else offsetFrames += written
                     }
-                    if (!outputStarted && NativeAudio.nativeGetStreamBufferedFrames() >= lowWatermarkFrames) {
+                    if (!outputStarted && !paused &&
+                        NativeAudio.nativeGetStreamBufferedFrames() >= lowWatermarkFrames) {
                         check(NativeAudio.nativeStartStreamPlayback() == 0) {
                             "AAudio could not start after PCM prebuffering"
                         }
