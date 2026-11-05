@@ -87,7 +87,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ?: throw IllegalStateException("Unable to open the selected audio document")
                 val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
-                if (bitPerfectRequested) {
+                if (bitPerfectRequested && segmentStartMs == 0L && segmentEndMs == null) {
                     usbPlaybackMode = true
                     playUsbBitPerfect(descriptor, generation)
                     return@thread
