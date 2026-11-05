@@ -45,6 +45,8 @@ class PlaybackService : Service() {
         const val EXTRA_TITLES = "queue_titles"
         const val EXTRA_ARTISTS = "queue_artists"
         const val EXTRA_INDEX = "queue_index"
+        const val EXTRA_CUE_STARTS = "queue_cue_starts_ms"
+        const val EXTRA_CUE_ENDS = "queue_cue_ends_ms"
         const val EXTRA_VALUE = "value"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_ARTIST = "media_artist"
@@ -72,6 +74,8 @@ class PlaybackService : Service() {
     private val queue = mutableListOf<String>()
     private val queueTitles = mutableListOf<String>()
     private val queueArtists = mutableListOf<String>()
+    private val queueCueStarts = mutableListOf<Long>()
+    private val queueCueEnds = mutableListOf<Long>()
     private var queueIndex = -1
     private var repeatMode = 0 // 0 off, 1 all, 2 one
     private var shuffle = false
@@ -155,6 +159,10 @@ class PlaybackService : Service() {
                     queueTitles.addAll(intent.getStringArrayListExtra(EXTRA_TITLES).orEmpty())
                     queueArtists.clear()
                     queueArtists.addAll(intent.getStringArrayListExtra(EXTRA_ARTISTS).orEmpty())
+                    queueCueStarts.clear()
+                    queueCueStarts.addAll(intent.getLongArrayExtra(EXTRA_CUE_STARTS)?.toList().orEmpty())
+                    queueCueEnds.clear()
+                    queueCueEnds.addAll(intent.getLongArrayExtra(EXTRA_CUE_ENDS)?.toList().orEmpty())
                     queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(queue.indices)
                 } else {
                     val uri = intent.getStringExtra(EXTRA_URI)
@@ -168,6 +176,10 @@ class PlaybackService : Service() {
                 val uris = intent.getStringArrayListExtra(EXTRA_QUEUE).orEmpty()
                 queue.clear()
                 queue.addAll(uris)
+                queueCueStarts.clear()
+                queueCueStarts.addAll(intent.getLongArrayExtra(EXTRA_CUE_STARTS)?.toList().orEmpty())
+                queueCueEnds.clear()
+                queueCueEnds.addAll(intent.getLongArrayExtra(EXTRA_CUE_ENDS)?.toList().orEmpty())
                 queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(0, (queue.size - 1).coerceAtLeast(0))
                 if (queue.isNotEmpty()) playCurrent()
             }
@@ -288,7 +300,7 @@ class PlaybackService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         io.execute {
             try {
-                player.play(uri)
+                player.play(uri, queueCueStarts.getOrNull(queueIndex) ?: 0L, queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L })
                 playbackState = PlaybackStateCompat.STATE_PLAYING
                 publishSessionState()
             } catch (error: Throwable) {
