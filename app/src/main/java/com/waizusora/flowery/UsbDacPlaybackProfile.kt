@@ -14,6 +14,7 @@ internal data class UsbDacPlaybackProfile(
     val bitResolution: Int,
     val endpointAddress: Int,
     val maxPacketBytes: Int,
+    val interval: Int,
     val synchronization: String
 ) {
     val endpointHex: String
@@ -46,6 +47,7 @@ internal data class UsbDacPlaybackProfile(
             var bitResolution = 0
             var endpointAddress = -1
             var maxPacketBytes = 0
+            var interval = 1
             var synchronization = "unknown"
 
             fun finishAlternate() {
@@ -66,6 +68,7 @@ internal data class UsbDacPlaybackProfile(
                         bitResolution = bitResolution,
                         endpointAddress = endpointAddress,
                         maxPacketBytes = maxPacketBytes,
+                        interval = interval,
                         synchronization = synchronization
                     )
                 }
@@ -97,6 +100,7 @@ internal data class UsbDacPlaybackProfile(
                         bitResolution = 0
                         endpointAddress = -1
                         maxPacketBytes = 0
+                        interval = 1
                         synchronization = "unknown"
                     }
                     DESCRIPTOR_CS_INTERFACE -> if (protocol == UAC2_PROTOCOL && length >= 6) {
@@ -118,7 +122,10 @@ internal data class UsbDacPlaybackProfile(
                             ((raw[offset + 5].toInt() and 0xff) shl 8)
                         if ((address and 0x80) == 0 && transferType == TRANSFER_ISOCHRONOUS) {
                             endpointAddress = address
-                            maxPacketBytes = packet and 0x07ff
+                            val basePacketBytes = packet and 0x07ff
+                            val additionalTransactions = ((packet shr 11) and 0x03) + 1
+                            maxPacketBytes = basePacketBytes * additionalTransactions
+                            interval = raw[offset + 6].toInt() and 0xff
                             synchronization = when ((attributes shr 2) and 0x03) {
                                 1 -> "asynchronous"
                                 2 -> "adaptive"
