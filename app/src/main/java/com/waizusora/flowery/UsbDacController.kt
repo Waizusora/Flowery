@@ -145,7 +145,7 @@ class UsbDacController(context: Context) {
             val interfaceSummary = (0 until device.interfaceCount).joinToString(separator = "\n") { index ->
                 val intf = device.getInterface(index)
                 "USB interface ${intf.id}: alternate=${intf.alternateSetting}, class=0x${intf.interfaceClass.toString(16)}, " +
-                    "subclass=0x${intf.interfaceSubclass.toString(16)}, protocol=0x${intf.protocol.toString(16)}, " +
+                    "subclass=0x${intf.interfaceSubclass.toString(16)}, protocol=0x${intf.interfaceProtocol.toString(16)}, " +
                     "endpoints=${intf.endpointCount}"
             }
             val deviceSummary = "Android USB device ID: ${device.deviceId}\nUSB device class: 0x${device.deviceClass.toString(16)}\n" +
