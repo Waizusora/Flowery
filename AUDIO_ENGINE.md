@@ -4,7 +4,7 @@
 
 `SAF URI → ParcelFileDescriptor → Rust/Symphonia → Rust/Rubato → Rust 31-band EQ → Rust bounded PCM ring → Rust AAudio NDK FFI`
 
-`FloweryPlayer.kt` owns Android document access, route selection, playback lifecycle, seek/pause requests, and service-facing state. For the AAudio route it requests bounded pump operations through JNI; `native/src/streaming.rs` performs incremental Symphonia decoding, Rubato resampling, EQ and format-level seeking, then transfers decoded frames directly into the Rust ring without creating a Java float array. `native/src/aaudio.rs` owns the AAudio NDK stream, PCM ring buffer, callback, output lifecycle, and ring-write API. The direct USB route remains separately coordinated by Kotlin because it requires Android USB permission and libusb session management. The C++ native target is retained only for the independent direct-USB libusb transport.
+`FloweryPlayer.kt` owns Android document access, route selection, playback lifecycle, seek/pause requests, and service-facing state. For the AAudio route it requests bounded pump operations through JNI; `native/src/streaming.rs` performs incremental Symphonia decoding, Rubato resampling, EQ and format-level seeking, then transfers decoded frames directly into the Rust ring without creating a Java float array. `native/src/aaudio.rs` owns the AAudio NDK stream, PCM ring buffer, callback, output lifecycle, and ring-write API. The direct USB route retains Kotlin orchestration only where Android USB permission, device/session lifecycle, and libusb transport calls are required. Rust parses and reads direct WAV PCM, applies decoded-PCM gain and signed-24-bit packing, and owns the bounded queue between the decoder producer and USB writer. The C++ native target is retained only for the independent direct-USB libusb transport.
 
 ## Decode and resampling
 
@@ -23,6 +23,14 @@ Native tests check chunk-boundary continuity and coefficient finiteness. The pro
 The AAudio ring capacity is selected from the negotiated output rate: at least two seconds of PCM and at least 32,768 frames, rounded up to a power of two. The Kotlin coordinator requests native pump chunks of up to 8,192 frames and starts output after a 1.5-second low-water mark, bounded to three quarters of the ring capacity. The Rust AAudio callback copies available interleaved float frames, applies output gain, clamps samples, converts to the selected PCM output format, fills underruns with silence, and stops after EOF and queue drain. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking. The producer and callback share a bounded frame-indexed ring buffer; flush pauses the stream before resetting queue indices.
 
 AAudio exclusive sharing is requested first; shared mode is attempted if exclusive opening fails. Shared mode may be mixed or resampled by Android.
+
+## Direct USB PCM processing
+
+The direct WAV route uses `native/src/wav_pcm.rs`. Rust duplicates the Android-provided file descriptor, validates the RIFF/WAVE container and PCM format, locates the data chunk, reads bounded frame-aligned blocks, and performs frame-based seeking. Supported direct PCM is stereo integer PCM16, PCM24, or PCM32. At unity gain the source bytes are passed through unchanged; non-unity software gain applies a stateful block-to-block ramp and changes sample data. Kotlin opens the SAF descriptor and manages Android USB permission and the DAC session, but does not parse WAV chunks or process PCM samples.
+
+For decoded direct USB playback, `native/src/streaming.rs` reads Symphonia output and applies the per-DAC gain ramp before packing signed 24-bit little-endian samples. `native/src/usb_pcm.rs` owns the bounded six-block queue shared by the decoder producer and USB writer. Queue capacity, ordering, timeout behavior, clear-on-seek, and close signaling are implemented in Rust. Kotlin retains producer/writer thread lifecycle, pause/seek intent, Android diagnostics, and submission of packed blocks to the libusb session. The queue is bounded by block count; the current producer uses at most 32,768 stereo frames per block.
+
+The retained C++ translation unit remains exclusively responsible for the libusb isochronous transport. No AAudio implementation is moved into or retained in C++.
 
 ## Seeking
 
