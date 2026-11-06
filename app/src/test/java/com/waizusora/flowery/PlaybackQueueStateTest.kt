@@ -50,10 +50,11 @@ class PlaybackQueueStateTest {
         assertEquals(-2, queue.transition(3, PlaybackQueueState.Action.COMPLETION))
         assertEquals(2, queue.transition(3, PlaybackQueueState.Action.NEXT))
     }
+
     @Test fun forwardsQueueStateAndActionToNativeTransitionPolicy() {
         val arguments = mutableListOf<Any>()
         val queue = PlaybackQueueState { current, size, shuffle, repeat, action ->
-            arguments += listOf(current, size, shuffle, repeat, action)
+            arguments.addAll(listOf(current, size, shuffle, repeat, action))
             2
         }
         queue.select(1, 4)
@@ -70,5 +71,4 @@ class PlaybackQueueStateTest {
             queue.setRepeatMode(3)
         }
     }
-
 }
