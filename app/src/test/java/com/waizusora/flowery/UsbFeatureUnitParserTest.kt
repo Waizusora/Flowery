@@ -18,7 +18,7 @@ class UsbFeatureUnitParserTest {
     fun detectsUac2MasterVolumeControl() {
         val descriptors = byteArrayOf(
             9, 4, 0, 0, 0, 1, 1, 0x20, 0,
-            15, 0x24, 0x06, 7, 1,
+            14, 0x24, 0x06, 7, 1,
             2, 0, 0, 0,
             2, 0, 0, 0,
             0
