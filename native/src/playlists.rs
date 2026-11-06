@@ -251,6 +251,29 @@ mod tests {
         assert_eq!(entries[1].title, None);
     }
 
+
+    #[test]
+    fn parses_bom_prefixed_cue_and_unicode_metadata() {
+        let cue = "\u{FEFF}TITLE \\"Álbum\\"\\nFILE \\"disc one.flac\\" WAVE\\nTRACK 01 AUDIO\\nTITLE \\"Café\\"\\nINDEX 01 00:00:00";
+        let parsed = parse_cue(cue);
+        assert_eq!(parsed.title.as_deref(), Some("Álbum"));
+        assert_eq!(parsed.tracks[0].title, "Café");
+        assert_eq!(parsed.tracks[0].file_name, "disc one.flac");
+    }
+
+    #[test]
+    fn parses_bom_prefixed_m3u_and_quoted_pls_paths() {
+        let m3u = parse_m3u("\\u{FEFF}#EXTM3U\\n#EXTINF:-1,東京\\naudio.flac");
+        assert_eq!(m3u.len(), 1);
+        assert_eq!(m3u[0].title.as_deref(), Some("東京"));
+
+        let pls = parse_pls("[playlist]\\nFile10=\\\"ten.flac\\\"\\nFile2=\\\"two.flac\\\"\\nTitle2=Second");
+        assert_eq!(pls.len(), 2);
+        assert_eq!(pls[0].path, "two.flac");
+        assert_eq!(pls[0].title.as_deref(), Some("Second"));
+        assert_eq!(pls[1].path, "ten.flac");
+    }
+
     #[test]
     fn parses_pls_entries_in_numeric_order() {
         let entries = parse_pls("[playlist]\nFile10=ten.flac\nTitle10=Ten\nFile2=two.flac\nTitle2=Two\n");
