@@ -1,6 +1,7 @@
 mod streaming;
 mod lyrics;
 mod library;
+mod catalog;
 mod queue;
 mod playlists;
 mod wav_pcm;
