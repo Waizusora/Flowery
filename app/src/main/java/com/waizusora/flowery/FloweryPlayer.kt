@@ -126,7 +126,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val unchanged = softwareVolume >= 0.999f && !outputDucked
             onState(
                 if (unchanged) {
-                    "USB exclusive · direct PCM · unity gain · EQ bypassed"
+                    "USB exclusive · Bit Perfect · direct PCM · unity gain · EQ bypassed"
                 } else {
                     "USB exclusive · direct PCM · software gain active · not bit-perfect"
                 }
@@ -799,7 +799,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val sourceSamplesUnchanged = softwareVolume >= 0.999f && !outputDucked
                     onState(
                         if (sourceSamplesUnchanged) {
-                            "USB exclusive · direct PCM · unity gain · EQ bypassed"
+                            "USB exclusive · Bit Perfect · direct PCM · unity gain · EQ bypassed"
                         } else {
                             "USB exclusive · direct PCM · software gain active · not bit-perfect"
                         }
