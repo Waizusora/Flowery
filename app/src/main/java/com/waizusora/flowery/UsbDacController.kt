@@ -66,7 +66,8 @@ class UsbDacController(context: Context) {
         return try {
             val descriptors = connection.rawDescriptors
             parseNativePlaybackProfiles(descriptors, null).any { profile ->
-                parseNativePlaybackClocks(descriptors, profile.interfaceNumber).isNotEmpty()
+                profile.protocol == 0x00 ||
+                    parseNativePlaybackClocks(descriptors, profile.interfaceNumber).isNotEmpty()
             }
         } catch (_: Throwable) {
             false
@@ -136,16 +137,16 @@ class UsbDacController(context: Context) {
             )
             val playbackProfiles = parseNativePlaybackProfiles(descriptors, null)
             val profileReport = if (playbackProfiles.isEmpty()) {
-                "\nStereo UAC2 OUT playback profiles: none could be validated from the descriptors."
+                "\nStereo UAC1/UAC2 OUT playback profiles: none could be validated from the descriptors."
             } else {
-                "\nDescriptor-derived stereo UAC2 OUT playback profiles:" +
+                "\nDescriptor-derived stereo UAC1/UAC2 OUT playback profiles:" +
                     playbackProfiles.joinToString(separator = "") { profile ->
-                        "\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
+                        "\n  UAC${if (profile.protocol == 0x20) 2 else 1}, interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
                             "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
                             "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
-                            "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, ${profile.synchronization} sync."
-                    } +
-                    "\n  Sample rates remain unverified until UAC2 clock negotiation succeeds."
+                            "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, ${profile.synchronization} sync, " +
+                            "rates=${profile.sampleRates.joinToString().ifEmpty { profile.sampleRateRange?.let { "${it.first}-${it.second}" } ?: "not advertised" }}."
+                    }
             }
             val interfaceSummary = (0 until device.interfaceCount).joinToString(separator = "\n") { index ->
                 val intf = device.getInterface(index)
@@ -259,6 +260,41 @@ class UsbDacController(context: Context) {
 
             var lastError: Throwable? = null
             for (profile in profiles) {
+                if (profile.protocol == 0x00) {
+                    val rateSupported = sampleRate in profile.sampleRates ||
+                        profile.sampleRateRange?.let { sampleRate in it.first..it.second } == true
+                    if (!rateSupported) {
+                        lastError = IllegalStateException(
+                            "UAC1 interface ${profile.interfaceNumber} does not advertise ${sampleRate} Hz."
+                        )
+                        continue
+                    }
+                    try {
+                        val nativeHandle = UsbDacNative.nativeOpen(
+                            connection.fileDescriptor,
+                            profile.interfaceNumber,
+                            profile.alternateSetting,
+                            profile.endpointAddress,
+                            profile.maxPacketBytes,
+                            profile.interval,
+                            profile.channels,
+                            profile.subslotBytes,
+                            sampleRate,
+                            0,
+                            -1,
+                            profile.protocol,
+                            profile.samplingFrequencyControl
+                        )
+                        if (nativeHandle != 0L) {
+                            return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                        }
+                        lastError = IllegalStateException("Native USB transport rejected the UAC1 playback profile.")
+                    } catch (error: Throwable) {
+                        lastError = error
+                    }
+                    continue
+                }
+
                 val clocks = parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
                 if (clocks.isEmpty()) {
                     lastError = IllegalStateException(
@@ -281,7 +317,9 @@ class UsbDacController(context: Context) {
                             profile.subslotBytes,
                             sampleRate,
                             clockId,
-                            controlInterface
+                            controlInterface,
+                            profile.protocol,
+                            false
                         )
                         if (nativeHandle != 0L) {
                             return UsbDacSession(connection, nativeHandle, profile, sampleRate)
@@ -296,10 +334,11 @@ class UsbDacController(context: Context) {
                 }
             }
             throw IllegalStateException(
-                "No descriptor-derived UAC2 playback profile accepted and confirmed " +
-                    "${sampleRate} Hz. No USB playback session was started.",
+                "No descriptor-derived UAC1/UAC2 playback profile accepted ${sampleRate} Hz. " +
+                    "No USB playback session was started.",
                 lastError
             )
+
         } catch (error: Throwable) {
             connection.close()
             throw error
@@ -333,12 +372,25 @@ class UsbDacController(context: Context) {
                 try {
                     val descriptors = connection.rawDescriptors
                     val profiles = parseNativePlaybackProfiles(descriptors, null)
-                    val compatibleProfiles = profiles.filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
+                    val compatibleProfiles = profiles.filter {
+                        requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes
+                    }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
                         else compatibleProfiles.map { it.bitResolution }.distinct()
-                    val rates = if (allowSampleRateConversion) {
-                        discoverClockRates(connection, descriptors, profiles, sampleRate)
-                    } else listOf(sampleRate)
+                    val rates = if (!allowSampleRateConversion) {
+                        listOf(sampleRate)
+                    } else {
+                        val uac2 = compatibleProfiles.filter { it.protocol == 0x20 }
+                        val uac2Rates = if (uac2.isNotEmpty()) {
+                            discoverClockRates(connection, descriptors, uac2, sampleRate)
+                        } else emptyList()
+                        val uac1Rates = compatibleProfiles.filter { it.protocol == 0x00 }.flatMap { profile ->
+                            profile.sampleRates + (profile.sampleRateRange?.let { range ->
+                                sampleRate.coerceIn(range.first, range.second).let(::listOf)
+                            } ?: emptyList())
+                        }
+                        (uac2Rates + uac1Rates).distinct().sortedBy { kotlin.math.abs(it - sampleRate) }
+                    }
                     resolutions to rates
                 } finally {
                     connection.close()
@@ -366,14 +418,14 @@ class UsbDacController(context: Context) {
                 }
             }
             if (candidateResolutions.isEmpty()) {
-                failures += "${device.identity}: no descriptor-validated stereo UAC2 PCM profiles"
+                failures += "${device.identity}: no descriptor-validated stereo UAC1/UAC2 PCM profiles"
             }
             if (candidateRates.isEmpty()) {
-                failures += "${device.identity}: no usable UAC2 clock rates were reported"
+                failures += "${device.identity}: no usable UAC1/UAC2 sample rates were reported"
             }
         }
         throw IllegalStateException(
-            "No connected UAC2 DAC accepted stereo PCM at source rate ${sampleRate} Hz. " +
+            "No connected UAC1/UAC2 DAC accepted stereo PCM at source rate ${sampleRate} Hz. " +
                 failures.joinToString("; ")
         )
     }
