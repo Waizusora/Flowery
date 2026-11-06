@@ -5,12 +5,13 @@ mod queue;
 mod playlists;
 mod wav_pcm;
 mod usb_pcm;
+mod usb_descriptors;
 #[cfg(target_os = "android")]
 mod aaudio;
 use base64::Engine;
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jbyteArray, jstring};
+use jni::sys::{jbyteArray, jint, jstring};
 use jni::JNIEnv;
 
 #[no_mangle]
@@ -225,5 +226,56 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
     match result {
         Ok(output) => write_bytes_to_java(&mut env, &output),
         Err(error) => { let _ = env.throw_new("java/lang/IllegalArgumentException", error); std::ptr::null_mut() }
+    }
+}
+
+fn descriptor_bytes(env: &mut JNIEnv, input: &JByteArray) -> Result<Vec<u8>, String> {
+    let length = env.get_array_length(input).map_err(|e| e.to_string())? as usize;
+    let mut signed = vec![0_i8; length];
+    env.get_byte_array_region(input, 0, &mut signed).map_err(|e| e.to_string())?;
+    Ok(signed.into_iter().map(|value| value as u8).collect())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacProfiles(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, requested_bits: jint,
+) -> jstring {
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let requested = if requested_bits <= 0 { None } else if requested_bits <= 255 {
+        Some(requested_bits as u8)
+    } else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid PCM bit resolution");
+        return std::ptr::null_mut();
+    };
+    match env.new_string(usb_descriptors::profiles_json(&bytes, requested)) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacPlaybackClocks(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, streaming_interface: jint,
+) -> jstring {
+    if !(0..=255).contains(&streaming_interface) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB interface number");
+        return std::ptr::null_mut();
+    }
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    match env.new_string(usb_descriptors::clocks_json(&bytes, streaming_interface as u8)) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null_mut(),
     }
 }
