@@ -852,7 +852,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stopped.set(true)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
-        worker = null
+        // Keep the worker reference until a later start or shutdown can join it.
         outputDurationMs = 0L
         outputSampleRate = 0
         pendingSeekMs.set(null)
