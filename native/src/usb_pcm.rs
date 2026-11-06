@@ -123,7 +123,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOfferUsbPcmB
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbPcmBlock(
-    mut env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint
+    env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint
 ) -> jbyteArray {
     let Some(queue) = queue_ref(handle) else { return std::ptr::null_mut(); };
     if timeout_ms < 0 { return std::ptr::null_mut(); }
