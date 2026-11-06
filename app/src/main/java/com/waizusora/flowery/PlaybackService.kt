@@ -443,30 +443,39 @@ class PlaybackService : Service() {
     }
 
     private fun skipNext() {
-        if (queue.isEmpty()) return
-        queueIndex = if (shuffle && queue.size > 1) {
-            (queue.indices.filter { it != queueIndex }.random())
-        } else if (queueIndex < queue.lastIndex) queueIndex + 1
-        else if (repeatMode == 1) 0 else return
+        val nextIndex = NativeAudio.nativeQueueTransition(
+            queueIndex, queue.size, shuffle, repeatMode, 0
+        )
+        if (nextIndex < 0) return
+        queueIndex = nextIndex
         player.stop()
         playCurrent()
     }
 
     private fun skipPrevious() {
-        if (queue.isEmpty()) return
-        queueIndex = if (queueIndex > 0) queueIndex - 1 else if (repeatMode == 1) queue.lastIndex else 0
+        val previousIndex = NativeAudio.nativeQueueTransition(
+            queueIndex, queue.size, shuffle, repeatMode, 1
+        )
+        if (previousIndex < 0) return
+        queueIndex = previousIndex
         player.stop()
         playCurrent()
     }
 
     private fun handleCompletion() {
-        if (repeatMode == 2) {
-            player.stop()
-            playCurrent()
-        } else if (queueIndex < queue.lastIndex || repeatMode == 1 || (shuffle && queue.size > 1)) {
-            skipNext()
-        } else {
-            stopPlayback()
+        when (val nextIndex = NativeAudio.nativeQueueTransition(
+            queueIndex, queue.size, shuffle, repeatMode, 2
+        )) {
+            -2 -> {
+                player.stop()
+                playCurrent()
+            }
+            -1 -> stopPlayback()
+            else -> {
+                queueIndex = nextIndex
+                player.stop()
+                playCurrent()
+            }
         }
     }
 
