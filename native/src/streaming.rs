@@ -75,6 +75,8 @@ pub(super) struct StreamDecoder {
     decoder: Box<dyn Decoder>,
     track_id: u32,
     source_rate: usize,
+    source_bits: u8,
+    lossless_source: bool,
     channels: usize,
     output_rate: usize,
     resampler: Option<Fft<f32>>,
@@ -111,13 +113,17 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
+        let source_bits = params.bits_per_sample.unwrap_or(0).min(u8::MAX as u32) as u8;
+        let codec_name = format!("{:?}", params.codec);
+        let lossless_source = codec_name.starts_with("PCM_")
+            || matches!(codec_name.as_str(), "FLAC" | "ALAC" | "APE" | "WAVPACK" | "TTA");
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
         if channels == 0 || channels > 2 { return Err(format!("AAudio streaming currently supports mono/stereo, found {channels} channels")); }
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported audio codec: {e}"))?;
         Ok(Self {
-            format, decoder, track_id, source_rate, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, lossless_source, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
@@ -386,6 +392,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
 }
 
 #[no_mangle]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfectSourceInfo(
+    _env: JNIEnv, _class: JClass, handle: jlong
+) -> jlong {
+    if handle == 0 { return 0; }
+    let decoder = unsafe { &*(handle as *mut StreamDecoder) };
+    let lossless = if decoder.lossless_source { 1_u64 } else { 0_u64 };
+    ((lossless << 32) | decoder.source_bits as u64) as jlong
+}
+
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDurationMs(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
@@ -463,11 +479,8 @@ fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
     let scaled = (finite_sample * gain).clamp(-1.0, 1.0);
     let negative_limit = -(1_i64 << (valid_bits - 1));
     let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
-    if scaled <= -1.0 {
-        negative_limit
-    } else {
-        (scaled as f64 * positive_limit as f64).round() as i64
-    }
+    let scale = (1_i64 << (valid_bits - 1)) as f64;
+    ((scaled as f64 * scale).round() as i64).clamp(negative_limit, positive_limit)
 }
 
 #[no_mangle]
