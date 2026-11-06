@@ -512,6 +512,30 @@ mod tests {
     }
 
     #[test]
+    fn normalized_f32_round_trip_preserves_supported_integer_pcm_samples() {
+        for bits in [8_u8, 16, 24] {
+            let scale = (1_i64 << (bits - 1)) as f32;
+            let values = [
+                -(1_i64 << (bits - 1)),
+                -((1_i64 << (bits - 1)) / 2),
+                -1,
+                0,
+                1,
+                (1_i64 << (bits - 1)) / 2,
+                (1_i64 << (bits - 1)) - 1,
+            ];
+            for value in values {
+                let normalized = value as f32 / scale;
+                assert_eq!(
+                    quantize_signed_pcm(normalized, 1.0, bits),
+                    value,
+                    "{bits}-bit integer sample {value} changed during normalized-f32 packing"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn equalizer_state_is_continuous_across_chunk_boundaries() {
         let coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], 4.5, 48_000));
         let input: Vec<f32> = (0..4096)
@@ -563,6 +587,8 @@ mod tests {
 
         let source_file = std::fs::File::open(&path).unwrap();
         let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
+        assert_eq!(stream.source_bits, 16);
+        assert!(stream.lossless_source, "PCM WAV must be classified as lossless");
         stream.configure(48_000, &[0.0; 31]).unwrap();
         assert_eq!(stream.read_frames(128).unwrap().len(), 256);
         assert_eq!(stream.seek_to(500).unwrap(), 500);
