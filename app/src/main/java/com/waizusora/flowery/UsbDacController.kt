@@ -61,6 +61,21 @@ class UsbDacController(context: Context) {
 
     fun hasPermission(device: UsbDevice): Boolean = manager.hasPermission(device)
 
+    fun hasCompatibleUac2PlaybackProfile(device: UsbDevice): Boolean {
+        if (!manager.hasPermission(device)) return false
+        val connection = manager.openDevice(device) ?: return false
+        return try {
+            val descriptors = connection.rawDescriptors
+            parseNativePlaybackProfiles(descriptors, null).any { profile ->
+                parseNativePlaybackClocks(descriptors, profile.interfaceNumber).isNotEmpty()
+            }
+        } catch (_: Throwable) {
+            false
+        } finally {
+            connection.close()
+        }
+    }
+
     fun requestPermission(device: UsbDevice) {
         val intent = Intent(ACTION_USB_PERMISSION).setPackage(appContext.packageName)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
