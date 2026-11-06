@@ -15,7 +15,7 @@ mod aaudio;
 use base64::Engine;
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jboolean, jbyteArray, jint, jstring, JNI_FALSE, JNI_TRUE};
+use jni::sys::{jbyteArray, jint, jstring};
 use jni::JNIEnv;
 
 #[no_mangle]
