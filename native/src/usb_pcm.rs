@@ -3,7 +3,7 @@ use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use jni::objects::{JByteArray, JClass};
-use jni::sys::{jboolean, jbyteArray, jint, jlong, jsize, JNI_FALSE, JNI_TRUE};
+use jni::sys::{jbyteArray, jint, jlong, jsize};
 use jni::JNIEnv;
 
 #[derive(Clone)]
