@@ -176,13 +176,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val streamInfo = NativeAudio.nativeGetStreamInfo(handle)
                 val sourceRate = (streamInfo ushr 32).toInt()
                 val channels = (streamInfo and 0xffff_ffffL).toInt()
-                check(sourceRate > 0 && channels in 1..2) { "The decoder returned an invalid audio format" }
+                check(sourceRate > 0 && channels in 1..8) { "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels." }
 
                 if (bitPerfectRequested) {
                     val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
                     val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
                     val losslessSource = (sourceInfo ushr 32) != 0L
-                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24) && channels == 2
+                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24) && channels in 1..8
                     recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
                     if (eligibleSource) {
                         usbPlaybackMode = true
