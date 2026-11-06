@@ -747,7 +747,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
             val controller = UsbDacController(context)
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
-                controller.audioDevices(), bitDepth, sampleRate
+                controller.audioDevices(), bitDepth, sampleRate,
+                requiredSubslotBytes = bitDepth / 8
             )
             val device = selectedDevice.usbDevice
             session = usbSession
