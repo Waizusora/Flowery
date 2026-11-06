@@ -93,8 +93,9 @@ struct TransportFailure {
 void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     auto* entry = static_cast<InFlightTransfer*>(transfer->user_data);
     if (entry != nullptr) {
+        UsbAudioSession* owner = entry->owner;
         entry->completed.store(true, std::memory_order_release);
-        if (entry->owner != nullptr) entry->owner->event_condition.notify_all();
+        if (owner != nullptr) owner->event_condition.notify_all();
     }
 }
 
@@ -188,7 +189,9 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
 // than freed, because the kernel may still reference its buffer.
 void abort_in_flight(UsbAudioSession* session) {
     for (auto& entry : session->in_flight) {
-        if (!entry->completed) libusb_cancel_transfer(entry->transfer);
+        if (!entry->completed.load(std::memory_order_acquire)) {
+            libusb_cancel_transfer(entry->transfer);
+        }
     }
     TransportFailure ignored;
     const auto deadline = std::chrono::steady_clock::now() +
