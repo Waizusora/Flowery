@@ -106,7 +106,7 @@ The streaming playback path is:
 
 `SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring buffer → Rust AAudio callback → Android audio route`
 
-The ring buffer has a fixed capacity of 16,384 frames in the current player configuration. The decoder worker produces chunks of up to 2,048 frames and replenishes the queue around a 4,096-frame low-water mark. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
+The ring buffer has a fixed capacity of 16,384 frames in the current player configuration. The Kotlin playback coordinator requests bounded native pump operations of up to 8,192 frames. Rust performs decoding, resampling, equalization, and ring-buffer writes without copying AAudio PCM through Java FloatArrays; Kotlin retains Android route, lifecycle, pause, and seek coordination. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
 
 Seeking uses a format-level Symphonia seek, resets decoder and DSP state, rebuilds resampler history where needed, discards preroll before the requested presentation time, and flushes queued output frames. The player tracks playback generations to prevent an older worker from changing the state of a newer track.
 
@@ -125,7 +125,8 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │   ├── Cargo.toml               # Rust dependencies
 │   └── src/
 │       ├── lib.rs               # JNI, decode helpers, Lofty tag operations
-│       └── streaming.rs         # Streaming decoder, resampler, EQ, seek
+│       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
+│       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
 └── .github/workflows/build.yml  # Android and native CI
 ```
