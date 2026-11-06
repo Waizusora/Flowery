@@ -10,13 +10,13 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio-
 | --- | --- |
 | `MainActivity` | Compose UI, folder selection and management, library presentation, player controls, EQ controls, metadata display and tag editor |
 | `LibraryScanner` | Recursive traversal of configured SAF document trees and sidecar LRC association |
-| `LrcParser` | Parse timestamped LRC text and select the current lyric line |
+| `LrcParser` | Convert native LRC results into UI models and request current-line lookup from Rust |
 | `PlaybackService` | Foreground playback lifecycle, media session, notification actions, audio focus, queue and playback modes |
 | `FloweryPlayer` | Open document descriptors, coordinate the streaming worker, manage output selection, volume, pause/resume and seeking |
 | `NativeAudio` | Kotlin JNI declarations for native decoding, streaming, metadata and AAudio operations |
 | `native/src/streaming.rs` | Symphonia streaming decoder, Rubato resampler, stateful 31-band EQ and format-level seek |
-| `native/src/lib.rs` | JNI exports, legacy whole-buffer decode/DSP helpers, and Lofty tag read/write operations |
-| `aaudio_output.cpp` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
+| `native/src/lib.rs` | JNI exports and Lofty tag read/write operations |
+| `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
  
 ## Playback sequence
 
@@ -52,7 +52,7 @@ The library uses the Android Storage Access Framework rather than MediaStore. Fo
 
 ## Native boundary
 
-JNI methods are declared in `NativeAudio.kt`. Rust exports the decoder, seek, chunk-read, DSP and tag operations. C++ exports AAudio stream and ring-buffer operations. Keep JNI signatures synchronized between Kotlin declarations and native exported names.
+JNI methods are declared in `NativeAudio.kt`. Rust exports the decoder, seek, chunk-read, DSP, library policy, playlist, lyric-timeline and tag operations. The Rust AAudio module owns the AAudio stream and ring-buffer operations; C++ is reserved for the libusb transport. Keep JNI signatures synchronized between Kotlin declarations and native exported names.
 
 ## Important invariants
 
