@@ -189,6 +189,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn pcm_format_accepts_packed_and_padded_sample_layouts() {
+        for (valid_bits, subslot_bytes) in [(8, 1), (16, 2), (20, 3), (24, 3), (24, 4), (32, 4)] {
+            let format = PcmFormat {
+                sample_rate: 192_000,
+                channels: 2,
+                valid_bits,
+                subslot_bytes,
+                signed: true,
+                little_endian: true,
+            };
+            assert!(format.validate().is_ok());
+            assert_eq!(format.bytes_per_frame(), 2 * subslot_bytes as usize);
+        }
+    }
+
+    #[test]
+    fn pcm_format_rejects_invalid_sample_representation() {
+        let format = PcmFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            valid_bits: 32,
+            subslot_bytes: 3,
+            signed: true,
+            little_endian: true,
+        };
+        assert!(format.validate().is_err());
+    }
+
+    #[test]
     fn queue_is_bounded_and_preserves_block_order() {
         let queue = UsbPcmQueue::new(1);
         let first = PcmBlock { pcm: vec![1, 2], frames: 1, epoch: 0, start_frames: 0, end_of_stream: false };
