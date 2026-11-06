@@ -466,7 +466,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     jint control_interface, jint protocol, jboolean sampling_frequency_control) {
     if (file_descriptor < 0 || interface_number < 0 || alternate_setting <= 0 ||
         endpoint <= 0 || (endpoint & 0x80) != 0 || max_packet_bytes <= 0 ||
-        interval <= 0 || channels != 2 || subslot_bytes <= 0 || sample_rate <= 0 ||
+        interval <= 0 || channels < 1 || channels > 8 || subslot_bytes <= 0 || sample_rate <= 0 ||
         (protocol != 0x00 && protocol != 0x20)) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Invalid USB Audio Class playback parameters");
