@@ -186,10 +186,10 @@ class UsbDacController(context: Context) {
     /**
      * Opens the descriptor-selected UAC2 stereo output using native libusb.
      *
-     * This claims the streaming interface, verifies the requested UAC2 clock
-     * frequency, and returns a session for exact-format integer PCM writes.
-     * The current player supplies raw stereo PCM WAV data; other source formats
-     * are rejected while USB bit-perfect mode is enabled.
+     * This claims the descriptor-selected streaming interface, verifies the
+     * requested UAC2 clock frequency, and returns a session for the negotiated
+     * signed integer PCM format. Source adapters may preserve WAV bytes or
+     * convert decoded samples into the selected DAC representation.
      */
     internal fun openExclusivePlaybackSession(
         device: UsbDevice,
@@ -301,8 +301,10 @@ class UsbDacController(context: Context) {
 
 
     /**
-     * Opens the first connected, permission-granted UAC2 DAC whose descriptors and clock
-     * negotiation support the exact stereo PCM format requested by the active source.
+     * Opens the first permission-granted UAC2 DAC whose descriptors and clock
+     * negotiation support the requested stereo PCM format. Automatic resolution
+     * selection prefers the highest descriptor-advertised valid-bit depth; decoded
+     * playback may select a supported clock rate and resample to it.
      */
     internal fun openFirstCompatiblePlaybackSession(
         devices: List<Device>,
