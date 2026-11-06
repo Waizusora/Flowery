@@ -934,6 +934,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             outputDurationMs = pcmSource.totalFrames * 1_000L / pcmSource.sampleRate
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
+            softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
+            usbSoftwareGainEnabled = true
             var firstTransfer = true
 
             while (!stopped.get() && playbackGeneration.get() == generation) {
