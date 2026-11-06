@@ -34,12 +34,11 @@ class LibraryScanner(private val context: Context) {
                         title = item.getString("title"),
                         folder = item.getString("folder"),
                         mimeType = if (item.isNull("mimeType")) null else item.optString("mimeType"),
-                        sidecarLyricsUri = item.optString("sidecarLyricsUri")
-                            .takeIf { it.isNotEmpty() }?.let(Uri::parse),
+                        sidecarLyricsUri = if (item.isNull("sidecarLyricsUri")) null else Uri.parse(item.getString("sidecarLyricsUri")),
                         cueStartMs = item.nullableLong("cueStartMs"),
                         cueEndMs = item.nullableLong("cueEndMs"),
-                        cuePlaylist = item.optString("cuePlaylist").takeIf { it.isNotEmpty() },
-                        playlistName = item.optString("playlistName").takeIf { it.isNotEmpty() },
+                        cuePlaylist = if (item.isNull("cuePlaylist")) null else item.getString("cuePlaylist"),
+                        playlistName = if (item.isNull("playlistName")) null else item.getString("playlistName"),
                         playlistOrder = item.nullableInt("playlistOrder")
                     )
                 )
