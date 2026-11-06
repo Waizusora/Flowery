@@ -595,6 +595,22 @@ mod tests {
     }
 
     #[test]
+    fn parses_uac1_stereo_pcm_playback_profile_and_discrete_rates() {
+        let descriptors = [
+            9,4,2,1,1,1,2,0x00,0,
+            7,0x24,1,5,0,1,0,
+            14,0x24,2,1,2,3,24,2,0x44,0xAC,0,0x80,0xBB,0,
+            7,5,0x01,0x05,0x26,1,1
+        ];
+        let profiles = parse_playback_profiles(&descriptors, Some(24));
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].protocol, 0x00);
+        assert_eq!(profiles[0].channels, 2);
+        assert_eq!(profiles[0].sample_rates, vec![44_100, 48_000]);
+        assert_eq!(profiles[0].endpoint_address, 1);
+    }
+
+    #[test]
     fn selects_nearest_rate_from_uac2_clock_ranges() {
         let ranges = r#"[{"minimum":48000,"maximum":96000,"resolution":1}]"#;
         let selected: Vec<u32> = serde_json::from_str(
