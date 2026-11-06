@@ -152,9 +152,6 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     if remaining>0 && o.eof.load(Ordering::Acquire) && o.write.load(Ordering::Acquire)==read+count {o.active.store(false,Ordering::Release);1}else{0}
 }
 
-fn result_or_throw(env:&mut JNIEnv, code:i32, message:&str)->i32 {
-    if code<0 {let _=env.throw_new("java/lang/IllegalStateException",format!("{message}: {code}"));} code
-}
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
     if rate<=0 || !(channels==1||channels==2) || capacity<2048 || ![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}
