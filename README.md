@@ -19,7 +19,7 @@ The repository is under active development. Features described as limitations be
 | Compressed audio decoding | Symphonia 0.5.4 (Rust) |
 | Streaming sample-rate conversion | Rubato 5.0.1 (Rust) |
 | Equalizer | Native Rust 31-band ISO graphic EQ |
-| Audio output | Rust AAudio NDK backend; native C++ libusb UAC2 transport API |
+| Audio output | Rust AAudio NDK backend; native C++ libusb UAC1/UAC2 transport API |
 | PCM buffering | Rust AAudio SPSC ring; bounded Rust queue for direct USB PCM blocks |
 | Audio tags | Lofty 0.25.5 |
 | Folder access | Storage Access Framework (SAF) |
@@ -80,7 +80,7 @@ The equalizer's center frequencies are 20 Hz, 25 Hz, 31.5 Hz, 40 Hz, 50 Hz, 63 H
 
 **USB and Bit Perfect status:** The direct USB path negotiates descriptor-derived stereo UAC1 Type-I PCM and UAC2 playback profiles. UAC1 rate selection follows its descriptor-advertised discrete/continuous rates and uses endpoint sampling-frequency SET_CUR/GET_CUR when advertised; UAC2 uses linked clock-source RANGE and SET_CUR/GET_CUR. Rust owns descriptor interpretation, PCM profile selection, and sample-rate policy; Kotlin handles Android USB permission and control transfers; C++ is restricted to libusb interface, clock, and isochronous transport operations. WAV integer PCM can use the source-preserving path only when the DAC accepts the exact channel, sample-rate, valid-bit, and subslot layout. Other decoder-supported formats are decoded to PCM and sent through the shared PCM output contract. The Now Playing Bit Perfect label is reserved for the verified eligible WAV path when unity gain is active and ducking is disabled; it is not shown for lossy decoded sources or processed PCM.
 
-The Rust descriptor report can identify UAC1 and UAC2 streaming descriptors, but UAC1 direct playback negotiation and transport are not implemented yet. Current direct USB playback is limited to stereo UAC2 PCM profiles; full UAC1/UAC2 class coverage, multichannel playback, automatic hardware-volume capability detection, and physical-device validation remain outstanding. DAC profile records are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and SHA-256 descriptor fingerprint. Standard descriptors do not reliably expose the physical chipset identity. USB events are retained only while USB Diagnostics → Record Log is active.
+Current direct USB playback supports stereo UAC1 Type-I PCM and stereo UAC2 PCM profiles. UAC1 formats other than Type-I PCM, multichannel playback, automatic hardware-volume capability detection, and physical-device validation remain outstanding. This is not a claim of universal compatibility with every UAC1/UAC2 device; descriptor quirks, endpoint synchronization, USB speed, packet scheduling, and vendor-specific behavior still require physical-DAC validation. DAC profile records are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and SHA-256 descriptor fingerprint. Standard descriptors do not reliably expose the physical chipset identity. USB events are retained only while USB Diagnostics → Record Log is active.
 
 ### Metadata and tag editing
 
@@ -193,7 +193,7 @@ The application uses the incremental Rust streaming decoder and native output ri
 ## Current limitations
 
 - Bit-perfect USB playback is not guaranteed or hardware-verified.
-- Direct USB playback currently supports stereo UAC2 profiles with signed PCM valid-bit resolutions of 8–32 bits and 1–4 byte subslots. UAC1 descriptor reporting exists, but UAC1 direct negotiation and playback are not implemented. Full UAC1/UAC2 class coverage, multichannel output, and automatic DAC hardware-volume capability detection remain unsupported.
+- Direct USB playback supports stereo UAC1 Type-I PCM and UAC2 profiles with signed PCM valid-bit resolutions of 8–32 bits and 1–4 byte subslots. UAC1 formats other than Type-I PCM, multichannel output, and automatic DAC hardware-volume capability detection remain unsupported.
 - USB descriptor profiles are stored locally by VID/PID and SHA-256 descriptor fingerprint. Standard USB descriptors do not reliably identify the physical silicon chipset, so the database records descriptor families rather than asserting an unverified chipset model.
 - AAudio exclusive mode is requested but may fall back to shared mode.
 - Multichannel output beyond mono and stereo is not supported by the current streaming output path.
@@ -211,4 +211,4 @@ Review the repository's license file and the license terms of all bundled depend
 
 USB Diagnostics → Record Log is the single diagnostic capture/export workflow. It combines periodic AAudio runtime telemetry, direct USB/libusb playback events, and the current connected-device descriptor/clock snapshot. Descriptor records are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and a SHA-256 fingerprint of the raw descriptor block. This is a descriptor-family identity, not proof of a silicon chipset model.
 
-Playback service commands are coordinated through an Android adapter backed by a Rust playback lifecycle controller. Rust owns queue index, shuffle/repeat state, transition decisions, and UAC2 profile/clock parsing; Android retains USB permission, device connection, foreground-service lifecycle, and URI/metadata presentation. The application does not infer sample-rate support from a device name, and direct USB playback still requires a successful device clock negotiation.
+Playback service commands are coordinated through an Android adapter backed by a Rust playback lifecycle controller. Rust owns queue index, shuffle/repeat state, transition decisions, and UAC1/UAC2 profile parsing; Android retains USB permission, device connection, foreground-service lifecycle, and URI/metadata presentation. The application does not infer sample-rate support from a device name, and direct USB playback still requires a successful device clock negotiation.
