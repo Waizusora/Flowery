@@ -79,8 +79,8 @@ internal class PlaybackCoordinator(
     fun close(onClosed: () -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
         NativeAudio.nativeSetPlaybackControllerState(nativeController, State.STOPPING.ordinal)
-        engine.stop()
         // Do not block Android's service lifecycle thread while the worker releases native handles.
+        // stopAndJoin captures the active worker before interrupting it, then waits for native cleanup.
         thread(name = "FloweryPlaybackControllerCleanup") {
             engine.stopAndJoin(Long.MAX_VALUE)
             NativeAudio.nativeSetPlaybackControllerState(nativeController, State.IDLE.ordinal)
