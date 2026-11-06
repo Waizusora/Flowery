@@ -317,10 +317,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
                 val usbKey = selectedDevice?.let { output ->
-                    val usbController = UsbDacController(context)
-                    usbController.audioDevices()
-                        .singleOrNull { it.usbDevice.productName == output.productName }
-                        ?.identity
+                    // Only one USB audio DAC is supported at a time; use its VID/PID key
+                    // so Android-routed and direct-libusb playback share one saved gain.
+                    UsbDacController(context).audioDevices().singleOrNull()?.identity
                         ?: "${output.productName}|${output.id}|${output.type}"
                 }
                 activeUsbDeviceKey = usbKey
