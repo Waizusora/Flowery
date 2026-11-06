@@ -316,8 +316,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     null
                 }
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
-                val usbKey = selectedDevice?.let {
-                    "${it.productName}|${it.id}|${it.type}"
+                val usbKey = selectedDevice?.let { output ->
+                    val usbController = UsbDacController(context)
+                    usbController.audioDevices()
+                        .singleOrNull { it.usbDevice.productName == output.productName }
+                        ?.identity
+                        ?: "${output.productName}|${output.id}|${output.type}"
                 }
                 activeUsbDeviceKey = usbKey
                 if (usbKey == null) {
