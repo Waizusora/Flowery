@@ -101,32 +101,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOfferUsbPcmBlock(
-    mut env: JNIEnv, _class: JClass, handle: jlong, pcm: JByteArray, frames: jint,
-    epoch: jint, start_frames: jlong, end_of_stream: jboolean, timeout_ms: jint
-) -> jboolean {
-    let Some(queue) = queue_ref(handle) else { return JNI_FALSE; };
-    if frames < 0 || frames > 32_768 || timeout_ms < 0 { return JNI_FALSE; }
-    let length = match env.get_array_length(&pcm) { Ok(value) => value as usize, Err(_) => return JNI_FALSE };
-    let expected_length = (frames as usize).checked_mul(6);
-    if (end_of_stream == JNI_TRUE && (frames != 0 || length != 0))
-        || (end_of_stream != JNI_TRUE && (frames == 0 || length == 0 || expected_length != Some(length))) {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB PCM queue block");
-        return JNI_FALSE;
-    }
-    let mut signed = vec![0_i8; length];
-    if env.get_byte_array_region(&pcm, 0, &mut signed).is_err() { return JNI_FALSE; }
-    let block = PcmBlock {
-        pcm: signed.into_iter().map(|value| value as u8).collect(),
-        frames: frames as u32,
-        epoch,
-        start_frames,
-        end_of_stream: end_of_stream == JNI_TRUE,
-    };
-    if queue.offer(block, Duration::from_millis(timeout_ms as u64)) { JNI_TRUE } else { JNI_FALSE }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbPcmBlock(
     env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint
 ) -> jbyteArray {
@@ -158,16 +132,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPcmQueueS
 ) -> jint {
     let Some(queue) = queue_ref(handle) else { return 0; };
     queue.state.lock().unwrap_or_else(|error| error.into_inner()).blocks.len() as jint
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClearUsbPcmQueue(
-    _env: JNIEnv, _class: JClass, handle: jlong
-) {
-    if let Some(queue) = queue_ref(handle) {
-        queue.state.lock().unwrap_or_else(|error| error.into_inner()).blocks.clear();
-        queue.changed.notify_all();
-    }
 }
 
 #[no_mangle]
