@@ -639,7 +639,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             producerStop.set(true)
             if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
             joinUninterruptibly(producerThread, 4_000L)
-            if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
+            if (queueHandle != 0L && producerThread?.isAlive != true) {
+                NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
+            } else if (queueHandle != 0L) {
+                recordUsbDiagnostic("USB_QUEUE_RETAINED producer did not exit before cleanup timeout")
+            }
             usbSoftwareGainEnabled = false
             try { session?.close() } finally {
                 usbPlaybackMode = false
@@ -703,7 +707,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var positionFrames = 0L
             var atEnd = false
             var segmentRemainingFrames = segmentDurationMs?.let { framesAtMilliseconds(it, sourceRate) }
-            var lastGain = currentUsbGain()
             while (active()) {
                 val requested = pendingSeekMs.getAndSet(null)
                 if (requested != null) {
