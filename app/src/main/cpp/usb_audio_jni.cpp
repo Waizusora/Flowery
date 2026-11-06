@@ -295,6 +295,40 @@ bool set_and_verify_clock(UsbAudioSession* session, int clock_id,
     return true;
 }
 
+bool set_and_verify_uac1_frequency(UsbAudioSession* session, int sample_rate, int* error) {
+    if (sample_rate <= 0 || sample_rate > 0x00ffffff) {
+        *error = LIBUSB_ERROR_INVALID_PARAM;
+        return false;
+    }
+    const uint16_t index = session->endpoint;
+    unsigned char rate_bytes[3] = {
+        static_cast<unsigned char>(sample_rate & 0xff),
+        static_cast<unsigned char>((sample_rate >> 8) & 0xff),
+        static_cast<unsigned char>((sample_rate >> 16) & 0xff)
+    };
+    int result = libusb_control_transfer(
+        session->handle, 0x22, 0x01, 0x0100, index, rate_bytes, sizeof(rate_bytes), 1500);
+    if (result != 3) {
+        *error = result < 0 ? result : LIBUSB_ERROR_IO;
+        return false;
+    }
+    unsigned char current_rate[3] = {};
+    result = libusb_control_transfer(
+        session->handle, 0xA2, 0x81, 0x0100, index, current_rate, sizeof(current_rate), 1500);
+    if (result != 3) {
+        *error = result < 0 ? result : LIBUSB_ERROR_IO;
+        return false;
+    }
+    const uint32_t confirmed = static_cast<uint32_t>(current_rate[0]) |
+        (static_cast<uint32_t>(current_rate[1]) << 8) |
+        (static_cast<uint32_t>(current_rate[2]) << 16);
+    if (confirmed != static_cast<uint32_t>(sample_rate)) {
+        *error = LIBUSB_ERROR_NOT_SUPPORTED;
+        return false;
+    }
+    return true;
+}
+
 // Raises an IllegalStateException describing the transport failure, including
 // symbolic transfer and packet status names for diagnostics.
 void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
@@ -429,10 +463,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     JNIEnv* env, jobject, jint file_descriptor, jint interface_number,
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
     jint channels, jint subslot_bytes, jint sample_rate, jint clock_id,
-    jint control_interface) {
+    jint control_interface, jint protocol, jboolean sampling_frequency_control) {
     if (file_descriptor < 0 || interface_number < 0 || alternate_setting <= 0 ||
         endpoint <= 0 || (endpoint & 0x80) != 0 || max_packet_bytes <= 0 ||
-        interval <= 0 || channels != 2 || subslot_bytes <= 0 || sample_rate <= 0) {
+        interval <= 0 || channels != 2 || subslot_bytes <= 0 || sample_rate <= 0 ||
+        (protocol != 0x00 && protocol != 0x20)) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Invalid USB Audio Class playback parameters");
         return 0;
@@ -483,7 +518,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
         return throw_usb_error(env, "Detaching the system USB audio driver", result);
     }
 
-    if (control_interface != interface_number) {
+    if (protocol == 0x20 && control_interface != interface_number) {
         result = libusb_claim_interface(session->handle, control_interface);
         if (result != LIBUSB_SUCCESS) {
             close_session(session);
@@ -500,9 +535,16 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     session->claimed = true;
 
     int clock_error = LIBUSB_SUCCESS;
-    if (!set_and_verify_clock(session, clock_id, control_interface, sample_rate, &clock_error)) {
-        close_session(session);
-        return throw_usb_error(env, "UAC2 clock SET_CUR/GET_CUR verification", clock_error);
+    if (protocol == 0x20) {
+        if (!set_and_verify_clock(session, clock_id, control_interface, sample_rate, &clock_error)) {
+            close_session(session);
+            return throw_usb_error(env, "UAC2 clock SET_CUR/GET_CUR verification", clock_error);
+        }
+    } else if (sampling_frequency_control == JNI_TRUE) {
+        if (!set_and_verify_uac1_frequency(session, sample_rate, &clock_error)) {
+            close_session(session);
+            return throw_usb_error(env, "UAC1 endpoint sampling-frequency SET_CUR/GET_CUR verification", clock_error);
+        }
     }
 
     result = libusb_set_interface_alt_setting(
