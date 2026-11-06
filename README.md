@@ -54,7 +54,7 @@ Application ID: `com.waizusora.flowery`
 
 - Add multiple folder roots through the Storage Access Framework.
 - Enable or disable individual roots and remove roots from the configured list.
-- Recursively scan enabled roots for supported filename extensions; Rust owns extension classification, sidecar LRC filename matching, and relative playlist-path normalization, while Kotlin handles SAF traversal and document resolution.
+- Recursively scan enabled roots for supported filename extensions; Rust owns audio classification, same-directory sidecar LRC matching, CUE/M3U/M3U8/PLS parsing and association, root-confined playlist path resolution, virtual-track construction, CUE time-range calculation, and catalog deduplication. Kotlin only traverses SAF trees, reads playlist text, and maps results to Android URIs.
 - Associate a sidecar `.lrc` file with an audio file when the base filenames match.
 - Parse CUE, M3U, and PLS playlist text in the Rust engine; Kotlin retains SAF document resolution and charset selection.
 - Scan document trees directly; the library does not use MediaStore.
