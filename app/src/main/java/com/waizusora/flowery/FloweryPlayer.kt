@@ -90,6 +90,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var usbPlaybackMode = false
+    @Volatile private var usbBitPerfectActive = false
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
@@ -178,12 +179,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(sourceRate > 0 && channels in 1..2) { "The decoder returned an invalid audio format" }
 
                 if (bitPerfectRequested) {
-                    recordUsbDiagnostic("DECODER_READY sampleRate=${sourceRate} channels=${channels} handleValid=${handle != 0L}")
-                    usbPlaybackMode = true
-                    playUsbDecodedDirect(
-                        handle, sourceRate, channels, generation, segmentStartMs, segmentEndMs
-                    )
-                    return@thread
+                    val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
+                    val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
+                    val losslessSource = (sourceInfo ushr 32) != 0L
+                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24)
+                    recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
+                    if (eligibleSource) {
+                        usbPlaybackMode = true
+                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
+                        return@thread
+                    }
+                    onState("Bit Perfect unavailable: source must be supported lossless PCM at 8, 16, or 24 bits.")
                 }
 
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -450,6 +456,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private fun playUsbDecodedDirect(
         handle: Long,
         sourceRate: Int,
+        sourceBits: Int,
         channels: Int,
         generation: Int,
         segmentStartMs: Long,
@@ -467,15 +474,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
             check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
-            recordUsbDiagnostic("SOURCE_VALIDATED format=decoded_float channels=${channels} sampleRate=${sourceRate}")
+            recordUsbDiagnostic("SOURCE_VALIDATED format=symphonia_lossless_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
             val controller = UsbDacController(context)
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            onState("USB exclusive: negotiating a supported stereo PCM format at ${sourceRate} Hz…")
-            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=auto sampleRate=${sourceRate} channels=${channels}")
-            val (selectedDevice, usbSession) =
-                controller.openFirstCompatiblePlaybackSession(discovered, 0, sourceRate, allowSampleRateConversion = true)
+            onState("USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz stereo PCM match…")
+            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${sourceBits} sampleRate=${sourceRate} channels=${channels} bitPerfect=true")
+            val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
+                discovered, sourceBits, sourceRate, allowSampleRateConversion = false
+            )
             val device = selectedDevice.usbDevice
             session = usbSession
             recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
@@ -483,9 +491,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(usbSession.profile.channels == channels && usbSession.sampleRate > 0) {
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
-            onState("USB exclusive: decoding and processing PCM (not bit-perfect)…")
-            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, usbSession.sampleRate, bandGainsDb)
-            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${usbSession.sampleRate} eqActive=${bandGainsDb.any { abs(it) > 0.001f }}")
+            check(usbSession.sampleRate == sourceRate && usbSession.profile.bitResolution == sourceBits) {
+                "Bit Perfect requires an exact source/DAC sample-rate and valid-bit match."
+            }
+            onState("USB exclusive: preparing unprocessed PCM…")
+            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, FloatArray(31) { 0f })
+            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${sourceRate} eqActive=false gain=1.0 ducking=false resampling=false")
             check(decoderConfigResult == 0) {
                 "Unable to configure the streaming decoder and DSP for direct USB output."
             }
@@ -493,7 +504,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_FLOAT_TO_S${usbSession.profile.bitResolution}_LE")
+            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${sourceBits}_LE sourceSamplePreservation=enabled")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
             usbOutputBitDepth = usbSession.profile.bitResolution
@@ -505,7 +516,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
             softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
-            usbSoftwareGainEnabled = true
+            usbBitPerfectActive = true
+            usbSoftwareGainEnabled = false
             recordUsbDiagnostic(
                 "USB_PCM_GAIN initialGain=${"%.3f".format(java.util.Locale.US, softwareVolume)} " +
                     "queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} " +
@@ -604,9 +616,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    val dspActive = bandGainsDb.any { abs(it) > 0.001f }
-                    onState("USB exclusive · decoded PCM (not bit-perfect) · " + usbSession.profile.bitResolution + "-bit · " + sourceRate + " Hz" +
-                        if (dspActive) " · EQ/DSP active" else " · EQ flat")
+                    onState("USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · Symphonia lossless decode")
                 }
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }
@@ -695,7 +705,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     /** Software gain applied on the decoded USB path: per-DAC volume times the ducking gain. */
     private fun currentUsbGain(): Float =
-        (softwareVolume * if (outputDucked) DUCK_GAIN else 1f).coerceIn(0f, 1f)
+        if (usbBitPerfectActive) 1f
+        else (softwareVolume * if (outputDucked) DUCK_GAIN else 1f).coerceIn(0f, 1f)
 
     private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock {
         require(encoded.size >= 17) { "The native USB PCM queue returned an invalid block header." }
