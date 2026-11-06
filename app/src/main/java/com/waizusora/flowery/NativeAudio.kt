@@ -33,6 +33,10 @@ object NativeAudio {
     external fun nativeClearUsbPcmQueue(queue: Long)
     external fun nativeCloseUsbPcmQueue(queue: Long)
     external fun nativeDestroyUsbPcmQueue(queue: Long)
+    external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, sourceRate: Int, channels: Int, segmentStartMs: Long, segmentEndMs: Long): Long
+    external fun nativeRequestUsbPcmProducerSeek(producer: Long, positionMs: Long)
+    external fun nativePumpUsbPcmProducer(producer: Long, targetGain: Float): Int
+    external fun nativeDestroyUsbPcmProducer(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeFlushStreamOutput(positionFrames: Long, shouldStart: Boolean): Int
