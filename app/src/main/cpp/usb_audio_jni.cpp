@@ -2,6 +2,8 @@
 #include <libusb.h>
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
@@ -9,7 +11,9 @@
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sys/time.h>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -21,8 +25,8 @@ namespace {
 // overhead while retaining a bounded scheduling horizon. At a 125 us service
 // interval, one 128-packet URB covers 16 ms; the adaptive window targets about
 // 192 ms of queued audio and is replenished as URBs complete.
-constexpr size_t kPacketsPerUrb = 128;
-constexpr size_t kMaxUrbsInFlight = 12;
+constexpr size_t kPacketsPerUrb = 64;
+constexpr size_t kMaxUrbsInFlight = 24;
 constexpr uint64_t kTargetQueuedAudioUs = 192000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
@@ -34,8 +38,9 @@ constexpr int kTeardownTimeoutMs = 2000;
 struct InFlightTransfer {
     std::vector<unsigned char> buffer;
     libusb_transfer* transfer = nullptr;
-    bool completed = false;
+    std::atomic<bool> completed{false};
     uint64_t sequence = 0;
+    UsbAudioSession* owner = nullptr;
 };
 
 struct UsbAudioSession {
@@ -58,6 +63,11 @@ struct UsbAudioSession {
     std::vector<std::unique_ptr<InFlightTransfer>> in_flight;
     uint64_t next_sequence = 0;
     std::chrono::steady_clock::time_point last_progress{};
+    std::atomic<bool> event_thread_running{false};
+    std::atomic<int> event_loop_error{LIBUSB_SUCCESS};
+    std::thread event_thread;
+    std::mutex event_mutex;
+    std::condition_variable event_condition;
     bool claimed = false;
     bool control_claimed = false;
     int control_interface = -1;
@@ -74,11 +84,16 @@ struct TransportFailure {
     unsigned int packet_status = 0;
     unsigned int actual_length = 0;
     unsigned int requested_length = 0;
+    size_t in_flight_at_failure = 0;
+    long long idle_ms_at_failure = 0;
 };
 
 void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     auto* entry = static_cast<InFlightTransfer*>(transfer->user_data);
-    if (entry != nullptr) entry->completed = true;
+    if (entry != nullptr) {
+        entry->completed.store(true, std::memory_order_release);
+        if (entry->owner != nullptr) entry->owner->event_condition.notify_all();
+    }
 }
 
 const char* transfer_status_name(unsigned int status) {
@@ -101,15 +116,26 @@ void record_failure(TransportFailure* failure, const char* reason, int code) {
     failure->code = code;
 }
 
-// Runs the libusb event loop once and reports an unrecoverable loop error.
-bool pump_events(UsbAudioSession* session, long timeout_us, TransportFailure* failure) {
-    timeval timeout{0, timeout_us};
-    const int result = libusb_handle_events_timeout_completed(session->context, &timeout, nullptr);
-    if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
-        record_failure(failure, "event_loop_error", result);
-        return false;
+// Owns libusb event processing on a dedicated thread. Transfer submission and
+// queue bookkeeping remain on the playback worker; callbacks only publish
+// completion state and wake that worker.
+void event_loop_main(UsbAudioSession* session) {
+    while (session->event_thread_running.load(std::memory_order_acquire)) {
+        timeval timeout{0, 10000};
+        const int result = libusb_handle_events_timeout_completed(
+            session->context, &timeout, nullptr);
+        if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
+            session->event_loop_error.store(result, std::memory_order_release);
+            session->event_condition.notify_all();
+            break;
+        }
     }
-    return true;
+}
+
+void stop_event_thread(UsbAudioSession* session) {
+    session->event_thread_running.store(false, std::memory_order_release);
+    session->event_condition.notify_all();
+    if (session->event_thread.joinable()) session->event_thread.join();
 }
 
 // Releases every completed transfer and records the first transport failure.
@@ -118,7 +144,7 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
     size_t write_index = 0;
     for (size_t read_index = 0; read_index < queue.size(); ++read_index) {
         std::unique_ptr<InFlightTransfer>& entry = queue[read_index];
-        if (!entry->completed) {
+        if (!entry->completed.load(std::memory_order_acquire)) {
             if (write_index != read_index) queue[write_index] = std::move(entry);
             ++write_index;
             continue;
@@ -166,7 +192,8 @@ void abort_in_flight(UsbAudioSession* session) {
     while (!session->in_flight.empty() && std::chrono::steady_clock::now() < deadline) {
         reap_completed(session, &ignored);
         if (session->in_flight.empty()) break;
-        if (!pump_events(session, 20000, &ignored)) break;
+        std::unique_lock<std::mutex> lock(session->event_mutex);
+        session->event_condition.wait_for(lock, std::chrono::milliseconds(20));
     }
     reap_completed(session, &ignored);
     for (auto& entry : session->in_flight) {
@@ -179,6 +206,7 @@ void close_session(UsbAudioSession* session) {
     if (session == nullptr) return;
     if (session->handle != nullptr) {
         abort_in_flight(session);
+        stop_event_thread(session);
         if (session->claimed) {
             // Restore the zero-bandwidth alternate setting before releasing the streaming interface.
             libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
@@ -278,8 +306,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X",
         failure.reason, libusb_error_name(failure.code), failure.code,
         failure.transfer_status, transfer_name,
-        static_cast<unsigned long long>(failure.sequence), session->in_flight.size(),
-        failure.failed_packet, failure.packet_status,
+        static_cast<unsigned long long>(failure.sequence), failure.in_flight_at_failure,
+        failure.idle_ms_at_failure, failure.failed_packet, failure.packet_status,
         packet_name, failure.actual_length,
         failure.requested_length, session->interval_us, session->sample_rate,
         session->endpoint);
@@ -293,6 +321,7 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
                 size_t total_bytes, TransportFailure* failure) {
     auto entry = std::make_unique<InFlightTransfer>();
     entry->sequence = session->next_sequence;
+    entry->owner = session;
     entry->buffer.assign(
         session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(session->pending_offset),
         session->pending_pcm.begin() +
@@ -326,17 +355,51 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
     return true;
 }
 
-// Waits for queue progress and enforces the stall watchdog. Returns false and
-// records a failure when the endpoint stops completing URBs.
+// Waits for the dedicated event thread to publish completions and enforces
+// a progress watchdog against the oldest outstanding URB.
 bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
-    if (!pump_events(session, 5000, failure)) return false;
     reap_completed(session, failure);
     if (failure->failed) return false;
+
+    const int event_error = session->event_loop_error.load(std::memory_order_acquire);
+    if (event_error != LIBUSB_SUCCESS) {
+        record_failure(failure, "event_loop_error", event_error);
+        failure->in_flight_at_failure = session->in_flight.size();
+        return false;
+    }
+
     if (!session->in_flight.empty()) {
         const auto idle = std::chrono::steady_clock::now() - session->last_progress;
         if (idle > std::chrono::milliseconds(kStallTimeoutMs)) {
             record_failure(failure, "stalled", LIBUSB_ERROR_TIMEOUT);
             failure->sequence = session->in_flight.front()->sequence;
+            failure->in_flight_at_failure = session->in_flight.size();
+            failure->idle_ms_at_failure =
+                std::chrono::duration_cast<std::chrono::milliseconds>(idle).count();
+            return false;
+        }
+    }
+
+    std::unique_lock<std::mutex> lock(session->event_mutex);
+    session->event_condition.wait_for(lock, std::chrono::milliseconds(5));
+    reap_completed(session, failure);
+    if (failure->failed) return false;
+
+    const int updated_event_error = session->event_loop_error.load(std::memory_order_acquire);
+    if (updated_event_error != LIBUSB_SUCCESS) {
+        record_failure(failure, "event_loop_error", updated_event_error);
+        failure->in_flight_at_failure = session->in_flight.size();
+        return false;
+    }
+
+    if (!session->in_flight.empty()) {
+        const auto idle = std::chrono::steady_clock::now() - session->last_progress;
+        if (idle > std::chrono::milliseconds(kStallTimeoutMs)) {
+            record_failure(failure, "stalled", LIBUSB_ERROR_TIMEOUT);
+            failure->sequence = session->in_flight.front()->sequence;
+            failure->in_flight_at_failure = session->in_flight.size();
+            failure->idle_ms_at_failure =
+                std::chrono::duration_cast<std::chrono::milliseconds>(idle).count();
             return false;
         }
     }
@@ -440,6 +503,17 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     if (result != LIBUSB_SUCCESS) {
         close_session(session);
         return throw_usb_error(env, "Selecting USB Audio alternate setting", result);
+    }
+
+    session->event_thread_running.store(true, std::memory_order_release);
+    try {
+        session->event_thread = std::thread(event_loop_main, session);
+    } catch (...) {
+        session->event_thread_running.store(false, std::memory_order_release);
+        close_session(session);
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, "Could not start the libusb event thread");
+        return 0;
     }
 
     return reinterpret_cast<jlong>(session);
