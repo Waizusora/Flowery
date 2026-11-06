@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal class PlaybackCoordinator(
     context: Context,
     private val onState: (String) -> Unit
-) : AutoCloseable {
+) {
     enum class State { IDLE, PREPARING, PLAYING, PAUSED, STOPPING, FAILED }
 
     private companion object {
