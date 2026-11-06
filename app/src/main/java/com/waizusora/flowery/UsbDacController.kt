@@ -183,7 +183,7 @@ class UsbDacController(context: Context) {
         requiredSubslotBytes: Int? = null
     ): UsbDacSession {
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
-        require(bitResolution == 0 || bitResolution in setOf(16, 24, 32)) { "PCM resolution must be automatic or 16, 24, or 32 bits." }
+        require(bitResolution == 0 || bitResolution in 8..32) { "PCM resolution must be automatic or between 8 and 32 bits." }
         require(sampleRate > 0) { "Sample rate must be positive." }
 
         val connection = manager.openDevice(device)
