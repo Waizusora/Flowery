@@ -73,6 +73,8 @@ internal class PlaybackCoordinator(
     }
 
     @Synchronized fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
+    fun currentVolumeFraction(): Float = engine.currentVolumeFraction()
+
     fun positionMs(): Long = engine.positionMs()
     fun durationMs(): Long = engine.durationMs()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
