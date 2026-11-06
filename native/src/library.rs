@@ -26,7 +26,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsSupportedA
 
 #[cfg(test)]
 mod tests {
-    use super::{is_supported_audio_extension, match_sidecar_lyrics, normalize_playlist_path};
+    use super::is_supported_audio_extension;
 
     #[test]
     fn recognizes_supported_formats_case_insensitively() {
