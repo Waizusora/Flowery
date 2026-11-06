@@ -894,6 +894,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("JNI", "jni 0.21 · Rust/Java native interface", color, muted)
             Detail("Audio adapter buffers", "audioadapter-buffers 5.1", color, muted)
             Detail("JSON", "serde_json 1", color, muted)
+            Detail("Serialization", "serde 1 · MIT OR Apache-2.0", color, muted)
             Detail("Base64", "base64 0.22", color, muted)
             Detail("Native platform bindings", "libc 0.2", color, muted)
             Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
