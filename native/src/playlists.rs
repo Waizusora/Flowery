@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CueTrack {
+pub(super) struct CueTrack {
     number: i64,
     title: String,
     performer: Option<String>,
@@ -17,14 +17,14 @@ struct CueTrack {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct CueSheet {
+pub(super) struct CueSheet {
     title: Option<String>,
     performer: Option<String>,
     tracks: Vec<CueTrack>,
 }
 
 #[derive(Serialize)]
-struct PlaylistEntry {
+pub(super) struct PlaylistEntry {
     path: String,
     title: Option<String>,
 }
@@ -54,7 +54,7 @@ fn parse_cue_time(value: &str) -> Option<i64> {
     Some(minutes.saturating_mul(60).saturating_add(seconds).saturating_mul(75).saturating_add(frames))
 }
 
-fn parse_cue(text: &str) -> CueSheet {
+pub(super) fn parse_cue(text: &str) -> CueSheet {
     let mut album_title = None;
     let mut album_performer = None;
     let mut current_file = String::new();
@@ -131,7 +131,7 @@ fn parse_cue(text: &str) -> CueSheet {
     CueSheet { title: album_title, performer: album_performer, tracks }
 }
 
-fn parse_m3u(text: &str) -> Vec<PlaylistEntry> {
+pub(super) fn parse_m3u(text: &str) -> Vec<PlaylistEntry> {
     let mut next_title: Option<String> = None;
     let mut entries = Vec::new();
     for raw in text.lines() {
@@ -151,7 +151,7 @@ fn parse_m3u(text: &str) -> Vec<PlaylistEntry> {
     entries
 }
 
-fn parse_pls(text: &str) -> Vec<PlaylistEntry> {
+pub(super) fn parse_pls(text: &str) -> Vec<PlaylistEntry> {
     let mut paths = BTreeMap::<i64, String>::new();
     let mut titles = BTreeMap::<i64, String>::new();
     for raw in text.lines() {
