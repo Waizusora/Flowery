@@ -473,27 +473,22 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
             recordUsbDiagnostic("SOURCE_VALIDATED format=decoded_float channels=${channels} sampleRate=${sourceRate}")
             val controller = UsbDacController(context)
-            onState("USB exclusive: detecting KT Micro DAC…")
+            onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            val candidates = discovered.filter { it.isReferenceKtmicro }
-            check(candidates.size == 1) { "Direct USB playback requires exactly one connected KT Micro KT-384/32 HIFI (found " + candidates.size + ")." }
-            val device = candidates.single().usbDevice
-            recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount}")
-            onState("USB exclusive: checking DAC permission…")
-            val permissionGranted = controller.hasPermission(device)
-            recordUsbDiagnostic("USB_PERMISSION granted=${permissionGranted}")
-            check(permissionGranted) { "USB permission is unavailable. Grant access to the connected DAC first." }
-            onState("USB exclusive: reading descriptors and negotiating " + sourceRate + " Hz clock…")
+            onState("USB exclusive: negotiating stereo 24-bit PCM at ${sourceRate} Hz…")
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=24 sampleRate=${sourceRate} channels=${channels}")
-            val usbSession = controller.openExclusivePlaybackSession(device, 24, sourceRate)
+            val (selectedDevice, usbSession) =
+                controller.openFirstCompatiblePlaybackSession(discovered, 24, sourceRate)
+            val device = selectedDevice.usbDevice
             session = usbSession
+            recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
             recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
             check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == 24 &&
                 usbSession.sampleRate == sourceRate) {
                 "The DAC profile does not match stereo 24-bit PCM at $sourceRate Hz."
             }
-            onState("USB exclusive: configuring Symphonia decoder and DSP…")
+            onState("USB exclusive: decoding and processing PCM (not bit-perfect)…")
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb)
             recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sampleRate=${sourceRate} eqActive=${bandGainsDb.any { abs(it) > 0.001f }}")
             check(decoderConfigResult == 0) {
@@ -613,7 +608,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (firstTransfer) {
                     firstTransfer = false
                     val dspActive = bandGainsDb.any { abs(it) > 0.001f }
-                    onState("USB exclusive · decoded PCM 24-bit · " + sourceRate + " Hz" +
+                    onState("USB exclusive · decoded PCM (not bit-perfect) · 24-bit · " + sourceRate + " Hz" +
                         if (dspActive) " · EQ/DSP active" else " · EQ flat")
                 }
             }
@@ -735,16 +730,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
 
             val controller = UsbDacController(context)
-            val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
-            check(candidates.size == 1) {
-                "USB bit-perfect mode requires exactly one connected KT Micro KT-384/32 HIFI."
-            }
-            val device = candidates.single().usbDevice
-            check(controller.hasPermission(device)) {
-                "USB permission is unavailable. Tap the USB DAC control and grant access first."
-            }
-
-            val usbSession = controller.openExclusivePlaybackSession(device, bitDepth, sampleRate)
+            val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
+                controller.audioDevices(), bitDepth, sampleRate
+            )
+            val device = selectedDevice.usbDevice
             session = usbSession
             check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == bitDepth) {
                 "The selected DAC alternate setting does not match the source PCM format."
@@ -785,7 +774,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    onState(if (softwareVolume >= 0.999f) "USB exclusive · direct PCM · unity gain" else "USB exclusive · direct PCM · software volume")
+                    val sourceSamplesUnchanged = softwareVolume >= 0.999f && !outputDucked
+                    onState(
+                        if (sourceSamplesUnchanged) {
+                            "USB exclusive · direct PCM · source samples unchanged · EQ bypassed"
+                        } else {
+                            "USB exclusive · direct PCM · software gain active · not bit-perfect"
+                        }
+                    )
                 }
             }
 

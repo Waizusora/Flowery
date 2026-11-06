@@ -2,54 +2,60 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.net.Uri
-import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Coordinates application-level playback commands and owns the lifetime of the native player.
- * Audio decoding, DSP, and output remain in the Rust engine; this class coordinates Android
- * service requests with that engine and publishes a stable lifecycle state.
+ * Android service adapter for the native playback lifecycle controller.
+ * The controller state is stored in Rust; this class retains Android command forwarding.
  */
 internal class PlaybackCoordinator(
     context: Context,
     private val onState: (String) -> Unit
-) {
+) : AutoCloseable {
     enum class State { IDLE, PREPARING, PLAYING, PAUSED, STOPPING, FAILED }
 
-    private val state = AtomicReference(State.IDLE)
+    private val nativeController = NativeAudio.nativeCreatePlaybackController().also {
+        check(it != 0L) { "Unable to create the native playback controller." }
+    }
     private val engine = FloweryPlayer(context) { message ->
-        state.set(
-            when {
-                message.startsWith("Playing") -> State.PLAYING
-                message.startsWith("Paused") -> State.PAUSED
-                message.startsWith("Unable") || message.startsWith("Error") -> State.FAILED
-                message == "Playback finished" -> State.IDLE
-                else -> state.get()
-            }
-        )
+        when {
+            message.startsWith("Playing") -> setState(State.PLAYING)
+            message.startsWith("Paused") -> setState(State.PAUSED)
+            message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
+                setState(State.FAILED)
+            message == "Playback finished" -> setState(State.IDLE)
+        }
         onState(message)
     }
 
-    fun state(): State = state.get()
+    private fun setState(value: State) {
+        check(NativeAudio.nativeSetPlaybackControllerState(nativeController, value.ordinal) == 0) {
+            "Rust rejected the playback controller state."
+        }
+    }
+
+    fun state(): State = State.values().getOrElse(
+        NativeAudio.nativeGetPlaybackControllerState(nativeController)
+    ) { State.FAILED }
 
     @Synchronized
     fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null) {
-        state.set(State.PREPARING)
+        setState(State.PREPARING)
         engine.play(uri, segmentStartMs, segmentEndMs)
     }
 
     @Synchronized
     fun pause() {
-        if (state.get() == State.PLAYING) {
+        if (state() == State.PLAYING) {
             engine.pause()
-            state.set(State.PAUSED)
+            setState(State.PAUSED)
         }
     }
 
     @Synchronized
     fun resume() {
-        if (state.get() == State.PAUSED) {
+        if (state() == State.PAUSED) {
             engine.resume()
-            state.set(State.PLAYING)
+            setState(State.PLAYING)
         }
     }
 
@@ -62,8 +68,13 @@ internal class PlaybackCoordinator(
 
     @Synchronized
     fun stop() {
-        state.set(State.STOPPING)
+        setState(State.STOPPING)
         engine.stop()
-        state.set(State.IDLE)
+        setState(State.IDLE)
+    }
+
+    override fun close() {
+        stop()
+        NativeAudio.nativeDestroyPlaybackController(nativeController)
     }
 }

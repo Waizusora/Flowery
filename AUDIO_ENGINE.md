@@ -62,7 +62,7 @@ The USB diagnostic log records `USB_PCM_GAIN` (initial gain and queue configurat
 
 ## Output limitations
 
-The current end-to-end direct path is deliberately limited to stereo RIFF/WAVE integer PCM16/24/32. It does not yet support FLAC, ALAC, AIFF, DSD, floating-point WAV, compressed formats, or multichannel output in USB bit-perfect mode. The sliding-window transport has been exercised only against a simulated libusb layer (byte-exact delivery, window bound, drain, flush, and stall detection) and has not yet been validated on the physical KT Micro unit with a USB protocol trace or external digital capture. A successful UAC2 clock readback and completed isochronous transfers are necessary runtime checks, but external measurement is still required before making a hardware-verified bit-perfect claim. The normal AAudio path outputs PCM float and can fall back from exclusive to shared mode; it is not bit-perfect. Gapless playback and crossfade are also not implemented.
+The source-bit-preserving direct path is limited to stereo RIFF/WAVE integer PCM16/24/32. It does not yet support FLAC, ALAC, AIFF, DSD, floating-point WAV, compressed formats, or multichannel output in USB bit-perfect mode. The sliding-window transport has been exercised only against a simulated libusb layer (byte-exact delivery, window bound, drain, flush, and stall detection) and has not yet been validated on the physical KT Micro unit with a USB protocol trace or external digital capture. A successful UAC2 clock readback and completed isochronous transfers are necessary runtime checks, but external measurement is still required before making a hardware-verified bit-perfect claim. The normal AAudio path outputs PCM float and can fall back from exclusive to shared mode; it is not bit-perfect. Gapless playback and crossfade are also not implemented.
 
 
 ## Lyrics parsing
@@ -77,11 +77,11 @@ CUE, M3U, and PLS parsing runs in Rust through JNI. The native parser produces s
 
 ## Playback queue policy
 
-Next, previous, natural-completion, shuffle, and repeat transition decisions are implemented in `native/src/queue.rs` and exposed through JNI. `PlaybackService` retains Android service state and the URI/metadata arrays required by notifications and media sessions, but delegates queue index transitions to Rust. The native transition function returns an explicit stop result or a replay-current result for repeat-one completion; queue state remains owned by the service adapter while the transition policy is native.
+Next, previous, natural-completion, shuffle, and repeat transition decisions are implemented in `native/src/queue.rs` and exposed through JNI. `PlaybackService` retains Android service state and the URI/metadata arrays required by notifications and media sessions, but delegates queue index transitions to Rust. The native transition function returns an explicit stop result or a replay-current result for repeat-one completion; queue index, queue size, repeat mode, shuffle state, and transition policy are owned by a native Rust queue-state handle. Kotlin retains only an adapter for Android service and notification integration.
 
 ## Playback orchestration and queue state
 
-`PlaybackCoordinator` owns the application-facing playback lifecycle and delegates audio work to `FloweryPlayer`. `PlaybackService` routes media-session commands through this coordinator. Queue selection, repeat mode, shuffle state, and navigation requests are held by `PlaybackQueueState`; transition policy remains implemented and tested in Rust.
+`PlaybackCoordinator` owns the application-facing playback lifecycle and delegates audio work to `FloweryPlayer`. `PlaybackService` routes media-session commands through this coordinator. `PlaybackQueueState` is a thin JNI adapter. Rust owns queue selection, repeat mode, shuffle state, and navigation transitions; the Android service retains URI and metadata collections required by platform notifications and media sessions.
 
 ## USB Audio Class descriptor parsing
 

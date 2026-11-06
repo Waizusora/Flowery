@@ -217,6 +217,41 @@ class UsbDacController(context: Context) {
     }
 
 
+
+    /**
+     * Opens the first connected, permission-granted UAC2 DAC whose descriptors and clock
+     * negotiation support the exact stereo PCM format requested by the active source.
+     */
+    internal fun openFirstCompatiblePlaybackSession(
+        devices: List<Device>,
+        bitResolution: Int,
+        sampleRate: Int
+    ): Pair<Device, UsbDacSession> {
+        val failures = mutableListOf<String>()
+        for (device in devices) {
+            if (!hasPermission(device.usbDevice)) {
+                failures += "${device.identity}: USB permission not granted"
+                continue
+            }
+            try {
+                val session = openExclusivePlaybackSession(device.usbDevice, bitResolution, sampleRate)
+                if (session.profile.channels == 2 &&
+                    session.profile.bitResolution == bitResolution &&
+                    session.sampleRate == sampleRate) {
+                    return device to session
+                }
+                session.close()
+                failures += "${device.identity}: negotiated profile did not match the requested format"
+            } catch (error: Throwable) {
+                failures += "${device.identity}: ${error.message ?: error.javaClass.simpleName}"
+            }
+        }
+        throw IllegalStateException(
+            "No connected UAC2 DAC accepted stereo ${bitResolution}-bit PCM at ${sampleRate} Hz. " +
+                failures.joinToString("; ")
+        )
+    }
+
     private fun parseNativePlaybackProfiles(
         descriptors: ByteArray,
         requestedBitResolution: Int

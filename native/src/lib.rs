@@ -3,6 +3,7 @@ mod lyrics;
 mod library;
 mod catalog;
 mod queue;
+mod playback_controller;
 mod playlists;
 mod wav_pcm;
 mod usb_pcm;

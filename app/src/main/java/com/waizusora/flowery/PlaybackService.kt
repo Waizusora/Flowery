@@ -241,7 +241,7 @@ class PlaybackService : Service() {
             ACTION_VOLUME -> player.setVolume(intent.getFloatExtra(EXTRA_VALUE, 1f))
             ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
-            ACTION_REPEAT -> { repeatMode = (repeatMode + 1) % 3; publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
+            ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
             ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
             ACTION_UPDATE_METADATA -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: currentTitle
@@ -556,7 +556,8 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
-        player.stop()
+        player.close()
+        queueState.close()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
         hasAudioFocus = false
