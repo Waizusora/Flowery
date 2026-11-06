@@ -6,7 +6,7 @@ use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use jni::objects::{JClass, JFloatArray, JString};
-use jni::sys::{jbyteArray, jint, jlong};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
