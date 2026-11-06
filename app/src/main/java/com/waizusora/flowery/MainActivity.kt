@@ -139,13 +139,13 @@ class MainActivity : ComponentActivity() {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
                         .apply()
-                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC2 playback profile from its descriptors. Decoded audio is converted to the DAC's supported PCM format and clock rate; WAV passthrough is used only when the source format matches exactly."
+                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC1/UAC2 playback profile from its descriptors. Decoded audio is converted to the DAC's supported PCM format and clock rate; WAV passthrough is used only when the source format matches exactly."
                 }
                 granted -> {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", false)
                         .apply()
-                    "Flowery recognized ${usbDacController.describeDevice(device)}, but its descriptors do not expose a usable stereo UAC2 playback profile and linked clock source. The DAC remains available through Android's normal audio route."
+                    "Flowery recognized ${usbDacController.describeDevice(device)}, but its descriptors do not expose a usable stereo UAC1/UAC2 playback profile. The DAC remains available through Android's normal audio route."
                 }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
@@ -339,7 +339,7 @@ class MainActivity : ComponentActivity() {
         val device = detected.usbDevice
         if (usbDacController.hasPermission(device)) {
             if (!usbDacController.hasCompatibleUac2PlaybackProfile(device)) {
-                usbDacMessage = "Flowery recognized ${detected.displayName}, but direct USB playback requires a stereo UAC2 profile with a linked clock source. Android's regular audio route remains available."
+                usbDacMessage = "Flowery recognized ${detected.displayName}, but direct USB playback requires a compatible stereo UAC1 Type-I PCM or UAC2 profile. Android's regular audio route remains available."
                 return
             }
             val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
@@ -348,11 +348,11 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = if (enabled) {
                 "Direct USB exclusive mode disabled. Playback will use the normal Flowery DSP and Android AAudio route."
             } else {
-                "Direct USB exclusive mode enabled for compatible UAC2 DACs. WAV integer PCM can preserve source samples at unity gain; decoded formats are converted to the selected DAC PCM format and negotiated clock rate; they are not bit-perfect. Flowery tries permitted devices using descriptor-derived capabilities."
+                "Direct USB exclusive mode enabled for compatible stereo UAC1/UAC2 DACs. WAV integer PCM can preserve source samples at unity gain; decoded formats are converted to the selected DAC PCM format and negotiated clock rate; they are not bit-perfect. Flowery tries permitted devices using descriptor-derived capabilities."
             }
         } else {
             usbDacController.requestPermission(device)
-            usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}. Permission grants device access only. Direct playback requires a compatible UAC2 stereo PCM profile and successful clock negotiation; decoded formats are not bit-perfect."
+            usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}. Permission grants device access only. Direct playback requires a compatible stereo UAC1 Type-I PCM or UAC2 PCM profile and successful sample-rate negotiation; decoded formats are not bit-perfect."
         }
     }
 
