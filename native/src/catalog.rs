@@ -27,8 +27,9 @@ struct Track {
 struct Catalog { tracks: Vec<Track> }
 
 fn key(path: &str) -> Option<String> {
+    let normalized = path.replace('\\', "/");
     let mut parts: Vec<&str> = Vec::new();
-    for part in path.replace('\\', "/").split('/') {
+    for part in normalized.split('/') {
         match part.trim() {
             "" | "." => {},
             ".." => { if parts.pop().is_none() { return None; } },
@@ -142,8 +143,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeBuildLibrary
             return std::ptr::null_mut();
         }
     };
-    let result = serde_json::from_str::<Snapshot>(&input).map(build)
-        .and_then(|catalog| serde_json::to_string(&catalog).map_err(|error| error.to_string()));
+    let result = match serde_json::from_str::<Snapshot>(&input) {
+        Ok(snapshot) => serde_json::to_string(&build(snapshot)).map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
     match result {
         Ok(value) => env.new_string(value).map(|value| value.into_raw()).unwrap_or(std::ptr::null_mut()),
         Err(error) => {
