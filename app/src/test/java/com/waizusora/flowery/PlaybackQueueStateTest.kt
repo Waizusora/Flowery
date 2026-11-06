@@ -50,4 +50,25 @@ class PlaybackQueueStateTest {
         assertEquals(-2, queue.transition(3, PlaybackQueueState.Action.COMPLETION))
         assertEquals(2, queue.transition(3, PlaybackQueueState.Action.NEXT))
     }
+    @Test fun forwardsQueueStateAndActionToNativeTransitionPolicy() {
+        val arguments = mutableListOf<Any>()
+        val queue = PlaybackQueueState { current, size, shuffle, repeat, action ->
+            arguments += listOf(current, size, shuffle, repeat, action)
+            2
+        }
+        queue.select(1, 4)
+        queue.setShuffle(true)
+        queue.setRepeatMode(1)
+
+        assertEquals(2, queue.transition(4, PlaybackQueueState.Action.NEXT))
+        assertEquals(listOf(1, 4, true, 1, 0), arguments)
+    }
+
+    @Test fun rejectsUnsupportedRepeatModes() {
+        val queue = state()
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            queue.setRepeatMode(3)
+        }
+    }
+
 }
