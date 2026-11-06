@@ -70,6 +70,7 @@ class PlaybackService : Service() {
         const val EXTRA_IS_PLAYING = "is_playing"
         const val EXTRA_SHUFFLE_ENABLED = "shuffle_enabled"
         const val EXTRA_REPEAT_MODE = "repeat_mode"
+        const val EXTRA_VOLUME = "extra_volume"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -156,7 +157,8 @@ class PlaybackService : Service() {
                     .putExtra(EXTRA_CURRENT_TITLE, currentTitle)
                     .putExtra(EXTRA_CURRENT_ARTIST, currentArtist)
                     .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
-                    .putExtra(EXTRA_REPEAT_MODE, repeatMode))
+                    .putExtra(EXTRA_REPEAT_MODE, repeatMode)
+                    .putExtra(EXTRA_VOLUME, player.currentVolumeFraction()))
             }
             mainHandler.postDelayed(this, 500L)
         }
