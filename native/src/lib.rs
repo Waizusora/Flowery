@@ -1,4 +1,6 @@
 mod streaming;
+#[cfg(target_os = "android")]
+mod aaudio;
 use std::io::Cursor;
 use base64::Engine;
 
