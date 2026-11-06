@@ -139,7 +139,7 @@ class MainActivity : ComponentActivity() {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
                         .apply()
-                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC1/UAC2 playback profile from its descriptors. Decoded audio is converted to the DAC's supported PCM format and clock rate; WAV passthrough is used only when the source format matches exactly."
+                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC1/UAC2 playback profile from its descriptors. All supported audio is decoded by Symphonia into the shared PCM path. Bit Perfect is not currently certified."
                 }
                 granted -> {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
@@ -348,7 +348,7 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = if (enabled) {
                 "Direct USB exclusive mode disabled. Playback will use the normal Flowery DSP and Android AAudio route."
             } else {
-                "Direct USB exclusive mode enabled for compatible stereo UAC1/UAC2 DACs. WAV integer PCM can preserve source samples at unity gain; decoded formats are converted to the selected DAC PCM format and negotiated clock rate; they are not bit-perfect. Flowery tries permitted devices using descriptor-derived capabilities."
+                "Direct USB exclusive mode enabled for compatible stereo UAC1/UAC2 DACs. All formats use Symphonia and the shared PCM path; Bit Perfect is not currently certified. Flowery tries permitted devices using descriptor-derived capabilities."
             }
         } else {
             usbDacController.requestPermission(device)
