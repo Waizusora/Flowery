@@ -229,7 +229,14 @@ class UsbDacController(context: Context) {
                 manufacturer = device.manufacturerName,
                 product = device.productName,
                 clockRangeReports = clockRangeReports
-            )
+            ) + "\n\nDescriptor-derived stereo UAC2 OUT profiles:" +
+                discoveredProfiles.joinToString(separator = "") { profile ->
+                    "\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
+                        "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
+                        "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
+                        "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, " +
+                        "${profile.synchronization} sync."
+                }
             runCatching {
                 val database = UsbDacProfileDatabase(appContext)
                 try {
