@@ -18,7 +18,7 @@ The extension list is a discovery filter only. Successful playback depends on Sy
 
 ## Sidecar LRC files
 
-During traversal of a directory, the scanner indexes files ending in `.lrc` by their filename without the extension. An audio file is associated with an LRC file when the base filenames match, ignoring case.
+Rust indexes sidecar `.lrc` files by directory and filename stem. An audio file is associated with the first matching LRC file in the same directory, ignoring case.
 
 `LrcParser` delegates parsing to Rust, which recognizes timestamps in the form `[minutes:seconds]` with an optional fractional component of one to three digits. Multiple timestamps on one line are expanded into separate lyric entries and sorted by timestamp. Current-line lookup is also performed in Rust using a binary search over the sorted timestamp array; Kotlin only maps the returned index to the UI model. Equal timestamps resolve to the last entry at that timestamp.
 
