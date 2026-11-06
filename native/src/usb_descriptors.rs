@@ -603,6 +603,7 @@ mod tests {
     fn playback_descriptor_trace_is_bounded_and_identifies_selected_stream() {
         let descriptors = [
             9,4,2,1,1,1,2,0x20,0,
+            3,0x24,1,
             9,4,3,0,0,1,1,0x20,0
         ];
         let trace = playback_descriptor_trace(&descriptors, 2);
