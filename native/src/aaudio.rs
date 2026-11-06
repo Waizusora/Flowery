@@ -1,4 +1,4 @@
-use jni::objects::{JClass, JFloatArray};
+use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_TRUE};
 use jni::JNIEnv;
 use std::ffi::c_void;
