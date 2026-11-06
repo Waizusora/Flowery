@@ -63,6 +63,7 @@ internal class UsbDacSession internal constructor(
     }
 
     private fun volumeRange(): Pair<Int, Int>? {
+        if (volumeRangeLoaded) return cachedVolumeRange
         val unit = volumeUnit ?: return null
         val minimum = ByteArray(2)
         val maximum = ByteArray(2)
@@ -72,12 +73,12 @@ internal class UsbDacSession internal constructor(
             if (transferred < 8) return null
             val buffer = java.nio.ByteBuffer.wrap(range).order(java.nio.ByteOrder.LITTLE_ENDIAN)
             if (buffer.short.toInt() < 1) return null
-            return buffer.short.toInt() to buffer.short.toInt()
+            return (buffer.short.toInt() to buffer.short.toInt()).also { cachedVolumeRange = it; volumeRangeLoaded = true }
         }
         if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) return null
         val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
         val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        return if (max > min) min to max else null
+        return (if (max > min) min to max else null).also { cachedVolumeRange = it; volumeRangeLoaded = true }
     }
 
     @Synchronized
@@ -101,6 +102,8 @@ internal class UsbDacSession internal constructor(
     }
     @Volatile
     private var closed = false
+    private var volumeRangeLoaded = false
+    private var cachedVolumeRange: Pair<Int, Int>? = null
 
     @Synchronized
     fun writePcm(pcmLittleEndian: ByteArray, frameCount: Int): Int {
