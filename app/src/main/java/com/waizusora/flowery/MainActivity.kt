@@ -176,6 +176,9 @@ class MainActivity : ComponentActivity() {
             if (intent.hasExtra(PlaybackService.EXTRA_REPEAT_MODE)) {
                 repeatMode = intent.getIntExtra(PlaybackService.EXTRA_REPEAT_MODE, 0).coerceIn(0, 2)
             }
+            if (intent.hasExtra(PlaybackService.EXTRA_VOLUME)) {
+                volume = intent.getFloatExtra(PlaybackService.EXTRA_VOLUME, volume).coerceIn(0f, 1f)
+            }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
             if (reportedDuration > 0L) playbackDurationMs = reportedDuration
