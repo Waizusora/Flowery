@@ -359,13 +359,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) { "Unable to update streaming equalizer" }
                         appliedEqualizerRevision = equalizerRevision
                     }
-                    val chunk = NativeAudio.nativeReadStreamChunk(handle, DECODE_CHUNK_FRAMES)
-                    if (chunk.isEmpty()) {
-                        reachedEnd = true
-                        continue
-                    }
-                    var frames = chunk.size / channels
-                    var outputChunk = chunk
+                    var pumpFrames = DECODE_CHUNK_FRAMES
                     if (segmentFrameLimit != null) {
                         val queuedFrames = NativeAudio.nativeGetOutputPositionFrames() +
                             NativeAudio.nativeGetStreamBufferedFrames().coerceAtLeast(0)
@@ -374,24 +368,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             reachedEnd = true
                             continue
                         }
-                        if (frames.toLong() > remainingFrames) {
-                            frames = remainingFrames.toInt()
-                            outputChunk = chunk.copyOf(frames * channels)
-                        }
+                        pumpFrames = minOf(pumpFrames.toLong(), remainingFrames).toInt()
                     }
-                    var offsetFrames = 0
-                    while (!stopped.get() && playbackGeneration.get() == generation && offsetFrames < frames && pendingSeekMs.get() == null) {
-                        val written = NativeAudio.nativeWriteStreamFrames(
-                            outputChunk, offsetFrames, frames - offsetFrames
-                        )
-                        if (written < 0) throw IllegalStateException("AAudio ring-buffer write failed")
-                        if (written == 0) {
+                    val pumped = NativeAudio.nativePumpStreamChunk(handle, pumpFrames)
+                    when {
+                        pumped == -1 -> reachedEnd = true
+                        pumped == 0 -> {
                             check(NativeAudio.nativeIsOutputActive()) {
                                 "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
                             }
                             Thread.sleep(4)
                         }
-                        else offsetFrames += written
+                        pumped < 0 -> throw IllegalStateException("Rust AAudio streaming pump failed")
                     }
                     if (!outputStarted && !paused &&
                         NativeAudio.nativeGetStreamBufferedFrames() >= lowWatermarkFrames) {
