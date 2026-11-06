@@ -4,10 +4,14 @@ import android.content.Context
 import android.media.AudioManager
 import kotlin.math.roundToInt
 
-/**
- * Routes ordinary outputs through Android's music stream volume.
- * USB DAC software gain is kept separately by stable device identity.
- */
+/** The three volume policies used by Flowery's Android and USB output routes. */
+enum class OutputVolumeProfile {
+    SYSTEM_STREAM,
+    USB_HARDWARE_SYNCHRONIZED,
+    USB_SOFTWARE
+}
+
+/** Routes system outputs through Android and keeps USB DAC software gain per device. */
 class OutputVolumeController(context: Context) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -25,6 +29,25 @@ class OutputVolumeController(context: Context) {
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, requested, 0)
     }
 
+    fun usbProfile(deviceKey: String, hardwareVolumeAvailable: Boolean): OutputVolumeProfile {
+        val profile = if (hardwareVolumeAvailable) {
+            OutputVolumeProfile.USB_HARDWARE_SYNCHRONIZED
+        } else {
+            OutputVolumeProfile.USB_SOFTWARE
+        }
+        preferences.edit().putString(profileKey(deviceKey), profile.name).apply()
+        return profile
+    }
+
+    fun usbProfile(deviceKey: String): OutputVolumeProfile =
+        runCatching {
+            OutputVolumeProfile.valueOf(
+                preferences.getString(profileKey(deviceKey), OutputVolumeProfile.USB_SOFTWARE.name)
+                    ?: OutputVolumeProfile.USB_SOFTWARE.name
+            )
+        }.getOrDefault(OutputVolumeProfile.USB_SOFTWARE)
+
+    /** New USB DACs without hardware volume controls start at a conservative 20%. */
     fun usbVolume(deviceKey: String): Float =
         preferences.getFloat(key(deviceKey), 0.20f).coerceIn(0f, 1f)
 
@@ -33,4 +56,5 @@ class OutputVolumeController(context: Context) {
     }
 
     private fun key(deviceKey: String) = "usb_volume_" + deviceKey.hashCode().toUInt().toString(16)
+    private fun profileKey(deviceKey: String) = "usb_profile_" + deviceKey.hashCode().toUInt().toString(16)
 }
