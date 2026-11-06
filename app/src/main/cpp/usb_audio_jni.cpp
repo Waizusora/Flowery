@@ -55,6 +55,17 @@ struct UsbAudioSession {
     int channels = 2;
     int subslot_bytes = 0;
     int sample_rate = 0;
+    uint8_t feedback_endpoint = 0;
+    uint16_t feedback_max_packet_bytes = 0;
+    libusb_transfer* feedback_transfer = nullptr;
+    std::vector<unsigned char> feedback_buffer;
+    std::atomic<bool> feedback_stopped{false};
+    std::atomic<bool> feedback_in_flight{false};
+    std::atomic<bool> feedback_valid{false};
+    std::atomic<uint32_t> feedback_rate_fp{0};
+    uint8_t feedback_fraction_bits = 0;
+    uint32_t feedback_base_interval_us = 0;
+    uint64_t feedback_phase = 0;
     uint64_t frame_phase = 0;
     uint32_t interval_us = 1000;
     // PCM that has been accepted from the caller but not yet submitted. The
@@ -99,6 +110,44 @@ void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     }
 }
 
+void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
+    auto* session = static_cast<UsbAudioSession*>(transfer->user_data);
+    if (session == nullptr) return;
+    session->feedback_in_flight.store(false, std::memory_order_release);
+    if (transfer->status == LIBUSB_TRANSFER_COMPLETED && transfer->num_iso_packets > 0) {
+        const auto& packet = transfer->iso_packet_desc[0];
+        const unsigned char* data = libusb_get_iso_packet_buffer_simple(transfer, 0);
+        if (packet.status == LIBUSB_TRANSFER_COMPLETED && data != nullptr) {
+            uint32_t value = 0;
+            if (session->feedback_fraction_bits == 14 && packet.actual_length >= 3) {
+                value = static_cast<uint32_t>(data[0]) |
+                        (static_cast<uint32_t>(data[1]) << 8) |
+                        (static_cast<uint32_t>(data[2]) << 16);
+            } else if (session->feedback_fraction_bits == 16 && packet.actual_length >= 4) {
+                value = static_cast<uint32_t>(data[0]) |
+                        (static_cast<uint32_t>(data[1]) << 8) |
+                        (static_cast<uint32_t>(data[2]) << 16) |
+                        (static_cast<uint32_t>(data[3]) << 24);
+            }
+            if (value != 0) {
+                session->feedback_rate_fp.store(value, std::memory_order_release);
+                session->feedback_valid.store(true, std::memory_order_release);
+            }
+        }
+    }
+    session->event_condition.notify_all();
+    if (!session->feedback_stopped.load(std::memory_order_acquire) &&
+        session->event_thread_running.load(std::memory_order_acquire)) {
+        const int result = libusb_submit_transfer(transfer);
+        if (result == LIBUSB_SUCCESS) {
+            session->feedback_in_flight.store(true, std::memory_order_release);
+        } else {
+            session->event_loop_error.store(result, std::memory_order_release);
+            session->event_condition.notify_all();
+        }
+    }
+}
+
 const char* transfer_status_name(unsigned int status) {
     switch (status) {
         case LIBUSB_TRANSFER_COMPLETED: return "COMPLETED";
@@ -136,9 +185,26 @@ void event_loop_main(UsbAudioSession* session) {
 }
 
 void stop_event_thread(UsbAudioSession* session) {
+    session->feedback_stopped.store(true, std::memory_order_release);
+    if (session->feedback_transfer != nullptr &&
+        session->feedback_in_flight.load(std::memory_order_acquire)) {
+        libusb_cancel_transfer(session->feedback_transfer);
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(kTeardownTimeoutMs);
+        while (session->feedback_in_flight.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::unique_lock<std::mutex> lock(session->event_mutex);
+            session->event_condition.wait_for(lock, std::chrono::milliseconds(10));
+        }
+    }
     session->event_thread_running.store(false, std::memory_order_release);
     session->event_condition.notify_all();
     if (session->event_thread.joinable()) session->event_thread.join();
+    if (session->feedback_transfer != nullptr &&
+        !session->feedback_in_flight.load(std::memory_order_acquire)) {
+        libusb_free_transfer(session->feedback_transfer);
+        session->feedback_transfer = nullptr;
+    }
 }
 
 // Releases every completed transfer and records the first transport failure.
@@ -462,11 +528,14 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     JNIEnv* env, jobject, jint file_descriptor, jint interface_number,
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
+    jint feedback_endpoint, jint feedback_max_packet_bytes,
     jint channels, jint subslot_bytes, jint sample_rate, jint clock_id,
     jint control_interface, jint protocol, jboolean sampling_frequency_control) {
     if (file_descriptor < 0 || interface_number < 0 || alternate_setting <= 0 ||
         endpoint <= 0 || (endpoint & 0x80) != 0 || max_packet_bytes <= 0 ||
-        interval <= 0 || channels < 1 || channels > 8 || subslot_bytes <= 0 || sample_rate <= 0 ||
+        interval <= 0 || feedback_endpoint < 0 || feedback_max_packet_bytes < 0 ||
+        ((feedback_endpoint == 0) != (feedback_max_packet_bytes == 0)) ||
+        channels < 1 || channels > 8 || subslot_bytes <= 0 || sample_rate <= 0 ||
         (protocol != 0x00 && protocol != 0x20)) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Invalid USB Audio Class playback parameters");
@@ -496,6 +565,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     session->channels = channels;
     session->subslot_bytes = subslot_bytes;
     session->sample_rate = sample_rate;
+    session->feedback_endpoint = static_cast<uint8_t>(feedback_endpoint);
+    session->feedback_max_packet_bytes = static_cast<uint16_t>(feedback_max_packet_bytes);
 
     const int speed = libusb_get_device_speed(libusb_get_device(session->handle));
     session->interval_us = service_interval_us(speed, session->interval);
@@ -565,6 +636,33 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
         return 0;
     }
 
+    if (session->feedback_endpoint != 0) {
+        const bool high_speed = speed == LIBUSB_SPEED_HIGH || speed == LIBUSB_SPEED_SUPER ||
+                                speed == LIBUSB_SPEED_SUPER_PLUS;
+        session->feedback_fraction_bits = high_speed ? 16 : 14;
+        session->feedback_base_interval_us = high_speed ? 125 : 1000;
+        session->feedback_buffer.resize(session->feedback_max_packet_bytes);
+        session->feedback_transfer = libusb_alloc_transfer(1);
+        if (session->feedback_transfer == nullptr) {
+            close_session(session);
+            jclass exception = env->FindClass("java/lang/IllegalStateException");
+            if (exception != nullptr) env->ThrowNew(exception, "Could not allocate the USB feedback transfer");
+            return 0;
+        }
+        libusb_fill_iso_transfer(
+            session->feedback_transfer, session->handle, session->feedback_endpoint,
+            session->feedback_buffer.data(), static_cast<int>(session->feedback_buffer.size()),
+            1, on_feedback_complete, session, 0);
+        libusb_set_iso_packet_lengths(
+            session->feedback_transfer, static_cast<unsigned int>(session->feedback_buffer.size()));
+        const int feedback_result = libusb_submit_transfer(session->feedback_transfer);
+        if (feedback_result != LIBUSB_SUCCESS) {
+            close_session(session);
+            return throw_usb_error(env, "Submitting asynchronous endpoint feedback transfer", feedback_result);
+        }
+        session->feedback_in_flight.store(true, std::memory_order_release);
+    }
+
     return reinterpret_cast<jlong>(session);
 }
 
@@ -619,9 +717,21 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         uint64_t phase = session->frame_phase;
         size_t planned_frames = 0;
         while (packet_bytes.size() < kPacketsPerUrb) {
-            const uint64_t accumulated =
-                phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
-            const unsigned int frames = static_cast<unsigned int>(accumulated / 1000000ULL);
+            uint64_t accumulated = 0;
+            unsigned int frames = 0;
+            if (session->feedback_endpoint != 0 &&
+                session->feedback_valid.load(std::memory_order_acquire)) {
+                const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
+                const uint64_t scaled = feedback * session->interval_us /
+                                        session->feedback_base_interval_us;
+                accumulated = phase + scaled;
+                frames = static_cast<unsigned int>(accumulated >> session->feedback_fraction_bits);
+                phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+            } else {
+                accumulated = phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
+                frames = static_cast<unsigned int>(accumulated / 1000000ULL);
+                phase = accumulated % 1000000ULL;
+            }
             if (frames == 0 || planned_frames + frames > available_frames) break;
             const unsigned int packet_size = static_cast<unsigned int>(frames * bytes_per_frame);
             if (packet_size > session->max_packet_bytes) {
@@ -630,7 +740,6 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             }
             packet_bytes.push_back(packet_size);
             planned_frames += frames;
-            phase = accumulated % 1000000ULL;
         }
         if (failure.failed || packet_bytes.empty()) break;
 
