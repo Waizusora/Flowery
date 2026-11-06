@@ -25,7 +25,7 @@ namespace {
 // and is intentionally left queued between JNI writes, so the endpoint does not
 // run dry while the producer decodes the next block.
 constexpr size_t kPacketsPerUrb = 64;
-constexpr size_t kMaxUrbsInFlight = 16;
+constexpr size_t kMaxUrbsInFlight = 32;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
 // because it cancels queued isochronous URBs and breaks the scheduling chain.
