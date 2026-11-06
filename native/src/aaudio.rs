@@ -111,6 +111,41 @@ impl Engine {
 static ENGINE:OnceLock<Mutex<Engine>>=OnceLock::new();
 fn engine()-> &'static Mutex<Engine>{ENGINE.get_or_init(||Mutex::new(Engine::new()))}
 
+/// Returns free PCM frames in the bounded output ring.
+pub(crate) fn available_output_frames() -> usize {
+    let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    engine.output.as_ref().map(|output| {
+        let read = output.read.load(Ordering::Acquire);
+        let write = output.write.load(Ordering::Acquire);
+        output.capacity.saturating_sub(write.saturating_sub(read)) as usize
+    }).unwrap_or(0)
+}
+
+/// Copies interleaved float PCM into the output ring without crossing JNI.
+pub(crate) fn write_output_samples(samples: &[f32]) -> Result<usize, i32> {
+    let mut engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let output = engine.output.as_mut().ok_or(INVALID_STATE)?;
+    if samples.len() % output.channels != 0 {
+        return Err(INVALID_FORMAT);
+    }
+    let requested_frames = samples.len() / output.channels;
+    let read = output.read.load(Ordering::Acquire);
+    let write = output.write.load(Ordering::Relaxed);
+    let queued = write.saturating_sub(read);
+    let frames = requested_frames.min(output.capacity.saturating_sub(queued) as usize);
+    if frames == 0 {
+        return Ok(0);
+    }
+    let sample_count = frames * output.channels;
+    let ring_len = output.ring.len();
+    for (index, sample) in samples[..sample_count].iter().enumerate() {
+        let ring_index = (write as usize * output.channels + index) % ring_len;
+        output.ring[ring_index] = *sample;
+    }
+    output.write.store(write + frames as u64, Ordering::Release);
+    Ok(frames)
+}
+
 unsafe fn wait_stream_state(stream:*mut AAudioStream, transient:i32, target:i32)->i32 {
     let mut state=AAudioStream_getState(stream);
     for _ in 0..4 {
