@@ -34,6 +34,9 @@ fn parse_timestamp(bytes: &[u8], start: usize) -> Option<(usize, i64)> {
         return None;
     }
     let seconds = std::str::from_utf8(&bytes[second_start..cursor]).ok()?.parse::<i64>().ok()?;
+    if seconds > 59 {
+        return None;
+    }
 
     let mut milliseconds = 0_i64;
     if bytes.get(cursor) == Some(&b'.') {
