@@ -6,7 +6,7 @@ The streaming audio path opens a SAF document descriptor, decodes packets increm
 
 The streaming decoder supports mono and stereo. The equalizer requires 31 gains and constrains each band to -12 dB through +12 dB. Resampler and per-channel EQ history persist between chunks. Seeking flushes queued output, performs a format-level seek, resets decoder/DSP state, and discards preroll before playback resumes.
 
-The library uses Storage Access Framework and `DocumentFile`; it does not use MediaStore. The foreground service maintains `MediaSessionCompat`, handles notification/media-button actions and audio focus, and responds to noisy-route events.
+The library uses Storage Access Framework and `DocumentFile`; it does not use MediaStore. The Rust library owns the supported audio-extension registry and classifies candidate audio files through JNI; Kotlin retains SAF traversal and URI handling. The foreground service maintains `MediaSessionCompat`, handles notification/media-button actions and audio focus, and responds to noisy-route events.
 
 ## USB DAC access
 
