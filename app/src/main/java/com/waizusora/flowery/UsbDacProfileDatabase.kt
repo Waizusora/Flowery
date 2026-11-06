@@ -21,12 +21,14 @@ internal class UsbDacProfileDatabase(context: Context) :
         val descriptorFingerprint: String,
         val descriptorHex: String,
         val seenCount: Long,
+        val totalProfiles: Int,
         val lastSeenEpochMs: Long
     ) {
         fun diagnosticSummary(): String = buildString {
             appendLine("Database profile key: $profileKey")
             appendLine("Descriptor SHA-256: $descriptorFingerprint")
             appendLine("Observed connections: $seenCount")
+            appendLine("Profiles stored in local database: $totalProfiles")
             appendLine("Last observed (epoch ms): $lastSeenEpochMs")
             appendLine("Raw configuration descriptor bytes (hex):")
             appendLine(descriptorHex)
@@ -85,10 +87,14 @@ internal class UsbDacProfileDatabase(context: Context) :
 
         writableDatabase.beginTransaction()
         try {
-            val existingCount = readableDatabase.rawQuery(
-                "SELECT seen_count FROM $TABLE_PROFILES WHERE profile_key = ?",
+            val existing = readableDatabase.rawQuery(
+                "SELECT first_seen_epoch_ms, seen_count FROM $TABLE_PROFILES WHERE profile_key = ?",
                 arrayOf(profileKey)
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0) to cursor.getLong(1) else null
+            }
+            val firstSeen = existing?.first ?: now
+            val nextSeenCount = (existing?.second ?: 0L) + 1L
             val values = ContentValues().apply {
                 put("profile_key", profileKey)
                 put("vendor_id", vendorId)
@@ -98,9 +104,9 @@ internal class UsbDacProfileDatabase(context: Context) :
                 put("descriptor_fingerprint", fingerprint)
                 put("descriptor_hex", rawHex)
                 put("descriptor_report", descriptorReport)
-                put("first_seen_epoch_ms", now)
+                put("first_seen_epoch_ms", firstSeen)
                 put("last_seen_epoch_ms", now)
-                put("seen_count", existingCount + 1L)
+                put("seen_count", nextSeenCount)
             }
             writableDatabase.insertWithOnConflict(
                 TABLE_PROFILES,
@@ -112,7 +118,7 @@ internal class UsbDacProfileDatabase(context: Context) :
         } finally {
             writableDatabase.endTransaction()
         }
-        return StoredProfile(profileKey, fingerprint, rawHex, existingCountFor(profileKey), now)
+        return StoredProfile(profileKey, fingerprint, rawHex, existingCountFor(profileKey), profileCount(), now)
     }
 
     private fun existingCountFor(profileKey: String): Long =
