@@ -8,6 +8,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import java.util.Locale
+import org.json.JSONArray
 
 /**
  * Discovers USB Audio Class devices and requests Android USB host permission.
@@ -126,7 +127,7 @@ class UsbDacController(context: Context) {
                 manufacturer = device.manufacturerName,
                 clockRangeReports = clockReports
             )
-            val playbackProfiles = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(descriptors)
+            val playbackProfiles = parseNativePlaybackProfiles(descriptors, 0)
             val profileReport = if (playbackProfiles.isEmpty()) {
                 "\nStereo UAC2 OUT playback profiles: none could be validated from the descriptors."
             } else {
@@ -174,16 +175,13 @@ class UsbDacController(context: Context) {
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
         try {
             val descriptors = connection.rawDescriptors
-            val profiles = UsbDacPlaybackProfile.findStereoUac2PlaybackProfiles(
-                descriptors,
-                requestedBitResolution = bitResolution
-            )
+            val profiles = parseNativePlaybackProfiles(descriptors, bitResolution)
             val profile = profiles.firstOrNull()
                 ?: throw IllegalStateException(
                     "No descriptor-validated stereo UAC2 OUT profile supports " +
                         bitResolution + "-bit PCM."
                 )
-            val clocks = UsbAudioDescriptorParser.playbackClockSources(descriptors, profile.interfaceNumber)
+            val clocks = parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
             if (clocks.isEmpty()) {
                 throw IllegalStateException(
                     "No UAC2 clock source descriptor was linked to playback interface ${profile.interfaceNumber}. " +
@@ -224,6 +222,43 @@ class UsbDacController(context: Context) {
         } catch (error: Throwable) {
             connection.close()
             throw error
+        }
+    }
+
+
+    private fun parseNativePlaybackProfiles(
+        descriptors: ByteArray,
+        requestedBitResolution: Int
+    ): List<UsbDacPlaybackProfile> {
+        val values = JSONArray(
+            NativeAudio.nativeParseUsbDacProfiles(descriptors, requestedBitResolution)
+        )
+        return (0 until values.length()).map { index ->
+            val value = values.getJSONObject(index)
+            UsbDacPlaybackProfile(
+                interfaceNumber = value.getInt("interfaceNumber"),
+                alternateSetting = value.getInt("alternateSetting"),
+                channels = value.getInt("channels"),
+                subslotBytes = value.getInt("subslotBytes"),
+                bitResolution = value.getInt("bitResolution"),
+                endpointAddress = value.getInt("endpointAddress"),
+                maxPacketBytes = value.getInt("maxPacketBytes"),
+                interval = value.getInt("interval"),
+                synchronization = value.getString("synchronization")
+            )
+        }
+    }
+
+    private fun parseNativePlaybackClocks(
+        descriptors: ByteArray,
+        streamingInterface: Int
+    ): List<Pair<Int, Int>> {
+        val values = JSONArray(
+            NativeAudio.nativeParseUsbDacPlaybackClocks(descriptors, streamingInterface)
+        )
+        return (0 until values.length()).map { index ->
+            val value = values.getJSONObject(index)
+            value.getInt("clockId") to value.getInt("controlInterface")
         }
     }
 
