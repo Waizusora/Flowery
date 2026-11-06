@@ -316,22 +316,28 @@ impl StreamDecoder {
         }
         Ok(result)
     }
-    pub(super) fn read_usb_pcm24(&mut self, max_frames: usize, target_gain: f32) -> Result<Vec<u8>, String> {
-        if self.channels != 2 || max_frames == 0 || !target_gain.is_finite() {
+    pub(super) fn read_usb_pcm(
+        &mut self,
+        max_frames: usize,
+        target_gain: f32,
+        format: crate::usb_pcm::PcmFormat,
+    ) -> Result<Vec<u8>, String> {
+        let format = format.validate().map_err(str::to_string)?;
+        if self.channels != format.channels as usize || max_frames == 0 || !target_gain.is_finite() {
             return Err("Invalid direct USB PCM read configuration".into());
         }
         let samples = self.read_frames(max_frames)?;
         let gain = target_gain.clamp(0.0, 1.0);
         let start_gain = if self.usb_last_gain < 0.0 { gain } else { self.usb_last_gain };
         let sample_count = samples.len();
-        let mut packed = Vec::with_capacity(sample_count.saturating_mul(3));
+        let mut packed = Vec::with_capacity(sample_count.saturating_mul(format.subslot_bytes as usize));
         for (index, sample) in samples.into_iter().enumerate() {
             let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
             let ramp_gain = start_gain + (gain - start_gain) * fraction;
-            let value = quantize_signed_24(sample, ramp_gain);
-            packed.push(value as u8);
-            packed.push((value >> 8) as u8);
-            packed.push((value >> 16) as u8);
+            let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
+            for byte in 0..format.subslot_bytes {
+                packed.push((value >> (byte * 8)) as u8);
+            }
         }
         self.usb_last_gain = gain;
         Ok(packed)
@@ -452,10 +458,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamCh
     }
 }
 
-fn quantize_signed_24(sample: f32, gain: f32) -> i32 {
+fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
     let finite_sample = if sample.is_finite() { sample } else { 0.0 };
     let scaled = (finite_sample * gain).clamp(-1.0, 1.0);
-    if scaled <= -1.0 { -8_388_608 } else { (scaled * 8_388_607.0) as i32 }
+    let negative_limit = -(1_i64 << (valid_bits - 1));
+    let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
+    if scaled <= -1.0 {
+        negative_limit
+    } else {
+        (scaled as f64 * positive_limit as f64).round() as i64
+    }
 }
 
 #[no_mangle]
