@@ -33,7 +33,7 @@ class LibraryScanner(private val context: Context) {
                         uri = Uri.parse(item.getString("uri")),
                         title = item.getString("title"),
                         folder = item.getString("folder"),
-                        mimeType = item.optString("mimeType").takeIf { it.isNotEmpty() },
+                        mimeType = if (item.isNull("mimeType")) null else item.optString("mimeType"),
                         sidecarLyricsUri = item.optString("sidecarLyricsUri")
                             .takeIf { it.isNotEmpty() }?.let(Uri::parse),
                         cueStartMs = item.nullableLong("cueStartMs"),
