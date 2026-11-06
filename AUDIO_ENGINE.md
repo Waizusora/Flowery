@@ -2,9 +2,9 @@
 
 ## Streaming pipeline
 
-`SAF URI → ParcelFileDescriptor → Symphonia → Rubato (when required) → 31-band EQ → bounded PCM ring → AAudio`
+`SAF URI → ParcelFileDescriptor → Rust/Symphonia → Rust/Rubato → Rust 31-band EQ → Rust bounded PCM ring → Rust AAudio NDK FFI`
 
-`FloweryPlayer.kt` coordinates the worker. `native/src/streaming.rs` implements incremental Symphonia decoding, Rubato resampling, EQ and format-level seeking. `app/src/main/cpp/aaudio_output.cpp` owns AAudio and the PCM ring buffer.
+`FloweryPlayer.kt` coordinates the worker. `native/src/streaming.rs` implements incremental Symphonia decoding, Rubato resampling, EQ and format-level seeking. `native/src/aaudio.rs` owns the AAudio NDK stream, PCM ring buffer, callback, output lifecycle, and JNI entry points. The C++ native target is retained only for the independent direct-USB libusb transport.
 
 ## Decode and resampling
 
@@ -20,7 +20,7 @@ Native tests check chunk-boundary continuity and coefficient finiteness. The pro
 
 ## Ring buffer and callback
 
-The configured ring capacity is 16,384 frames. The worker decodes chunks up to 2,048 frames and targets a 4,096-frame low-water mark. The AAudio callback copies available interleaved float frames, applies output gain, clamps samples, fills underruns with silence, and stops after EOF and queue drain. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking. A flush epoch invalidates stale frames after a seek.
+The configured ring capacity is 16,384 frames. The worker decodes chunks up to 2,048 frames and targets a 4,096-frame low-water mark. The Rust AAudio callback copies available interleaved float frames, applies output gain, clamps samples, converts to the selected PCM output format, fills underruns with silence, and stops after EOF and queue drain. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking. The producer and callback share a bounded frame-indexed ring buffer; flush pauses the stream before resetting queue indices.
 
 AAudio exclusive sharing is requested first; shared mode is attempted if exclusive opening fails. Shared mode may be mixed or resampled by Android.
 
