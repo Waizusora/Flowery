@@ -1,6 +1,7 @@
 mod streaming;
 mod lyrics;
 mod library;
+mod queue;
 mod playlists;
 #[cfg(target_os = "android")]
 mod aaudio;
