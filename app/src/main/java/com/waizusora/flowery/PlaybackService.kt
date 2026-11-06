@@ -240,7 +240,10 @@ class PlaybackService : Service() {
             ACTION_RESUME -> resumePlayback()
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> skipPrevious()
-            ACTION_VOLUME -> player.setVolume(intent.getFloatExtra(EXTRA_VALUE, 1f))
+            ACTION_VOLUME -> {
+                val requestedVolume = intent.getFloatExtra(EXTRA_VALUE, 1f)
+                io.execute { if (::player.isInitialized) player.setVolume(requestedVolume) }
+            }
             ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
