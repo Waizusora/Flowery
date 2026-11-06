@@ -107,7 +107,7 @@ The streaming playback path is:
 
 `SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring buffer → Rust AAudio callback → Android audio route`
 
-The ring buffer capacity is selected from the negotiated output rate: at least two seconds of PCM and at least 32,768 frames, rounded up to a power of two. The Kotlin playback coordinator requests bounded native pump operations of up to 8,192 frames and starts output after a 1.5-second low-water mark, bounded to three quarters of ring capacity. Rust performs decoding, resampling, equalization, and ring-buffer writes without copying AAudio PCM through Java FloatArrays; Kotlin retains Android route, lifecycle, pause, and seek coordination. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
+Rust computes the ring buffer capacity from the negotiated output rate: at least two seconds of PCM and at least 32,768 frames, rounded up to a power of two. Rust also selects the nearest supported output rate when the source rate is unavailable, converts timeline positions to frames, and computes the 1.5-second low-water mark bounded to three quarters of ring capacity. Kotlin supplies Android-reported device capabilities and coordinates lifecycle and bounded native pump calls. Rust performs decoding, resampling, equalization, and ring-buffer writes without copying AAudio PCM through Java FloatArrays; Kotlin retains Android route, lifecycle, pause, and seek coordination. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
 
 Seeking uses a format-level Symphonia seek, resets decoder and DSP state, rebuilds resampler history where needed, discards preroll before the requested presentation time, and flushes queued output frames. The player tracks playback generations to prevent an older worker from changing the state of a newer track.
 
@@ -133,6 +133,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │       ├── usb_pcm.rs           # Bounded direct-USB PCM block queue
 │       ├── usb_producer.rs      # Rust-owned decoded USB segment and producer policy
 │       ├── usb_descriptors.rs   # UAC descriptor and clock-response parsing
+│       ├── playback_policy.rs   # Output-rate, ring sizing and frame policy
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
 └── .github/workflows/build.yml  # Android and native CI
