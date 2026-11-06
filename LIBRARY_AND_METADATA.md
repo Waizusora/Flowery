@@ -4,7 +4,7 @@
 
 Flowery uses the Android Storage Access Framework (SAF), not MediaStore. Users select folder trees through the system document picker. Configured roots can be enabled, disabled, or removed; only enabled roots are scanned. `LibraryScanner` recursively traverses trees through `DocumentFile` and deduplicates tracks by document URI.
 
-The scanner recognizes these filename extensions: `mp3`, `flac`, `wav`, `wave`, `aiff`, `aif`, `alac`, `m4a`, `mp4`, `aac`, `ogg`, `opus`, `oga`, `wma`, `ape`, `wv`, `tta`, `mka`, `m4b`, `dsf`, and `dff`. This is a discovery filter only. Playback depends on Symphonia's actual container and codec support.
+The supported audio filename-extension registry and its classification policy are owned by `native/src/library.rs`. `LibraryScanner` calls the Rust predicate for candidate files and playlist targets. Kotlin remains responsible for traversing `DocumentFile` trees, opening SAF documents, and associating Android `Uri` values; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
 
 ## Sidecar LRC
 
