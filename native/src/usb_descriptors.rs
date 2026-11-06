@@ -532,7 +532,7 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock_ranges_json, clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace};
+    use super::{clock_ranges_json, clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace, select_usb_sample_rates_json};
     use serde_json::Value;
 
     #[test]
@@ -548,6 +548,34 @@ mod tests {
         assert_eq!(profiles[0].channels, 2);
         assert_eq!(profiles[0].endpoint_address, 4);
         assert_eq!(profiles[0].max_packet_bytes, 294);
+    }
+
+    #[test]
+    fn selects_nearest_rate_from_uac2_clock_ranges() {
+        let ranges = r#"[{"minimum":48000,"maximum":96000,"resolution":1}]"#;
+        let selected: Vec<u32> = serde_json::from_str(
+            &select_usb_sample_rates_json(44_100, ranges)
+        ).unwrap();
+        assert_eq!(selected, vec![48_000]);
+    }
+
+    #[test]
+    fn preserves_source_rate_when_clock_range_accepts_it() {
+        let ranges = r#"[{"minimum":44100,"maximum":96000,"resolution":1}]"#;
+        let selected: Vec<u32> = serde_json::from_str(
+            &select_usb_sample_rates_json(44_100, ranges)
+        ).unwrap();
+        assert_eq!(selected[0], 44_100);
+    }
+
+    #[test]
+    fn falls_back_to_verified_standard_rate_candidates_when_range_is_unavailable() {
+        let selected: Vec<u32> = serde_json::from_str(
+            &select_usb_sample_rates_json(48_000, "[]")
+        ).unwrap();
+        assert_eq!(selected[0], 48_000);
+        assert!(selected.contains(&44_100));
+        assert!(selected.contains(&192_000));
     }
 
     #[test]
