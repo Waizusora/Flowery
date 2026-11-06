@@ -60,6 +60,47 @@ class UsbDacController(context: Context) {
 
     fun hasPermission(device: UsbDevice): Boolean = manager.hasPermission(device)
 
+    /** Reads the current master-channel Feature Unit volume when the DAC exposes it. */
+    fun readHardwareVolumeFraction(device: UsbDevice): Float? {
+        if (!manager.hasPermission(device)) return null
+        val connection = manager.openDevice(device) ?: return null
+        return try {
+            val unit = UsbFeatureUnitParser.find(connection.rawDescriptors) ?: return null
+            fun request(code: Int, data: ByteArray): Int = connection.controlTransfer(
+                if (code == 0x01) 0x21 else 0xA1,
+                code,
+                0x0200,
+                (unit.unitId shl 8) or unit.controlInterface,
+                data,
+                data.size,
+                500
+            )
+            val range = if (unit.protocol == 0x20) {
+                val response = ByteArray(8)
+                if (request(0x82, response) < 8) return null
+                val buffer = java.nio.ByteBuffer.wrap(response).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+                if (buffer.short.toInt() < 1) return null
+                buffer.short.toInt() to buffer.short.toInt()
+            } else {
+                val minimum = ByteArray(2)
+                val maximum = ByteArray(2)
+                if (request(0x82, minimum) != 2 || request(0x83, maximum) != 2) return null
+                val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+                val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+                min to max
+            }
+            if (range.second <= range.first) return null
+            val current = ByteArray(2)
+            if (request(0x81, current) != 2) return null
+            val value = java.nio.ByteBuffer.wrap(current).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+            ((value - range.first).toFloat() / (range.second - range.first).toFloat()).coerceIn(0f, 1f)
+        } catch (_: Throwable) {
+            null
+        } finally {
+            connection.close()
+        }
+    }
+
     fun hasCompatibleUac2PlaybackProfile(device: UsbDevice): Boolean {
         if (!manager.hasPermission(device)) return false
         val connection = manager.openDevice(device) ?: return false
