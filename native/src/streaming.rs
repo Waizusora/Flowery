@@ -458,8 +458,6 @@ fn quantize_signed_24(sample: f32, gain: f32) -> i32 {
     if scaled <= -1.0 { -8_388_608 } else { (scaled * 8_388_607.0) as i32 }
 }
 
-/// Reads a bounded decoded chunk, applies a stateful software-gain ramp, and packs
-/// stereo samples as signed 24-bit little-endian PCM for the direct USB transport.
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseStreamDecoder(
     _env: JNIEnv, _class: JClass, handle: jlong
