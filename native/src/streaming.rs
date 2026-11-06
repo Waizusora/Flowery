@@ -443,6 +443,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamCh
     output.into_raw()
 }
 
+fn quantize_signed_24(sample: f32, gain: f32) -> i32 {
+    let finite_sample = if sample.is_finite() { sample } else { 0.0 };
+    let scaled = (finite_sample * gain).clamp(-1.0, 1.0);
+    if scaled <= -1.0 { -8_388_608 } else { (scaled * 8_388_607.0) as i32 }
+}
+
 /// Reads a bounded decoded chunk, applies a stateful software-gain ramp, and packs
 /// stereo samples as signed 24-bit little-endian PCM for the direct USB transport.
 #[no_mangle]
@@ -472,9 +478,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamCh
     for (index, sample) in samples.into_iter().enumerate() {
         let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
         let ramp_gain = start_gain + (gain - start_gain) * fraction;
-        let finite_sample = if sample.is_finite() { sample } else { 0.0 };
-        let scaled = (finite_sample * ramp_gain).clamp(-1.0, 1.0);
-        let value = if scaled <= -1.0 { -8_388_608 } else { (scaled * 8_388_607.0) as i32 };
+        let value = quantize_signed_24(sample, ramp_gain);
         packed.push(value as i8);
         packed.push((value >> 8) as i8);
         packed.push((value >> 16) as i8);
@@ -502,6 +506,14 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::fd::AsRawFd;
+
+    #[test]
+    fn signed_24_bit_quantization_handles_full_scale_and_non_finite_samples() {
+        assert_eq!(quantize_signed_24(-1.0, 1.0), -8_388_608);
+        assert_eq!(quantize_signed_24(1.0, 1.0), 8_388_607);
+        assert_eq!(quantize_signed_24(0.0, 0.5), 0);
+        assert_eq!(quantize_signed_24(f32::NAN, 1.0), 0);
+    }
 
     #[test]
     fn equalizer_state_is_continuous_across_chunk_boundaries() {
