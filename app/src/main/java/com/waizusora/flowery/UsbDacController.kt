@@ -8,7 +8,6 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import java.util.Locale
-import kotlin.math.roundToLong
 import org.json.JSONArray
 
 /**
@@ -327,7 +326,7 @@ class UsbDacController(context: Context) {
                     val profiles = parseNativePlaybackProfiles(descriptors, null)
                     val compatibleProfiles = profiles.filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
-                        else compatibleProfiles.map { it.bitResolution }.distinct().sortedDescending()
+                        else compatibleProfiles.map { it.bitResolution }.distinct()
                     val rates = if (allowSampleRateConversion) {
                         discoverClockRates(connection, descriptors, profiles, sampleRate)
                     } else listOf(sampleRate)
@@ -376,7 +375,7 @@ class UsbDacController(context: Context) {
         profiles: List<UsbDacPlaybackProfile>,
         sourceRate: Int
     ): List<Int> {
-        val discovered = linkedSetOf<Int>()
+        val discoveredRanges = JSONArray()
         val clocks = profiles.flatMap { profile ->
             parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
         }.distinct()
@@ -389,30 +388,13 @@ class UsbDacController(context: Context) {
             if (transferred < 2) continue
             val ranges = JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
             for (index in 0 until ranges.length()) {
-                val range = ranges.getJSONObject(index)
-                val minimum = range.optLong("minimum", 0L)
-                val maximum = range.optLong("maximum", 0L)
-                val resolution = range.optLong("resolution", 0L)
-                if (minimum <= 0L || maximum < minimum || maximum > Int.MAX_VALUE) continue
-                val bounded = sourceRate.toLong().coerceIn(minimum, maximum)
-                val selected = if (resolution > 0L) {
-                    val steps = ((bounded - minimum).toDouble() / resolution).roundToLong()
-                    (minimum + steps * resolution).coerceIn(minimum, maximum)
-                } else bounded
-                if (selected in 1..Int.MAX_VALUE.toLong()) discovered += selected.toInt()
+                discoveredRanges.put(ranges.getJSONObject(index))
             }
         }
-        if (discovered.isEmpty()) {
-            // RANGE may be unsupported by otherwise usable UAC2 clocks. Probe common
-            // rates only as candidates; native SET_CUR/GET_CUR readback must confirm
-            // every selected rate before a session can start.
-            return (listOf(sourceRate) + listOf(
-                44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
-                352_800, 384_000, 32_000, 64_000, 128_000, 256_000,
-                8_000, 11_025, 16_000, 22_050, 24_000
-            )).distinct().sortedBy { kotlin.math.abs(it.toLong() - sourceRate.toLong()) }
-        }
-        return discovered.sortedBy { kotlin.math.abs(it.toLong() - sourceRate.toLong()) }
+        val candidates = JSONArray(
+            NativeAudio.nativeSelectUsbSampleRates(sourceRate, discoveredRanges.toString())
+        )
+        return (0 until candidates.length()).map { candidates.getInt(it) }
     }
 
     private fun parseNativePlaybackProfiles(
