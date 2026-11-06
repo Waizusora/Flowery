@@ -7,10 +7,10 @@ import java.nio.ByteOrder
 import kotlin.math.roundToLong
 
 /**
- * Reads unmodified interleaved integer PCM from a little-endian RIFF/WAVE file.
+ * Reads stereo integer PCM from a little-endian RIFF/WAVE file.
  *
- * The reader intentionally accepts only stereo PCM16/24/32. It does not decode,
- * normalize, resample, change volume, or apply DSP to the sample payload.
+ * PCM16/24/32 samples are preserved at unity gain. A non-unity software-volume
+ * setting is applied in-place with a short ramp before the USB transfer.
  */
 internal class WavPcmSource private constructor(
     private val input: ParcelFileDescriptor.AutoCloseInputStream,
