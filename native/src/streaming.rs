@@ -484,11 +484,15 @@ mod tests {
     use std::os::fd::AsRawFd;
 
     #[test]
-    fn signed_24_bit_quantization_handles_full_scale_and_non_finite_samples() {
-        assert_eq!(quantize_signed_24(-1.0, 1.0), -8_388_608);
-        assert_eq!(quantize_signed_24(1.0, 1.0), 8_388_607);
-        assert_eq!(quantize_signed_24(0.0, 0.5), 0);
-        assert_eq!(quantize_signed_24(f32::NAN, 1.0), 0);
+    fn generic_pcm_quantization_handles_supported_valid_bit_widths() {
+        for bits in [8, 16, 20, 24, 32] {
+            let negative_limit = -(1_i64 << (bits - 1));
+            let positive_limit = (1_i64 << (bits - 1)) - 1;
+            assert_eq!(quantize_signed_pcm(-1.0, 1.0, bits), negative_limit);
+            assert_eq!(quantize_signed_pcm(1.0, 1.0, bits), positive_limit);
+            assert_eq!(quantize_signed_pcm(0.0, 0.5, bits), 0);
+            assert_eq!(quantize_signed_pcm(f32::NAN, 1.0, bits), 0);
+        }
     }
 
     #[test]
