@@ -11,8 +11,6 @@ const USB_DECODE_CHUNK_FRAMES: usize = 32_768;
 struct ProducerState {
     decoder: *mut StreamDecoder,
     queue: &'static UsbPcmQueue,
-    source_rate: u64,
-    channels: usize,
     format: PcmFormat,
     segment_start_ms: u64,
     segment_end_ms: Option<u64>,
@@ -80,13 +78,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     let start = segment_start_ms as u64;
     let remaining = end.map(|value| frames_at_ms(value.saturating_sub(start), source_rate as u64));
     let format = PcmFormat { sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8, subslot_bytes: subslot_bytes as u8, signed: true, little_endian: true };
-    if format.validate().is_err() || format.sample_rate != source_rate as u32 { return 0; }
+    if format.validate().is_err() { return 0; }
     let producer = UsbPcmProducer {
         state: Mutex::new(ProducerState {
             decoder: decoder_handle as *mut StreamDecoder,
             queue,
-            source_rate: source_rate as u64,
-            channels: channels as usize,
             format,
             segment_start_ms: start,
             segment_end_ms: end,
@@ -142,7 +138,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
                 state.epoch = state.epoch.wrapping_add(1);
                 state.at_end = false;
                 state.pending_block = None;
-                state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.source_rate);
+                state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.format.sample_rate as u64);
                 state.segment_remaining_frames = state.segment_end_ms
                     .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.source_rate));
             }
