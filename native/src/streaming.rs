@@ -70,7 +70,7 @@ fn apply_eq_samples(
     }
 }
 
-struct StreamDecoder {
+pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
@@ -316,6 +316,27 @@ impl StreamDecoder {
         }
         Ok(result)
     }
+    pub(super) fn read_usb_pcm24(&mut self, max_frames: usize, target_gain: f32) -> Result<Vec<u8>, String> {
+        if self.channels != 2 || max_frames == 0 || !target_gain.is_finite() {
+            return Err("Invalid direct USB PCM read configuration".into());
+        }
+        let samples = self.read_frames(max_frames)?;
+        let gain = target_gain.clamp(0.0, 1.0);
+        let start_gain = if self.usb_last_gain < 0.0 { gain } else { self.usb_last_gain };
+        let sample_count = samples.len();
+        let mut packed = Vec::with_capacity(sample_count.saturating_mul(3));
+        for (index, sample) in samples.into_iter().enumerate() {
+            let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
+            let ramp_gain = start_gain + (gain - start_gain) * fraction;
+            let value = quantize_signed_24(sample, ramp_gain);
+            packed.push(value as u8);
+            packed.push((value >> 8) as u8);
+            packed.push((value >> 16) as u8);
+        }
+        self.usb_last_gain = gain;
+        Ok(packed)
+    }
+
 }
 
 fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],String> {
