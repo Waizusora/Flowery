@@ -19,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -309,7 +310,7 @@ fun FloweryNavigation(
                     if (selectedFolder == null && !virtualCueFolder) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { destination = Destination.PLAYER; lyricsVisible = false }) {
-                                Icon(Icons.Default.ArrowBack, "Now playing", tint = foreground)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Now playing", tint = foreground)
                             }
                             Heading("Folders", foreground)
                             Spacer(Modifier.weight(1f))
@@ -356,7 +357,7 @@ fun FloweryNavigation(
                         if (folders.isEmpty()) Text("No folders added. Add folders in Settings → Library.", color = muted)
                     } else if (virtualCueFolder) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { virtualCueFolder = false }) { Icon(Icons.Default.ArrowBack, "Back to folders", tint = foreground) }
+                            IconButton(onClick = { virtualCueFolder = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to folders", tint = foreground) }
                             Heading("CUE & PLAYLISTS", foreground)
                         }
                         val cueTracks = tracks.filter { it.cuePlaylist != null }
@@ -386,7 +387,7 @@ fun FloweryNavigation(
                     } else {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = { selectedFolder = null }) {
-                                Icon(Icons.Default.ArrowBack, "Back to folders", tint = foreground)
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to folders", tint = foreground)
                             }
                             Column(Modifier.weight(1f)) {
                                 Heading(selectedFolder!!.name, foreground)
@@ -649,7 +650,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit) {
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = color) }
+        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
             SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.AUDIO_DIAGNOSTICS -> "AAudio Diagnostics"; SettingsPage.LIBRARY -> "Library"
             SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
