@@ -178,9 +178,9 @@ class UsbDacController(context: Context) {
             )
             val playbackProfiles = parseNativePlaybackProfiles(descriptors, null)
             val profileReport = if (playbackProfiles.isEmpty()) {
-                "\nStereo UAC1/UAC2 OUT playback profiles: none could be validated from the descriptors."
+                "\nUAC1 Type-I/UAC2 OUT PCM playback profiles: none could be validated from the descriptors."
             } else {
-                "\nDescriptor-derived stereo UAC1/UAC2 OUT playback profiles:" +
+                "\nDescriptor-derived UAC1 Type-I/UAC2 OUT PCM playback profiles:" +
                     playbackProfiles.joinToString(separator = "") { profile ->
                         "\n  UAC${if (profile.protocol == 0x20) 2 else 1}, interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
                             "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
@@ -273,7 +273,7 @@ class UsbDacController(context: Context) {
                 product = device.productName,
                 manufacturer = device.manufacturerName,
                 clockRangeReports = clockRangeReports
-            ) + "\n\nDescriptor-derived stereo UAC2 OUT profiles:" +
+            ) + "\n\nDescriptor-derived UAC1 Type-I/UAC2 OUT PCM profiles:" +
                 discoveredProfiles.joinToString(separator = "") { profile ->
                     "\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
                         "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
@@ -294,7 +294,7 @@ class UsbDacController(context: Context) {
                 .filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
             if (profiles.isEmpty()) {
                 throw IllegalStateException(
-                    "No descriptor-validated stereo UAC2 OUT profile supports " +
+                    "No descriptor-validated UAC1 Type-I/UAC2 OUT PCM profile supports " +
                         bitResolution + "-bit PCM."
                 )
             }
@@ -394,7 +394,7 @@ class UsbDacController(context: Context) {
 
     /**
      * Opens the first permission-granted UAC2 DAC whose descriptors and clock
-     * negotiation support the requested stereo PCM format. Automatic resolution
+     * negotiation support the requested PCM channel layout. Automatic resolution
      * selection prefers the highest descriptor-advertised valid-bit depth; decoded
      * playback may select a supported clock rate and resample to it.
      */
