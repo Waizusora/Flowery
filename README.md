@@ -118,7 +118,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 .
 ├── app/
 │   └── src/main/
-│       ├── cpp/                 # AAudio output, libusb UAC2 transport and CMake configuration
+│       ├── cpp/                 # libusb UAC2 transport and CMake configuration
 │       ├── java/.../flowery/    # Android UI, service, SAF library, JNI bridge
 │       └── AndroidManifest.xml
 ├── native/
