@@ -416,9 +416,14 @@ fun FloweryNavigation(
                 }
                 Destination.DSP -> {
                     Heading("DSP", foreground)
-                    Text("Software volume", color = foreground, fontWeight = FontWeight.SemiBold)
+                    Text("Output volume", color = foreground, fontWeight = FontWeight.SemiBold)
                     Slider(value = volume, onValueChange = onVolume)
                     Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.align(Alignment.End))
+                    Text(
+                        "USB DAC: software gain is saved separately for each DAC and remains available without a physical volume control. Speaker, AUX and Bluetooth follow Android media volume.",
+                        color = muted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                     Text("31-band ISO equalizer · ±12 dB", color = foreground, fontWeight = FontWeight.SemiBold)
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
                         shape = RoundedCornerShape(18.dp)) {
