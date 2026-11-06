@@ -1,8 +1,6 @@
 package com.waizusora.flowery
 
 import android.content.Context
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
@@ -44,7 +42,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
-private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, AUDIO_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, USB_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -87,33 +85,43 @@ fun FloweryNavigation(
         label = "folder-refresh-rotation"
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
-    var aaudioLogRecording by remember { mutableStateOf(false) }
-    var aaudioPreviousSample by remember { mutableStateOf<LongArray?>(null) }
-    var aaudioPendingLog by remember { mutableStateOf("") }
-    val aaudioLogLines = remember { mutableStateListOf<String>() }
-    val aaudioSaveLauncher = rememberLauncherForActivityResult(
+    var usbDiagnosticRecording by remember { mutableStateOf(false) }
+    var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
+    var usbDiagnosticPendingLog by remember { mutableStateOf("") }
+    var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
+    val usbDiagnosticLines = remember { mutableStateListOf<String>() }
+    val usbDiagnosticSaveLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         if (uri != null) runCatching {
-            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(aaudioPendingLog) }
+            context.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(usbDiagnosticPendingLog) }
         }
     }
-    LaunchedEffect(aaudioLogRecording) {
-        while (aaudioLogRecording) {
-            val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
-            val openAttempt = runCatching { NativeAudio.nativeGetLastOutputOpenDiagnostics() }.getOrNull()
-            if (sample != null && sample.size >= 36) {
-                val previous = aaudioPreviousSample
-                aaudioLogLines.add(createAaudioLogLine(sample, previous, openAttempt))
-                if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
-                aaudioPreviousSample = sample
-            } else {
-                val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
-                    .format(java.util.Date())
-                aaudioLogLines.add("$wallTime diagnostics=unavailable")
-                if (aaudioLogLines.size > 7200) aaudioLogLines.removeAt(0)
+    LaunchedEffect(usbDiagnosticRecording) {
+        if (usbDiagnosticRecording) {
+            usbDiagnosticDescriptorReport = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val controller = UsbDacController(context)
+                val devices = controller.audioDevices()
+                if (devices.isEmpty()) "No USB Audio Class device was detected when Record Log started."
+                else devices.joinToString(separator = "\n\n") { device ->
+                    "===== \${device.displayName} · \${device.identity} =====\n" +
+                        if (controller.hasPermission(device.usbDevice)) controller.inspectDescriptors(device.usbDevice)
+                        else "USB permission not granted; raw descriptors and clock ranges are unavailable."
+                }
             }
-            kotlinx.coroutines.delay(1000)
+            while (usbDiagnosticRecording) {
+                val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
+                val openAttempt = runCatching { NativeAudio.nativeGetLastOutputOpenDiagnostics() }.getOrNull()
+                if (sample != null && sample.size >= 36) {
+                    usbDiagnosticLines.add(createAaudioLogLine(sample, usbDiagnosticPreviousSample, openAttempt))
+                    usbDiagnosticPreviousSample = sample
+                } else {
+                    val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())
+                    usbDiagnosticLines.add("$wallTime aaudioDiagnostics=unavailable")
+                }
+                if (usbDiagnosticLines.size > 7200) usbDiagnosticLines.removeAt(0)
+                kotlinx.coroutines.delay(1000)
+            }
         }
     }
     var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
@@ -269,11 +277,6 @@ fun FloweryNavigation(
                             valueRange = 0f..seekDurationMs.toFloat(),
                             enabled = durationMs > 0L
                         )
-                        if (status.contains("USB exclusive") || status.startsWith("Playback error")) {
-                            Text(status, color = if (status.startsWith("Playback error")) Color(0xFFFF8A80) else muted,
-                                style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
-                        }
                         Row(
                             Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
@@ -301,14 +304,6 @@ fun FloweryNavigation(
                                     modifier = Modifier.size(30.dp))
                             }
                         }
-                    }
-                    currentTag?.let { tag ->
-                        val details = listOfNotNull(tag.bitDepth.takeIf { it > 0 }?.let { "Bit depth: $it-bit" },
-                            tag.sampleRate.takeIf { it > 0 }?.let { "Sample rate: ${"%.1f".format(Locale.ROOT, it / 1000.0)} kHz" },
-                            tag.bitrateKbps.takeIf { it > 0 }?.let { "Bit rate: $it kbps" },
-                            tag.channels.takeIf { it > 0 }?.let { "Channel: $it ch" })
-                        if (details.isNotEmpty()) Text(details.joinToString("  ·  "), color = muted,
-                            textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     }
                 }
                 Destination.FOLDERS -> {
@@ -447,27 +442,41 @@ fun FloweryNavigation(
                     }
                 }
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
-                    aaudioLogRecording = aaudioLogRecording,
-                    aaudioLogCount = aaudioLogLines.size,
-                    onToggleAaudioLog = {
-                        if (aaudioLogRecording) aaudioLogRecording = false
-                        else { aaudioLogLines.clear(); aaudioPreviousSample = null; aaudioLogRecording = true }
+                    usbDiagnosticRecording = usbDiagnosticRecording,
+                    usbDiagnosticLogCount = usbDiagnosticLines.size,
+                    usbDiagnosticDescriptorReport = usbDiagnosticDescriptorReport,
+                    onToggleUsbDiagnosticLog = {
+                        if (usbDiagnosticRecording) {
+                            usbDiagnosticRecording = false
+                            prefs.edit().putBoolean("usb_diagnostic_recording", false).apply()
+                        } else {
+                            usbDiagnosticLines.clear()
+                            usbDiagnosticPreviousSample = null
+                            usbDiagnosticDescriptorReport = "Reading connected USB DAC descriptors…"
+                            prefs.edit().putString("usb_direct_diagnostics", "")
+                                .putBoolean("usb_diagnostic_recording", true).apply()
+                            usbDiagnosticRecording = true
+                        }
                     },
-                    onSaveAaudioLog = {
+                    onSaveUsbDiagnosticLog = {
                         val usbDirectLog = prefs.getString("usb_direct_diagnostics", "").orEmpty()
-                        aaudioPendingLog = buildString {
-                            appendLine("# Flowery combined audio diagnostic log")
-                            appendLine("# AAudio samples: ${aaudioLogLines.size}")
-                            appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
+                        usbDiagnosticPendingLog = buildString {
+                            appendLine("# Flowery USB diagnostic record")
+                            appendLine("# Recorded at: \${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
+                            appendLine("# AAudio telemetry samples: \${usbDiagnosticLines.size}")
+                            appendLine("# Direct USB events: \${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
                             appendLine()
-                            appendLine("===== AAudio diagnostics =====")
-                            aaudioLogLines.forEach { appendLine(it) }
+                            appendLine("===== USB descriptor and DAC profile database snapshot =====")
+                            appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
                             appendLine()
-                            appendLine("===== Direct USB/libusb diagnostics =====")
-                            if (usbDirectLog.isBlank()) appendLine("No direct USB diagnostic events were recorded.")
+                            appendLine("===== AAudio runtime telemetry =====")
+                            usbDiagnosticLines.forEach { appendLine(it) }
+                            appendLine()
+                            appendLine("===== Direct USB / libusb playback events =====")
+                            if (usbDirectLog.isBlank()) appendLine("No direct USB playback events were recorded.")
                             else appendLine(usbDirectLog)
                         }
-                        aaudioSaveLauncher.launch("flowery-audio-log-${System.currentTimeMillis()}.txt")
+                        usbDiagnosticSaveLauncher.launch("flowery-usb-diagnostic-\${System.currentTimeMillis()}.txt")
                     },
                     usbBitPerfectEnabled = usbBitPerfectEnabled,
                     onUsbBitPerfectChanged = { enabled ->
@@ -476,7 +485,7 @@ fun FloweryNavigation(
                     },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
-                        SettingsPage.AUDIO_INFO, SettingsPage.AUDIO_DIAGNOSTICS -> SettingsPage.AUDIO
+                        SettingsPage.AUDIO_INFO, SettingsPage.USB_DIAGNOSTICS -> SettingsPage.AUDIO
                         SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
@@ -644,8 +653,8 @@ private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAtt
 
 @Composable
 private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
-    aaudioLogRecording: Boolean, aaudioLogCount: Int,
-    onToggleAaudioLog: () -> Unit, onSaveAaudioLog: () -> Unit,
+    usbDiagnosticRecording: Boolean, usbDiagnosticLogCount: Int, usbDiagnosticDescriptorReport: String,
+    onToggleUsbDiagnosticLog: () -> Unit, onSaveUsbDiagnosticLog: () -> Unit,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
     libraryEncoding: String, availableEncodings: List<String>, changeEncoding: (String) -> Unit,
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
@@ -657,7 +666,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
-            SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.AUDIO_DIAGNOSTICS -> "AAudio Diagnostics"; SettingsPage.LIBRARY -> "Library"
+            SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.USB_DIAGNOSTICS -> "USB Diagnostics"; SettingsPage.LIBRARY -> "Library"
             SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
             SettingsPage.TRANSLATOR -> "Translator"; SettingsPage.CONTRIBUTORS -> "Contributor"; SettingsPage.ROOT -> "Settings"
         }, color)
@@ -684,7 +693,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 }
             }
             SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
-            SettingCard("AAudio Diagnostics", "Ring-buffer underruns, hardware XRuns and output buffer metrics", color, muted) { navigate(SettingsPage.AUDIO_DIAGNOSTICS) }
+            SettingCard("USB Diagnostics", "Record USB descriptors, DAC profiles, clock negotiation and playback telemetry", color, muted) { navigate(SettingsPage.USB_DIAGNOSTICS) }
         }
         SettingsPage.AUDIO_INFO -> {
             Detail("Decoder", "Symphonia · progressive packet decoding", color, muted)
@@ -695,83 +704,29 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Playback status", status, color, muted)
             Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
         }
-        SettingsPage.AUDIO_DIAGNOSTICS -> {
-            var metrics by remember(page) { mutableStateOf<LongArray?>(null) }
+        SettingsPage.USB_DIAGNOSTICS -> {
+            Text("Record Log captures connected DAC descriptors, descriptor-derived playback profiles, UAC2 clock ranges, AAudio runtime telemetry, and direct USB/libusb events in one file.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onToggleAaudioLog, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (aaudioLogRecording) Color(0xFFB44758) else Color(0xFF7452A6))) {
-                    Icon(if (aaudioLogRecording) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
-                    Text(if (aaudioLogRecording) "  Stop Log" else "  Start Log")
+                Button(onClick = onToggleUsbDiagnosticLog, modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else Color(0xFF7452A6))) {
+                    Icon(if (usbDiagnosticRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
+                    Text(if (usbDiagnosticRecording) "  Stop Log" else "  Record Log")
                 }
-                Button(onClick = onSaveAaudioLog, enabled = !aaudioLogRecording && aaudioLogCount > 0,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                Button(onClick = onSaveUsbDiagnosticLog, enabled = !usbDiagnosticRecording &&
+                    (usbDiagnosticLogCount > 0 || usbDiagnosticDescriptorReport.isNotBlank()),
+                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Text("  Save Log")
                 }
             }
-            Text(if (aaudioLogRecording) "Recording every second in the background. You can leave Settings, play the problem track, then return here to stop and save."
-                else "Start Log before playback. Sampling continues while you navigate to Now Playing; stop logging before saving.",
+            Text(if (usbDiagnosticRecording)
+                "Recording. Connect or use the DAC, reproduce the issue, then stop and save the log."
+            else "Start recording before reproducing a USB DAC issue. Descriptor inspection runs at the start of the recording session.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
-            Text("Captured samples: $aaudioLogCount", color = muted, style = MaterialTheme.typography.labelSmall)
-            Button(onClick = { metrics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Text("  Refresh diagnostics")
-            }
-            Text("Values are also available as a live snapshot below. The log records timestamp progression and frame deltas so playback interruptions can be correlated with the hardware clock.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            val data = metrics
-            if (data == null || data.size < 21) {
-                Detail("Output", "No diagnostics sampled yet. Start playback, then refresh.", color, muted)
-            } else {
-                Detail("Ring-buffer underruns", data[0].toString(), color, muted)
-                Detail("AAudio hardware XRuns", if (data[1] < 0) "Unavailable" else data[1].toString(), color, muted)
-                Detail("Queued PCM frames", data[2].toString(), color, muted)
-                Detail("Ring capacity", "${data[3]} frames", color, muted)
-                Detail("AAudio buffer size", if (data[4] > 0) "${data[4]} frames" else "Unavailable", color, muted)
-                Detail("Frames per burst", if (data[5] > 0) data[5].toString() else "Unavailable", color, muted)
-                Detail("Stream state", data[6].toString(), color, muted)
-                Detail("Output sample rate", if (data[7] > 0) "${data[7]} Hz" else "Unavailable", color, muted)
-                Detail("Actual AAudio device ID", data[8].toString(), color, muted)
-                Detail("Sharing mode", when (data[9].toInt()) { 0 -> "EXCLUSIVE"; 1 -> "SHARED"; else -> "Unavailable" }, color, muted)
-                Detail("PCM format", when (data[10].toInt()) { 2 -> "PCM_FLOAT"; 1 -> "PCM_I16"; 3 -> "PCM_I24_PACKED"; 4 -> "PCM_I32"; else -> "Unknown (${data[10]})" }, color, muted)
-                Detail("Output channels", data[11].toString(), color, muted)
-                Detail("Performance mode", when (data[12].toInt()) { 12 -> "LOW_LATENCY"; 11 -> "POWER_SAVING"; 10 -> "NONE"; else -> "Unknown (${data[12]})" }, color, muted)
-                Detail("Data callbacks", data[13].toString(), color, muted)
-                Detail("Callback frames requested", data[14].toString(), color, muted)
-                Detail("PCM frames delivered", data[15].toString(), color, muted)
-                Detail("Silence frames inserted", data[16].toString(), color, muted)
-                Detail("Largest callback", "${data[17]} frames", color, muted)
-                Detail("Unexpected silence frames", data[18].toString(), color, muted)
-                Detail("Exclusive open result", data[19].toString(), color, muted)
-                Detail("Shared open result", data[20].toString(), color, muted)
-                if (data.size >= 27) {
-                    Detail("Maximum callback processing time", "${data[21] / 1_000_000.0} ms", color, muted)
-                    Detail("Maximum callback interval", "${data[22] / 1_000_000.0} ms", color, muted)
-                    Detail("Negotiated stream sample rate", "${data[23]} Hz", color, muted)
-                    Detail("Maximum callback scheduling lateness", "${data[24] / 1_000_000.0} ms", color, muted)
-                    Detail("Callback intervals over 10 ms late", data[25].toString(), color, muted)
-                    Detail("AAudio buffer capacity", "${data[26]} frames", color, muted)
-                }
-                if (data.size >= 31) {
-                    Detail("AAudio timestamp result", if (data[27] == 0L) "Available (AAUDIO_OK)" else "Unavailable (error ${data[27]})", color, muted)
-                    Detail("Hardware timestamp frame position", data[28].toString(), color, muted)
-                    Detail("Hardware timestamp time", if (data[29] > 0L) "${data[29]} ns · CLOCK_MONOTONIC" else "Unavailable", color, muted)
-                    Detail("Frames written to AAudio", data[30].toString(), color, muted)
-                }
-                if (data.size >= 36) {
-                    val sharingName: (Long) -> String = { mode ->
-                        when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "Unavailable ($mode)" }
-                    }
-                    Detail("Preferred sharing mode", sharingName(data[31]), color, muted)
-                    Detail("Successful open request mode", sharingName(data[32]), color, muted)
-                    Detail("Requested device ID", data[33].toString(), color, muted)
-                    Detail("Last callback interval", "${data[34] / 1_000_000.0} ms", color, muted)
-                    Detail("Last callback lateness", "${data[35] / 1_000_000.0} ms", color, muted)
-                }
-            }
-            Text("Callback counters include requested frames, PCM frames copied from the ring, and silence frames written by the callback. A non-zero silence-frame count can reveal gaps even when the hardware XRun counter remains zero. Hardware timestamps are queried on demand using CLOCK_MONOTONIC; the timestamp result must be AAUDIO_OK before its frame position and time are interpreted. Frames written is the stream's cumulative submitted-frame count. AAudio device ID and sharing mode describe the stream actually opened. Counters reset when the output stream is recreated.",
+            Text("AAudio telemetry samples: $usbDiagnosticLogCount", color = muted, style = MaterialTheme.typography.labelSmall)
+            Detail("Descriptor capture", if (usbDiagnosticDescriptorReport.isBlank()) "Not captured yet" else "Captured or pending", color, muted)
+            Text("The log is the single diagnostic export. It includes descriptor and clock capability evidence, actual AAudio output state, and USB transport failures where available.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.LIBRARY -> {
