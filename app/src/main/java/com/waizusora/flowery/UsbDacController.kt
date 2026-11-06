@@ -235,7 +235,8 @@ class UsbDacController(context: Context) {
         device: UsbDevice,
         bitResolution: Int,
         sampleRate: Int,
-        requiredSubslotBytes: Int? = null
+        requiredSubslotBytes: Int? = null,
+        requiredChannels: Int? = null
     ): UsbDacSession {
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
         require(bitResolution == 0 || bitResolution in 8..32) { "PCM resolution must be automatic or between 8 and 32 bits." }
@@ -291,7 +292,8 @@ class UsbDacController(context: Context) {
                 }
             }
             val profiles = parseNativePlaybackProfiles(descriptors, bitResolution.takeIf { it > 0 })
-                .filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
+                .filter { (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) &&
+                    (requiredChannels == null || it.channels == requiredChannels) }
             if (profiles.isEmpty()) {
                 throw IllegalStateException(
                     "No descriptor-validated UAC1 Type-I/UAC2 OUT PCM profile supports " +
@@ -419,7 +421,7 @@ class UsbDacController(context: Context) {
                     val descriptors = connection.rawDescriptors
                     val profiles = parseNativePlaybackProfiles(descriptors, null)
                     val compatibleProfiles = profiles.filter {
-                        requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes
+                        (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) && it.channels == channels
                     }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
                         else compatibleProfiles.map { it.bitResolution }.distinct()
@@ -449,7 +451,7 @@ class UsbDacController(context: Context) {
             for (candidateBits in candidateResolutions) {
                 for (candidateRate in candidateRates) {
                     try {
-                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes)
+                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes, channels)
                         if (session.profile.channels == channels &&
                             session.profile.bitResolution == candidateBits &&
                             session.sampleRate == candidateRate) {
