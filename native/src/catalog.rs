@@ -171,9 +171,9 @@ mod tests {
         let catalog = build(serde_json::from_str::<Snapshot>(input).unwrap());
         assert_eq!(catalog.tracks.len(), 5);
         assert_eq!(catalog.tracks[1].sidecar_lyrics_uri.as_deref(), Some("content://lyric"));
-        assert_eq!(catalog.tracks[2].title, "First");
-        assert_eq!(catalog.tracks[3].title, "Intro");
-        assert_eq!(catalog.tracks[3].cue_end_ms, Some(60_000));
-        assert_eq!(catalog.tracks[4].cue_start_ms, Some(60_000));
+        assert_eq!(catalog.tracks[2].title, "Intro");
+        assert_eq!(catalog.tracks[2].cue_end_ms, Some(60_000));
+        assert_eq!(catalog.tracks[3].cue_start_ms, Some(60_000));
+        assert_eq!(catalog.tracks[4].title, "First");
     }
 }
