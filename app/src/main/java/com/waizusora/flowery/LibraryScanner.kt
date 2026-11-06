@@ -29,8 +29,16 @@ class LibraryScanner(private val context: Context) {
 
     private fun visit(directory: DocumentFile, rootName: String, output: MutableMap<String, AudioTrackItem>, pathStack: List<DocumentFile>) {
         val children = directory.listFiles()
+        val audioFiles = children.filter { it.isFile && it.name != null &&
+            NativeAudio.nativeIsSupportedAudioExtension(it.name.substringAfterLast(".", "")) }
         val lyricFiles = children.filter { it.isFile && it.name?.endsWith(".lrc", ignoreCase = true) == true }
-            .associateBy { it.name?.substringBeforeLast('.')?.lowercase().orEmpty() }
+        val lyricNames = lyricFiles.mapNotNull { it.name }.toTypedArray()
+        val audioNames = audioFiles.mapNotNull { it.name }.toTypedArray()
+        val sidecarMatches = NativeAudio.nativeMatchSidecarLyrics(audioNames, lyricNames)
+        val sidecarByName = audioNames.mapIndexedNotNull { index, name ->
+            val lyricIndex = sidecarMatches.getOrNull(index) ?: -1
+            if (lyricIndex >= 0) name to lyricFiles.firstOrNull { it.name == lyricNames[lyricIndex] }?.uri else null
+        }.toMap()
         val cueFiles = children.filter { it.isFile && it.name?.endsWith(".cue", ignoreCase = true) == true }
         val playlistFiles = children.filter { it.isFile && (it.name?.substringAfterLast(".", "")?.lowercase() ?: "") in setOf("m3u", "m3u8", "pls") }
         children.forEach { file ->
@@ -43,7 +51,7 @@ class LibraryScanner(private val context: Context) {
                     output[file.uri.toString()] = AudioTrackItem(
                         uri = file.uri, title = name.substringBeforeLast("."), folder = rootName,
                         mimeType = file.type,
-                        sidecarLyricsUri = lyricFiles[name.substringBeforeLast(".").lowercase()]?.uri
+                        sidecarLyricsUri = sidecarByName[name]
                     )
                 }
             }
@@ -89,7 +97,8 @@ class LibraryScanner(private val context: Context) {
     }.getOrNull()
 
     private fun resolvePlaylistPath(pathStack: List<DocumentFile>, rawPath: String): DocumentFile? {
-        val path = Uri.decode(rawPath.trim().removeSurrounding("\"").replace(92.toChar(), '/'))
+        val path = NativeAudio.nativeNormalizePlaylistPath(Uri.decode(rawPath))
+            ?: return null
         if (path.startsWith("content://", ignoreCase = true)) {
             return runCatching { DocumentFile.fromSingleUri(context, Uri.parse(path)) }.getOrNull()
         }

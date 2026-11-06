@@ -550,9 +550,10 @@ class MainActivity : ComponentActivity() {
         Uri.decode(track.uri.lastPathSegment.orEmpty()).substringAfterLast('.', "")
 
     private fun readTag(track: AudioTrackItem): AudioTag {
-        val bytes = contentResolver.openInputStream(track.uri)?.use { it.readBytes() }
-            ?: throw IllegalStateException("Unable to open selected audio file")
-        val json = JSONObject(NativeAudio.nativeReadTags(bytes, extensionOf(track), cacheDir.absolutePath))
+        val jsonText = contentResolver.openFileDescriptor(track.uri, "r")?.use { descriptor ->
+            NativeAudio.nativeReadTagsFromFd(descriptor.fd, extensionOf(track), cacheDir.absolutePath)
+        } ?: throw IllegalStateException("Unable to open selected audio file")
+        val json = JSONObject(jsonText)
         return AudioTag(
             uri = track.uri,
             fileName = Uri.decode(track.uri.lastPathSegment.orEmpty()),
@@ -669,17 +670,22 @@ class MainActivity : ComponentActivity() {
         status = "Writing metadata with Lofty…"
         io.execute {
             try {
-                val bytes = contentResolver.openInputStream(tag.uri)?.use { it.readBytes() }
-                    ?: throw IllegalStateException("Unable to read original audio file")
                 val extension = extensionOf(tracks.firstOrNull { it.uri == tag.uri } ?: AudioTrackItem(tag.uri, tag.fileName, "", null))
-                val edited = NativeAudio.nativeWriteTags(
-                    bytes, extension, cacheDir.absolutePath, tag.title, tag.artist, tag.album, tag.albumArtist,
-                    tag.genre, tag.year, tag.track, tag.disc, tag.comment, tag.composer, tag.lyrics
-                )
-                contentResolver.openOutputStream(tag.uri, "wt")?.use { output ->
-                    output.write(edited)
-                    output.flush()
-                } ?: throw IllegalStateException("The selected document provider does not allow writing this file")
+                val stagedPath = contentResolver.openFileDescriptor(tag.uri, "r")?.use { descriptor ->
+                    NativeAudio.nativeWriteTagsFromFd(
+                        descriptor.fd, extension, cacheDir.absolutePath, tag.title, tag.artist, tag.album,
+                        tag.albumArtist, tag.genre, tag.year, tag.track, tag.disc, tag.comment, tag.composer, tag.lyrics
+                    )
+                } ?: throw IllegalStateException("Unable to open original audio file")
+                val stagedFile = java.io.File(stagedPath)
+                try {
+                    contentResolver.openOutputStream(tag.uri, "wt")?.use { output ->
+                        stagedFile.inputStream().use { input -> input.copyTo(output) }
+                        output.flush()
+                    } ?: throw IllegalStateException("The selected document provider does not allow writing this file")
+                } finally {
+                    stagedFile.delete()
+                }
                 val updated = readTag(tracks.firstOrNull { it.uri == tag.uri } ?: AudioTrackItem(tag.uri, tag.fileName, "", null))
                 runOnUiThread {
                     currentTag = updated

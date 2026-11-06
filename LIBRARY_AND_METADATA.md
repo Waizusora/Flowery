@@ -4,7 +4,7 @@
 
 Flowery uses the Android Storage Access Framework (SAF), not MediaStore. Users select folder trees through the system document picker. Configured roots can be enabled, disabled, or removed; only enabled roots are scanned. `LibraryScanner` recursively traverses trees through `DocumentFile` and deduplicates tracks by document URI.
 
-The supported audio filename-extension registry and its classification policy are owned by `native/src/library.rs`. `LibraryScanner` calls the Rust predicate for candidate files and playlist targets. Kotlin remains responsible for traversing `DocumentFile` trees, opening SAF documents, and associating Android `Uri` values; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
+The supported audio filename-extension registry, case-insensitive sidecar LRC matching, and relative playlist-path normalization are owned by `native/src/library.rs`. `LibraryScanner` passes directory filename snapshots to Rust for sidecar association and asks Rust to normalize playlist paths before resolving them through SAF. Kotlin remains responsible for traversing `DocumentFile` trees, opening SAF documents, and associating Android `Uri` values; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
 
 ## Sidecar LRC
 
@@ -14,7 +14,7 @@ Embedded lyric extraction, remote lyric search, lyric downloads, and writing LRC
 
 ## Audio tags
 
-The Rust layer uses Lofty to read and write supported tags. The editor exposes title, artist, album, album artist, genre, year/date, track number, disc number, comment, composer, and lyrics. For edits, the selected document is staged in the app-private cache, updated through Lofty, and written back to the original SAF document. The provider must grant write access. Text-tag updates do not decode and re-encode the audio stream.
+The Rust layer uses Lofty to read and write supported tags. The editor exposes title, artist, album, album artist, genre, year/date, track number, disc number, comment, composer, and lyrics. For reads and edits, Kotlin passes a duplicated SAF file descriptor to Rust rather than copying the complete audio file into a JNI `ByteArray`. Rust stages the descriptor contents in the app-private cache and Lofty reads or updates that staged file. The edited staged file is streamed back to the original SAF document and then removed. The provider must grant write access. Text-tag updates do not decode and re-encode the audio stream.
 
 Tag support varies by format and tag type. Unsupported write combinations and provider write failures must be treated as failed edits. Embedded artwork can be read for display, but artwork replacement is not currently exposed.
 

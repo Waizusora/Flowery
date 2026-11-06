@@ -54,7 +54,7 @@ Application ID: `com.waizusora.flowery`
 
 - Add multiple folder roots through the Storage Access Framework.
 - Enable or disable individual roots and remove roots from the configured list.
-- Recursively scan enabled roots for supported filename extensions; the registry and classification policy are implemented in Rust, while Kotlin handles SAF traversal.
+- Recursively scan enabled roots for supported filename extensions; Rust owns extension classification, sidecar LRC filename matching, and relative playlist-path normalization, while Kotlin handles SAF traversal and document resolution.
 - Associate a sidecar `.lrc` file with an audio file when the base filenames match.
 - Parse CUE, M3U, and PLS playlist text in the Rust engine; Kotlin retains SAF document resolution and charset selection.
 - Scan document trees directly; the library does not use MediaStore.
@@ -82,7 +82,7 @@ The equalizer's center frequencies are 20 Hz, 25 Hz, 31.5 Hz, 40 Hz, 50 Hz, 63 H
 
 Lofty is used to read and write supported audio tags. The editor exposes title, artist, album, album artist, genre, year/date, track number, disc number, comment, composer, and lyrics.
 
-Tag writes are staged in the app-private cache and written back to the original SAF document. The document provider must grant write access. Tag/container support varies; unsupported or read-only combinations are rejected rather than treated as successful writes. Editing text tags does not require decoding and re-encoding the audio stream.
+Tag reads and writes pass SAF file descriptors to Rust rather than copying complete audio files through JNI byte arrays. Lofty operates on a temporary app-private cache file, and the edited file is streamed back to the original SAF document. The document provider must grant write access. Tag/container support varies; unsupported or read-only combinations are rejected rather than treated as successful writes. Editing text tags does not require decoding and re-encoding the audio stream.
 
 Embedded cover artwork can be read for display. Replacing embedded artwork is not currently exposed by the editor.
 

@@ -8,6 +8,8 @@ object NativeAudio {
     external fun nativeParseM3u(content: String): String
     external fun nativeParsePls(content: String): String
     external fun nativeIsSupportedAudioExtension(extension: String): Boolean
+    external fun nativeMatchSidecarLyrics(audioNames: Array<String>, lyricNames: Array<String>): IntArray
+    external fun nativeNormalizePlaylistPath(path: String): String?
     external fun nativeQueueTransition(currentIndex: Int, queueSize: Int, shuffle: Boolean, repeatMode: Int, action: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeGetStreamInfo(handle: Long): Long
@@ -46,6 +48,8 @@ object NativeAudio {
     external fun nativeParseUsbDacClockSources(descriptors: ByteArray): String
     external fun nativeDescribeUsbAudioDescriptors(descriptors: ByteArray): String
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
+    external fun nativeReadTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String): String
+    external fun nativeWriteTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): String
     external fun nativeWriteTags(encodedAudio: ByteArray, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): ByteArray
     external fun nativeSetOutputVolume(volume: Float)
     external fun nativePauseOutput(): Int
