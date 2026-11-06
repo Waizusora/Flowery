@@ -178,7 +178,7 @@ class PlaybackService : Service() {
                 override fun onSkipToPrevious() = skipPrevious()
                 override fun onSeekTo(position: Long) = player.seekTo(position)
             })
-            setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
+            setFlags(MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS)
             isActive = true
         }
         publishSessionState()
