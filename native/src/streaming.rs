@@ -121,7 +121,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: 1.0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: -1.0,
         })
     }
 
@@ -467,7 +467,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamCh
     };
     let gain = target_gain.clamp(0.0, 1.0);
     let mut packed = Vec::<i8>::with_capacity(samples.len().saturating_mul(3));
-    let start_gain = decoder.usb_last_gain;
+    let start_gain = if decoder.usb_last_gain < 0.0 { gain } else { decoder.usb_last_gain };
     let sample_count = samples.len();
     for (index, sample) in samples.into_iter().enumerate() {
         let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
