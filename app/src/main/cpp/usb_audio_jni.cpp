@@ -661,6 +661,25 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
             return throw_usb_error(env, "Submitting asynchronous endpoint feedback transfer", feedback_result);
         }
         session->feedback_in_flight.store(true, std::memory_order_release);
+        const auto feedback_deadline = std::chrono::steady_clock::now() +
+                                       std::chrono::milliseconds(500);
+        while (!session->feedback_valid.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < feedback_deadline &&
+               session->event_loop_error.load(std::memory_order_acquire) == LIBUSB_SUCCESS) {
+            std::unique_lock<std::mutex> lock(session->event_mutex);
+            session->event_condition.wait_for(lock, std::chrono::milliseconds(10));
+        }
+        if (!session->feedback_valid.load(std::memory_order_acquire)) {
+            const int feedback_error = session->event_loop_error.load(std::memory_order_acquire);
+            close_session(session);
+            jclass exception = env->FindClass("java/lang/IllegalStateException");
+            if (exception != nullptr) env->ThrowNew(
+                exception,
+                feedback_error == LIBUSB_SUCCESS
+                    ? "Asynchronous USB endpoint did not provide a valid feedback sample"
+                    : "Asynchronous USB feedback endpoint failed");
+            return 0;
+        }
     }
 
     return reinterpret_cast<jlong>(session);
