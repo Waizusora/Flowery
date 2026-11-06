@@ -581,4 +581,28 @@ mod tests {
         assert_eq!(report["malformed"], true);
     }
 
+    #[test]
+    fn parses_only_complete_uac2_clock_ranges_from_transferred_bytes() {
+        let mut response = vec![1, 0];
+        response.extend_from_slice(&44_100u32.to_le_bytes());
+        response.extend_from_slice(&96_000u32.to_le_bytes());
+        response.extend_from_slice(&1u32.to_le_bytes());
+        let parsed: Value = serde_json::from_str(&clock_ranges_json(&response, response.len())).unwrap();
+        assert_eq!(parsed[0]["minimum"], 44_100);
+        assert_eq!(parsed[0]["maximum"], 96_000);
+        assert_eq!(parsed[0]["resolution"], 1);
+        assert_eq!(clock_ranges_json(&response, 13), "[]");
+    }
+
+    #[test]
+    fn playback_descriptor_trace_is_bounded_and_identifies_selected_stream() {
+        let descriptors = [
+            9,4,2,1,1,1,2,0x20,0,
+            9,4,3,0,0,1,1,0x20,0
+        ];
+        let trace = playback_descriptor_trace(&descriptors, 2);
+        assert!(trace.contains("SELECTED_STREAM"));
+        assert!(trace.contains("number=2"));
+    }
+
 }
