@@ -74,7 +74,7 @@ class PlaybackService : Service() {
         private const val NOTIFICATION_ID = 41
     }
 
-    private lateinit var player: FloweryPlayer
+    private lateinit var player: PlaybackCoordinator
     private lateinit var session: MediaSessionCompat
     private lateinit var audioManager: AudioManager
     private var focusRequest: AudioFocusRequest? = null
@@ -90,9 +90,16 @@ class PlaybackService : Service() {
     private val queueCuePlaylists = mutableListOf<String>()
     private val queuePlaylistNames = mutableListOf<String>()
     private val queuePlaylistOrders = mutableListOf<Int>()
-    private var queueIndex = -1
-    private var repeatMode = 0 // 0 off, 1 all, 2 one
-    private var shuffle = false
+    private val queueState = PlaybackQueueState()
+    private var queueIndex: Int
+        get() = queueState.currentIndex
+        set(value) = queueState.select(value, queue.size)
+    private var repeatMode: Int
+        get() = queueState.repeatMode
+        set(value) = queueState.setRepeatMode(value)
+    private var shuffle: Boolean
+        get() = queueState.shuffleEnabled
+        set(value) = queueState.setShuffle(value)
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
@@ -158,7 +165,7 @@ class PlaybackService : Service() {
     override fun onCreate() {
         super.onCreate()
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
-        player = FloweryPlayer(this) { message ->
+        player = PlaybackCoordinator(this) { message ->
             publishState(message)
             if (message == "Playback finished") handleCompletion()
         }
@@ -443,9 +450,7 @@ class PlaybackService : Service() {
     }
 
     private fun skipNext() {
-        val nextIndex = NativeAudio.nativeQueueTransition(
-            queueIndex, queue.size, shuffle, repeatMode, 0
-        )
+        val nextIndex = queueState.transition(queue.size, PlaybackQueueState.Action.NEXT)
         if (nextIndex < 0) return
         queueIndex = nextIndex
         player.stop()
@@ -453,9 +458,7 @@ class PlaybackService : Service() {
     }
 
     private fun skipPrevious() {
-        val previousIndex = NativeAudio.nativeQueueTransition(
-            queueIndex, queue.size, shuffle, repeatMode, 1
-        )
+        val previousIndex = queueState.transition(queue.size, PlaybackQueueState.Action.PREVIOUS)
         if (previousIndex < 0) return
         queueIndex = previousIndex
         player.stop()
@@ -463,9 +466,7 @@ class PlaybackService : Service() {
     }
 
     private fun handleCompletion() {
-        when (val nextIndex = NativeAudio.nativeQueueTransition(
-            queueIndex, queue.size, shuffle, repeatMode, 2
-        )) {
+        when (val nextIndex = queueState.transition(queue.size, PlaybackQueueState.Action.COMPLETION)) {
             -2 -> {
                 player.stop()
                 playCurrent()
