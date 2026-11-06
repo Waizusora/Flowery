@@ -19,7 +19,6 @@ import org.json.JSONArray
 class UsbDacController(context: Context) {
     companion object {
         const val ACTION_USB_PERMISSION = "com.waizusora.flowery.action.USB_PERMISSION"
-        const val KTMICRO_KT384_32_NAME = "KT Micro KT-384/32 HIFI"
     }
 
     private val appContext = context.applicationContext
@@ -30,7 +29,6 @@ class UsbDacController(context: Context) {
         val displayName: String,
         val identity: String,
         val hasStreamingInterface: Boolean,
-        val isReferenceKtmicro: Boolean
     )
 
     fun audioDevices(): List<Device> = manager.deviceList.values
@@ -40,8 +38,7 @@ class UsbDacController(context: Context) {
                 usbDevice = device,
                 displayName = describeDevice(device),
                 identity = deviceIdentity(device),
-                hasStreamingInterface = hasAudioStreamingInterface(device),
-                isReferenceKtmicro = isReferenceKtmicro(device)
+                hasStreamingInterface = hasAudioStreamingInterface(device)
             )
         }
 
@@ -52,20 +49,13 @@ class UsbDacController(context: Context) {
                 intf.interfaceSubclass == 2
         }
 
-    fun isReferenceKtmicro(device: UsbDevice): Boolean =
-        NativeAudio.nativeIsReferenceUsbDac(device.vendorId, device.productId)
-
     fun deviceIdentity(device: UsbDevice): String =
         "%04X:%04X".format(Locale.ROOT, device.vendorId, device.productId)
 
     fun describeDevice(device: UsbDevice): String {
         val identity = deviceIdentity(device)
-        return if (isReferenceKtmicro(device)) {
-            "$KTMICRO_KT384_32_NAME (VID/PID $identity)"
-        } else {
-            val product = device.productName?.takeIf { it.isNotBlank() } ?: "USB Audio Device"
-            "$product (VID/PID $identity)"
-        }
+        val product = device.productName?.takeIf { it.isNotBlank() } ?: "USB Audio Device"
+        return "$product (VID/PID $identity)"
     }
 
     fun hasPermission(device: UsbDevice): Boolean = manager.hasPermission(device)
@@ -191,14 +181,28 @@ class UsbDacController(context: Context) {
         sampleRate: Int
     ): UsbDacSession {
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
-        require(bitResolution in setOf(16, 24, 32)) { "Only 16-, 24-, and 32-bit PCM are supported." }
+        require(bitResolution == 0 || bitResolution in setOf(16, 24, 32)) { "PCM resolution must be automatic or 16, 24, or 32 bits." }
         require(sampleRate > 0) { "Sample rate must be positive." }
 
         val connection = manager.openDevice(device)
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
         try {
             val descriptors = connection.rawDescriptors
-            val profiles = parseNativePlaybackProfiles(descriptors, bitResolution)
+            val descriptorReport = UsbAudioDescriptorParser.report(
+                raw = descriptors,
+                manufacturer = device.manufacturerName,
+                product = device.productName
+            )
+            runCatching {
+                val database = UsbDacProfileDatabase(appContext)
+                try {
+                    database.record(device.vendorId, device.productId, device.manufacturerName,
+                        device.productName, descriptors, descriptorReport)
+                } finally {
+                    database.close()
+                }
+            }
+            val profiles = parseNativePlaybackProfiles(descriptors, bitResolution.takeIf { it > 0 })
             if (profiles.isEmpty()) {
                 throw IllegalStateException(
                     "No descriptor-validated stereo UAC2 OUT profile supports " +
@@ -272,31 +276,53 @@ class UsbDacController(context: Context) {
                 failures += "${device.identity}: USB permission not granted"
                 continue
             }
-            try {
-                val session = openExclusivePlaybackSession(device.usbDevice, bitResolution, sampleRate)
-                if (session.profile.channels == 2 &&
-                    session.profile.bitResolution == bitResolution &&
-                    session.sampleRate == sampleRate) {
-                    return device to session
+            val candidateResolutions = if (bitResolution > 0) {
+                listOf(bitResolution)
+            } else {
+                runCatching {
+                    val connection = manager.openDevice(device.usbDevice)
+                        ?: throw IllegalStateException("Android could not open the USB device.")
+                    try {
+                        parseNativePlaybackProfiles(connection.rawDescriptors, null)
+                            .map { it.bitResolution }.distinct().sortedDescending()
+                    } finally {
+                        connection.close()
+                    }
+                }.getOrElse { error ->
+                    failures += "${device.identity}: descriptor discovery failed: ${error.message}"
+                    emptyList()
                 }
-                session.close()
-                failures += "${device.identity}: negotiated profile did not match the requested format"
-            } catch (error: Throwable) {
-                failures += "${device.identity}: ${error.message ?: error.javaClass.simpleName}"
+            }
+            for (candidateBits in candidateResolutions) {
+                try {
+                    val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, sampleRate)
+                    if (session.profile.channels == 2 &&
+                        session.profile.bitResolution == candidateBits &&
+                        session.sampleRate == sampleRate) {
+                        return device to session
+                    }
+                    session.close()
+                    failures += "${device.identity}: negotiated profile did not match ${candidateBits}-bit PCM"
+                } catch (error: Throwable) {
+                    failures += "${device.identity} ${candidateBits}-bit: ${error.message ?: error.javaClass.simpleName}"
+                }
+                }
+            if (candidateResolutions.isEmpty()) {
+                failures += "${device.identity}: no descriptor-validated stereo UAC2 PCM profiles"
             }
         }
         throw IllegalStateException(
-            "No connected UAC2 DAC accepted stereo ${bitResolution}-bit PCM at ${sampleRate} Hz. " +
+            "No connected UAC2 DAC accepted stereo ${if (bitResolution > 0) "$bitResolution-bit" else "supported"} PCM at ${sampleRate} Hz. " +
                 failures.joinToString("; ")
         )
     }
 
     private fun parseNativePlaybackProfiles(
         descriptors: ByteArray,
-        requestedBitResolution: Int
+        requestedBitResolution: Int?
     ): List<UsbDacPlaybackProfile> {
         val values = JSONArray(
-            NativeAudio.nativeParseUsbDacProfiles(descriptors, requestedBitResolution)
+            NativeAudio.nativeParseUsbDacProfiles(descriptors, requestedBitResolution ?: 0)
         )
         return (0 until values.length()).map { index ->
             UsbDacPlaybackProfile.fromNativeJson(values.getJSONObject(index))
