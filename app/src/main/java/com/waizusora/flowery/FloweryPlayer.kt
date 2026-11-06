@@ -6,13 +6,13 @@ import android.media.AudioManager
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
@@ -473,6 +473,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         var totalFramesSent = 0L
         var chunkCount = 0L
         var producerThread: Thread? = null
+        var queueHandle = 0L
         val producerStop = AtomicBoolean(false)
         val producerFailure = AtomicReference<Throwable?>(null)
         try {
@@ -535,7 +536,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             runCatching {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             }
-            val queue = ArrayBlockingQueue<UsbPcmBlock>(USB_QUEUE_DEPTH_BLOCKS)
+            queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
+            check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             val endReached = AtomicBoolean(false)
             producerThread = thread(name = "FloweryUsbDecoder") {
                 runCatching {
@@ -544,7 +546,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 runUsbDecodeProducer(
                     handle, sourceRate, channels, generation,
                     segmentStartMs, segmentEndMs, segmentDurationMs,
-                    queue, endReached, producerStop, producerFailure
+                    queueHandle, endReached, producerStop, producerFailure
                 )
             }
 
@@ -553,11 +555,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             // Prebuffer: do not prime the USB window until enough decoded audio is ready.
             val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
             while (playbackActive() && producerFailure.get() == null && !endReached.get() &&
-                queue.size < USB_PREBUFFER_BLOCKS) {
+                NativeAudio.nativeUsbPcmQueueSize(queueHandle) < USB_PREBUFFER_BLOCKS) {
                 Thread.sleep(5)
             }
             recordUsbDiagnostic(
-                "USB_PREBUFFER_READY queuedBlocks=${queue.size} endReached=${endReached.get()} " +
+                "USB_PREBUFFER_READY queuedBlocks=${NativeAudio.nativeUsbPcmQueueSize(queueHandle)} endReached=${endReached.get()} " +
                     "waitMs=${"%.2f".format(java.util.Locale.US,
                         (android.os.SystemClock.elapsedRealtimeNanos() - prebufferStartedNs) / 1_000_000.0)}"
             )
@@ -569,7 +571,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (paused) { Thread.sleep(10); continue }
                 producerFailure.get()?.let { throw it }
                 val waitStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
-                val block = queue.poll(USB_QUEUE_POLL_MS, TimeUnit.MILLISECONDS) ?: continue
+                val encodedBlock = NativeAudio.nativePollUsbPcmBlock(queueHandle, USB_QUEUE_POLL_MS.toInt()) ?: continue
+                val block = decodeUsbPcmBlock(encodedBlock)
                 val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs) / 1_000_000.0
                 if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS) {
                     starvationEvents++
@@ -607,7 +610,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         "audioMs=${"%.2f".format(java.util.Locale.US, audioDurationMs)} " +
                         "transportMs=${"%.2f".format(java.util.Locale.US, transportDurationMs)} " +
                         "throughputRatio=${"%.3f".format(java.util.Locale.US, throughputRatio)} " +
-                        "queuedBlocks=${queue.size}"
+                        "queuedBlocks=${NativeAudio.nativeUsbPcmQueueSize(queueHandle)}"
                 )
                 check(acceptedFrames == frames) {
                     "The USB DAC transport accepted ${acceptedFrames} of ${frames} frames."
@@ -634,7 +637,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             // The producer owns the native decoder handle until it has exited; the caller
             // closes that handle immediately after this method returns.
             producerStop.set(true)
+            if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
             joinUninterruptibly(producerThread, 4_000L)
+            if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
             usbSoftwareGainEnabled = false
             try { session?.close() } finally {
                 usbPlaybackMode = false
@@ -674,7 +679,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         segmentStartMs: Long,
         segmentEndMs: Long?,
         segmentDurationMs: Long?,
-        queue: ArrayBlockingQueue<UsbPcmBlock>,
+        queueHandle: Long,
         endReached: AtomicBoolean,
         stop: AtomicBoolean,
         failure: AtomicReference<Throwable?>
@@ -685,7 +690,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         fun publish(block: UsbPcmBlock): Boolean {
             while (active()) {
                 if (pendingSeekMs.get() != null) return false
-                if (queue.offer(block, USB_QUEUE_POLL_MS, TimeUnit.MILLISECONDS)) return true
+                if (NativeAudio.nativeOfferUsbPcmBlock(
+                        queueHandle, block.pcm, block.frames, block.epoch, block.startFrames,
+                        block.endOfStream, USB_QUEUE_POLL_MS.toInt()
+                    )) return true
             }
             return false
         }
@@ -704,7 +712,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val absoluteMs = segmentStartMs + relativeMs
                     val actual = NativeAudio.nativeSeekStreamDecoder(handle, absoluteMs)
                     check(actual >= 0L) { "The decoder could not seek to the requested position." }
-                    queue.clear()
+                    NativeAudio.nativeClearUsbPcmQueue(queueHandle)
                     epoch++
                     atEnd = false
                     endReached.set(false)
@@ -719,41 +727,27 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     continue
                 }
                 if (segmentRemainingFrames == 0L) {
-                    atEnd = publishEndOfStream(queue, epoch, positionFrames, endReached, ::publish)
+                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
                     continue
                 }
-                val samples = NativeAudio.nativeReadStreamChunk(handle, USB_DECODE_CHUNK_FRAMES)
-                if (samples.isEmpty()) {
-                    atEnd = publishEndOfStream(queue, epoch, positionFrames, endReached, ::publish)
+                val pcm = NativeAudio.nativeReadStreamChunkPcm24(handle, USB_DECODE_CHUNK_FRAMES, currentUsbGain())
+                if (pcm.isEmpty()) {
+                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
                     continue
                 }
-                check(samples.size % channels == 0) { "The decoder returned an incomplete interleaved PCM frame." }
-                val decodedFrames = samples.size / channels
+                val bytesPerFrame = channels * 3
+                check(pcm.size % bytesPerFrame == 0) { "The Rust decoder returned an incomplete packed PCM frame." }
+                val decodedFrames = pcm.size / bytesPerFrame
                 val frames = segmentRemainingFrames?.let { minOf(decodedFrames.toLong(), it).toInt() }
                     ?: decodedFrames
                 if (frames <= 0) {
-                    atEnd = publishEndOfStream(queue, epoch, positionFrames, endReached, ::publish)
+                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
                     continue
                 }
                 segmentRemainingFrames = segmentRemainingFrames?.minus(frames)
 
-                // Linear gain ramp from the previous block's gain avoids zipper noise when the
-                // volume slider moves; the result is clamped before integer conversion.
-                val targetGain = currentUsbGain()
-                val gainDelta = targetGain - lastGain
-                val totalSamples = frames * channels
-                val pcm = ByteArray(totalSamples * 3)
-                var byteOffset = 0
-                for (sampleIndex in 0 until totalSamples) {
-                    val gain = lastGain + gainDelta * (sampleIndex.toFloat() / totalSamples)
-                    val scaled = (samples[sampleIndex] * gain).coerceIn(-1f, 1f)
-                    val value = if (scaled <= -1f) -8_388_608 else (scaled * 8_388_607f).toInt()
-                    pcm[byteOffset++] = value.toByte()
-                    pcm[byteOffset++] = (value shr 8).toByte()
-                    pcm[byteOffset++] = (value shr 16).toByte()
-                }
-                lastGain = targetGain
-                val block = UsbPcmBlock(pcm, frames, epoch, positionFrames)
+                val packedPcm = if (frames == decodedFrames) pcm else pcm.copyOf(frames * bytesPerFrame)
+                val block = UsbPcmBlock(packedPcm, frames, epoch, positionFrames)
                 positionFrames += frames
                 // If publish() yields to a seek, the block is dropped and the loop services the seek.
                 publish(block)
@@ -769,7 +763,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     private fun publishEndOfStream(
-        queue: ArrayBlockingQueue<UsbPcmBlock>,
         epoch: Int,
         positionFrames: Long,
         endReached: AtomicBoolean,
@@ -784,13 +777,36 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private fun currentUsbGain(): Float =
         (softwareVolume * if (outputDucked) DUCK_GAIN else 1f).coerceIn(0f, 1f)
 
+    private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock {
+        require(encoded.size >= 17) { "The native USB PCM queue returned an invalid block header." }
+        val buffer = ByteBuffer.wrap(encoded).order(ByteOrder.LITTLE_ENDIAN)
+        val endOfStream = buffer.get().toInt() != 0
+        val epoch = buffer.int
+        val frames = buffer.int
+        val startFrames = buffer.long
+        val pcm = ByteArray(buffer.remaining())
+        buffer.get(pcm)
+        require(frames >= 0 && (endOfStream || frames > 0)) { "The native USB PCM queue returned invalid frame metadata." }
+        return UsbPcmBlock(pcm, frames, epoch, startFrames, endOfStream)
+    }
+
     private fun playUsbBitPerfect(descriptor: ParcelFileDescriptor, generation: Int) {
-        var source: WavPcmSource? = null
+        var wavHandle = 0L
         var session: UsbDacSession? = null
         try {
             onState("Opening direct USB PCM path…")
-            val pcmSource = WavPcmSource.open(descriptor)
-            source = pcmSource
+            wavHandle = NativeAudio.nativeOpenWavPcm(descriptor.fd)
+            check(wavHandle != 0L) { "Rust could not open the WAV PCM source." }
+            val info = NativeAudio.nativeGetWavPcmInfo(wavHandle)
+            check(info.size == 4) { "Rust returned invalid WAV PCM metadata." }
+            val sampleRate = info[0].toInt()
+            val bitDepth = info[1].toInt()
+            val channels = info[2].toInt()
+            val totalFrames = info[3]
+            check(sampleRate > 0 && channels == 2 && bitDepth in setOf(16, 24, 32) && totalFrames >= 0L) {
+                "Rust returned an unsupported WAV PCM format."
+            }
+
             val controller = UsbDacController(context)
             val candidates = controller.audioDevices().filter { it.isReferenceKtmicro }
             check(candidates.size == 1) {
@@ -801,18 +817,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 "USB permission is unavailable. Tap the USB DAC control and grant access first."
             }
 
-            val usbSession = controller.openExclusivePlaybackSession(
-                device,
-                pcmSource.bitDepth,
-                pcmSource.sampleRate
-            )
+            val usbSession = controller.openExclusivePlaybackSession(device, bitDepth, sampleRate)
             session = usbSession
-            check(usbSession.profile.channels == 2 && usbSession.profile.bitResolution == pcmSource.bitDepth) {
+            check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == bitDepth) {
                 "The selected DAC alternate setting does not match the source PCM format."
             }
 
-            outputSampleRate = pcmSource.sampleRate
-            outputDurationMs = pcmSource.totalFrames * 1_000L / pcmSource.sampleRate
+            outputSampleRate = sampleRate
+            outputDurationMs = totalFrames * 1_000L / sampleRate
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
             softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
@@ -826,15 +838,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 pendingSeekMs.getAndSet(null)?.let { requested ->
-                    val targetFrame = framesAtMilliseconds(requested, pcmSource.sampleRate)
-                    usbPositionFrames = pcmSource.seekToFrame(targetFrame)
+                    val targetFrame = framesAtMilliseconds(requested, sampleRate)
+                    usbPositionFrames = NativeAudio.nativeSeekWavPcmFrame(wavHandle, targetFrame)
+                    check(usbPositionFrames >= 0L) { "Rust could not seek within the WAV PCM source." }
                     usbSession.flush()
                 }
 
-                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES, softwareVolume * (if (outputDucked) DUCK_GAIN else 1f))
+                val pcm = NativeAudio.nativeReadWavPcmFrames(
+                    wavHandle, USB_DECODE_CHUNK_FRAMES,
+                    softwareVolume * (if (outputDucked) DUCK_GAIN else 1f)
+                )
                 if (pcm.isEmpty()) break
-                val frameBytes = usbSession.profile.channels * usbSession.profile.subslotBytes
-                check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
+                val frameBytes = channels * (bitDepth / 8)
+                check(pcm.size % frameBytes == 0) { "Rust returned an incomplete WAV PCM frame." }
                 val frames = pcm.size / frameBytes
                 check(usbSession.writePcm(pcm, frames) == frames) {
                     "The USB transport did not accept the complete PCM chunk."
@@ -856,7 +872,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             try {
                 session?.close()
             } finally {
-                source?.close()
+                if (wavHandle != 0L) NativeAudio.nativeCloseWavPcm(wavHandle)
                 activeUsbDeviceKey = null
                 outputSampleRate = 0
             }
