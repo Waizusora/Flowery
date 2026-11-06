@@ -8,6 +8,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
 import java.util.Locale
+import kotlin.math.roundToLong
 import org.json.JSONArray
 
 /**
@@ -268,7 +269,8 @@ class UsbDacController(context: Context) {
     internal fun openFirstCompatiblePlaybackSession(
         devices: List<Device>,
         bitResolution: Int,
-        sampleRate: Int
+        sampleRate: Int,
+        allowSampleRateConversion: Boolean = false
     ): Pair<Device, UsbDacSession> {
         val failures = mutableListOf<String>()
         for (device in devices) {
@@ -276,45 +278,90 @@ class UsbDacController(context: Context) {
                 failures += "${device.identity}: USB permission not granted"
                 continue
             }
-            val candidateResolutions = if (bitResolution > 0) {
-                listOf(bitResolution)
-            } else {
-                runCatching {
-                    val connection = manager.openDevice(device.usbDevice)
-                        ?: throw IllegalStateException("Android could not open the USB device.")
+            val discovery = runCatching {
+                val connection = manager.openDevice(device.usbDevice)
+                    ?: throw IllegalStateException("Android could not open the USB device.")
+                try {
+                    val descriptors = connection.rawDescriptors
+                    val profiles = parseNativePlaybackProfiles(descriptors, null)
+                    val resolutions = if (bitResolution > 0) listOf(bitResolution)
+                        else profiles.map { it.bitResolution }.distinct().sortedDescending()
+                    val rates = if (allowSampleRateConversion) {
+                        discoverClockRates(connection, descriptors, profiles, sampleRate)
+                    } else listOf(sampleRate)
+                    resolutions to rates
+                } finally {
+                    connection.close()
+                }
+            }.getOrElse { error ->
+                failures += "${device.identity}: descriptor discovery failed: ${error.message ?: error.javaClass.simpleName}"
+                emptyList<Int>() to emptyList()
+            }
+            val (candidateResolutions, candidateRates) = discovery
+            for (candidateBits in candidateResolutions) {
+                for (candidateRate in candidateRates) {
                     try {
-                        parseNativePlaybackProfiles(connection.rawDescriptors, null)
-                            .map { it.bitResolution }.distinct().sortedDescending()
-                    } finally {
-                        connection.close()
+                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate)
+                        if (session.profile.channels == 2 &&
+                            session.profile.bitResolution == candidateBits &&
+                            session.sampleRate == candidateRate) {
+                            return device to session
+                        }
+                        session.close()
+                        failures += "${device.identity}: negotiated profile mismatch for ${candidateBits}-bit/${candidateRate} Hz"
+                    } catch (error: Throwable) {
+                        failures += "${device.identity} ${candidateBits}-bit/${candidateRate} Hz: " +
+                            (error.message ?: error.javaClass.simpleName)
                     }
-                }.getOrElse { error ->
-                    failures += "${device.identity}: descriptor discovery failed: ${error.message}"
-                    emptyList()
                 }
             }
-            for (candidateBits in candidateResolutions) {
-                try {
-                    val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, sampleRate)
-                    if (session.profile.channels == 2 &&
-                        session.profile.bitResolution == candidateBits &&
-                        session.sampleRate == sampleRate) {
-                        return device to session
-                    }
-                    session.close()
-                    failures += "${device.identity}: negotiated profile did not match ${candidateBits}-bit PCM"
-                } catch (error: Throwable) {
-                    failures += "${device.identity} ${candidateBits}-bit: ${error.message ?: error.javaClass.simpleName}"
-                }
-                }
             if (candidateResolutions.isEmpty()) {
                 failures += "${device.identity}: no descriptor-validated stereo UAC2 PCM profiles"
             }
+            if (candidateRates.isEmpty()) {
+                failures += "${device.identity}: no usable UAC2 clock rates were reported"
+            }
         }
         throw IllegalStateException(
-            "No connected UAC2 DAC accepted stereo ${if (bitResolution > 0) "$bitResolution-bit" else "supported"} PCM at ${sampleRate} Hz. " +
+            "No connected UAC2 DAC accepted stereo PCM at source rate ${sampleRate} Hz. " +
                 failures.joinToString("; ")
         )
+    }
+
+    private fun discoverClockRates(
+        connection: android.hardware.usb.UsbDeviceConnection,
+        descriptors: ByteArray,
+        profiles: List<UsbDacPlaybackProfile>,
+        sourceRate: Int
+    ): List<Int> {
+        val discovered = linkedSetOf<Int>()
+        val clocks = profiles.flatMap { profile ->
+            parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
+        }.distinct()
+        for ((clockId, controlInterface) in clocks) {
+            val response = ByteArray(2 + 12 * 16)
+            val transferred = connection.controlTransfer(
+                0xA1, 0x82, 0x0100, (clockId shl 8) or controlInterface,
+                response, response.size, 1_000
+            )
+            if (transferred < 2) continue
+            val ranges = JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
+            for (index in 0 until ranges.length()) {
+                val range = ranges.getJSONObject(index)
+                val minimum = range.optLong("minimum", 0L)
+                val maximum = range.optLong("maximum", 0L)
+                val resolution = range.optLong("resolution", 0L)
+                if (minimum <= 0L || maximum < minimum || maximum > Int.MAX_VALUE) continue
+                val bounded = sourceRate.toLong().coerceIn(minimum, maximum)
+                val selected = if (resolution > 0L) {
+                    val steps = ((bounded - minimum).toDouble() / resolution).roundToLong()
+                    (minimum + steps * resolution).coerceIn(minimum, maximum)
+                } else bounded
+                if (selected in 1..Int.MAX_VALUE.toLong()) discovered += selected.toInt()
+            }
+        }
+        if (discovered.isEmpty()) return listOf(sourceRate)
+        return discovered.sortedBy { kotlin.math.abs(it.toLong() - sourceRate.toLong()) }
     }
 
     private fun parseNativePlaybackProfiles(
