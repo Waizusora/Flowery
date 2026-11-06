@@ -11,6 +11,9 @@ pub struct PlaybackProfile {
     pub max_packet_bytes: u16,
     pub interval: u8,
     pub synchronization: &'static str,
+    pub protocol: u8,
+    pub sample_rates: Vec<u32>,
+    pub sample_rate_range: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -32,6 +35,8 @@ struct Alternate {
     max_packet_bytes: u16,
     interval: u8,
     synchronization: &'static str,
+    sample_rates: Vec<u32>,
+    sample_rate_range: Option<(u32, u32)>,
 }
 
 fn le16(bytes: &[u8], offset: usize) -> u16 {
@@ -46,7 +51,8 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
 
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
-            if a.protocol == 0x20 && a.channels == 2 && (1..=4).contains(&a.subslot_bytes)
+            let supported_protocol = a.protocol == 0x00 || a.protocol == 0x20;
+            if supported_protocol && a.channels == 2 && (1..=4).contains(&a.subslot_bytes)
                 && (8..=32).contains(&a.bit_resolution)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
@@ -63,6 +69,9 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     max_packet_bytes: a.max_packet_bytes,
                     interval: a.interval,
                     synchronization: a.synchronization,
+                    protocol: a.protocol,
+                    sample_rates: a.sample_rates.clone(),
+                    sample_rate_range: a.sample_rate_range,
                 });
             }
         }
@@ -76,7 +85,8 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
             0x04 => {
                 finish(&current, &mut profiles);
                 current = if length >= 9 && raw[offset + 5] == 0x01
-                    && raw[offset + 6] == 0x02 && raw[offset + 7] == 0x20
+                    && raw[offset + 6] == 0x02
+                    && (raw[offset + 7] == 0x00 || raw[offset + 7] == 0x20)
                 {
                     Some(Alternate {
                         interface_number: raw[offset + 2],
@@ -90,14 +100,45 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
             }
             0x24 if current.is_some() && length >= 3 => {
                 let alt = current.as_mut().unwrap();
-                match raw[offset + 2] {
-                    0x01 if length >= 11 => {
+                match (alt.protocol, raw[offset + 2]) {
+                    (0x20, 0x01) if length >= 11 => {
                         alt.terminal_link = raw[offset + 3];
                         alt.channels = raw[offset + 10];
                     }
-                    0x02 if length >= 6 && raw[offset + 3] == 0x01 => {
+                    (0x20, 0x02) if length >= 6 && raw[offset + 3] == 0x01 => {
                         alt.subslot_bytes = raw[offset + 4];
                         alt.bit_resolution = raw[offset + 5];
+                    }
+                    // UAC1 AudioStreaming General descriptor (AS_GENERAL).
+                    (0x00, 0x01) if length >= 7 => {
+                        alt.terminal_link = raw[offset + 3];
+                    }
+                    // UAC1 Type-I format descriptor. Only PCM (format tag 0x0001)
+                    // is accepted by the direct integer-PCM transport.
+                    (0x00, 0x02) if length >= 8 && raw[offset + 3] == 0x01 => {
+                        alt.channels = raw[offset + 4];
+                        alt.subslot_bytes = raw[offset + 5];
+                        alt.bit_resolution = raw[offset + 6];
+                        let frequency_count = raw[offset + 7] as usize;
+                        if frequency_count == 0 {
+                            if length >= 14 {
+                                let minimum = le24(raw, offset + 8);
+                                let maximum = le24(raw, offset + 11);
+                                if minimum > 0 && maximum >= minimum {
+                                    alt.sample_rate_range = Some((minimum, maximum));
+                                }
+                            }
+                        } else {
+                            let available = (length - 8) / 3;
+                            if frequency_count <= available {
+                                for index in 0..frequency_count {
+                                    let rate = le24(raw, offset + 8 + index * 3);
+                                    if rate > 0 && !alt.sample_rates.contains(&rate) {
+                                        alt.sample_rates.push(rate);
+                                    }
+                                }
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -329,7 +370,10 @@ pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String
         "endpointAddress": p.endpoint_address,
         "maxPacketBytes": p.max_packet_bytes,
         "interval": p.interval,
-        "synchronization": p.synchronization
+        "synchronization": p.synchronization,
+        "protocol": p.protocol,
+        "sampleRates": p.sample_rates,
+        "sampleRateRange": p.sample_rate_range.map(|(minimum, maximum)| json!([minimum, maximum]))
     })).collect();
     serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string())
 }
