@@ -68,7 +68,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
                 && a.max_packet_bytes > 0 && a.interval > 0
-                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some() || a.synchronization_address != 0)
+                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some())
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
                 out.push(PlaybackProfile {
