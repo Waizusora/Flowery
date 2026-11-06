@@ -557,8 +557,7 @@ class PlaybackService : Service() {
     }
 
     override fun onDestroy() {
-        player.close()
-        queueState.close()
+        player.close { queueState.close() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
         hasAudioFocus = false

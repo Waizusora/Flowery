@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.content.Context
 import android.net.Uri
 import kotlin.concurrent.thread
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android service adapter for the native playback lifecycle controller.
@@ -14,18 +15,19 @@ internal class PlaybackCoordinator(
 ) : AutoCloseable {
     enum class State { IDLE, PREPARING, PLAYING, PAUSED, STOPPING, FAILED }
 
+    private val closed = AtomicBoolean(false)
     private val nativeController = NativeAudio.nativeCreatePlaybackController().also {
         check(it != 0L) { "Unable to create the native playback controller." }
     }
     private val engine = FloweryPlayer(context) { message ->
-        when {
+        if (!closed.get()) when {
             message.startsWith("Playing") -> setState(State.PLAYING)
             message.startsWith("Paused") -> setState(State.PAUSED)
             message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
                 setState(State.FAILED)
             message == "Playback finished" -> setState(State.IDLE)
         }
-        onState(message)
+        if (!closed.get()) onState(message)
     }
 
     private fun setState(value: State) {
@@ -74,19 +76,16 @@ internal class PlaybackCoordinator(
         setState(State.IDLE)
     }
 
-    override fun close() {
-        setState(State.STOPPING)
-        val stopped = engine.stopAndJoin()
-        if (stopped) {
-            setState(State.IDLE)
+    fun close(onClosed: () -> Unit = {}) {
+        if (!closed.compareAndSet(false, true)) return
+        NativeAudio.nativeSetPlaybackControllerState(nativeController, State.STOPPING.ordinal)
+        engine.stop()
+        // Do not block Android's service lifecycle thread while the worker releases native handles.
+        thread(name = "FloweryPlaybackControllerCleanup") {
+            engine.stopAndJoin(Long.MAX_VALUE)
+            NativeAudio.nativeSetPlaybackControllerState(nativeController, State.IDLE.ordinal)
             NativeAudio.nativeDestroyPlaybackController(nativeController)
-        } else {
-            // Keep the native handle alive until the worker can no longer publish state.
-            thread(name = "FloweryPlaybackControllerCleanup") {
-                engine.stopAndJoin(Long.MAX_VALUE)
-                NativeAudio.nativeSetPlaybackControllerState(nativeController, State.IDLE.ordinal)
-                NativeAudio.nativeDestroyPlaybackController(nativeController)
-            }
+            onClosed()
         }
     }
 }
