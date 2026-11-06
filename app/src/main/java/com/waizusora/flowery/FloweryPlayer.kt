@@ -215,19 +215,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     null
                 }
                 val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
-                val usbKey = selectedDevice?.let { output ->
-                    // Only one USB audio DAC is supported at a time; use its VID/PID key
-                    // so Android-routed and direct-libusb playback share one saved gain.
-                    UsbDacController(context).audioDevices().singleOrNull()?.identity
-                        ?: "${output.productName}|${output.id}|${output.type}"
-                }
-                activeUsbDeviceKey = usbKey
-                if (usbKey == null) {
-                    softwareVolume = 1f
-                } else {
-                    // A DAC without an exposed hardware-volume interface starts at 20%.
-                    softwareVolume = volumeController.usbVolume(usbKey)
-                }
+                // Android-managed USB, AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
+                // Per-DAC software gain is reserved for the direct libusb route.
+                activeUsbDeviceKey = null
+                softwareVolume = 1f
                 val deviceId = selectedDevice?.id ?: 0
                 // Android mixer BIT_PERFECT is not used as a fallback. When the user enables
                 // USB Bit-Perfect, playback has already taken the direct USB transport path.
