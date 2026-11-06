@@ -474,6 +474,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         var chunkCount = 0L
         var producerThread: Thread? = null
         var queueHandle = 0L
+        var producerHandle = 0L
         val producerStop = AtomicBoolean(false)
         val producerFailure = AtomicReference<Throwable?>(null)
         try {
@@ -538,16 +539,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
+            producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
+                handle, queueHandle, sourceRate, channels, segmentStartMs, segmentEndMs ?: -1L
+            )
+            check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
             val endReached = AtomicBoolean(false)
-            producerThread = thread(name = "FloweryUsbDecoder") {
+            producerThread = thread(name = "FloweryUsbProducerControl") {
                 runCatching {
                     android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
                 }
-                runUsbDecodeProducer(
-                    handle, sourceRate, channels, generation,
-                    segmentStartMs, segmentEndMs, segmentDurationMs,
-                    queueHandle, endReached, producerStop, producerFailure
-                )
+                runUsbDecodeProducer(producerHandle, generation, endReached, producerStop, producerFailure)
             }
 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation
@@ -639,6 +640,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             producerStop.set(true)
             if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
             joinUninterruptibly(producerThread)
+            if (producerHandle != 0L) NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
             if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
             usbSoftwareGainEnabled = false
             try { session?.close() } finally {
@@ -667,86 +669,37 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
      *
      * Failures are reported through [failure]; the writer rethrows them on its own thread.
      */
+    /**
+     * Android owns this worker thread only to coordinate cancellation and seek requests.
+     * Segment bounds, decoder seeking, PCM packing, block metadata, epochs, and queue
+     * publication are owned by the Rust producer.
+     */
     private fun runUsbDecodeProducer(
-        handle: Long,
-        sourceRate: Int,
-        channels: Int,
+        producerHandle: Long,
         generation: Int,
-        segmentStartMs: Long,
-        segmentEndMs: Long?,
-        segmentDurationMs: Long?,
-        queueHandle: Long,
         endReached: AtomicBoolean,
         stop: AtomicBoolean,
         failure: AtomicReference<Throwable?>
     ) {
         fun active() = !stop.get() && !stopped.get() && playbackGeneration.get() == generation
-
-        // Offers a block, yielding to a pending seek or a stop request instead of blocking forever.
-        fun publish(block: UsbPcmBlock): Boolean {
-            while (active()) {
-                if (pendingSeekMs.get() != null) return false
-                if (NativeAudio.nativeOfferUsbPcmBlock(
-                        queueHandle, block.pcm, block.frames, block.epoch, block.startFrames,
-                        block.endOfStream, USB_QUEUE_POLL_MS.toInt()
-                    )) return true
-            }
-            return false
-        }
-
         try {
-            var epoch = 0
-            var positionFrames = 0L
-            var atEnd = false
-            var segmentRemainingFrames = segmentDurationMs?.let { framesAtMilliseconds(it, sourceRate) }
             while (active()) {
-                val requested = pendingSeekMs.getAndSet(null)
-                if (requested != null) {
-                    val relativeMs = requested.coerceAtLeast(0L)
-                        .coerceAtMost(segmentDurationMs ?: Long.MAX_VALUE)
-                    val absoluteMs = segmentStartMs + relativeMs
-                    val actual = NativeAudio.nativeSeekStreamDecoder(handle, absoluteMs)
-                    check(actual >= 0L) { "The decoder could not seek to the requested position." }
-                    NativeAudio.nativeClearUsbPcmQueue(queueHandle)
-                    epoch++
-                    atEnd = false
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    NativeAudio.nativeRequestUsbPcmProducerSeek(producerHandle, requested.coerceAtLeast(0L))
                     endReached.set(false)
-                    positionFrames = (actual - segmentStartMs).coerceAtLeast(0L) * sourceRate / 1_000L
-                    segmentRemainingFrames = segmentEndMs?.let {
-                        framesAtMilliseconds((it - absoluteMs).coerceAtLeast(0L), sourceRate)
+                }
+                when (NativeAudio.nativePumpUsbPcmProducer(producerHandle, currentUsbGain())) {
+                    1 -> Unit
+                    0 -> Thread.sleep(2)
+                    -1 -> {
+                        endReached.set(true)
+                        Thread.sleep(20)
                     }
+                    else -> throw IllegalStateException("The Rust direct USB producer failed.")
                 }
-                if (atEnd) {
-                    // Stay alive so that a seek issued during the final queued seconds still works.
-                    Thread.sleep(20)
-                    continue
-                }
-                if (segmentRemainingFrames == 0L) {
-                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
-                    continue
-                }
-                val pcm = NativeAudio.nativeReadStreamChunkPcm24(handle, USB_DECODE_CHUNK_FRAMES, currentUsbGain())
-                if (pcm.isEmpty()) {
-                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
-                    continue
-                }
-                val bytesPerFrame = channels * 3
-                check(pcm.size % bytesPerFrame == 0) { "The Rust decoder returned an incomplete packed PCM frame." }
-                val decodedFrames = pcm.size / bytesPerFrame
-                val frames = segmentRemainingFrames?.let { minOf(decodedFrames.toLong(), it).toInt() }
-                    ?: decodedFrames
-                if (frames <= 0) {
-                    atEnd = publishEndOfStream(epoch, positionFrames, endReached, ::publish)
-                    continue
-                }
-                segmentRemainingFrames = segmentRemainingFrames?.minus(frames)
-
-                val packedPcm = if (frames == decodedFrames) pcm else pcm.copyOf(frames * bytesPerFrame)
-                val block = UsbPcmBlock(packedPcm, frames, epoch, positionFrames)
-                positionFrames += frames
-                // If publish() yields to a seek, the block is dropped and the loop services the seek.
-                publish(block)
             }
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
         } catch (error: Throwable) {
             if (active()) {
                 recordUsbDiagnostic(
@@ -755,17 +708,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 failure.compareAndSet(null, error)
             }
         }
-    }
-
-    private fun publishEndOfStream(
-        epoch: Int,
-        positionFrames: Long,
-        endReached: AtomicBoolean,
-        publish: (UsbPcmBlock) -> Boolean
-    ): Boolean {
-        val published = publish(UsbPcmBlock(ByteArray(0), 0, epoch, positionFrames, endOfStream = true))
-        if (published) endReached.set(true)
-        return published
     }
 
     /** Software gain applied on the decoded USB path: per-DAC volume times the ducking gain. */
