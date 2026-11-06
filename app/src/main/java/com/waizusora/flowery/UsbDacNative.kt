@@ -3,7 +3,7 @@ package com.waizusora.flowery
 import android.hardware.usb.UsbDeviceConnection
 
 /**
- * JNI bridge to the native libusb UAC2 transport.
+ * JNI bridge to the native libusb USB Audio Class transport.
  *
  * PCM input must already be interleaved signed integer little-endian samples
  * in the exact bit depth and sample rate selected for the DAC.
@@ -24,7 +24,9 @@ internal object UsbDacNative {
         subslotBytes: Int,
         sampleRate: Int,
         clockId: Int,
-        controlInterface: Int
+        controlInterface: Int,
+        protocol: Int,
+        samplingFrequencyControl: Boolean
     ): Long
 
     external fun nativeWriteIsochronous(handle: Long, pcm: ByteArray, frameCount: Int): Int
@@ -34,7 +36,7 @@ internal object UsbDacNative {
 }
 
 /**
- * Owns the Android USB connection for the full lifetime of a claimed UAC2
+ * Owns the Android USB connection for the full lifetime of a claimed USB Audio Class
  * streaming interface. Calls must be made off the UI thread. A write returns
  * once the PCM has been staged and the bounded isochronous window has accepted
  * it, so up to roughly 256 ms of previously written audio may still be queued
