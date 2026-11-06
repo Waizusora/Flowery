@@ -139,7 +139,6 @@ class MainActivity : ComponentActivity() {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
                         .apply()
-                    inspectUsbDevice(device)
                     "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery will attempt direct USB playback when the device exposes a compatible UAC2 stereo PCM profile and accepts the requested clock rate. Supported WAV PCM can preserve source samples at unity gain; decoded formats are processed 24-bit PCM and are not bit-perfect."
                 }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
@@ -215,6 +214,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+            .putBoolean("usb_diagnostic_recording", false).apply()
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -336,22 +337,9 @@ class MainActivity : ComponentActivity() {
             } else {
                 "Direct USB exclusive mode enabled for compatible UAC2 DACs. WAV integer PCM can preserve source samples at unity gain; decoded formats use processed 24-bit PCM and are not bit-perfect. Flowery tries permitted devices until one accepts the exact PCM profile and clock rate."
             }
-            inspectUsbDevice(device)
         } else {
             usbDacController.requestPermission(device)
             usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}. Permission grants device access only. Direct playback requires a compatible UAC2 stereo PCM profile and successful clock negotiation; decoded formats are not bit-perfect."
-        }
-    }
-
-    private fun inspectUsbDevice(device: android.hardware.usb.UsbDevice) {
-        io.execute {
-            val report = usbDacController.inspectDescriptors(device) +
-                "\n\nUSB permission status: granted. Permission authorizes USB device access; it does not select an audio mode." +
-                "\n\nPlayback mode by source:" +
-                "\n• Stereo WAV integer PCM16/24/32: Flowery attempts direct USB output only when a connected UAC2 DAC exposes a matching profile and accepts the source sample rate. Source samples remain unchanged only at unity gain with ducking disabled; EQ is bypassed." +
-                "\n• FLAC, ALAC, MP3 and other decoded formats: with direct USB enabled they are decoded by Symphonia, processed as configured, converted to packed 24-bit PCM, and sent over the USB transport. This is not bit-perfect. Otherwise they use Android AAudio." +
-                "\n• Direct USB setup failures stop playback rather than silently falling back to AAudio."
-            runOnUiThread { usbDacMessage = report }
         }
     }
 
