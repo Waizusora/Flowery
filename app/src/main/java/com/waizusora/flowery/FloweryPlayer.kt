@@ -483,7 +483,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${sourceBits} sampleRate=${sourceRate} channels=${channels} bitPerfect=true")
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
                 discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
-                requiredSubslotBytes = sourceBits / 8
+                requiredSubslotBytes = sourceBits / 8, channels = channels
             )
             val device = selectedDevice.usbDevice
             session = usbSession
