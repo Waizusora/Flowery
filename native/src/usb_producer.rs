@@ -64,8 +64,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     segment_end_ms: jlong,
 ) -> jlong {
     if decoder_handle == 0 || source_rate <= 0 || channels != 2
-        || !(16..=32).contains(&bit_resolution) || !matches!(bit_resolution, 16 | 24 | 32)
-        || subslot_bytes != bit_resolution.div_ceil(8)
+        || !(8..=32).contains(&bit_resolution) || !(1..=4).contains(&subslot_bytes)
+        || bit_resolution > subslot_bytes * 8
         || segment_start_ms < 0 || segment_end_ms < -1
         || (segment_end_ms >= 0 && segment_end_ms < segment_start_ms)
     {
@@ -80,7 +80,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     let start = segment_start_ms as u64;
     let remaining = end.map(|value| frames_at_ms(value.saturating_sub(start), source_rate as u64));
     let format = PcmFormat { sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8, subslot_bytes: subslot_bytes as u8, signed: true, little_endian: true };
-    if format.validate().is_err() { return 0; }
+    if format.validate().is_err() || format.sample_rate != source_rate as u32 { return 0; }
     let producer = UsbPcmProducer {
         state: Mutex::new(ProducerState {
             decoder: decoder_handle as *mut StreamDecoder,
