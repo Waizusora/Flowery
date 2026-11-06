@@ -22,11 +22,12 @@ impl PcmFormat {
         if self.sample_rate == 0 || self.channels == 0 {
             return Err("PCM sample rate and channel count must be positive");
         }
-        if !matches!(self.valid_bits, 16 | 24 | 32)
-            || self.subslot_bytes != self.valid_bits.div_ceil(8)
+        if !(8..=32).contains(&self.valid_bits)
+            || !(1..=4).contains(&self.subslot_bytes)
+            || self.valid_bits as u16 > self.subslot_bytes as u16 * 8
             || !self.signed || !self.little_endian
         {
-            return Err("Unsupported PCM representation; expected signed little-endian PCM16/24/32");
+            return Err("Unsupported PCM representation; expected signed little-endian PCM with 8-32 valid bits in 1-4 byte subslots");
         }
         Ok(self)
     }
