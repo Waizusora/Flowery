@@ -101,7 +101,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOfferUsbPcmB
     epoch: jint, start_frames: jlong, end_of_stream: jboolean, timeout_ms: jint
 ) -> jboolean {
     let Some(queue) = queue_ref(handle) else { return JNI_FALSE; };
-    if frames < 0 || timeout_ms < 0 { return JNI_FALSE; }
+    if frames < 0 || frames > 32_768 || timeout_ms < 0 { return JNI_FALSE; }
     let length = match env.get_array_length(&pcm) { Ok(value) => value as usize, Err(_) => return JNI_FALSE };
     let expected_length = (frames as usize).checked_mul(6);
     if (end_of_stream == JNI_TRUE && (frames != 0 || length != 0))
