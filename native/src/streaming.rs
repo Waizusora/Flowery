@@ -388,6 +388,48 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
     0
 }
 
+
+/// Decodes one bounded chunk and copies it directly into the Rust-owned AAudio ring.
+/// Returns produced frames, 0 when the ring is full, and -1 at end of stream.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamChunk(
+    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
+) -> jint {
+    if handle == 0 || max_frames <= 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid streaming pump arguments");
+        return -2;
+    }
+    let available = crate::aaudio::available_output_frames();
+    if available == 0 {
+        return 0;
+    }
+    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
+    let frames = (max_frames as usize).min(available);
+    let samples = match decoder.read_frames(frames) {
+        Ok(samples) => samples,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            return -2;
+        }
+    };
+    if samples.is_empty() {
+        return -1;
+    }
+    let channels = decoder.channels;
+    match crate::aaudio::write_output_samples(&samples) {
+        Ok(written) if written == samples.len() / channels => written as jint,
+        Ok(_) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio ring accepted an incomplete decoded chunk");
+            -2
+        }
+        Err(code) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", format!("AAudio ring write failed: {code}"));
+            -2
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamChunk(
     mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
