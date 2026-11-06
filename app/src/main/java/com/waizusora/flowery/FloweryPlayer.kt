@@ -88,6 +88,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var usbPlaybackMode = false
+    @Volatile private var usbSourceBitPerfectEligible = false
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
@@ -114,11 +115,29 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             volumeController.setUsbVolume(usbKey, normalized)
             applyOutputVolume()
         }
+        publishUsbPlaybackModeStatus()
+    }
+
+    private fun publishUsbPlaybackModeStatus() {
+        if (!usbPlaybackMode || outputSampleRate <= 0) return
+        if (usbSourceBitPerfectEligible) {
+            val unchanged = softwareVolume >= 0.999f && !outputDucked
+            onState(
+                if (unchanged) {
+                    "USB exclusive · direct PCM · source samples unchanged · EQ bypassed"
+                } else {
+                    "USB exclusive · direct PCM · software gain active · not bit-perfect"
+                }
+            )
+        } else {
+            onState("USB exclusive · decoded PCM (not bit-perfect) · 24-bit · ${outputSampleRate} Hz")
+        }
     }
 
     fun setDucked(ducked: Boolean) {
         outputDucked = ducked
         applyOutputVolume()
+        publishUsbPlaybackModeStatus()
     }
 
     private fun applyOutputVolume() {
@@ -468,6 +487,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val producerStop = AtomicBoolean(false)
         val producerFailure = AtomicReference<Throwable?>(null)
         try {
+            usbSourceBitPerfectEligible = false
             recordUsbDiagnostic("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
             check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
@@ -745,6 +765,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             activeUsbDeviceKey = controller.deviceIdentity(device)
             softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
             usbSoftwareGainEnabled = true
+            usbSourceBitPerfectEligible = true
             var firstTransfer = true
 
             while (!stopped.get() && playbackGeneration.get() == generation) {
@@ -791,6 +812,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
         } finally {
             usbSoftwareGainEnabled = false
+            usbSourceBitPerfectEligible = false
             usbPlaybackMode = false
             try {
                 session?.close()
@@ -858,6 +880,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         pendingSeekMs.set(null)
         paused = false
         usbPlaybackMode = false
+        usbSourceBitPerfectEligible = false
         usbPositionFrames = 0L
         activeUsbDeviceKey = null
     }
