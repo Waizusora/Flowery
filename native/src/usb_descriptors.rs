@@ -270,11 +270,6 @@ pub fn playback_descriptor_trace(raw: &[u8], streaming_interface: u8) -> String 
     lines.join("\n")
 }
 
-/// Identifies the explicitly supported reference DAC by its USB vendor and product IDs.
-pub fn is_reference_ktmicro(vendor_id: u16, product_id: u16) -> bool {
-    vendor_id == 0x31B2 && product_id == 0x0111
-}
-
 pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String {
     let profiles = parse_playback_profiles(raw, requested_bit_resolution);
     let values: Vec<Value> = profiles.iter().map(|p| json!({
@@ -489,7 +484,7 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock_ranges_json, clock_sources, descriptor_report_json, is_reference_ktmicro, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace};
+    use super::{clock_ranges_json, clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace};
     use serde_json::Value;
 
     #[test]
