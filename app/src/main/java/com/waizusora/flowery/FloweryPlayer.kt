@@ -744,6 +744,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         return UsbPcmBlock(pcm, frames, epoch, startFrames, endOfStream)
     }
 
+    fun currentVolumeFraction(): Float {
+        val session = activeUsbSession
+        if (session?.hardwareVolumeAvailable == true) {
+            val hardware = runCatching { session.readHardwareVolumeFraction() }.getOrNull()
+            if (hardware != null) softwareVolume = hardware
+        }
+        return if (usbPlaybackMode) softwareVolume.coerceIn(0f, 1f) else volumeController.systemVolumeFraction()
+    }
+
     fun positionMs(): Long =
         if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
         else if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate
