@@ -958,7 +958,7 @@ private fun FloweryApp(
                         if (selectedTrack?.uri == track.uri) Icon(Icons.Default.PlayArrow, "Selected", tint = Gold)
                     }
                 }
-                Text("SOFTWARE VOLUME", color = Color.White)
+                Text("OUTPUT VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
                 Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
                 Card(
