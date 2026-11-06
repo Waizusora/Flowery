@@ -47,7 +47,7 @@ fn low_watermark_frames(sample_rate: i32, capacity_frames: i32) -> i32 {
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectPreferredSampleRate(
-    mut env: JNIEnv, _class: JClass, source_rate: jint, rates: JIntArray,
+    env: JNIEnv, _class: JClass, source_rate: jint, rates: JIntArray,
 ) -> jint {
     let length = match env.get_array_length(&rates) {
         Ok(value) => value as usize,
