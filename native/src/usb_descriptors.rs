@@ -47,7 +47,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
             if a.protocol == 0x20 && a.channels == 2 && a.subslot_bytes > 0
-                && a.bit_resolution > 0 && a.endpoint_address.is_some()
+                && a.bit_resolution > 0 && a.terminal_link > 0 && a.endpoint_address.is_some()
                 && a.max_packet_bytes > 0 && a.interval > 0
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
@@ -132,6 +132,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
 /// Resolves UAC2 clock sources associated with the terminal link of a playback interface.
 pub fn playback_clock_sources(raw: &[u8], streaming_interface: u8) -> Vec<ClockSource> {
     let mut current_interface = 0xffu8;
+    let mut current_class = 0xffu8;
     let mut current_subclass = 0xffu8;
     let mut terminal_clocks = std::collections::HashMap::<u8, u8>::new();
     let mut clock_interfaces = std::collections::HashMap::<u8, u8>::new();
@@ -144,10 +145,11 @@ pub fn playback_clock_sources(raw: &[u8], streaming_interface: u8) -> Vec<ClockS
         if length < 2 || offset + length > raw.len() { break; }
         if descriptor_type == 0x04 && length >= 9 {
             current_interface = raw[offset + 2];
+            current_class = raw[offset + 5];
             current_subclass = raw[offset + 6];
         } else if descriptor_type == 0x24 && length >= 4 {
             let subtype = raw[offset + 2];
-            if current_subclass == 1 {
+            if current_class == 1 && current_subclass == 1 {
                 match subtype {
                     0x02 if length >= 8 => {
                         let id = raw[offset + 3];
@@ -165,7 +167,7 @@ pub fn playback_clock_sources(raw: &[u8], streaming_interface: u8) -> Vec<ClockS
                     }
                     _ => {}
                 }
-            } else if current_interface == streaming_interface && current_subclass == 2 && subtype == 1 {
+            } else if current_class == 1 && current_interface == streaming_interface && current_subclass == 2 && subtype == 1 {
                 let terminal = raw[offset + 3];
                 if terminal != 0 && !playback_links.contains(&terminal) { playback_links.push(terminal); }
             }
@@ -217,7 +219,7 @@ mod tests {
     fn parses_stereo_uac2_out_profile_and_packet_multiplier() {
         let descriptors = [
             9,4,2,2,1,1,2,0x20,0,
-            16,0x24,1,0,0,0,0,0,0,0,2,0,0,0,0,0,
+            16,0x24,1,5,0,0,0,0,0,0,2,0,0,0,0,0,
             6,0x24,2,1,3,24,
             7,5,0x04,0x09,0x26,1,1
         ];
