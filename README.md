@@ -193,3 +193,8 @@ The application uses the incremental Rust streaming decoder and native output ri
 ## License and third-party components
 
 Review the repository's license file and the license terms of all bundled dependencies before redistributing the application. Lofty and Rubato are available under MIT OR Apache-2.0; Symphonia and transitive dependencies retain their respective upstream licenses.
+
+
+## Playback and USB architecture
+
+Playback service commands are coordinated through a dedicated playback coordinator and queue state model. Rust owns queue transition rules and parses UAC2 playback profiles and terminal-linked clock sources; Android retains USB permission, device connection, and service lifecycle responsibilities. The application does not infer sample-rate support from a device name, and direct USB playback still requires a successful device clock negotiation.
