@@ -461,49 +461,6 @@ fn quantize_signed_24(sample: f32, gain: f32) -> i32 {
 /// Reads a bounded decoded chunk, applies a stateful software-gain ramp, and packs
 /// stereo samples as signed 24-bit little-endian PCM for the direct USB transport.
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamChunkPcm24(
-    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint, target_gain: jni::sys::jfloat
-) -> jbyteArray {
-    if handle == 0 || max_frames <= 0 || !target_gain.is_finite() {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid packed PCM read arguments");
-        return std::ptr::null_mut();
-    }
-    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
-    if decoder.channels != 2 {
-        let _ = env.throw_new("java/lang/IllegalStateException", "Direct USB packed PCM currently requires stereo audio");
-        return std::ptr::null_mut();
-    }
-    let samples = match decoder.read_frames(max_frames as usize) {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error);
-            return std::ptr::null_mut();
-        }
-    };
-    let gain = target_gain.clamp(0.0, 1.0);
-    let mut packed = Vec::<i8>::with_capacity(samples.len().saturating_mul(3));
-    let start_gain = if decoder.usb_last_gain < 0.0 { gain } else { decoder.usb_last_gain };
-    let sample_count = samples.len();
-    for (index, sample) in samples.into_iter().enumerate() {
-        let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
-        let ramp_gain = start_gain + (gain - start_gain) * fraction;
-        let value = quantize_signed_24(sample, ramp_gain);
-        packed.push(value as i8);
-        packed.push((value >> 8) as i8);
-        packed.push((value >> 16) as i8);
-    }
-    decoder.usb_last_gain = gain;
-    let output = match env.new_byte_array(packed.len() as i32) {
-        Ok(value) => value,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    if env.set_byte_array_region(&output, 0, &packed).is_err() {
-        return std::ptr::null_mut();
-    }
-    output.into_raw()
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseStreamDecoder(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) {
