@@ -63,6 +63,7 @@ struct UsbAudioSession {
     std::atomic<bool> feedback_in_flight{false};
     std::atomic<bool> feedback_valid{false};
     std::atomic<uint32_t> feedback_rate_fp{0};
+    std::atomic<int64_t> feedback_last_update_ns{0};
     uint8_t feedback_fraction_bits = 0;
     uint32_t feedback_base_interval_us = 0;
     uint64_t feedback_phase = 0;
@@ -131,6 +132,10 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
             }
             if (value != 0) {
                 session->feedback_rate_fp.store(value, std::memory_order_release);
+                const auto now = std::chrono::steady_clock::now().time_since_epoch();
+                session->feedback_last_update_ns.store(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
+                    std::memory_order_release);
                 session->feedback_valid.store(true, std::memory_order_release);
             }
         }
@@ -734,18 +739,26 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             (session->pending_pcm.size() - session->pending_offset) / bytes_per_frame;
         packet_bytes.clear();
         uint64_t phase = session->frame_phase;
+        uint64_t feedback_phase = session->feedback_phase;
         size_t planned_frames = 0;
         while (packet_bytes.size() < kPacketsPerUrb) {
             uint64_t accumulated = 0;
             unsigned int frames = 0;
             if (session->feedback_endpoint != 0 &&
                 session->feedback_valid.load(std::memory_order_acquire)) {
+                const auto now = std::chrono::steady_clock::now().time_since_epoch();
+                const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+                const int64_t feedback_ns = session->feedback_last_update_ns.load(std::memory_order_acquire);
+                if (feedback_ns <= 0 || now_ns - feedback_ns > 100000000LL) {
+                    record_failure(&failure, "feedback_timeout", LIBUSB_ERROR_TIMEOUT);
+                    break;
+                }
                 const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
                 const uint64_t scaled = feedback * session->interval_us /
                                         session->feedback_base_interval_us;
-                accumulated = phase + scaled;
+                accumulated = feedback_phase + scaled;
                 frames = static_cast<unsigned int>(accumulated >> session->feedback_fraction_bits);
-                phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+                feedback_phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
             } else {
                 accumulated = phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
                 frames = static_cast<unsigned int>(accumulated / 1000000ULL);
@@ -770,6 +783,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
         if (!submit_urb(session, packet_bytes, planned_frames * bytes_per_frame, &failure)) break;
         session->frame_phase = phase;
+        session->feedback_phase = feedback_phase;
     }
 
     if (failure.failed) {
@@ -830,6 +844,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     session->pending_pcm.clear();
     session->pending_offset = 0;
     session->frame_phase = 0;
+    session->feedback_phase = 0;
 }
 
 extern "C" JNIEXPORT void JNICALL
