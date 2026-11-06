@@ -135,9 +135,6 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     // is accepted by the direct integer-PCM transport.
                     (0x00, 0x02) if length >= 4 => {
                         alt.format_type = raw[offset + 3];
-                        if alt.format_type == 0x02 && length >= 7 {
-                            alt.format_tag = le16(raw, offset + 5);
-                        }
                         if alt.format_type != 0x01 || length < 8 { offset += length; continue; }
                         alt.channels = raw[offset + 4];
                         alt.subslot_bytes = raw[offset + 5];
