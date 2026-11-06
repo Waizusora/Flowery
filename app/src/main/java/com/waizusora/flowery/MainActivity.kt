@@ -125,7 +125,7 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
                 granted -> {
-                    volume = OutputVolumeController(this).usbVolume(usbDacController.deviceIdentity(device))
+                    volume = OutputVolumeController(this@MainActivity).usbVolume(usbDacController.deviceIdentity(device))
                     if (usbDacController.isReferenceKtmicro(device)) {
                         getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                             .putBoolean("usb_bit_perfect_enabled", true)
