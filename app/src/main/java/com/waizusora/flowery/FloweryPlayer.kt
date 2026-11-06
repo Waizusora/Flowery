@@ -86,6 +86,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var bandGainsDb = FloatArray(31)
     @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
+    @Volatile private var usbOutputBitDepth = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var usbPlaybackMode = false
@@ -131,7 +132,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
             )
         } else {
-            onState("USB exclusive · decoded PCM (not bit-perfect) · 24-bit · ${outputSampleRate} Hz")
+            onState("USB exclusive · decoded PCM (not bit-perfect) · ${usbOutputBitDepth}-bit · ${outputSampleRate} Hz")
         }
     }
 
@@ -500,7 +501,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             session = usbSession
             recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
             recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
-            check(usbSession.profile.channels == channels && usbSession.sampleRate == sourceRate) {
+            check(usbSession.profile.channels == channels && usbSession.sampleRate > 0) {
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
             onState("USB exclusive: decoding and processing PCM (not bit-perfect)…")
@@ -516,6 +517,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_FLOAT_TO_S${usbSession.profile.bitResolution}_LE")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
+            usbOutputBitDepth = usbSession.profile.bitResolution
             val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
             val segmentDurationMs = segmentEndMs?.let {
                 (it - segmentStartMs).coerceAtLeast(0L)
@@ -648,6 +650,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPlaybackMode = false
                 activeUsbDeviceKey = null
                 outputSampleRate = 0
+                usbOutputBitDepth = 0
             }
         }
     }
@@ -757,6 +760,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
 
             outputSampleRate = sampleRate
+            usbOutputBitDepth = bitDepth
             outputDurationMs = totalFrames * 1_000L / sampleRate
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
@@ -874,6 +878,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         // Keep the worker reference until a later start or shutdown can join it.
         outputDurationMs = 0L
         outputSampleRate = 0
+        usbOutputBitDepth = 0
         pendingSeekMs.set(null)
         paused = false
         usbPlaybackMode = false
