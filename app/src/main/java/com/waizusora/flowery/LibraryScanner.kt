@@ -18,12 +18,6 @@ data class AudioTrackItem(
 )
 
 class LibraryScanner(private val context: Context) {
-    private val extensions = setOf(
-        "mp3", "flac", "wav", "wave", "aiff", "aif", "alac", "m4a", "mp4",
-        "aac", "ogg", "opus", "oga", "wma", "ape", "wv", "tta", "mka",
-        "m4b", "dsf", "dff"
-    )
-
     fun scan(roots: List<LibraryFolder>): List<AudioTrackItem> {
         val result = LinkedHashMap<String, AudioTrackItem>()
         roots.filter { it.enabled }.forEach { root ->
@@ -45,7 +39,7 @@ class LibraryScanner(private val context: Context) {
             } else if (file.isFile) {
                 val name = file.name ?: return@forEach
                 val extension = name.substringAfterLast(".", "").lowercase()
-                if (extension in extensions) {
+                if (NativeAudio.nativeIsSupportedAudioExtension(extension)) {
                     output[file.uri.toString()] = AudioTrackItem(
                         uri = file.uri, title = name.substringBeforeLast("."), folder = rootName,
                         mimeType = file.type,
@@ -79,7 +73,7 @@ class LibraryScanner(private val context: Context) {
                 val audioFile = resolvePlaylistPath(pathStack, entry.path) ?: return@entryLoop
                 if (audioFile.isDirectory) return@entryLoop
                 val audioExtension = audioFile.name?.substringAfterLast(".", "")?.lowercase()
-                if (audioExtension == null || audioExtension !in extensions) return@entryLoop
+                if (audioExtension == null || !NativeAudio.nativeIsSupportedAudioExtension(audioExtension)) return@entryLoop
                 val item = AudioTrackItem(
                     uri = audioFile.uri,
                     title = entry.title?.takeIf { it.isNotBlank() } ?: audioFile.name?.substringBeforeLast(".") ?: "Track " + (index + 1),
