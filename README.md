@@ -54,7 +54,7 @@ Application ID: `com.waizusora.flowery`
 
 - Add multiple folder roots through the Storage Access Framework.
 - Enable or disable individual roots and remove roots from the configured list.
-- Recursively scan enabled roots for supported filename extensions.
+- Recursively scan enabled roots for supported filename extensions; the registry and classification policy are implemented in Rust, while Kotlin handles SAF traversal.
 - Associate a sidecar `.lrc` file with an audio file when the base filenames match.
 - Parse CUE, M3U, and PLS playlist text in the Rust engine; Kotlin retains SAF document resolution and charset selection.
 - Scan document trees directly; the library does not use MediaStore.
@@ -127,6 +127,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │   └── src/
 │       ├── lib.rs               # JNI, decode helpers, Lofty tag operations
 │       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
+│       ├── library.rs           # Supported audio filename-extension policy
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
 └── .github/workflows/build.yml  # Android and native CI
