@@ -267,7 +267,7 @@ pub fn playback_descriptor_trace(raw: &[u8], streaming_interface: u8) -> String 
     if offset < raw.len() && lines.len() >= 100 {
         lines.push("Trace truncated at 100 entries.".to_string());
     }
-    lines.join("\\n")
+    lines.join("\n")
 }
 
 pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String {
