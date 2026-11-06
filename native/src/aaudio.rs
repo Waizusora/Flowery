@@ -203,15 +203,6 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(_:JNIEnv,_:JClass)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
 }
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteStreamFrames(env:JNIEnv,_:JClass,input:JFloatArray,offset:jint,frames:jint)->jint{
- if offset<0||frames<=0{return 0;}let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());let Some(o)=e.output.as_mut() else{return 0;};if !o.active.load(Ordering::Acquire){return 0;}
- let read=o.read.load(Ordering::Acquire);let write=o.write.load(Ordering::Relaxed);let queued=write.saturating_sub(read);let count=(frames as u64).min(o.capacity.saturating_sub(queued));if count==0{return 0;}
- let start=offset as usize*o.channels;let n=count as usize*o.channels;let len=env.get_array_length(&input).unwrap_or(0) as usize;if start+n>len{return -1;}
- let mut temp=vec![0.0f32;n];if env.get_float_array_region(&input, start as i32, &mut temp).is_err(){return -1;}
- let ring_len=o.ring.len();
- for (i,v) in temp.into_iter().enumerate(){let index=(write as usize*o.channels+i)%ring_len;o.ring[index]=v;}
- o.write.store(write+count,Ordering::Release);count as i32
-}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(_:JNIEnv,_:JClass,position:jlong,start:jboolean)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null()||position<0{return INVALID_STATE;}
  unsafe{let mut s=AAudioStream_getState(e.stream);if s==STATE_DISCONNECTED{return -899;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s==STATE_PAUSING{let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s!=STATE_PAUSED&&s!=STATE_OPEN&&s!=STATE_STOPPED{return INVALID_STATE;}}
