@@ -173,6 +173,8 @@ The Rust test suite includes checks for:
 - Accurate WAV seek positioning, including converted seek preroll.
 - Saturating millisecond-to-frame conversion.
 
+Android local JVM unit tests use a JVM-compatible `org.json` implementation rather than the Android framework stub, so JSON parsing behavior can be exercised outside an Android runtime.
+
 CI success confirms that the configured build and automated tests completed. It does not replace playback testing across Android versions, audio routes, USB DACs, and individual file formats.
 
 ## Native audio API boundary
