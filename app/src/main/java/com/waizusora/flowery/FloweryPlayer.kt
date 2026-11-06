@@ -476,7 +476,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         try {
             recordUsbDiagnostic("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
-            check(channels == 2) { "Direct USB decoded playback currently requires a stereo source." }
+            check(channels in 1..8) { "Direct USB decoded playback supports one through eight channels." }
             recordUsbDiagnostic("SOURCE_VALIDATED format=symphonia_lossless_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
             val controller = UsbDacController(context)
             onState("USB exclusive: discovering compatible UAC2 DACs…")
