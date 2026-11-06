@@ -25,6 +25,14 @@ object LrcParser {
         }
     }
 
-    fun currentLine(lines: List<LyricLine>, positionMs: Long): LyricLine? =
-        lines.lastOrNull { it.timeMs <= positionMs }
+    /**
+     * Resolves the active line in Rust using a binary search over sorted timestamps.
+     * The returned index preserves the last-entry behavior for duplicate timestamps.
+     */
+    fun currentLine(lines: List<LyricLine>, positionMs: Long): LyricLine? {
+        if (lines.isEmpty()) return null
+        val timestamps = LongArray(lines.size) { index -> lines[index].timeMs }
+        val index = NativeAudio.nativeFindCurrentLyricIndex(timestamps, positionMs)
+        return lines.getOrNull(index)
+    }
 }
