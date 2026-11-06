@@ -46,9 +46,7 @@ Seeking flushes the output ring, performs a format-level Symphonia seek, resets 
 
 ## Output volume policy
 
-Speaker, wired AUX/headphones, and Bluetooth use Android's `STREAM_MUSIC` volume. Flowery reads the current system volume when the UI starts and writes slider changes back to that stream; Android remains responsible for device-specific safe-listening limits and any system warning/confirmation UI. Flowery does not impose a fixed 67% ceiling, because safe-volume thresholds and user override behavior are controlled by Android and may vary by device and region.
-
-USB decoded PCM output normally uses a separate per-DAC software gain preference. Strict Bit Perfect mode disables software volume and digital gain entirely; volume changes are rejected while that mode is active. Ducking is also bypassed for the direct USB Bit Perfect path. The transport does not map physical DAC buttons or query hardware volume controls.
+Flowery uses three output-volume profiles. Profile 1 routes speaker, wired AUX/headphones, and Bluetooth through Android `STREAM_MUSIC`; Android remains responsible for safe-listening limits and system warning UI. Profile 2 is selected when the USB DAC advertises a master-channel UAC Feature Unit Volume Control. Flowery reads and writes the Feature Unit's signed 1/256 dB volume value, and the UI polls the current hardware value so physical DAC volume buttons and the software slider remain synchronized. Profile 3 is used when no usable Feature Unit volume control is advertised; it applies a per-DAC software gain, initially 20% for a new DAC, and persists later changes. Profile 3 changes PCM samples and therefore cannot be labelled Bit Perfect. Strict Bit Perfect mode bypasses software gain and ducking; profile 2 may still adjust the DAC's own output volume without changing the PCM payload. Vendor-specific volume controls that are not exposed as standard UAC Feature Units are not inferred.
 
 ## USB diagnostic recording and descriptor profile database
 
