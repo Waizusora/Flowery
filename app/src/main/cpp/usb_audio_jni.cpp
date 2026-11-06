@@ -141,16 +141,19 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
         }
     }
     session->event_condition.notify_all();
-    if (!session->feedback_stopped.load(std::memory_order_acquire) &&
-        session->event_thread_running.load(std::memory_order_acquire)) {
-        const int result = libusb_submit_transfer(transfer);
-        if (result == LIBUSB_SUCCESS) {
-            session->feedback_in_flight.store(true, std::memory_order_release);
-        } else {
-            session->event_loop_error.store(result, std::memory_order_release);
-            session->event_condition.notify_all();
+    {
+        std::lock_guard<std::mutex> lock(session->event_mutex);
+        if (!session->feedback_stopped.load(std::memory_order_acquire) &&
+            session->event_thread_running.load(std::memory_order_acquire)) {
+            const int result = libusb_submit_transfer(transfer);
+            if (result == LIBUSB_SUCCESS) {
+                session->feedback_in_flight.store(true, std::memory_order_release);
+            } else {
+                session->event_loop_error.store(result, std::memory_order_release);
+            }
         }
     }
+    session->event_condition.notify_all();
 }
 
 const char* transfer_status_name(unsigned int status) {
@@ -190,10 +193,15 @@ void event_loop_main(UsbAudioSession* session) {
 }
 
 void stop_event_thread(UsbAudioSession* session) {
-    session->feedback_stopped.store(true, std::memory_order_release);
-    if (session->feedback_transfer != nullptr &&
-        session->feedback_in_flight.load(std::memory_order_acquire)) {
-        libusb_cancel_transfer(session->feedback_transfer);
+    {
+        std::lock_guard<std::mutex> lock(session->event_mutex);
+        session->feedback_stopped.store(true, std::memory_order_release);
+        if (session->feedback_transfer != nullptr &&
+            session->feedback_in_flight.load(std::memory_order_acquire)) {
+            libusb_cancel_transfer(session->feedback_transfer);
+        }
+    }
+    if (session->feedback_transfer != nullptr) {
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(kTeardownTimeoutMs);
         while (session->feedback_in_flight.load(std::memory_order_acquire) &&
@@ -538,8 +546,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     jint control_interface, jint protocol, jboolean sampling_frequency_control) {
     if (file_descriptor < 0 || interface_number < 0 || alternate_setting <= 0 ||
         endpoint <= 0 || (endpoint & 0x80) != 0 || max_packet_bytes <= 0 ||
-        interval <= 0 || feedback_endpoint < 0 || feedback_max_packet_bytes < 0 ||
+        interval <= 0 || feedback_endpoint < 0 || feedback_endpoint > 255 || feedback_max_packet_bytes < 0 ||
         ((feedback_endpoint == 0) != (feedback_max_packet_bytes == 0)) ||
+        (feedback_endpoint != 0 && (feedback_endpoint & 0x80) == 0) ||
         channels < 1 || channels > 8 || subslot_bytes <= 0 || sample_rate <= 0 ||
         (protocol != 0x00 && protocol != 0x20)) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
@@ -575,6 +584,16 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
 
     const int speed = libusb_get_device_speed(libusb_get_device(session->handle));
     session->interval_us = service_interval_us(speed, session->interval);
+    if (session->feedback_endpoint != 0) {
+        const bool high_speed = speed == LIBUSB_SPEED_HIGH || speed == LIBUSB_SPEED_SUPER || speed == LIBUSB_SPEED_SUPER_PLUS;
+        const uint16_t minimum_feedback_bytes = high_speed ? 4 : 3;
+        if (session->feedback_max_packet_bytes < minimum_feedback_bytes) {
+            close_session(session);
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            if (exception != nullptr) env->ThrowNew(exception, "Feedback endpoint packet is too short for its USB speed");
+            return 0;
+        }
+    }
     const uint64_t maximum_interval_frames =
         (static_cast<uint64_t>(sample_rate) * session->interval_us + 999999ULL) / 1000000ULL;
     const uint64_t maximum_interval_bytes =
