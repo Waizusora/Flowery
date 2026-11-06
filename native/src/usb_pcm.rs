@@ -7,12 +7,12 @@ use jni::sys::{jboolean, jbyteArray, jint, jlong, jsize, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
 #[derive(Clone)]
-struct PcmBlock {
-    pcm: Vec<u8>,
-    frames: u32,
-    epoch: i32,
-    start_frames: i64,
-    end_of_stream: bool,
+pub(super) struct PcmBlock {
+    pub(super) pcm: Vec<u8>,
+    pub(super) frames: u32,
+    pub(super) epoch: i32,
+    pub(super) start_frames: i64,
+    pub(super) end_of_stream: bool,
 }
 
 struct QueueState {
@@ -20,7 +20,7 @@ struct QueueState {
     closed: bool,
 }
 
-struct UsbPcmQueue {
+pub(super) struct UsbPcmQueue {
     capacity: usize,
     state: Mutex<QueueState>,
     changed: Condvar,
@@ -35,7 +35,7 @@ impl UsbPcmQueue {
         }
     }
 
-    fn offer(&self, block: PcmBlock, timeout: Duration) -> bool {
+    pub(super) fn offer(&self, block: PcmBlock, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         while state.blocks.len() >= self.capacity && !state.closed {
@@ -56,6 +56,11 @@ impl UsbPcmQueue {
         state.blocks.push_back(block);
         self.changed.notify_all();
         true
+    }
+
+    pub(super) fn clear(&self) {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).blocks.clear();
+        self.changed.notify_all();
     }
 
     fn poll(&self, timeout: Duration) -> Option<PcmBlock> {
@@ -83,7 +88,7 @@ impl UsbPcmQueue {
     }
 }
 
-fn queue_ref(handle: jlong) -> Option<&'static UsbPcmQueue> {
+pub(super) fn queue_ref(handle: jlong) -> Option<&'static UsbPcmQueue> {
     if handle == 0 { None } else { Some(unsafe { &*(handle as *const UsbPcmQueue) }) }
 }
 
