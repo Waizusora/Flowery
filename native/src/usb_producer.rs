@@ -140,7 +140,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
                 state.pending_block = None;
                 state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.format.sample_rate as u64);
                 state.segment_remaining_frames = state.segment_end_ms
-                    .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.source_rate));
+                    .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.format.sample_rate as u64));
             }
             Err(error) => {
                 let _ = env.throw_new("java/lang/IllegalStateException", error);
