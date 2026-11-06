@@ -357,7 +357,8 @@ class UsbDacController(context: Context) {
         bitResolution: Int,
         sampleRate: Int,
         allowSampleRateConversion: Boolean = false,
-        requiredSubslotBytes: Int? = null
+        requiredSubslotBytes: Int? = null,
+        channels: Int = 2
     ): Pair<Device, UsbDacSession> {
         val failures = mutableListOf<String>()
         for (device in devices) {
@@ -403,7 +404,7 @@ class UsbDacController(context: Context) {
                 for (candidateRate in candidateRates) {
                     try {
                         val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes)
-                        if (session.profile.channels == 2 &&
+                        if (session.profile.channels == channels &&
                             session.profile.bitResolution == candidateBits &&
                             session.sampleRate == candidateRate) {
                             return device to session
@@ -417,14 +418,14 @@ class UsbDacController(context: Context) {
                 }
             }
             if (candidateResolutions.isEmpty()) {
-                failures += "${device.identity}: no descriptor-validated stereo UAC1/UAC2 PCM profiles"
+                failures += "${device.identity}: no descriptor-validated requested-channel UAC1/UAC2 PCM profiles"
             }
             if (candidateRates.isEmpty()) {
                 failures += "${device.identity}: no usable UAC1/UAC2 sample rates were reported"
             }
         }
         throw IllegalStateException(
-            "No connected UAC1/UAC2 DAC accepted stereo PCM at source rate ${sampleRate} Hz. " +
+            "No connected UAC1/UAC2 DAC accepted requested-channel PCM at source rate ${sampleRate} Hz. " +
                 failures.joinToString("; ")
         )
     }
