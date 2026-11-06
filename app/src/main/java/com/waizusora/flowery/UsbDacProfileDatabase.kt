@@ -87,6 +87,8 @@ internal class UsbDacProfileDatabase(context: Context) :
         val rawHex = rawDescriptors.joinToString("") { "%02X".format(it.toInt() and 0xff) }
         val now = System.currentTimeMillis()
 
+        var previouslyObserved = false
+        var nextSeenCount = 1L
         writableDatabase.beginTransaction()
         try {
             val existing = readableDatabase.rawQuery(
@@ -95,8 +97,9 @@ internal class UsbDacProfileDatabase(context: Context) :
             ).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getLong(0) to cursor.getLong(1) else null
             }
+            previouslyObserved = existing != null
             val firstSeen = existing?.first ?: now
-            val nextSeenCount = (existing?.second ?: 0L) + 1L
+            nextSeenCount = (existing?.second ?: 0L) + 1L
             val values = ContentValues().apply {
                 put("profile_key", profileKey)
                 put("vendor_id", vendorId)
@@ -120,7 +123,7 @@ internal class UsbDacProfileDatabase(context: Context) :
         } finally {
             writableDatabase.endTransaction()
         }
-        return StoredProfile(profileKey, fingerprint, rawHex, existingCountFor(profileKey), profileCount(), existing != null, now)
+        return StoredProfile(profileKey, fingerprint, rawHex, nextSeenCount, profileCount(), previouslyObserved, now)
     }
 
     private fun existingCountFor(profileKey: String): Long =
