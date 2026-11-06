@@ -331,7 +331,10 @@ class MainActivity : ComponentActivity() {
 
         // Prefer a device for which Android permission is already granted. If none is
         // authorized yet, request access to the first enumerated device.
-        val detected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) }
+        val detected = devices.firstOrNull {
+            usbDacController.hasPermission(it.usbDevice) &&
+                usbDacController.hasCompatibleUac2PlaybackProfile(it.usbDevice)
+        } ?: devices.firstOrNull { !usbDacController.hasPermission(it.usbDevice) }
             ?: devices.first()
         val device = detected.usbDevice
         if (usbDacController.hasPermission(device)) {
