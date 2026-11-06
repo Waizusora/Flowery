@@ -135,7 +135,13 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
                 granted && usbDacController.hasCompatibleUac2PlaybackProfile(device) -> {
-                    volume = OutputVolumeController(this@MainActivity).usbVolume(usbDacController.deviceIdentity(device))
+                    run {
+                        val volumeController = OutputVolumeController(this@MainActivity)
+                        val key = usbDacController.deviceIdentity(device)
+                        val hardwareVolume = usbDacController.readHardwareVolumeFraction(device)
+                        volumeController.usbProfile(key, hardwareVolume != null)
+                        volume = hardwareVolume ?: volumeController.usbVolume(key)
+                    }
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
                         .apply()
@@ -317,8 +323,11 @@ class MainActivity : ComponentActivity() {
     private fun refreshOutputVolume() {
         val volumeController = OutputVolumeController(this)
         val connectedDac = usbDacController.audioDevices().singleOrNull()
-        volume = connectedDac?.let { volumeController.usbVolume(it.identity) }
-            ?: volumeController.systemVolumeFraction()
+        volume = connectedDac?.let { device ->
+            val hardwareVolume = usbDacController.readHardwareVolumeFraction(device.usbDevice)
+            volumeController.usbProfile(device.identity, hardwareVolume != null)
+            hardwareVolume ?: volumeController.usbVolume(device.identity)
+        } ?: volumeController.systemVolumeFraction()
     }
 
     private fun requestUsbDacAccess() {
