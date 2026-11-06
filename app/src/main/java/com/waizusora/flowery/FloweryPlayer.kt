@@ -492,17 +492,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            onState("USB exclusive: negotiating stereo 24-bit PCM at ${sourceRate} Hz…")
-            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=24 sampleRate=${sourceRate} channels=${channels}")
+            onState("USB exclusive: negotiating a supported stereo PCM format at ${sourceRate} Hz…")
+            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=auto sampleRate=${sourceRate} channels=${channels}")
             val (selectedDevice, usbSession) =
-                controller.openFirstCompatiblePlaybackSession(discovered, 24, sourceRate)
+                controller.openFirstCompatiblePlaybackSession(discovered, 0, sourceRate)
             val device = selectedDevice.usbDevice
             session = usbSession
             recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
             recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
-            check(usbSession.profile.channels == channels && usbSession.profile.bitResolution == 24 &&
-                usbSession.sampleRate == sourceRate) {
-                "The DAC profile does not match stereo 24-bit PCM at $sourceRate Hz."
+            check(usbSession.profile.channels == channels && usbSession.sampleRate == sourceRate) {
+                "The negotiated DAC profile does not match the decoded PCM stream."
             }
             onState("USB exclusive: decoding and processing PCM (not bit-perfect)…")
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb)
@@ -514,7 +513,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_FLOAT_TO_S24_LE")
+            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_FLOAT_TO_S${usbSession.profile.bitResolution}_LE")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = sourceRate
             val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
@@ -541,7 +540,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
-                handle, queueHandle, sourceRate, channels, segmentStartMs, segmentEndMs ?: -1L
+                handle, queueHandle, sourceRate, channels, usbSession.profile.bitResolution,
+                usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
             val endReached = AtomicBoolean(false)
@@ -624,7 +624,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (firstTransfer) {
                     firstTransfer = false
                     val dspActive = bandGainsDb.any { abs(it) > 0.001f }
-                    onState("USB exclusive · decoded PCM (not bit-perfect) · 24-bit · " + sourceRate + " Hz" +
+                    onState("USB exclusive · decoded PCM (not bit-perfect) · " + usbSession.profile.bitResolution + "-bit · " + sourceRate + " Hz" +
                         if (dspActive) " · EQ/DSP active" else " · EQ flat")
                 }
             }
