@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.QueueMusic
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -275,7 +276,6 @@ fun FloweryNavigation(
                         ) {
                             IconButton(
                                 onClick = { selectedTrack?.let(onInspect) },
-                                enabled = selectedTrack != null,
                                 modifier = Modifier.size(40.dp)
                             ) {
                                 Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6),
@@ -377,7 +377,7 @@ fun FloweryNavigation(
                             Text(name ?: "Playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
                             entries.sortedBy { it.playlistOrder ?: Int.MAX_VALUE }.forEach { item ->
                                 Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.QueueMusic, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
+                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
                                     Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
                                 }
                                 HorizontalDivider(color = muted.copy(alpha = .16f))
