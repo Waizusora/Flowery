@@ -961,7 +961,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    onState("USB exclusive bit-perfect · PCM ${pcmSource.bitDepth}-bit · ${pcmSource.sampleRate} Hz")
+                    onState(if (softwareVolume >= 0.999f) "USB exclusive · direct PCM · unity gain" else "USB exclusive · direct PCM · software volume")
                 }
             }
 
