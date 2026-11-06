@@ -64,7 +64,6 @@ use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{ItemKey, Tag};
 use std::fs;
-use std::io::{Seek, SeekFrom};
 use std::os::fd::FromRawFd;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -211,7 +210,6 @@ fn copy_descriptor_to_temp(fd: i32, extension: &str, temp_dir: &str) -> Result<P
     let duplicate = unsafe { libc::dup(fd) };
     if duplicate < 0 { return Err(format!("Unable to duplicate audio descriptor: {}", std::io::Error::last_os_error())); }
     let mut source = unsafe { std::fs::File::from_raw_fd(duplicate) };
-    source.seek(SeekFrom::Start(0)).map_err(|e| format!("Unable to seek audio descriptor: {e}"))?;
     let path = temporary_audio_path(temp_dir, extension);
     let mut destination = fs::File::create(&path).map_err(|e| format!("Unable to stage audio file: {e}"))?;
     std::io::copy(&mut source, &mut destination).map_err(|e| format!("Unable to copy audio document: {e}"))?;
