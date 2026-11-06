@@ -3,6 +3,7 @@ object NativeAudio {
     init { System.loadLibrary("flowery_audio") }
     external fun nativeEngineVersion(): String
     external fun nativeParseLrc(content: String): String
+    external fun nativeFindCurrentLyricIndex(timestamps: LongArray, positionMs: Long): Int
     external fun nativeParseCue(content: String): String
     external fun nativeParseM3u(content: String): String
     external fun nativeParsePls(content: String): String
@@ -13,7 +14,6 @@ object NativeAudio {
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
     external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
-    external fun nativeReadStreamChunk(handle: Long, maxFrames: Int): FloatArray
     external fun nativeReadStreamChunkPcm24(handle: Long, maxFrames: Int, targetGain: Float): ByteArray
     external fun nativePumpStreamChunk(handle: Long, maxFrames: Int): Int
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
