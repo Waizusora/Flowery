@@ -20,6 +20,8 @@ internal object UsbDacNative {
         endpoint: Int,
         maxPacketBytes: Int,
         interval: Int,
+        feedbackEndpoint: Int,
+        feedbackMaxPacketBytes: Int,
         channels: Int,
         subslotBytes: Int,
         sampleRate: Int,
