@@ -14,7 +14,7 @@ mod aaudio;
 use base64::Engine;
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jbyteArray, jint, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jstring, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
 #[no_mangle]
@@ -83,6 +83,20 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPlaybackD
         &mut env,
         &usb_descriptors::playback_descriptor_trace(&bytes, streaming_interface as u8),
     )
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsReferenceUsbDac(
+    _env: JNIEnv, _class: JClass, vendor_id: jint, product_id: jint,
+) -> jboolean {
+    if (0..=u16::MAX as jint).contains(&vendor_id)
+        && (0..=u16::MAX as jint).contains(&product_id)
+        && usb_descriptors::is_reference_ktmicro(vendor_id as u16, product_id as u16)
+    {
+        JNI_TRUE
+    } else {
+        JNI_FALSE
+    }
 }
 
 #[no_mangle]
