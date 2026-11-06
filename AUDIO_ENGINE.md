@@ -63,3 +63,8 @@ LRC parsing runs in Rust through the native JNI boundary. The parser recognizes 
 ## Playlist parsing
 
 CUE, M3U, and PLS parsing runs in Rust through JNI. The native parser produces structured metadata and playlist entries; Kotlin adapts those values to app models. Charset selection and document-tree path resolution remain in Kotlin because they depend on Android/JVM and SAF APIs.
+
+
+## Playback queue policy
+
+Next, previous, natural-completion, shuffle, and repeat transition decisions are implemented in `native/src/queue.rs` and exposed through JNI. `PlaybackService` retains Android service state and the URI/metadata arrays required by notifications and media sessions, but delegates queue index transitions to Rust. The native transition function returns an explicit stop result or a replay-current result for repeat-one completion; queue state remains owned by the service adapter while the transition policy is native.
