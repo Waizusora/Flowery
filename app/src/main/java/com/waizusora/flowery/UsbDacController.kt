@@ -184,12 +184,11 @@ class UsbDacController(context: Context) {
     }
 
     /**
-     * Opens the descriptor-selected UAC2 stereo output using native libusb.
+     * Opens a descriptor-selected UAC1 or UAC2 stereo output using native libusb.
      *
-     * This claims the descriptor-selected streaming interface, verifies the
-     * requested UAC2 clock frequency, and returns a session for the negotiated
-     * signed integer PCM format. Source adapters may preserve WAV bytes or
-     * convert decoded samples into the selected DAC representation.
+     * The session validates the requested sample rate against the relevant UAC
+     * descriptors and performs the class-specific rate or clock negotiation that
+     * the device advertises. The shared PCM producer supplies signed integer PCM.
      */
     internal fun openExclusivePlaybackSession(
         device: UsbDevice,
