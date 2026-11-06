@@ -680,7 +680,8 @@ mod tests {
             9,4,2,1,1,1,2,0x00,0,
             7,0x24,1,5,0,1,0,
             14,0x24,2,1,2,3,24,2,0x44,0xAC,0,0x80,0xBB,0,
-            7,5,0x01,0x05,0x26,1,1
+            7,5,0x01,0x05,0x26,1,1,
+            7,5,0x81,0x11,0x03,1,1
         ];
         let profiles = parse_playback_profiles(&descriptors, Some(24));
         assert_eq!(profiles.len(), 1);
@@ -688,6 +689,29 @@ mod tests {
         assert_eq!(profiles[0].channels, 2);
         assert_eq!(profiles[0].sample_rates, vec![44_100, 48_000]);
         assert_eq!(profiles[0].endpoint_address, 1);
+    }
+
+    #[test]
+    fn reports_uac1_type_ii_and_type_iii_without_exposing_them_as_type_i_pcm() {
+        let type_ii = [
+            9,4,1,1,1,1,2,0,0,
+            7,0x24,1,5,0,2,0,
+            9,0x24,2,2,0x80,0x3e,0x00,0x01,0
+        ];
+        let report: Value = serde_json::from_str(&descriptor_report_json(&type_ii)).unwrap();
+        assert_eq!(report["streams"][0]["uac1FormatTypes"][0], 2);
+        assert_eq!(report["streams"][0]["uac1FormatTags"][0], 2);
+        assert!(parse_playback_profiles(&type_ii, None).is_empty());
+
+        let type_iii = [
+            9,4,1,1,1,1,2,0,0,
+            7,0x24,1,5,0,1,0,
+            14,0x24,2,3,2,4,24,2,0x44,0xac,0,0x80,0xbb,0
+        ];
+        let report: Value = serde_json::from_str(&descriptor_report_json(&type_iii)).unwrap();
+        assert_eq!(report["streams"][0]["uac1FormatTypes"][0], 3);
+        assert_eq!(report["streams"][0]["channels"][0], 2);
+        assert!(parse_playback_profiles(&type_iii, None).is_empty());
     }
 
     #[test]
