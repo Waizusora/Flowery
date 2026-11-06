@@ -124,9 +124,8 @@ unsafe fn wait_stream_state(stream:*mut AAudioStream, transient:i32, target:i32)
         if result!=OK{return result;}
         state=next;
     }
-    if state==target{OK}else{- timeout_code()}
+    if state==target{OK}else{-889}
 }
-fn timeout_code()->i32{-889}
 
 unsafe extern "C" fn error_callback(_: *mut AAudioStream, data:*mut c_void, error:i32){
     if !data.is_null(){let o=&*(data as *const Output);o.error.store(error,Ordering::Release);o.active.store(false,Ordering::Release);}
