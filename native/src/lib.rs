@@ -217,7 +217,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWriteTags(
         set_tag_text(tag, ItemKey::Composer, values.next().unwrap());
         let lyric_key = if tag.tag_type() == lofty::tag::TagType::Id3v2 { ItemKey::UnsyncLyrics } else { ItemKey::Lyrics };
         set_tag_text(tag, lyric_key, values.next().unwrap());
-        tagged.save_to(path, WriteOptions::default())
+        let mut output = fs::File::create(path)
+            .map_err(|e| format!("Unable to open staged audio file for tag writing: {e}"))?;
+        tagged.save_to(&mut output, WriteOptions::default())
             .map_err(|e| format!("Lofty could not write tags for this format: {e}"))?;
         fs::read(path).map_err(|e| format!("Unable to read edited audio file: {e}"))
     });
