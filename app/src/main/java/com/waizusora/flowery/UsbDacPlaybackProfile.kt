@@ -3,7 +3,7 @@ package com.waizusora.flowery
 import org.json.JSONObject
 
 /**
- * Descriptor-derived UAC2 playback capability metadata.
+ * Descriptor-derived UAC1/UAC2 playback capability metadata.
  *
  * The profile is parsed by Rust and does not prove that an interface is claimed,
  * a stream is active, or the resulting output is bit-perfect.
@@ -17,7 +17,10 @@ internal data class UsbDacPlaybackProfile(
     val endpointAddress: Int,
     val maxPacketBytes: Int,
     val interval: Int,
-    val synchronization: String
+    val synchronization: String,
+    val protocol: Int,
+    val sampleRates: List<Int>,
+    val sampleRateRange: Pair<Int, Int>?
 ) {
     val endpointHex: String
         get() = "0x%02X".format(endpointAddress)
@@ -32,7 +35,14 @@ internal data class UsbDacPlaybackProfile(
             endpointAddress = value.getInt("endpointAddress"),
             maxPacketBytes = value.getInt("maxPacketBytes"),
             interval = value.getInt("interval"),
-            synchronization = value.getString("synchronization")
+            synchronization = value.getString("synchronization"),
+            protocol = value.optInt("protocol", 0x20),
+            sampleRates = value.optJSONArray("sampleRates")?.let { rates ->
+                (0 until rates.length()).map { rates.getInt(it) }
+            } ?: emptyList(),
+            sampleRateRange = value.optJSONArray("sampleRateRange")?.let { range ->
+                if (range.length() >= 2) range.getInt(0) to range.getInt(1) else null
+            }
         )
     }
 }
