@@ -119,7 +119,7 @@ class UsbDacController(context: Context) {
                 manufacturer = device.manufacturerName,
                 clockRangeReports = clockReports
             )
-            val playbackProfiles = parseNativePlaybackProfiles(descriptors, 0)
+            val playbackProfiles = parseNativePlaybackProfiles(descriptors, null)
             val profileReport = if (playbackProfiles.isEmpty()) {
                 "\nStereo UAC2 OUT playback profiles: none could be validated from the descriptors."
             } else {
