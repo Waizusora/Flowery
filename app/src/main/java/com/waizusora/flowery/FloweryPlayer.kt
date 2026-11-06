@@ -76,6 +76,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     )
 
     @Volatile private var activeUsbDeviceKey: String? = null
+    @Volatile private var activeUsbSession: UsbDacSession? = null
     // True while a direct USB route permits per-DAC software volume. Non-unity gain
     // changes PCM samples and is therefore not source-bit-perfect.
     @Volatile private var usbSoftwareGainEnabled = false
@@ -102,27 +103,38 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setVolume(value: Float) {
-        if (usbPlaybackMode && !usbSoftwareGainEnabled) {
-            onState("Software volume is unavailable for the active USB output route.")
+        val normalized = value.coerceIn(0f, 1f)
+        if (usbPlaybackMode) {
+            val usbKey = activeUsbDeviceKey
+            val session = activeUsbSession
+            if (session?.hardwareVolumeAvailable == true && session.setHardwareVolumeFraction(normalized)) {
+                softwareVolume = session.readHardwareVolumeFraction() ?: normalized
+                if (usbKey != null) volumeController.setUsbVolume(usbKey, softwareVolume)
+                usbBitPerfectActive = true
+                usbSoftwareGainEnabled = false
+                onState("USB DAC hardware volume synchronized · ${(softwareVolume * 100).toInt()}%")
+            } else {
+                if (!usbSoftwareGainEnabled) {
+                    onState("USB DAC hardware volume control is unavailable; software volume is disabled for this session.")
+                    return
+                }
+                softwareVolume = normalized
+                if (usbKey != null) volumeController.setUsbVolume(usbKey, normalized)
+                usbBitPerfectActive = false
+                onState("USB DAC software volume · ${(normalized * 100).toInt()}%")
+            }
+            publishUsbPlaybackModeStatus()
             return
         }
-        val normalized = value.coerceIn(0f, 1f)
-        val usbKey = activeUsbDeviceKey
-        if (usbKey == null) {
-            // Speaker, wired AUX/headsets, and Bluetooth follow Android's media stream.
-            volumeController.setSystemVolume(normalized)
-            softwareVolume = 1f
-        } else {
-            softwareVolume = normalized
-            volumeController.setUsbVolume(usbKey, normalized)
-            applyOutputVolume()
-        }
+        volumeController.setSystemVolume(normalized)
+        softwareVolume = 1f
         publishUsbPlaybackModeStatus()
     }
 
     private fun publishUsbPlaybackModeStatus() {
         if (!usbPlaybackMode || outputSampleRate <= 0) return
-        onState("USB exclusive · PCM output · Bit Perfect not verified · ${usbOutputBitDepth}-bit · ${outputSampleRate} Hz")
+        val mode = if (usbBitPerfectActive) "BIT PERFECT" else "PCM · software volume ${(softwareVolume * 100).toInt()}%"
+        onState("USB exclusive · $mode · ${usbOutputBitDepth}-bit · ${outputSampleRate} Hz")
     }
 
     fun setDucked(ducked: Boolean) {
@@ -519,14 +531,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             outputDurationMs = segmentDurationMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
-            softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
-            usbBitPerfectActive = true
-            usbSoftwareGainEnabled = false
-            recordUsbDiagnostic(
-                "USB_PCM_GAIN bitPerfect=true producerGain=1.0 softwareVolume=disabled ducking=disabled " +
-                    "queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} " +
-                    "blockFrames=${USB_DECODE_CHUNK_FRAMES}"
-            )
+            activeUsbSession = usbSession
+            val hardwareVolume = usbSession.readHardwareVolumeFraction()
+            volumeController.usbProfile(activeUsbDeviceKey!!, hardwareVolume != null)
+            if (hardwareVolume != null) {
+                softwareVolume = hardwareVolume
+                usbBitPerfectActive = true
+                usbSoftwareGainEnabled = false
+            } else {
+                softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
+                usbBitPerfectActive = false
+                usbSoftwareGainEnabled = true
+            }
+            recordUsbDiagnostic("USB_VOLUME_PROFILE profile=${if (hardwareVolume != null) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${hardwareVolume != null}")
+            recordUsbDiagnostic("USB_PCM_GAIN bitPerfect=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} blockFrames=${USB_DECODE_CHUNK_FRAMES}")
 
             // The writer (this thread) must never wait on decoding. Rust produces packed PCM blocks
             // into its bounded queue; this Kotlin thread only drains blocks into the libusb
@@ -620,7 +638,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    onState("USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · Symphonia lossless decode")
+                    onState(if (usbBitPerfectActive) "USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · Symphonia lossless decode" else "USB exclusive · PCM · software volume " + (softwareVolume * 100).toInt() + "% · " + sourceBits + "-bit · " + sourceRate + " Hz")
                 }
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }
@@ -639,6 +657,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             if (producerHandle != 0L) NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
             if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
             usbSoftwareGainEnabled = false
+            activeUsbSession = null
             try { session?.close() } finally {
                 usbPlaybackMode = false
                 activeUsbDeviceKey = null
