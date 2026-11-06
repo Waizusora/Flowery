@@ -127,7 +127,8 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │   └── src/
 │       ├── lib.rs               # JNI entry points and Lofty tag operations
 │       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
-│       ├── library.rs           # Supported audio filename-extension policy
+│       ├── library.rs           # Audio extension and filename policy
+│       ├── catalog.rs           # Rust-owned library catalog and playlist association
 │       ├── queue.rs             # Shuffle, repeat, and queue transitions
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
