@@ -356,6 +356,27 @@ fn descriptor_bytes(env: &mut JNIEnv, input: &JByteArray) -> Result<Vec<u8>, Str
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectUsbSampleRates(
+    mut env: JNIEnv, _class: JClass, source_rate: jint, ranges_json: JString,
+) -> jstring {
+    if source_rate <= 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Source sample rate must be positive");
+        return std::ptr::null_mut();
+    }
+    let ranges = match env.get_string(&ranges_json) {
+        Ok(value) => value.to_string_lossy().into_owned(),
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    match env.new_string(usb_descriptors::select_usb_sample_rates_json(source_rate as u32, &ranges)) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacProfiles(
     mut env: JNIEnv, _class: JClass, input: JByteArray, requested_bits: jint,
 ) -> jstring {
