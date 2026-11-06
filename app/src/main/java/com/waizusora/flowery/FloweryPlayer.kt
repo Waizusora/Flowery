@@ -523,7 +523,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             usbBitPerfectActive = true
             usbSoftwareGainEnabled = false
             recordUsbDiagnostic(
-                "USB_PCM_GAIN initialGain=${"%.3f".format(java.util.Locale.US, softwareVolume)} " +
+                "USB_PCM_GAIN bitPerfect=true producerGain=1.0 softwareVolume=disabled ducking=disabled " +
                     "queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} " +
                     "blockFrames=${USB_DECODE_CHUNK_FRAMES}"
             )
