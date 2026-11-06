@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::FromRawFd;
 
-use jni::objects::{JClass, JLongArray};
+use jni::objects::JClass;
 use jni::sys::{jbyteArray, jint, jlong, jlongArray};
 use jni::JNIEnv;
 
