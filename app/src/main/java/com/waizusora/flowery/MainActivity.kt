@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
                 granted -> {
+                    volume = OutputVolumeController(this).usbVolume(usbDacController.deviceIdentity(device))
                     if (usbDacController.isReferenceKtmicro(device)) {
                         getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                             .putBoolean("usb_bit_perfect_enabled", true)
@@ -215,7 +216,7 @@ class MainActivity : ComponentActivity() {
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
-        volume = OutputVolumeController(this).systemVolumeFraction()
+        refreshOutputVolume()
         setContent {
             FloweryNavigation(
                 context = this,
@@ -304,8 +305,16 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    private fun refreshOutputVolume() {
+        val volumeController = OutputVolumeController(this)
+        val connectedDac = usbDacController.audioDevices().singleOrNull()
+        volume = connectedDac?.let { volumeController.usbVolume(it.identity) }
+            ?: volumeController.systemVolumeFraction()
+    }
+
     private fun requestUsbDacAccess() {
         val devices = usbDacController.audioDevices()
+        refreshOutputVolume()
         when {
             devices.isEmpty() -> usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
             devices.size > 1 -> usbDacMessage = "More than one USB Audio Class device is connected. Disconnect other USB audio devices and retry so Flowery can request permission for the intended DAC."
