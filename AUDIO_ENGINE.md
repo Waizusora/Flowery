@@ -32,7 +32,7 @@ Seeking flushes the output ring, performs a format-level Symphonia seek, resets 
 
 Speaker, wired AUX/headphones, and Bluetooth use Android's `STREAM_MUSIC` volume. Flowery reads the current system volume when the UI starts and writes slider changes back to that stream; Android remains responsible for device-specific safe-listening limits and any system warning/confirmation UI. Flowery does not impose a fixed 67% ceiling, because safe-volume thresholds and user override behavior are controlled by Android and may vary by device and region.
 
-USB output uses a separate software gain preference keyed to the selected Android USB output identity. A newly encountered DAC defaults to 20%; subsequent slider changes are saved per key. This is software gain in the current float PCM callback, not physical DAC hardware volume control. The current direct USB transport does not map physical DAC buttons or query hardware volume controls; direct WAV and decoded USB playback therefore use the per-DAC software volume preference.
+USB output uses a separate software gain preference keyed to the selected USB output identity. A newly encountered DAC defaults to 20%; subsequent slider changes are saved per key. The Android AAudio route applies gain in its float PCM callback, while direct libusb WAV and decoded-PCM routes apply gain before integer PCM is submitted to the DAC. The direct USB transport does not map physical DAC buttons or query hardware volume controls, so software volume remains available without a physical volume control.
 
 ## USB DAC discovery and permission
 
