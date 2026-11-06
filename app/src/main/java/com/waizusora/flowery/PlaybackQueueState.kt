@@ -5,7 +5,7 @@ package com.waizusora.flowery
  * Native Rust remains the single source of truth for shuffle/repeat transition rules.
  */
 internal class PlaybackQueueState(
-    private val transition: (Int, Int, Boolean, Int, Int) -> Int =
+    private val nativeTransition: (Int, Int, Boolean, Int, Int) -> Int =
         { current, size, shuffle, repeat, action ->
             NativeAudio.nativeQueueTransition(current, size, shuffle, repeat, action)
         }
@@ -36,10 +36,12 @@ internal class PlaybackQueueState(
         return shuffleEnabled
     }
 
+    fun setShuffle(enabled: Boolean) { shuffleEnabled = enabled }
+
     /** Returns an index, -1 to stop, or -2 to replay the current item on completion. */
     fun transition(queueSize: Int, action: Action): Int {
         if (queueSize <= 0 || currentIndex !in 0 until queueSize) return -1
-        return transition(
+        return nativeTransition(
             currentIndex,
             queueSize,
             shuffleEnabled,
