@@ -8,6 +8,7 @@ object NativeAudio {
     external fun nativeParseM3u(content: String): String
     external fun nativeParsePls(content: String): String
     external fun nativeIsSupportedAudioExtension(extension: String): Boolean
+    external fun nativeBuildLibraryCatalog(snapshot: String): String
     external fun nativeMatchSidecarLyrics(audioNames: Array<String>, lyricNames: Array<String>): IntArray
     external fun nativeNormalizePlaylistPath(path: String): String?
     external fun nativeQueueTransition(currentIndex: Int, queueSize: Int, shuffle: Boolean, repeatMode: Int, action: Int): Int
