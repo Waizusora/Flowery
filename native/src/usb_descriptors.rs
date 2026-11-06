@@ -489,7 +489,7 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources};
+    use super::{clock_ranges_json, clock_sources, descriptor_report_json, is_reference_ktmicro, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace};
     use serde_json::Value;
 
     #[test]
