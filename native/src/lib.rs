@@ -1,4 +1,4 @@
-mod streaming;\nmod lyrics;
+mod streaming;\nmod lyrics;\nmod library;
 mod playlists;
 #[cfg(target_os = "android")]
 mod aaudio;
