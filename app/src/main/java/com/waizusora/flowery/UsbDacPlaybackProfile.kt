@@ -20,7 +20,8 @@ internal data class UsbDacPlaybackProfile(
     val synchronization: String,
     val protocol: Int,
     val sampleRates: List<Int>,
-    val sampleRateRange: Pair<Int, Int>?
+    val sampleRateRange: Pair<Int, Int>?,
+    val samplingFrequencyControl: Boolean
 ) {
     val endpointHex: String
         get() = "0x%02X".format(endpointAddress)
@@ -42,7 +43,8 @@ internal data class UsbDacPlaybackProfile(
             } ?: emptyList(),
             sampleRateRange = value.optJSONArray("sampleRateRange")?.let { range ->
                 if (range.length() >= 2) range.getInt(0) to range.getInt(1) else null
-            }
+            },
+            samplingFrequencyControl = value.optBoolean("samplingFrequencyControl", false)
         )
     }
 }
