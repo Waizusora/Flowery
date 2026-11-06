@@ -157,6 +157,7 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
             if (transfer->status != LIBUSB_TRANSFER_COMPLETED) {
                 record_failure(failure, "transfer_error", LIBUSB_ERROR_IO);
                 failure->sequence = entry->sequence;
+                failure->in_flight_at_failure = queue.size();
                 failure->transfer_status = static_cast<unsigned int>(transfer->status);
             } else {
                 for (int i = 0; i < transfer->num_iso_packets; ++i) {
@@ -165,6 +166,7 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
                         packet.actual_length != packet.length) {
                         record_failure(failure, "packet_error", LIBUSB_ERROR_IO);
                         failure->sequence = entry->sequence;
+                        failure->in_flight_at_failure = queue.size();
                         failure->transfer_status = static_cast<unsigned int>(transfer->status);
                         failure->failed_packet = i;
                         failure->packet_status = static_cast<unsigned int>(packet.status);
@@ -303,7 +305,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
     std::snprintf(
         message, sizeof(message),
         "USB isochronous PCM transfer failed: reason=%s; %s (%d); "
-        "transfer_status=%u (%s); sequence=%llu; in_flight=%zu; failed_packet=%d; "
+        "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X",
         failure.reason, libusb_error_name(failure.code), failure.code,
