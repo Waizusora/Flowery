@@ -215,7 +215,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOpenWavPcm(
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetWavPcmInfo(
-    mut env: JNIEnv, _class: JClass, handle: jlong
+    env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlongArray {
     if handle == 0 { return std::ptr::null_mut(); }
     let source = unsafe { &*(handle as *mut WavPcmSource) };
