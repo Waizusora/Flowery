@@ -2,7 +2,7 @@
 
 ## Scope
 
-Flowery is an Android application with a Kotlin application layer, a Rust audio engine and AAudio output backend, and a native C++ libusb transport for direct USB DAC playback. Kotlin owns Android APIs, user interaction, document permissions, device permissions, and platform lifecycle integration. Rust owns platform-independent playback policy, decoding, DSP, PCM buffering, and AAudio stream operations. C++ is reserved for the libusb transport.
+Flowery is an Android application with a Kotlin application layer, a Rust audio engine and AAudio output backend, and a native C++ libusb transport for direct USB DAC playback. Kotlin owns Android APIs, user interaction, document permissions, device permissions, and platform lifecycle integration. Rust owns platform-independent playback policy, USB descriptor parsing, decoding, DSP, generic PCM format negotiation/packing, PCM buffering, and AAudio stream operations. C++ is reserved for the libusb transport.
 
 ## Component map
 
@@ -17,11 +17,20 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio 
 | `native/src/streaming.rs` | Symphonia streaming decoder, Rubato resampler, stateful 31-band EQ and format-level seek |
 | `native/src/lib.rs` | JNI exports and Lofty tag read/write operations |
 | `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
-| `native/src/usb_producer.rs` | Direct USB decoded-playback segment bounds, seek epochs, packed PCM production and bounded-queue publication |
-| `native/src/usb_descriptors.rs` | UAC descriptor parsing, reference-DAC identification, playback profiles, clock links, GET_RANGE responses and diagnostic traces |
+| `native/src/usb_producer.rs` | Direct USB decoded-playback segment bounds, seek epochs, negotiated PCM production and bounded-queue publication |
+| `native/src/usb_pcm.rs` | Shared `PcmFormat` contract and bounded PCM block queue for all direct USB sample representations |
+| `native/src/usb_descriptors.rs` | Model-independent UAC descriptor parsing, PCM playback profiles, clock links, GET_RANGE responses and diagnostic traces |
 | `UsbDacProfileDatabase` | Local SQLite catalogue of raw USB descriptor blocks and parsed DAC profile reports, keyed by VID/PID and descriptor fingerprint |
 | `native/src/playback_policy.rs` | Output sample-rate preference, ring capacity, frame conversion and playback watermarks |
  
+## USB DAC discovery and PCM format contract
+
+DAC discovery does not depend on a hard-coded VID/PID or product name. Kotlin enumerates USB Audio Class devices and manages Android USB Host permission; Rust parses descriptors and derives stereo UAC2 playback profiles, valid-bit resolutions, subslot widths, endpoints, packet capacity, synchronization, and clock-source links. Kotlin performs the required class-specific clock RANGE requests, while the native C++ libusb transport performs SET_CUR/GET_CUR negotiation and isochronous transfers.
+
+The local SQLite profile database stores VID/PID, manufacturer/product strings, raw descriptor bytes, parsed descriptor reports, clock ranges, SHA-256 descriptor fingerprints, and observation history. USB descriptors do not reliably identify physical silicon, so Flowery stores descriptor-family identity rather than guessing a chipset model.
+
+One Rust `PcmFormat` contract defines sample rate, channels, valid-bit resolution, subslot width, signedness, and byte order. Decoded sources are resampled only when the selected DAC clock cannot accept the source rate, then quantized into the descriptor-derived format. Integer WAV passthrough is a source adapter that preserves bytes only when the source format and DAC subslot layout match exactly. Both adapters feed the same bounded PCM queue and libusb transport. Current direct output supports stereo UAC2 profiles with 8–32 valid bits and 1–4 byte subslots; UAC1 direct streaming and multichannel output are not implemented.
+
 ## Playback sequence
 
 1. The UI selects a track represented by a SAF content URI.
