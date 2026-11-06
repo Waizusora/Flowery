@@ -325,7 +325,9 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshOutputVolume() {
         val volumeController = OutputVolumeController(this)
-        val connectedDac = usbDacController.audioDevices().singleOrNull()
+        val directUsbEnabled = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+            .getBoolean("usb_bit_perfect_enabled", false)
+        val connectedDac = if (directUsbEnabled) usbDacController.audioDevices().singleOrNull() else null
         volume = connectedDac?.let { device ->
             val hardwareVolume = usbDacController.readHardwareVolumeFraction(device.usbDevice)
             volumeController.usbProfile(device.identity, hardwareVolume != null)
