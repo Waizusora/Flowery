@@ -5,6 +5,7 @@ use std::os::fd::FromRawFd;
 use jni::objects::JClass;
 use jni::sys::{jbyteArray, jint, jlong, jlongArray};
 use jni::JNIEnv;
+use crate::usb_pcm::PcmFormat;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct WavHeader {
@@ -84,9 +85,11 @@ fn read_wav_header<R: Read + Seek>(reader: &mut R) -> Result<WavHeader, String> 
         return Err("USB direct PCM currently requires stereo WAV audio.".into());
     }
     if !matches!(bit_depth, 16 | 24 | 32) {
-        return Err("USB direct PCM supports integer PCM at 16, 24, or 32 bits.".into());
+        return Err("Direct WAV passthrough supports integer PCM at 16, 24, or 32 bits; other source formats use the decoded PCM pipeline.".into());
     }
     let expected_block_align = (channels as u32) * (bit_depth as u32 / 8);
+    let format = PcmFormat { sample_rate, channels, valid_bits: bit_depth as u8, subslot_bytes: (bit_depth / 8) as u8, signed: true, little_endian: true };
+    format.validate().map_err(str::to_string)?;
     if sample_rate == 0 || block_align as u32 != expected_block_align {
         return Err("WAV sample rate or PCM block alignment is invalid.".into());
     }
