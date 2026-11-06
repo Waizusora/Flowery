@@ -126,7 +126,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
         offset += length;
     }
     finish(&current, &mut profiles);
-    profiles.sort_by_key(|p| (p.bit_resolution, p.alternate_setting));
+    profiles.sort_by_key(|p| (std::cmp::Reverse(p.bit_resolution), p.alternate_setting));
     profiles.dedup_by_key(|p| (p.interface_number, p.alternate_setting));
     profiles
 }
@@ -270,6 +270,52 @@ pub fn playback_descriptor_trace(raw: &[u8], streaming_interface: u8) -> String 
         lines.push("Trace truncated at 100 entries.".to_string());
     }
     lines.join("\n")
+}
+
+/// Selects candidate output rates from UAC2 clock RANGE values. Every candidate is
+/// still subject to a successful device SET_CUR/GET_CUR readback before use.
+pub fn select_usb_sample_rates_json(source_rate: u32, ranges_json: &str) -> String {
+    let standard_rates = [
+        44_100_u32, 48_000, 88_200, 96_000, 176_400, 192_000,
+        352_800, 384_000, 32_000, 64_000, 128_000, 256_000,
+        8_000, 11_025, 16_000, 22_050, 24_000,
+    ];
+    if source_rate == 0 {
+        return "[]".to_string();
+    }
+
+    let mut candidates = Vec::<u32>::new();
+    if let Ok(value) = serde_json::from_str::<Value>(ranges_json) {
+        if let Some(ranges) = value.as_array() {
+            for range in ranges {
+                let minimum = range.get("minimum").and_then(Value::as_u64).unwrap_or(0);
+                let maximum = range.get("maximum").and_then(Value::as_u64).unwrap_or(0);
+                let resolution = range.get("resolution").and_then(Value::as_u64).unwrap_or(0);
+                if minimum == 0 || maximum < minimum || maximum > u32::MAX as u64 {
+                    continue;
+                }
+                let bounded = (source_rate as u64).clamp(minimum, maximum);
+                let selected = if resolution > 0 {
+                    let offset = bounded - minimum;
+                    let steps = (offset + resolution / 2) / resolution;
+                    minimum.saturating_add(steps.saturating_mul(resolution)).min(maximum)
+                } else {
+                    bounded
+                };
+                if selected > 0 && selected <= u32::MAX as u64 {
+                    candidates.push(selected as u32);
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        candidates.push(source_rate);
+        candidates.extend(standard_rates);
+    }
+    candidates.sort_by_key(|rate| rate.abs_diff(source_rate));
+    candidates.dedup();
+    serde_json::to_string(&candidates).unwrap_or_else(|_| "[]".to_string())
 }
 
 pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String {
