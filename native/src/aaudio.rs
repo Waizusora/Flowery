@@ -82,7 +82,12 @@ impl Engine {
         let mut result=AAudio_createStreamBuilder(&mut builder);
         if result!=OK || builder.is_null(){return result;}
         AAudioStreamBuilder_setDirection(builder,0);
-        if device>0 {\n            if let Ok(name)=std::ffi::CString::new("AAudioStreamBuilder_setDeviceId") {\n                let symbol=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr());\n                if !symbol.is_null(){let setter:unsafe extern "C" fn(*mut AAudioStreamBuilder,i32)=std::mem::transmute(symbol);setter(builder,device);}\n            }\n        }
+        if device>0 {
+            if let Ok(name)=std::ffi::CString::new("AAudioStreamBuilder_setDeviceId") {
+                let symbol=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr());
+                if !symbol.is_null(){let setter:unsafe extern "C" fn(*mut AAudioStreamBuilder,i32)=std::mem::transmute(symbol);setter(builder,device);}
+            }
+        }
         AAudioStreamBuilder_setFormat(builder,out.format);
         AAudioStreamBuilder_setSampleRate(builder,rate);
         AAudioStreamBuilder_setChannelCount(builder,out.channels as i32);
