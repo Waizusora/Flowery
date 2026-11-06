@@ -325,7 +325,7 @@ class MainActivity : ComponentActivity() {
                         usbDacMessage = if (enabled) {
                             "USB exclusive bit-perfect mode disabled. Playback will use the regular Flowery DSP and AAudio path."
                         } else {
-                            "Direct USB exclusive bit-perfect mode is enabled for supported PCM WAV tracks. FLAC and other decoded formats continue through AAudio; its actual EXCLUSIVE or SHARED mode is shown in Audio Settings → AAudio Diagnostics. Digital volume remains at unity on the direct USB path."
+                            "Direct USB exclusive mode is enabled. Supported PCM WAV tracks are sent bit-perfect with digital volume at unity. FLAC and other decoded formats are decoded and sent over the same USB transport with the per-DAC software volume applied."
                         }
                     } else {
                         usbDacMessage = "USB access is already granted for ${detected.displayName}. Exclusive bit-perfect playback is currently configured for the KT Micro KT-384/32 HIFI only."
@@ -345,7 +345,7 @@ class MainActivity : ComponentActivity() {
                 "\n\nUSB permission status: granted. Permission authorizes USB device access; it does not select an audio mode." +
                 "\n\nPlayback mode by source:" +
                 "\n• Supported PCM WAV on the configured KT Micro DAC: Flowery can attempt direct USB exclusive bit-perfect. The mode becomes active only after the USB interface and DAC clock negotiation succeed." +
-                "\n• FLAC, ALAC, MP3 and other decoded formats: Symphonia/DSP output through Android AAudio. Check Settings → Audio → AAudio Diagnostics for the actual EXCLUSIVE or SHARED mode and device ID." +
+                "\n• FLAC, ALAC, MP3 and other decoded formats: with USB exclusive mode enabled they are decoded by Symphonia and sent over the direct USB transport with software volume (not bit-perfect); otherwise they use Android AAudio. Check Settings → Audio → AAudio Diagnostics for the AAudio EXCLUSIVE or SHARED mode and device ID." +
                 "\n• If AAudio cannot open EXCLUSIVE, Flowery retries with SHARED mode."
             runOnUiThread { usbDacMessage = report }
         }
