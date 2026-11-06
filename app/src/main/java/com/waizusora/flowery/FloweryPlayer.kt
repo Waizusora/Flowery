@@ -910,7 +910,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         NativeAudio.nativeStopOutput()
-        clearAndroidUsbBitPerfect()
         worker?.interrupt()
         worker = null
         outputDurationMs = 0L
