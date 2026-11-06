@@ -190,10 +190,31 @@ class UsbDacController(context: Context) {
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
         try {
             val descriptors = connection.rawDescriptors
+            val discoveredProfiles = parseNativePlaybackProfiles(descriptors, null)
+            val clockRangeReports = discoveredProfiles.flatMap { profile ->
+                parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
+            }.distinct().map { (clockId, controlInterface) ->
+                val response = ByteArray(2 + 12 * 16)
+                val transferred = connection.controlTransfer(
+                    0xA1, 0x82, 0x0100, (clockId shl 8) or controlInterface,
+                    response, response.size, 1_000
+                )
+                val ranges = if (transferred >= 2)
+                    JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
+                else JSONArray()
+                val values = (0 until ranges.length()).map { index ->
+                    val range = ranges.getJSONObject(index)
+                    "${range.optLong("minimum")}-${range.optLong("maximum")} Hz step=${range.optLong("resolution")}"
+                }
+                "Clock source $clockId (control interface $controlInterface): " +
+                    if (values.isEmpty()) "GET_RANGE unavailable (USB result $transferred)"
+                    else values.joinToString()
+            }
             val descriptorReport = UsbAudioDescriptorParser.report(
                 raw = descriptors,
                 manufacturer = device.manufacturerName,
-                product = device.productName
+                product = device.productName,
+                clockRangeReports = clockRangeReports
             )
             runCatching {
                 val database = UsbDacProfileDatabase(appContext)
