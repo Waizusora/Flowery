@@ -89,7 +89,7 @@ class UsbDacController(context: Context) {
             ?: return "Android could not open the USB device connection."
         return try {
             val descriptors = connection.rawDescriptors
-            val clockReports = UsbAudioDescriptorParser.clockSources(descriptors).mapNotNull { (clockId, controlInterface) ->
+            val clockReports = UsbAudioDescriptorParser.clockSources(descriptors).map { (clockId, controlInterface) ->
                 val response = ByteArray(2 + 12 * 16)
                 val transferred = connection.controlTransfer(
                     0xA1,
@@ -100,23 +100,19 @@ class UsbDacController(context: Context) {
                     response.size,
                     1_000
                 )
-                if (transferred < 2) {
-                    "Clock source $clockId on control interface $controlInterface: GET_RANGE unavailable (USB result $transferred)."
-                } else {
-                    val count = (response[0].toInt() and 0xff) or
-                        ((response[1].toInt() and 0xff) shl 8)
-                    val ranges = (0 until minOf(count, (transferred - 2) / 12)).map { index ->
-                        val start = 2 + index * 12
-                        val minimum = readLe32(response, start)
-                        val maximum = readLe32(response, start + 4)
-                        val resolution = readLe32(response, start + 8)
-                        "$minimum-$maximum Hz (step $resolution)"
-                    }
-                    if (ranges.isEmpty()) {
+                val ranges = JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
+                val formattedRanges = (0 until ranges.length()).map { index ->
+                    val range = ranges.getJSONObject(index)
+                    "${range.getLong("minimum")}-${range.getLong("maximum")} Hz " +
+                        "(step ${range.getLong("resolution")})"
+                }
+                when {
+                    transferred < 2 ->
+                        "Clock source $clockId on control interface $controlInterface: GET_RANGE unavailable (USB result $transferred)."
+                    formattedRanges.isEmpty() ->
                         "Clock source $clockId on control interface $controlInterface: no valid ranges returned."
-                    } else {
-                        "Clock source $clockId on control interface $controlInterface: ${ranges.joinToString()}."
-                    }
+                    else ->
+                        "Clock source $clockId on control interface $controlInterface: ${formattedRanges.joinToString()}."
                 }
             }
             val descriptorReport = UsbAudioDescriptorParser.report(
@@ -147,12 +143,6 @@ class UsbDacController(context: Context) {
             connection.close()
         }
     }
-
-    private fun readLe32(bytes: ByteArray, offset: Int): Long =
-        (bytes[offset].toLong() and 0xffL) or
-            ((bytes[offset + 1].toLong() and 0xffL) shl 8) or
-            ((bytes[offset + 2].toLong() and 0xffL) shl 16) or
-            ((bytes[offset + 3].toLong() and 0xffL) shl 24)
 
     /**
      * Opens the descriptor-selected UAC2 stereo output using native libusb.
