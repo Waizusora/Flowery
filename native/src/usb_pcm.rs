@@ -6,6 +6,36 @@ use jni::objects::JClass;
 use jni::sys::{jbyteArray, jint, jlong, jsize};
 use jni::JNIEnv;
 
+/// Format contract shared by direct USB PCM producers and the bounded transport queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PcmFormat {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub valid_bits: u8,
+    pub subslot_bytes: u8,
+    pub signed: bool,
+    pub little_endian: bool,
+}
+
+impl PcmFormat {
+    pub fn validate(self) -> Result<Self, &'static str> {
+        if self.sample_rate == 0 || self.channels == 0 {
+            return Err("PCM sample rate and channel count must be positive");
+        }
+        if !matches!(self.valid_bits, 16 | 24 | 32)
+            || self.subslot_bytes != self.valid_bits.div_ceil(8)
+            || !self.signed || !self.little_endian
+        {
+            return Err("Unsupported PCM representation; expected signed little-endian PCM16/24/32");
+        }
+        Ok(self)
+    }
+
+    pub fn bytes_per_frame(self) -> usize {
+        self.channels as usize * self.subslot_bytes as usize
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct PcmBlock {
     pub(super) pcm: Vec<u8>,
