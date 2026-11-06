@@ -1,6 +1,6 @@
 # Flowery
 
-Flowery is an Android music player with a Kotlin and Jetpack Compose interface, a Rust-based decoding and DSP layer, and native C++ audio output through Android AAudio.
+Flowery is an Android music player with a Kotlin and Jetpack Compose interface, a Rust-based decoding, DSP, and Android AAudio output layer, plus a separate native C++ libusb transport for direct USB DAC playback.
 
 ## Project status
 
@@ -17,7 +17,7 @@ The repository is under active development. Features described as limitations be
 | Compressed audio decoding | Symphonia 0.5.4 (Rust) |
 | Streaming sample-rate conversion | Rubato 5.0.1 (Rust) |
 | Equalizer | Native Rust 31-band ISO graphic EQ |
-| Audio output | C++ and Android AAudio; native libusb UAC2 transport API |
+| Audio output | Rust AAudio NDK backend; native C++ libusb UAC2 transport API |
 | PCM buffering | Fixed-capacity single-producer/single-consumer ring buffer |
 | Audio tags | Lofty 0.25.5 |
 | Folder access | Storage Access Framework (SAF) |
@@ -104,7 +104,7 @@ Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-fi
 
 The streaming playback path is:
 
-`SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → Kotlin producer → native PCM ring buffer → AAudio callback → output device`
+`SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring buffer → Rust AAudio callback → Android audio route`
 
 The ring buffer has a fixed capacity of 16,384 frames in the current player configuration. The decoder worker produces chunks of up to 2,048 frames and replenishes the queue around a 4,096-frame low-water mark. The AAudio callback consumes available frames, applies output gain, fills underruns with silence, and observes end-of-stream state. It does not perform file I/O, decoding, resampling, dynamic allocation, or mutex locking.
 
