@@ -61,7 +61,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     segment_start_ms: jlong,
     segment_end_ms: jlong,
 ) -> jlong {
-    if decoder_handle == 0 || source_rate <= 0 || channels != 2
+    if decoder_handle == 0 || source_rate <= 0 || !(1..=8).contains(&channels)
         || !(8..=32).contains(&bit_resolution) || !(1..=4).contains(&subslot_bytes)
         || bit_resolution > subslot_bytes * 8
         || segment_start_ms < 0 || segment_end_ms < -1
