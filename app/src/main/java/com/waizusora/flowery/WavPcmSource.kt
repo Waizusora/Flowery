@@ -4,6 +4,7 @@ import android.os.ParcelFileDescriptor
 import java.io.EOFException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.roundToLong
 
 /**
  * Reads unmodified interleaved integer PCM from a little-endian RIFF/WAVE file.
@@ -23,12 +24,13 @@ internal class WavPcmSource private constructor(
     private val bytesPerFrame = channels * (bitDepth / 8)
     val totalFrames: Long = dataBytes / bytesPerFrame
     private var framesRead = 0L
+    private var lastGain = 1f
 
     init {
         channel.position(dataOffset)
     }
 
-    fun readFrames(maxFrames: Int): ByteArray {
+    fun readFrames(maxFrames: Int, gain: Float = 1f): ByteArray {
         require(maxFrames > 0)
         val remaining = totalFrames - framesRead
         if (remaining <= 0) return ByteArray(0)
@@ -40,7 +42,64 @@ internal class WavPcmSource private constructor(
             if (count < 0) throw EOFException("WAV data chunk ended unexpectedly")
         }
         framesRead += requested
+        applySoftwareGain(bytes, gain.coerceIn(0f, 1f))
         return bytes
+    }
+
+    /**
+     * Applies a short per-block gain ramp to integer PCM. Unity gain leaves the
+     * original bytes untouched; non-unity gain intentionally changes sample data.
+     */
+    private fun applySoftwareGain(bytes: ByteArray, targetGain: Float) {
+        if (bytes.isEmpty()) {
+            lastGain = targetGain
+            return
+        }
+        if (targetGain == 1f && lastGain == 1f) return
+
+        val sampleBytes = bitDepth / 8
+        val sampleCount = bytes.size / sampleBytes
+        val startGain = lastGain
+        for (index in 0 until sampleCount) {
+            val offset = index * sampleBytes
+            val fraction = if (sampleCount <= 1) 1f else index.toFloat() / (sampleCount - 1)
+            val gain = startGain + (targetGain - startGain) * fraction
+            when (bitDepth) {
+                16 -> {
+                    var value = (bytes[offset].toInt() and 0xff) or
+                        ((bytes[offset + 1].toInt() and 0xff) shl 8)
+                    if (value and 0x8000 != 0) value -= 0x1_0000
+                    val scaled = (value * gain).roundToLong().coerceIn(-32_768L, 32_767L).toInt()
+                    bytes[offset] = scaled.toByte()
+                    bytes[offset + 1] = (scaled shr 8).toByte()
+                }
+                24 -> {
+                    var value = (bytes[offset].toInt() and 0xff) or
+                        ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+                        ((bytes[offset + 2].toInt() and 0xff) shl 16)
+                    if (value and 0x800000 != 0) value = value or -0x1000000
+                    val scaled = (value * gain).roundToLong()
+                        .coerceIn(-8_388_608L, 8_388_607L).toInt()
+                    bytes[offset] = scaled.toByte()
+                    bytes[offset + 1] = (scaled shr 8).toByte()
+                    bytes[offset + 2] = (scaled shr 16).toByte()
+                }
+                32 -> {
+                    val value = (bytes[offset].toInt() and 0xff) or
+                        ((bytes[offset + 1].toInt() and 0xff) shl 8) or
+                        ((bytes[offset + 2].toInt() and 0xff) shl 16) or
+                        (bytes[offset + 3].toInt() shl 24)
+                    val scaled = (value.toDouble() * gain).roundToLong()
+                        .coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+                    bytes[offset] = scaled.toByte()
+                    bytes[offset + 1] = (scaled shr 8).toByte()
+                    bytes[offset + 2] = (scaled shr 16).toByte()
+                    bytes[offset + 3] = (scaled shr 24).toByte()
+                }
+                else -> error("Unsupported WAV PCM bit depth: $bitDepth")
+            }
+        }
+        lastGain = targetGain
     }
 
     fun seekToFrame(frame: Long): Long {
