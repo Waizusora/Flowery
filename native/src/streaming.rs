@@ -139,7 +139,7 @@ impl StreamDecoder {
         Ok(())
     }
 
-    fn seek_to(&mut self, position_ms: u64) -> Result<u64,String> {
+    pub(super) fn seek_to(&mut self, position_ms: u64) -> Result<u64,String> {
         let requested_ms = if self.duration_ms > 0 { position_ms.min(self.duration_ms) } else { position_ms };
         let seeked = self.format.seek(
             SeekMode::Accurate,
