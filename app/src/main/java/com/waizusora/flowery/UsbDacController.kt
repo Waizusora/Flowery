@@ -204,6 +204,7 @@ class UsbDacController(context: Context) {
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
         try {
             val descriptors = connection.rawDescriptors
+            val volumeUnit = UsbFeatureUnitParser.find(descriptors)
             val discoveredProfiles = parseNativePlaybackProfiles(descriptors, null)
             val clockRangeReports = discoveredProfiles.flatMap { profile ->
                 parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
@@ -285,7 +286,7 @@ class UsbDacController(context: Context) {
                             profile.samplingFrequencyControl
                         )
                         if (nativeHandle != 0L) {
-                            return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                            return UsbDacSession(connection, nativeHandle, profile, sampleRate, volumeUnit)
                         }
                         lastError = IllegalStateException("Native USB transport rejected the UAC1 playback profile.")
                     } catch (error: Throwable) {
