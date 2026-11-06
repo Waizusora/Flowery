@@ -573,6 +573,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             )
 
             var firstTransfer = true
+            var lastHardwareVolumePollNs = 0L
             var activeEpoch = 0
             var starvationEvents = 0L
             while (playbackActive()) {
@@ -622,6 +623,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 )
                 check(acceptedFrames == frames) {
                     "The USB DAC transport accepted ${acceptedFrames} of ${frames} frames."
+                }
+                if (usbSession.hardwareVolumeAvailable) {
+                    val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+                    if (nowNs - lastHardwareVolumePollNs >= 500_000_000L) {
+                        usbSession.readHardwareVolumeFraction()?.let { softwareVolume = it }
+                        lastHardwareVolumePollNs = nowNs
+                    }
                 }
                 chunkCount++
                 totalFramesSent += acceptedFrames
@@ -735,14 +743,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         return UsbPcmBlock(pcm, frames, epoch, startFrames, endOfStream)
     }
 
-    fun currentVolumeFraction(): Float {
-        val session = activeUsbSession
-        if (session?.hardwareVolumeAvailable == true) {
-            val hardware = runCatching { session.readHardwareVolumeFraction() }.getOrNull()
-            if (hardware != null) softwareVolume = hardware
-        }
-        return if (usbPlaybackMode) softwareVolume.coerceIn(0f, 1f) else volumeController.systemVolumeFraction()
-    }
+    /** Returns the latest cached volume; USB control transfers run on the playback worker. */
+    fun currentVolumeFraction(): Float =
+        if (usbPlaybackMode) softwareVolume.coerceIn(0f, 1f) else volumeController.systemVolumeFraction()
 
     fun positionMs(): Long =
         if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
