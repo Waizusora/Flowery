@@ -63,6 +63,7 @@ object NativeAudio {
     external fun nativeTuneOutputBuffer(): Int
     external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int, outputFormat: Int, requireExactRate: Boolean): Int
     external fun nativeParseUsbDacProfiles(descriptors: ByteArray, requestedBitResolution: Int): String
+    external fun nativeSelectUsbSampleRates(sourceRate: Int, rangesJson: String): String
     external fun nativeParseUsbDacPlaybackClocks(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeParseUsbDacClockSources(descriptors: ByteArray): String
     external fun nativeDescribeUsbAudioDescriptors(descriptors: ByteArray): String
