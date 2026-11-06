@@ -69,7 +69,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
                 && a.max_packet_bytes > 0 && a.interval > 0
-                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some())
+                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some_and(|endpoint| a.synchronization_address == 0 || endpoint == a.synchronization_address))
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
                 out.push(PlaybackProfile {
@@ -688,6 +688,40 @@ mod tests {
         assert_eq!(profiles[0].sample_rates, vec![44_100, 48_000]);
         assert_eq!(profiles[0].endpoint_address, 1);
         assert_eq!(profiles[0].feedback_endpoint, Some(0x81));
+    }
+
+    #[test]
+    fn asynchronous_endpoint_requires_matching_explicit_feedback_endpoint() {
+        let base = [
+            9,4,2,1,1,1,2,0x00,0,
+            7,0x24,1,5,0,1,0,
+            14,0x24,2,1,2,3,24,2,0x44,0xac,0,0x80,0xbb,0,
+            9,5,0x01,0x05,0x26,0,1,0,0x82
+        ];
+        assert!(parse_playback_profiles(&base, None).is_empty());
+
+        let mut matching = base.to_vec();
+        matching.extend_from_slice(&[7,5,0x82,0x11,0x03,1,1]);
+        let profiles = parse_playback_profiles(&matching, None);
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].feedback_endpoint, Some(0x82));
+
+        let mut mismatched = base.to_vec();
+        mismatched.extend_from_slice(&[7,5,0x81,0x11,0x03,1,1]);
+        assert!(parse_playback_profiles(&mismatched, None).is_empty());
+    }
+
+    #[test]
+    fn adaptive_and_synchronous_endpoints_do_not_require_feedback_endpoint() {
+        for attributes in [0x09, 0x0d] {
+            let descriptors = [
+                9,4,2,1,1,1,2,0x00,0,
+                7,0x24,1,5,0,1,0,
+                14,0x24,2,1,2,3,24,2,0x44,0xac,0,0x80,0xbb,0,
+                7,5,0x01,attributes,0x26,0,1
+            ];
+            assert_eq!(parse_playback_profiles(&descriptors, None).len(), 1);
+        }
     }
 
     #[test]
