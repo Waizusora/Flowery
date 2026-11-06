@@ -260,6 +260,15 @@ fun FloweryNavigation(
                         Text(currentTag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist",
                             Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE), color = muted,
                             style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1)
+                        if (status.contains("Bit Perfect")) {
+                            Text(
+                                "BIT PERFECT",
+                                color = Color(0xFF2EAD68),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.2.sp
+                            )
+                        }
                     }
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleEnabled) Color(0xFF1E90FF) else foreground) }
