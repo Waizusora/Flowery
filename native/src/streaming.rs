@@ -6,7 +6,7 @@ use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use jni::objects::{JClass, JFloatArray, JString};
-use jni::sys::{jbyteArray, jfloatArray, jint, jlong};
+use jni::sys::{jbyteArray, jint, jlong};
 use jni::JNIEnv;
 use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
@@ -429,18 +429,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamCh
             -2
         }
     }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamChunk(
-    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
-) -> jfloatArray {
-    if handle==0 || max_frames<=0 { return std::ptr::null_mut(); }
-    let decoder=unsafe { &mut *(handle as *mut StreamDecoder) };
-    let samples=match decoder.read_frames(max_frames as usize) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);return std::ptr::null_mut();} };
-    let output=match env.new_float_array(samples.len() as i32) { Ok(v)=>v,Err(_)=>return std::ptr::null_mut() };
-    if env.set_float_array_region(&output,0,&samples).is_err() { return std::ptr::null_mut(); }
-    output.into_raw()
 }
 
 fn quantize_signed_24(sample: f32, gain: f32) -> i32 {
