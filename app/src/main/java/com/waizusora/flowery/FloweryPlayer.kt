@@ -190,8 +190,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     )
 
     @Volatile private var activeUsbDeviceKey: String? = null
-    // True only while the decoded (non-bit-perfect) direct USB path is active; software
-    // gain is permitted there because the samples are already decoded and quantized.
+    // True while a direct USB route permits per-DAC software volume. Non-unity gain
+    // changes PCM samples and is therefore not source-bit-perfect.
     @Volatile private var usbSoftwareGainEnabled = false
     private val stopped = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
@@ -215,7 +215,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun setVolume(value: Float) {
         if (usbPlaybackMode && !usbSoftwareGainEnabled) {
-            onState("Direct USB WAV bit-perfect playback keeps digital gain at unity. Use the DAC hardware volume control.")
+            onState("Software volume is unavailable for the active USB output route.")
             return
         }
         val normalized = value.coerceIn(0f, 1f)
@@ -276,7 +276,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val directPcmSupported = extension == "wav" || extension == "wave"
                 if (bitPerfectRequested && directPcmSupported &&
                     segmentStartMs == 0L && segmentEndMs == null) {
-                    recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_WAV_BIT_PERFECT")
+                    recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_WAV_DIRECT_PCM")
                     usbPlaybackMode = true
                     playUsbBitPerfect(descriptor, generation)
                     return@thread
@@ -907,7 +907,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         var source: WavPcmSource? = null
         var session: UsbDacSession? = null
         try {
-            onState("Opening direct USB bit-perfect path…")
+            onState("Opening direct USB PCM path…")
             val pcmSource = WavPcmSource.open(descriptor)
             source = pcmSource
             val controller = UsbDacController(context)
@@ -950,7 +950,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     usbSession.flush()
                 }
 
-                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES, softwareVolume)
+                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES, softwareVolume * (if (outputDucked) DUCK_GAIN else 1f))
                 if (pcm.isEmpty()) break
                 val frameBytes = usbSession.profile.channels * usbSession.profile.subslotBytes
                 check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
