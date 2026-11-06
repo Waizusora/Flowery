@@ -22,7 +22,7 @@ object NativeAudio {
     external fun nativePlaybackQueueTransition(handle: Long, size: Int, action: Int): Int
     external fun nativeGetPlaybackQueueSnapshot(handle: Long): LongArray
     external fun nativeCreatePlaybackController(): Long
-    external fun nativeSetPlaybackControllerState(handle: Long, state: Int): Int
+    external fun nativeTransitionPlaybackController(handle: Long, event: Int): Int
     external fun nativeGetPlaybackControllerState(handle: Long): Int
     external fun nativeDestroyPlaybackController(handle: Long)
     external fun nativeSelectPreferredSampleRate(sourceRate: Int, supportedRates: IntArray): Int

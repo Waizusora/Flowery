@@ -15,24 +15,34 @@ internal class PlaybackCoordinator(
 ) : AutoCloseable {
     enum class State { IDLE, PREPARING, PLAYING, PAUSED, STOPPING, FAILED }
 
+    private companion object {
+        const val EVENT_PREPARE = 0
+        const val EVENT_START = 1
+        const val EVENT_PAUSE = 2
+        const val EVENT_RESUME = 3
+        const val EVENT_STOP = 4
+        const val EVENT_FINISH = 5
+        const val EVENT_FAIL = 6
+    }
+
     private val closed = AtomicBoolean(false)
     private val nativeController = NativeAudio.nativeCreatePlaybackController().also {
         check(it != 0L) { "Unable to create the native playback controller." }
     }
     private val engine = FloweryPlayer(context) { message ->
         if (!closed.get()) when {
-            message.startsWith("Playing") -> setState(State.PLAYING)
-            message.startsWith("Paused") -> setState(State.PAUSED)
+            message.startsWith("Playing") -> transition(EVENT_START)
+            message.startsWith("Paused") -> transition(EVENT_PAUSE)
             message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
-                setState(State.FAILED)
-            message == "Playback finished" -> setState(State.IDLE)
+                transition(EVENT_FAIL)
+            message == "Playback finished" -> transition(EVENT_FINISH)
         }
         if (!closed.get()) onState(message)
     }
 
-    private fun setState(value: State) {
-        check(NativeAudio.nativeSetPlaybackControllerState(nativeController, value.ordinal) == 0) {
-            "Rust rejected the playback controller state."
+    private fun transition(event: Int) {
+        check(NativeAudio.nativeTransitionPlaybackController(nativeController, event) >= 0) {
+            "Rust rejected the playback lifecycle event."
         }
     }
 
@@ -42,7 +52,7 @@ internal class PlaybackCoordinator(
 
     @Synchronized
     fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null) {
-        setState(State.PREPARING)
+        transition(EVENT_PREPARE)
         engine.play(uri, segmentStartMs, segmentEndMs)
     }
 
@@ -50,7 +60,7 @@ internal class PlaybackCoordinator(
     fun pause() {
         if (state() == State.PLAYING) {
             engine.pause()
-            setState(State.PAUSED)
+            transition(EVENT_PAUSE)
         }
     }
 
@@ -58,7 +68,7 @@ internal class PlaybackCoordinator(
     fun resume() {
         if (state() == State.PAUSED) {
             engine.resume()
-            setState(State.PLAYING)
+            transition(EVENT_RESUME)
         }
     }
 
@@ -71,19 +81,19 @@ internal class PlaybackCoordinator(
 
     @Synchronized
     fun stop() {
-        setState(State.STOPPING)
+        transition(EVENT_STOP)
         engine.stop()
-        setState(State.IDLE)
+        transition(EVENT_FINISH)
     }
 
     fun close(onClosed: () -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
-        NativeAudio.nativeSetPlaybackControllerState(nativeController, State.STOPPING.ordinal)
+        transition(EVENT_STOP)
         // Do not block Android's service lifecycle thread while the worker releases native handles.
         // stopAndJoin captures the active worker before interrupting it, then waits for native cleanup.
         thread(name = "FloweryPlaybackControllerCleanup") {
             engine.stopAndJoin(Long.MAX_VALUE)
-            NativeAudio.nativeSetPlaybackControllerState(nativeController, State.IDLE.ordinal)
+            transition(EVENT_FINISH)
             NativeAudio.nativeDestroyPlaybackController(nativeController)
             onClosed()
         }
