@@ -8,7 +8,7 @@
 
 ## Decode and resampling
 
-Symphonia probes the selected document and decodes the default audio track packet by packet. The streaming path retains pending samples rather than assembling the entire decoded track in one PCM array. Mono and stereo are supported by the current output path. Scanner extension recognition does not guarantee that every corresponding codec can be decoded.
+Symphonia probes the selected document and decodes the default audio track packet by packet. The streaming path retains pending samples rather than assembling the entire decoded track in one PCM array. Mono and stereo are supported by the current output path. The supported filename-extension registry is maintained in `native/src/library.rs` and queried through JNI by the Kotlin SAF scanner. This is a discovery filter only; it does not guarantee that every corresponding codec can be decoded.
 
 Rubato 5 uses a fixed-ratio synchronous FFT resampler. Its instance and filter history persist across chunks. When source and output sample rates match, conversion is bypassed. USB output rates are selected using Android-reported device information where available, then validated by attempting to open AAudio. This is not exhaustive USB Audio Class capability enumeration.
 
