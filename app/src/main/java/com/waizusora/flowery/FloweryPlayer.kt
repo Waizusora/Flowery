@@ -530,9 +530,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "blockFrames=${USB_DECODE_CHUNK_FRAMES}"
             )
 
-            // The writer (this thread) must never wait on decoding: decode, gain and 24-bit
-            // quantization run on a dedicated producer thread and reach the writer through a
-            // bounded queue, so the isochronous window is refilled as soon as it has room.
+            // The writer (this thread) must never wait on decoding. Rust produces packed PCM blocks
+            // into its bounded queue; this Kotlin thread only drains blocks into the libusb
+            // session so the isochronous transfer window can be refilled promptly.
             runCatching {
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
             }
@@ -660,11 +660,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     /**
-     * Decoder thread of the decoded direct USB path. Reads float PCM from the native
-     * decoder, applies the per-DAC software gain (and the ducking gain) with a short linear
-     * ramp across each block, quantizes to packed signed 24-bit little-endian PCM and
-     * publishes the result to [queue]. Seek requests are serviced here, because this thread
-     * is the sole user of the decoder [handle] while it runs.
+     * Producer coordinator for the decoded direct USB path. Rust decodes a bounded chunk,
+     * applies the per-DAC gain ramp, packs signed 24-bit PCM, and stores it in the native
+     * bounded queue. Seek requests are serviced here because this thread is the sole user
+     * of the decoder [handle] while it runs.
      *
      * Failures are reported through [failure]; the writer rethrows them on its own thread.
      */
