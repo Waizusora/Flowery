@@ -638,12 +638,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             // closes that handle immediately after this method returns.
             producerStop.set(true)
             if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
-            joinUninterruptibly(producerThread, 4_000L)
-            if (queueHandle != 0L && producerThread?.isAlive != true) {
-                NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
-            } else if (queueHandle != 0L) {
-                recordUsbDiagnostic("USB_QUEUE_RETAINED producer did not exit before cleanup timeout")
-            }
+            joinUninterruptibly(producerThread)
+            if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
             usbSoftwareGainEnabled = false
             try { session?.close() } finally {
                 usbPlaybackMode = false
@@ -653,15 +649,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
     }
 
-    /** Waits for [thread] to exit, deferring (not losing) any interrupt that arrives meanwhile. */
-    private fun joinUninterruptibly(thread: Thread?, timeoutMs: Long) {
+    /** Waits for [thread] to exit before releasing native decoder or queue handles. */
+    private fun joinUninterruptibly(thread: Thread?) {
         if (thread == null) return
-        val deadline = android.os.SystemClock.elapsedRealtime() + timeoutMs
         var interrupted = false
         while (thread.isAlive) {
-            val remaining = deadline - android.os.SystemClock.elapsedRealtime()
-            if (remaining <= 0L) break
-            try { thread.join(remaining) } catch (_: InterruptedException) { interrupted = true }
+            try { thread.join() } catch (_: InterruptedException) { interrupted = true }
         }
         if (interrupted) Thread.currentThread().interrupt()
     }
