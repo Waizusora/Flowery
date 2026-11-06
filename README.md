@@ -175,6 +175,10 @@ The Rust test suite includes checks for:
 
 CI success confirms that the configured build and automated tests completed. It does not replace playback testing across Android versions, audio routes, USB DACs, and individual file formats.
 
+## Native audio API boundary
+
+The application uses the incremental Rust streaming decoder and native output ring for playback. The former whole-file JNI decoder and stateless array-based resampler/equalizer entry points have been removed so playback cannot accidentally regress to a full-track PCM allocation or duplicate DSP path. Kotlin retains Android document, lifecycle, routing, and UI responsibilities; PCM decoding, resampling, equalization, and bounded output buffering remain in Rust.
+
 ## Current limitations
 
 - Bit-perfect USB playback is not guaranteed or hardware-verified.
