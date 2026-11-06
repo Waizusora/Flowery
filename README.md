@@ -90,7 +90,7 @@ Embedded cover artwork can be read for display. Replacing embedded artwork is no
 
 - Discover a sidecar `.lrc` file with the same base filename as the audio file.
 - Parse sidecar LRC timestamps, expand multiple timestamps per line, and sort entries chronologically in the Rust engine through JNI.
-- Resolve the lyric line corresponding to the current playback position in the Kotlin presentation layer.
+- Resolve the active lyric line in Rust using binary search over sorted timestamps; Kotlin maps the returned index to the UI model.
 
 Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-file writing are not implemented.
 
@@ -125,7 +125,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 ├── native/
 │   ├── Cargo.toml               # Rust dependencies
 │   └── src/
-│       ├── lib.rs               # JNI, decode helpers, Lofty tag operations
+│       ├── lib.rs               # JNI entry points and Lofty tag operations
 │       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
 │       ├── library.rs           # Supported audio filename-extension policy
 │       ├── queue.rs             # Shuffle, repeat, and queue transitions
@@ -179,7 +179,7 @@ CI success confirms that the configured build and automated tests completed. It 
 
 ## Native audio API boundary
 
-The application uses the incremental Rust streaming decoder and native output ring for playback. The former whole-file JNI decoder and stateless array-based resampler/equalizer entry points have been removed so playback cannot accidentally regress to a full-track PCM allocation or duplicate DSP path. Kotlin retains Android document, lifecycle, routing, and UI responsibilities; PCM decoding, resampling, equalization, and bounded output buffering remain in Rust.
+The application uses the incremental Rust streaming decoder and native output ring for playback. The former whole-file JNI decoder, legacy float-array streaming read export, and stateless array-based resampler/equalizer entry points have been removed so playback cannot accidentally regress to a full-track PCM allocation or duplicate DSP path. Kotlin retains Android document, lifecycle, routing, and UI responsibilities; PCM decoding, resampling, equalization, and bounded output buffering remain in Rust.
 
 ## Current limitations
 
