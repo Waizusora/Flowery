@@ -48,7 +48,7 @@ Transient focus loss pauses playback and can resume it when focus returns. Ducki
 
 ## Storage model
 
-The library uses the Android Storage Access Framework rather than MediaStore. Folder tree URIs are retained by the application, and the scanner traverses enabled roots through `DocumentFile`. Track access continues through document URIs and provider-granted permissions.
+The library uses the Android Storage Access Framework rather than MediaStore. Kotlin traverses enabled roots through `DocumentFile` and reads CUE/playlist text because document access and provider permissions are Android responsibilities. Rust owns audio classification, same-directory sidecar matching, CUE/M3U/M3U8/PLS parsing and association, root-confined relative-path resolution, virtual-track creation, CUE time calculations, and catalog deduplication. Kotlin maps returned document URI values to Android `Uri` models.
 
 ## Native boundary
 
