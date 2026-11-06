@@ -25,6 +25,20 @@ struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
 #[derive(Clone, Copy, Default)]
 struct BiquadCoefficients { b0:f32, b1:f32, b2:f32, a1:f32, a2:f32 }
 
+fn is_lossless_codec(codec: symphonia::core::codecs::CodecType) -> bool {
+    use symphonia::core::codecs::*;
+    matches!(codec,
+        CODEC_TYPE_PCM_S32LE | CODEC_TYPE_PCM_S32LE_PLANAR | CODEC_TYPE_PCM_S32BE | CODEC_TYPE_PCM_S32BE_PLANAR |
+        CODEC_TYPE_PCM_S24LE | CODEC_TYPE_PCM_S24LE_PLANAR | CODEC_TYPE_PCM_S24BE | CODEC_TYPE_PCM_S24BE_PLANAR |
+        CODEC_TYPE_PCM_S16LE | CODEC_TYPE_PCM_S16LE_PLANAR | CODEC_TYPE_PCM_S16BE | CODEC_TYPE_PCM_S16BE_PLANAR |
+        CODEC_TYPE_PCM_S8 | CODEC_TYPE_PCM_S8_PLANAR |
+        CODEC_TYPE_PCM_U32LE | CODEC_TYPE_PCM_U32LE_PLANAR | CODEC_TYPE_PCM_U32BE | CODEC_TYPE_PCM_U32BE_PLANAR |
+        CODEC_TYPE_PCM_U24LE | CODEC_TYPE_PCM_U24LE_PLANAR | CODEC_TYPE_PCM_U24BE | CODEC_TYPE_PCM_U24BE_PLANAR |
+        CODEC_TYPE_PCM_U16LE | CODEC_TYPE_PCM_U16LE_PLANAR | CODEC_TYPE_PCM_U16BE | CODEC_TYPE_PCM_U16BE_PLANAR |
+        CODEC_TYPE_PCM_U8 | CODEC_TYPE_PCM_U8_PLANAR |
+        CODEC_TYPE_FLAC | CODEC_TYPE_WAVPACK | CODEC_TYPE_MONKEYS_AUDIO | CODEC_TYPE_ALAC | CODEC_TYPE_TTA
+    )
+}
 fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
     ((milliseconds as u128 * sample_rate as u128) / 1000)
         .min(u64::MAX as u128) as u64
@@ -114,9 +128,7 @@ impl StreamDecoder {
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
         let source_bits = params.bits_per_sample.unwrap_or(0).min(u8::MAX as u32) as u8;
-        let codec_name = format!("{:?}", params.codec);
-        let lossless_source = codec_name.starts_with("PCM_")
-            || matches!(codec_name.as_str(), "FLAC" | "ALAC" | "APE" | "WAVPACK" | "TTA");
+        let lossless_source = is_lossless_codec(params.codec);
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
         if channels == 0 || channels > 2 { return Err(format!("AAudio streaming currently supports mono/stereo, found {channels} channels")); }
