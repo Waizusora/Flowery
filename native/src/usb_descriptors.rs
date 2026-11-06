@@ -129,6 +129,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     // UAC1 AudioStreaming General descriptor (AS_GENERAL).
                     (0x00, 0x01) if length >= 7 => {
                         alt.terminal_link = raw[offset + 3];
+                        alt.format_tag = le16(raw, offset + 5);
                     }
                     // UAC1 Type-I format descriptor. Only PCM (format tag 0x0001)
                     // is accepted by the direct integer-PCM transport.
@@ -439,6 +440,8 @@ struct StreamDescriptor {
     endpoints: Vec<Value>,
     uac1_format_types: std::collections::BTreeSet<u8>,
     uac1_format_tags: std::collections::BTreeSet<u16>,
+    uac1_max_bit_rates: std::collections::BTreeSet<u16>,
+    uac1_samples_per_frames: std::collections::BTreeSet<u16>,
 }
 
 fn le24(bytes: &[u8], offset: usize) -> u32 {
@@ -525,38 +528,57 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
                         }
                         _ => {}
                     }
+                } else if stream.protocol == 0x00 && subtype == 0x01 && length >= 7 {
+                    let tag = le16(raw, offset + 5);
+                    if tag != 0 { stream.uac1_format_tags.insert(tag); }
                 } else if stream.protocol == 0x00 && subtype == 0x02 && length >= 4 {
                     let format_type = raw[offset + 3];
                     if format_type != 0 { stream.uac1_format_types.insert(format_type); }
-                    if format_type == 0x02 && length >= 7 {
-                        let tag = le16(raw, offset + 5);
-                        if tag != 0 { stream.uac1_format_tags.insert(tag); }
-                    }
-                    if format_type != 0x01 || length < 8 {
-                        offset += length;
-                        continue;
-                    }
-                    let channels = raw[offset + 4];
-                    let subslot = raw[offset + 5];
-                    let bits = raw[offset + 6];
-                    if channels > 0 { stream.channels.insert(channels); }
-                    if subslot > 0 { stream.subslot_bytes.insert(subslot); }
-                    if bits > 0 { stream.bit_resolutions.insert(bits); }
-                    let frequency_count = raw[offset + 7] as usize;
-                    if frequency_count == 0 {
-                        if length >= 14 {
-                            let minimum = le24(raw, offset + 8);
-                            let maximum = le24(raw, offset + 11);
-                            if minimum > 0 && maximum >= minimum {
-                                stream.sample_rate_ranges.push((minimum, maximum));
+                    if format_type == 0x02 {
+                        if length >= 8 {
+                            stream.uac1_max_bit_rates.insert(le16(raw, offset + 4));
+                            stream.uac1_samples_per_frames.insert(le16(raw, offset + 6));
+                        }
+                        let frequency_count_offset = 8usize;
+                        if length > frequency_count_offset {
+                            let frequency_count = raw[offset + frequency_count_offset] as usize;
+                            if frequency_count > 0 {
+                                let available = (length - frequency_count_offset - 1) / 3;
+                                if frequency_count > available { malformed = true; }
+                                for index in 0..frequency_count.min(available) {
+                                    let rate = le24(raw, offset + frequency_count_offset + 1 + index * 3);
+                                    if rate > 0 { stream.sample_rates.insert(rate); }
+                                }
                             }
-                        } else { malformed = true; }
-                    } else {
-                        let available = (length - 8) / 3;
-                        if frequency_count > available { malformed = true; }
-                        for index in 0..frequency_count.min(available) {
-                            let rate = le24(raw, offset + 8 + index * 3);
-                            if rate > 0 { stream.sample_rates.insert(rate); }
+                        }
+                    } else if format_type == 0x01 || format_type == 0x03 {
+                        if length < 8 {
+                            malformed = true;
+                            offset += length;
+                            continue;
+                        }
+                        let channels = raw[offset + 4];
+                        let subslot = raw[offset + 5];
+                        let bits = raw[offset + 6];
+                        if channels > 0 { stream.channels.insert(channels); }
+                        if subslot > 0 { stream.subslot_bytes.insert(subslot); }
+                        if bits > 0 { stream.bit_resolutions.insert(bits); }
+                        let frequency_count = raw[offset + 7] as usize;
+                        if frequency_count == 0 {
+                            if length >= 14 {
+                                let minimum = le24(raw, offset + 8);
+                                let maximum = le24(raw, offset + 11);
+                                if minimum > 0 && maximum >= minimum {
+                                    stream.sample_rate_ranges.push((minimum, maximum));
+                                }
+                            } else { malformed = true; }
+                        } else {
+                            let available = (length - 8) / 3;
+                            if frequency_count > available { malformed = true; }
+                            for index in 0..frequency_count.min(available) {
+                                let rate = le24(raw, offset + 8 + index * 3);
+                                if rate > 0 { stream.sample_rates.insert(rate); }
+                            }
                         }
                     }
                 }
@@ -621,6 +643,8 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
         "sampleRateRanges": stream.sample_rate_ranges.iter().map(|(min, max)| vec![min, max]).collect::<Vec<_>>(),
         "uac1FormatTypes": stream.uac1_format_types.iter().copied().collect::<Vec<_>>(),
         "uac1FormatTags": stream.uac1_format_tags.iter().copied().collect::<Vec<_>>(),
+        "uac1MaxBitRates": stream.uac1_max_bit_rates.iter().copied().collect::<Vec<_>>(),
+        "uac1SamplesPerFrames": stream.uac1_samples_per_frames.iter().copied().collect::<Vec<_>>(),
         "endpoints": stream.endpoints.clone()
     })).collect();
     serde_json::to_string(&json!({
