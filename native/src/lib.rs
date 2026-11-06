@@ -46,6 +46,45 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacC
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbClockRanges(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, transferred: jint,
+) -> jstring {
+    if transferred < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB clock-range transfer length");
+        return std::ptr::null_mut();
+    }
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    write_text_to_java(&mut env, &usb_descriptors::clock_ranges_json(&bytes, transferred as usize))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPlaybackDescriptorTrace(
+    mut env: JNIEnv, _class: JClass, input: JByteArray, streaming_interface: jint,
+) -> jstring {
+    if !(0..=255).contains(&streaming_interface) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB streaming interface number");
+        return std::ptr::null_mut();
+    }
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    write_text_to_java(
+        &mut env,
+        &usb_descriptors::playback_descriptor_trace(&bytes, streaming_interface as u8),
+    )
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDescribeUsbAudioDescriptors(
     mut env: JNIEnv, _class: JClass, input: JByteArray,
 ) -> jstring {
