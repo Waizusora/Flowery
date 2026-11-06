@@ -950,7 +950,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     usbSession.flush()
                 }
 
-                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES)
+                val pcm = pcmSource.readFrames(USB_DECODE_CHUNK_FRAMES, softwareVolume)
                 if (pcm.isEmpty()) break
                 val frameBytes = usbSession.profile.channels * usbSession.profile.subslotBytes
                 check(pcm.size % frameBytes == 0) { "PCM source returned an incomplete audio frame." }
