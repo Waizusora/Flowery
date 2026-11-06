@@ -234,18 +234,7 @@ class UsbDacController(context: Context) {
             NativeAudio.nativeParseUsbDacProfiles(descriptors, requestedBitResolution)
         )
         return (0 until values.length()).map { index ->
-            val value = values.getJSONObject(index)
-            UsbDacPlaybackProfile(
-                interfaceNumber = value.getInt("interfaceNumber"),
-                alternateSetting = value.getInt("alternateSetting"),
-                channels = value.getInt("channels"),
-                subslotBytes = value.getInt("subslotBytes"),
-                bitResolution = value.getInt("bitResolution"),
-                endpointAddress = value.getInt("endpointAddress"),
-                maxPacketBytes = value.getInt("maxPacketBytes"),
-                interval = value.getInt("interval"),
-                synchronization = value.getString("synchronization")
-            )
+            UsbDacPlaybackProfile.fromNativeJson(values.getJSONObject(index))
         }
     }
 

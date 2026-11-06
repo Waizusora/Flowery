@@ -24,6 +24,42 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersio
     version.into_raw()
 }
 
+
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacClockSources(
+    mut env: JNIEnv, _class: JClass, input: JByteArray,
+) -> jstring {
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    match env.new_string(usb_descriptors::clock_sources_json(&bytes)) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDescribeUsbAudioDescriptors(
+    mut env: JNIEnv, _class: JClass, input: JByteArray,
+) -> jstring {
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    match env.new_string(usb_descriptors::descriptor_report_json(&bytes)) {
+        Ok(value) => value.into_raw(),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadTags(
     mut env: JNIEnv, _class: JClass, input: JByteArray, extension: JString, temp_dir: JString,
