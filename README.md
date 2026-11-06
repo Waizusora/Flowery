@@ -21,7 +21,7 @@ The repository is under active development. Features described as limitations be
 | PCM buffering | Fixed-capacity single-producer/single-consumer ring buffer |
 | Audio tags | Lofty 0.25.5 |
 | Folder access | Storage Access Framework (SAF) |
-| Playback integration | Android foreground service and MediaSessionCompat |
+| Playback integration | Android foreground service and MediaSessionCompat; Rust queue transition policy |
 | CI | GitHub Actions |
 
 Application ID: `com.waizusora.flowery`
@@ -128,6 +128,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │       ├── lib.rs               # JNI, decode helpers, Lofty tag operations
 │       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
 │       ├── library.rs           # Supported audio filename-extension policy
+│       ├── queue.rs             # Shuffle, repeat, and queue transitions
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
 └── .github/workflows/build.yml  # Android and native CI
