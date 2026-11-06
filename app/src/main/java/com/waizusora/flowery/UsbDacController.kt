@@ -19,8 +19,6 @@ import org.json.JSONArray
 class UsbDacController(context: Context) {
     companion object {
         const val ACTION_USB_PERMISSION = "com.waizusora.flowery.action.USB_PERMISSION"
-        const val KTMICRO_VENDOR_ID = 0x31B2
-        const val KTMICRO_KT384_32_PRODUCT_ID = 0x0111
         const val KTMICRO_KT384_32_NAME = "KT Micro KT-384/32 HIFI"
     }
 
@@ -55,8 +53,7 @@ class UsbDacController(context: Context) {
         }
 
     fun isReferenceKtmicro(device: UsbDevice): Boolean =
-        device.vendorId == KTMICRO_VENDOR_ID &&
-            device.productId == KTMICRO_KT384_32_PRODUCT_ID
+        NativeAudio.nativeIsReferenceUsbDac(device.vendorId, device.productId)
 
     fun deviceIdentity(device: UsbDevice): String =
         "%04X:%04X".format(Locale.ROOT, device.vendorId, device.productId)
