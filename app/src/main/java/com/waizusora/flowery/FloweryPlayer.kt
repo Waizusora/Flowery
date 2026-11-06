@@ -182,7 +182,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
                     val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
                     val losslessSource = (sourceInfo ushr 32) != 0L
-                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24)
+                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24) && channels == 2
                     recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
                     if (eligibleSource) {
                         usbPlaybackMode = true
@@ -491,8 +491,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(usbSession.profile.channels == channels && usbSession.sampleRate > 0) {
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
-            check(usbSession.sampleRate == sourceRate && usbSession.profile.bitResolution == sourceBits) {
-                "Bit Perfect requires an exact source/DAC sample-rate and valid-bit match."
+            check(usbSession.sampleRate == sourceRate &&
+                usbSession.profile.bitResolution == sourceBits &&
+                usbSession.profile.subslotBytes == sourceBits / 8
+            ) {
+                "Bit Perfect requires an exact source/DAC sample-rate, valid-bit, and PCM subslot match."
             }
             onState("USB exclusive: preparing unprocessed PCM…")
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, FloatArray(31) { 0f })
