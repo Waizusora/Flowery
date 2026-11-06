@@ -29,7 +29,7 @@ internal object UsbFeatureUnitParser {
                     protocol = raw[offset + 7].toInt() and 0xff
                 }
                 0x24 -> if (interfaceClass == 1 && interfaceSubclass == 1 &&
-                    raw[offset + 2].toInt() and 0xff == 0x06) {
+                    (raw[offset + 2].toInt() and 0xff) == 0x06) {
                     val unitId = raw[offset + 3].toInt() and 0xff
                     val hasVolume = when (protocol) {
                         0x00 -> length >= 7 &&
