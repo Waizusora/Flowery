@@ -138,20 +138,24 @@ class UsbDacController(context: Context) {
                     "\n  Sample rates remain unverified until UAC2 clock negotiation succeeds."
             }
             val completeReport = descriptorReport + profileReport
-            val profileDatabase = UsbDacProfileDatabase(appContext)
-            val storedProfile = try {
-                profileDatabase.record(
-                    vendorId = device.vendorId,
-                    productId = device.productId,
-                    manufacturer = device.manufacturerName,
-                    product = device.productName,
-                    rawDescriptors = descriptors,
-                    descriptorReport = completeReport
-                )
-            } finally {
-                profileDatabase.close()
+            val databaseSummary = runCatching {
+                val profileDatabase = UsbDacProfileDatabase(appContext)
+                try {
+                    profileDatabase.record(
+                        vendorId = device.vendorId,
+                        productId = device.productId,
+                        manufacturer = device.manufacturerName,
+                        product = device.productName,
+                        rawDescriptors = descriptors,
+                        descriptorReport = completeReport
+                    ).diagnosticSummary()
+                } finally {
+                    profileDatabase.close()
+                }
+            }.getOrElse { error ->
+                "DAC profile database write failed: ${error.message ?: error.javaClass.simpleName}"
             }
-            completeReport + "\n\n" + storedProfile.diagnosticSummary()
+            completeReport + "\n\n" + databaseSummary
         } catch (error: Throwable) {
             "USB descriptor inspection failed: ${error.message ?: error.javaClass.simpleName}"
         } finally {
