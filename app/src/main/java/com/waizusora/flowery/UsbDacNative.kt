@@ -70,12 +70,12 @@ internal class UsbDacSession internal constructor(
         if (unit.protocol == 0x20) {
             val range = ByteArray(8)
             val transferred = volumeControl(0x82, range)
-            if (transferred < 8) return null
+            if (transferred < 8) { volumeRangeLoaded = true; return null }
             val buffer = java.nio.ByteBuffer.wrap(range).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            if (buffer.short.toInt() < 1) return null
+            if (buffer.short.toInt() < 1) { volumeRangeLoaded = true; return null }
             return (buffer.short.toInt() to buffer.short.toInt()).also { cachedVolumeRange = it; volumeRangeLoaded = true }
         }
-        if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) return null
+        if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) { volumeRangeLoaded = true; return null }
         val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
         val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
         return (if (max > min) min to max else null).also { cachedVolumeRange = it; volumeRangeLoaded = true }
