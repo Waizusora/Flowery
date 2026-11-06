@@ -704,7 +704,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Output", "AAudio · bounded PCM ring buffer", color, muted)
             Detail("Pipeline", "SAF file → Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring → AAudio", color, muted)
             Detail("Playback status", status, color, muted)
-            Detail("Runtime telemetry", "Per-stage timing, decoder throughput, and live DSP meters are not currently exposed by the engine.", color, muted)
+            Detail("Runtime telemetry", "AAudio stream and callback telemetry is captured through Settings → Audio → USB Diagnostics → Record Log. Per-stage decoder timing, throughput, and live DSP meters are not currently exposed.", color, muted)
         }
         SettingsPage.USB_DIAGNOSTICS -> {
             Text("Record Log captures connected DAC descriptors, descriptor-derived playback profiles, UAC2 clock ranges, AAudio runtime telemetry, and direct USB/libusb events in one file.",
