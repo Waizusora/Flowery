@@ -8,7 +8,7 @@ const SUPPORTED_AUDIO_EXTENSIONS: &[&str] = &[
     "m4b", "dsf", "dff",
 ];
 
-fn is_supported_audio_extension(extension: &str) -> bool {
+pub(crate) fn is_supported_audio_extension(extension: &str) -> bool {
     let normalized = extension.trim().trim_start_matches('.').to_ascii_lowercase();
     SUPPORTED_AUDIO_EXTENSIONS.contains(&normalized.as_str())
 }
@@ -53,7 +53,7 @@ mod tests {
 }
 
 
-fn normalized_stem(name: &str) -> String {
+pub(crate) fn normalized_stem(name: &str) -> String {
     let name = name.rsplit_once('/').map(|(_, value)| value).unwrap_or(name);
     name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(name).trim().to_lowercase()
 }
@@ -70,7 +70,7 @@ fn match_sidecar_lyrics(audio_names: &[String], lyric_names: &[String]) -> Vec<i
         .collect()
 }
 
-fn normalize_playlist_path(raw: &str) -> Option<String> {
+pub(crate) fn normalize_playlist_path(raw: &str) -> Option<String> {
     let path = raw.trim().trim_matches('"').replace('\\', "/");
     let lower = path.to_ascii_lowercase();
     if path.is_empty()
