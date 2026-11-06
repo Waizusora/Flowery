@@ -1,6 +1,8 @@
 # Flowery
 
-Flowery is an Android music player with a Kotlin and Jetpack Compose interface, a Rust-based decoding, DSP, and Android AAudio output layer, plus a separate native C++ libusb transport for direct USB DAC playback.
+Flowery is an Android music player focused on a clear local music library, flexible playback, and direct USB DAC integration. It combines a Jetpack Compose and Material 3 interface with a Rust audio engine for decoding, PCM processing, DSP, and playback policy. Kotlin provides Android platform integration, while a narrowly scoped C++ component provides the libusb transport used by direct USB playback.
+
+The project aims to provide a consistent PCM output path across supported audio formats, with transparent reporting of the negotiated DAC format and whether the active path meets Flowery's strict Bit Perfect conditions.
 
 ## Project status
 
@@ -76,7 +78,9 @@ A filename being recognized by the scanner does not guarantee that its codec can
 
 The equalizer's center frequencies are 20 Hz, 25 Hz, 31.5 Hz, 40 Hz, 50 Hz, 63 Hz, 80 Hz, 100 Hz, 125 Hz, 160 Hz, 200 Hz, 250 Hz, 315 Hz, 400 Hz, 500 Hz, 630 Hz, 800 Hz, 1 kHz, 1.25 kHz, 1.6 kHz, 2 kHz, 2.5 kHz, 3.15 kHz, 4 kHz, 5 kHz, 6.3 kHz, 8 kHz, 10 kHz, 12.5 kHz, 16 kHz, and 20 kHz.
 
-**USB and bit-perfect limitations:** Direct USB exclusive playback discovers permission-granted UAC2 stereo DACs from their USB descriptors rather than matching a model name or VID/PID whitelist. Rust parses and prioritizes the advertised PCM valid-bit/subslot profiles and selects sample-rate candidates from descriptor-linked UAC2 clock RANGE data; Kotlin performs the Android control transfers, and the libusb transport verifies the selected clock with SET_CUR/GET_CUR. Decoded sources use one format-aware PCM pipeline: Symphonia decode → Rubato resampling only when the DAC cannot accept the source rate → DSP → generic signed little-endian PCM packing for the negotiated 8–32 valid-bit resolution and 1–4 byte subslot → bounded native PCM queue → libusb isochronous transport. WAV integer PCM16/24/32 can bypass decoding only when the DAC profile has the exact same subslot layout and accepts the source sample rate; source bytes remain unchanged only at unity gain with ducking disabled. Other decoded sources are processed and are not source-bit-perfect. Raw descriptors, clock ranges, parsed profiles, and observation history are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and SHA-256 descriptor fingerprint; standard descriptors do not reliably expose the physical chipset identity. USB events are retained only while USB Diagnostics → Record Log is active. UAC1 direct playback, multichannel output, automatic hardware-volume capability detection, and physical-device validation remain outstanding.
+**USB and Bit Perfect status:** The direct USB path currently negotiates descriptor-derived stereo UAC2 playback profiles. Rust owns descriptor interpretation, PCM profile selection, and sample-rate policy; Kotlin handles Android USB permission and control transfers; C++ is restricted to libusb interface, clock, and isochronous transport operations. WAV integer PCM can use the source-preserving path only when the DAC accepts the exact channel, sample-rate, valid-bit, and subslot layout. Other decoder-supported formats are decoded to PCM and sent through the shared PCM output contract. The Now Playing Bit Perfect label is reserved for the verified eligible WAV path when unity gain is active and ducking is disabled; it is not shown for lossy decoded sources or processed PCM.
+
+The Rust descriptor report can identify UAC1 and UAC2 streaming descriptors, but UAC1 direct playback negotiation and transport are not implemented yet. Current direct USB playback is limited to stereo UAC2 PCM profiles; full UAC1/UAC2 class coverage, multichannel playback, automatic hardware-volume capability detection, and physical-device validation remain outstanding. DAC profile records are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and SHA-256 descriptor fingerprint. Standard descriptors do not reliably expose the physical chipset identity. USB events are retained only while USB Diagnostics → Record Log is active.
 
 ### Metadata and tag editing
 
@@ -189,7 +193,7 @@ The application uses the incremental Rust streaming decoder and native output ri
 ## Current limitations
 
 - Bit-perfect USB playback is not guaranteed or hardware-verified.
-- Generic UAC2 descriptor/profile discovery and exact clock negotiation are implemented for stereo profiles with signed PCM valid-bit resolutions of 8–32 bits and 1–4 byte subslots. UAC1 direct playback, multichannel output, and automatic DAC hardware-volume capability detection remain unsupported.
+- Direct USB playback currently supports stereo UAC2 profiles with signed PCM valid-bit resolutions of 8–32 bits and 1–4 byte subslots. UAC1 descriptor reporting exists, but UAC1 direct negotiation and playback are not implemented. Full UAC1/UAC2 class coverage, multichannel output, and automatic DAC hardware-volume capability detection remain unsupported.
 - USB descriptor profiles are stored locally by VID/PID and SHA-256 descriptor fingerprint. Standard USB descriptors do not reliably identify the physical silicon chipset, so the database records descriptor families rather than asserting an unverified chipset model.
 - AAudio exclusive mode is requested but may fall back to shared mode.
 - Multichannel output beyond mono and stereo is not supported by the current streaming output path.
