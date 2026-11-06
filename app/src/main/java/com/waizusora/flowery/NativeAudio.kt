@@ -49,6 +49,8 @@ object NativeAudio {
     external fun nativeParseUsbDacPlaybackClocks(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeParseUsbDacClockSources(descriptors: ByteArray): String
     external fun nativeDescribeUsbAudioDescriptors(descriptors: ByteArray): String
+    external fun nativeParseUsbClockRanges(response: ByteArray, transferred: Int): String
+    external fun nativeUsbPlaybackDescriptorTrace(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeReadTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String): String
     external fun nativeWriteTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): String
