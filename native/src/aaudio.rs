@@ -113,6 +113,21 @@ impl Engine {
 static ENGINE:OnceLock<Mutex<Engine>>=OnceLock::new();
 fn engine()-> &'static Mutex<Engine>{ENGINE.get_or_init(||Mutex::new(Engine::new()))}
 
+unsafe fn wait_stream_state(stream:*mut AAudioStream, transient:i32, target:i32)->i32 {
+    let mut state=AAudioStream_getState(stream);
+    for _ in 0..4 {
+        if state==target{return OK;}
+        if state==STATE_DISCONNECTED{return -899;}
+        if state!=transient{return INVALID_STATE;}
+        let mut next=state;
+        let result=AAudioStream_waitForStateChange(stream,state,&mut next,1_000_000_000);
+        if result!=OK{return result;}
+        state=next;
+    }
+    if state==target{OK}else{- timeout_code()}
+}
+fn timeout_code()->i32{-889}
+
 unsafe extern "C" fn error_callback(_: *mut AAudioStream, data:*mut c_void, error:i32){
     if !data.is_null(){let o=&*(data as *const Output);o.error.store(error,Ordering::Release);o.active.store(false,Ordering::Release);}
 }
@@ -169,7 +184,7 @@ fn result_or_throw(env:&mut JNIEnv, code:i32, message:&str)->i32 {
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(_:JNIEnv,_:JClass,position:jlong,start:jboolean)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null()||position<0{return INVALID_STATE;}
- unsafe{let mut s=AAudioStream_getState(e.stream);if s==STATE_DISCONNECTED{return -899;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}let mut n=s;let r=AAudioStream_waitForStateChange(e.stream,s,&mut n,1_000_000_000);if r!=OK{return r;}s=n;}if s==STATE_PAUSING{let mut n=s;let r=AAudioStream_waitForStateChange(e.stream,s,&mut n,1_000_000_000);if r!=OK{return r;}s=n;}if s!=STATE_PAUSED&&s!=STATE_OPEN&&s!=STATE_STOPPED{return INVALID_STATE;}}
+ unsafe{let mut s=AAudioStream_getState(e.stream);if s==STATE_DISCONNECTED{return -899;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s==STATE_PAUSING{let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s!=STATE_PAUSED&&s!=STATE_OPEN&&s!=STATE_STOPPED{return INVALID_STATE;}}
  let o=e.output.as_ref().unwrap();o.read.store(0,Ordering::Relaxed);o.write.store(0,Ordering::Relaxed);o.played.store(position as u64,Ordering::Release);o.eof.store(false,Ordering::Release);o.active.store(true,Ordering::Release);
  if start==JNI_TRUE{unsafe{AAudioStream_requestStart(e.stream)}}else{OK}
 }
@@ -177,8 +192,8 @@ fn result_or_throw(env:&mut JNIEnv, code:i32, message:&str)->i32 {
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.write.load(Ordering::Acquire).saturating_sub(o.read.load(Ordering::Acquire)).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(_:JNIEnv,_:JClass,v:f32){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.volume.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed);}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_PAUSED{return OK;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}let mut n=s;return AAudioStream_waitForStateChange(e.stream,s,&mut n,1_000_000_000);}if s==STATE_PAUSING{let mut n=s;return AAudioStream_waitForStateChange(e.stream,s,&mut n,1_000_000_000);}INVALID_STATE}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s==STATE_PAUSED{let r=AAudioStream_requestStart(e.stream);if r!=OK{return r;}return OK;}if s==STATE_STARTING{let mut n=s;return AAudioStream_waitForStateChange(e.stream,s,&mut n,1_000_000_000);}INVALID_STATE}}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_PAUSED{return OK;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}return wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);}if s==STATE_PAUSING{return wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);}INVALID_STATE}}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s==STATE_PAUSED{let r=AAudioStream_requestStart(e.stream);if r!=OK{return r;}return wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);}if s==STATE_STARTING{return wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);}INVALID_STATE}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutput(_:JNIEnv,_:JClass){let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());if let Some(o)=e.output.as_ref(){o.active.store(false,Ordering::Release);}unsafe{e.stop();}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(_:JNIEnv,_:JClass)->jboolean{if engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.active.load(Ordering::Acquire)).unwrap_or(false){JNI_TRUE}else{0}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.underruns.load(Ordering::Acquire).min(i32::MAX as u64) as i32).unwrap_or(0)}
