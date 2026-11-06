@@ -58,3 +58,8 @@ The current end-to-end direct path is deliberately limited to stereo RIFF/WAVE i
 ## Lyrics parsing
 
 LRC parsing runs in Rust through the native JNI boundary. The parser recognizes one- to two-digit minute fields, two-digit seconds, and optional one- to three-digit fractional seconds; it expands multiple timestamps on a line, removes timestamp tokens from the lyric text, and sorts entries chronologically. Kotlin retains only the UI model adapter and current-line presentation lookup. Sidecar document discovery and file access continue to use Android's Storage Access Framework.
+
+
+## Playlist parsing
+
+CUE, M3U, and PLS parsing runs in Rust through JNI. The native parser produces structured metadata and playlist entries; Kotlin adapts those values to app models. Charset selection and document-tree path resolution remain in Kotlin because they depend on Android/JVM and SAF APIs.

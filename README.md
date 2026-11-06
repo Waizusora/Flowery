@@ -56,6 +56,7 @@ Application ID: `com.waizusora.flowery`
 - Enable or disable individual roots and remove roots from the configured list.
 - Recursively scan enabled roots for supported filename extensions.
 - Associate a sidecar `.lrc` file with an audio file when the base filenames match.
+- Parse CUE, M3U, and PLS playlist text in the Rust engine; Kotlin retains SAF document resolution and charset selection.
 - Scan document trees directly; the library does not use MediaStore.
 
 Folder scanning recognizes these extensions: `.mp3`, `.flac`, `.wav`, `.wave`, `.aiff`, `.aif`, `.alac`, `.m4a`, `.mp4`, `.aac`, `.ogg`, `.opus`, `.oga`, `.wma`, `.ape`, `.wv`, `.tta`, `.mka`, `.m4b`, `.dsf`, and `.dff`.

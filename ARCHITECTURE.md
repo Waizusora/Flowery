@@ -22,3 +22,8 @@ Lyrics toggles the sidecar LRC presentation in the artwork area. DSP exposes sof
 ## Native lyrics parsing
 
 Sidecar LRC timestamp recognition, multi-timestamp expansion, text cleanup, and chronological ordering are implemented in the Rust library. The JNI adapter returns structured JSON; Kotlin maps the result to the UI-facing lyric model and selects the line for the current presentation position. Android document access and lyric presentation remain platform responsibilities.
+
+
+## Native playlist parsing
+
+CUE, M3U, and PLS text parsing is implemented in Rust and exposed through JNI. Kotlin retains charset decoding, Android Storage Access Framework document resolution, and UI-facing data models. CUE parsing preserves track frame offsets and derives end offsets from the next track that references the same source file.
