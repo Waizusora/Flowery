@@ -7,6 +7,7 @@ object NativeAudio {
     external fun nativeParseM3u(content: String): String
     external fun nativeParsePls(content: String): String
     external fun nativeIsSupportedAudioExtension(extension: String): Boolean
+    external fun nativeQueueTransition(currentIndex: Int, queueSize: Int, shuffle: Boolean, repeatMode: Int, action: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
