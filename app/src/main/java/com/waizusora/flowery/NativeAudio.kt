@@ -17,7 +17,6 @@ object NativeAudio {
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
     external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
-    external fun nativeReadStreamChunkPcm24(handle: Long, maxFrames: Int, targetGain: Float): ByteArray
     external fun nativePumpStreamChunk(handle: Long, maxFrames: Int): Int
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
@@ -27,10 +26,8 @@ object NativeAudio {
     external fun nativeSeekWavPcmFrame(handle: Long, frame: Long): Long
     external fun nativeCloseWavPcm(handle: Long)
     external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
-    external fun nativeOfferUsbPcmBlock(queue: Long, pcm: ByteArray, frames: Int, epoch: Int, startFrames: Long, endOfStream: Boolean, timeoutMs: Int): Boolean
     external fun nativePollUsbPcmBlock(queue: Long, timeoutMs: Int): ByteArray?
     external fun nativeUsbPcmQueueSize(queue: Long): Int
-    external fun nativeClearUsbPcmQueue(queue: Long)
     external fun nativeCloseUsbPcmQueue(queue: Long)
     external fun nativeDestroyUsbPcmQueue(queue: Long)
     external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, sourceRate: Int, channels: Int, segmentStartMs: Long, segmentEndMs: Long): Long
