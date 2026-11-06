@@ -63,7 +63,8 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
             let supported_protocol = a.protocol == 0x00 || a.protocol == 0x20;
-            if supported_protocol && (1..=8).contains(&a.channels) && (1..=4).contains(&a.subslot_bytes)
+            if supported_protocol && (a.protocol != 0x00 || a.format_tag == 0x0001)
+                && (1..=8).contains(&a.channels) && (1..=4).contains(&a.subslot_bytes)
                 && (8..=32).contains(&a.bit_resolution)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
@@ -686,6 +687,7 @@ mod tests {
         assert_eq!(profiles[0].channels, 2);
         assert_eq!(profiles[0].sample_rates, vec![44_100, 48_000]);
         assert_eq!(profiles[0].endpoint_address, 1);
+        assert_eq!(profiles[0].feedback_endpoint, Some(0x81));
     }
 
     #[test]
