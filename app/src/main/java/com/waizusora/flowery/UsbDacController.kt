@@ -179,7 +179,8 @@ class UsbDacController(context: Context) {
     internal fun openExclusivePlaybackSession(
         device: UsbDevice,
         bitResolution: Int,
-        sampleRate: Int
+        sampleRate: Int,
+        requiredSubslotBytes: Int? = null
     ): UsbDacSession {
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
         require(bitResolution == 0 || bitResolution in setOf(16, 24, 32)) { "PCM resolution must be automatic or 16, 24, or 32 bits." }
@@ -204,6 +205,7 @@ class UsbDacController(context: Context) {
                 }
             }
             val profiles = parseNativePlaybackProfiles(descriptors, bitResolution.takeIf { it > 0 })
+                .filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
             if (profiles.isEmpty()) {
                 throw IllegalStateException(
                     "No descriptor-validated stereo UAC2 OUT profile supports " +
@@ -270,7 +272,8 @@ class UsbDacController(context: Context) {
         devices: List<Device>,
         bitResolution: Int,
         sampleRate: Int,
-        allowSampleRateConversion: Boolean = false
+        allowSampleRateConversion: Boolean = false,
+        requiredSubslotBytes: Int? = null
     ): Pair<Device, UsbDacSession> {
         val failures = mutableListOf<String>()
         for (device in devices) {
@@ -284,8 +287,9 @@ class UsbDacController(context: Context) {
                 try {
                     val descriptors = connection.rawDescriptors
                     val profiles = parseNativePlaybackProfiles(descriptors, null)
+                    val compatibleProfiles = profiles.filter { requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
-                        else profiles.map { it.bitResolution }.distinct().sortedDescending()
+                        else compatibleProfiles.map { it.bitResolution }.distinct().sortedDescending()
                     val rates = if (allowSampleRateConversion) {
                         discoverClockRates(connection, descriptors, profiles, sampleRate)
                     } else listOf(sampleRate)
@@ -301,7 +305,7 @@ class UsbDacController(context: Context) {
             for (candidateBits in candidateResolutions) {
                 for (candidateRate in candidateRates) {
                     try {
-                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate)
+                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes)
                         if (session.profile.channels == 2 &&
                             session.profile.bitResolution == candidateBits &&
                             session.sampleRate == candidateRate) {
