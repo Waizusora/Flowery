@@ -5,7 +5,6 @@ mod catalog;
 mod queue;
 mod playback_controller;
 mod playlists;
-mod wav_pcm;
 mod usb_pcm;
 mod usb_producer;
 mod playback_policy;
