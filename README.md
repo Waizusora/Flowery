@@ -196,7 +196,7 @@ The application uses the incremental Rust streaming decoder and native output ri
 - Direct USB decoded-PCM playback supports descriptor-selected UAC1 Type-I PCM and UAC2 profiles with 1–8 channels, signed PCM valid-bit resolutions of 8–32 bits, and 1–4 byte subslots. UAC1 Type-II/III are descriptor-recognized but not decoded-PCM playback formats. Explicit asynchronous feedback is used for packet scheduling; implicit feedback and vendor-specific synchronization variants remain unsupported.
 - USB descriptor profiles are stored locally by VID/PID and SHA-256 descriptor fingerprint. Standard USB descriptors do not reliably identify the physical silicon chipset, so the database records descriptor families rather than asserting an unverified chipset model.
 - AAudio exclusive mode is requested but may fall back to shared mode.
-- Multichannel output beyond mono and stereo is not supported by the current streaming output path.
+- The direct USB PCM path supports up to eight channels when the source and selected DAC alternate setting match. The Android AAudio output route remains limited to the channel layouts accepted by the selected Android output device.
 - Gapless playback and crossfade are not implemented.
 - Embedded and remote lyric retrieval are not implemented.
 - Embedded artwork replacement is not implemented.
