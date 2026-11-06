@@ -1,4 +1,4 @@
-mod streaming;
+mod streaming;\nmod lyrics;
 #[cfg(target_os = "android")]
 mod aaudio;
 use std::io::Cursor;

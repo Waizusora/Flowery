@@ -88,8 +88,8 @@ Embedded cover artwork can be read for display. Replacing embedded artwork is no
 ### Lyrics
 
 - Discover a sidecar `.lrc` file with the same base filename as the audio file.
-- Parse one or more timestamps per line and sort the resulting lyric entries by timestamp.
-- Resolve the lyric line corresponding to the current playback position.
+- Parse sidecar LRC timestamps, expand multiple timestamps per line, and sort entries chronologically in the Rust engine through JNI.
+- Resolve the lyric line corresponding to the current playback position in the Kotlin presentation layer.
 
 Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-file writing are not implemented.
 

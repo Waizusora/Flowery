@@ -53,3 +53,8 @@ The USB diagnostic log records `USB_PCM_GAIN` (initial gain and queue configurat
 ## Output limitations
 
 The current end-to-end direct path is deliberately limited to stereo RIFF/WAVE integer PCM16/24/32. It does not yet support FLAC, ALAC, AIFF, DSD, floating-point WAV, compressed formats, or multichannel output in USB bit-perfect mode. The sliding-window transport has been exercised only against a simulated libusb layer (byte-exact delivery, window bound, drain, flush, and stall detection) and has not yet been validated on the physical KT Micro unit with a USB protocol trace or external digital capture. A successful UAC2 clock readback and completed isochronous transfers are necessary runtime checks, but external measurement is still required before making a hardware-verified bit-perfect claim. The normal AAudio path outputs PCM float and can fall back from exclusive to shared mode; it is not bit-perfect. Gapless playback and crossfade are also not implemented.
+
+
+## Lyrics parsing
+
+LRC parsing runs in Rust through the native JNI boundary. The parser recognizes one- to two-digit minute fields, two-digit seconds, and optional one- to three-digit fractional seconds; it expands multiple timestamps on a line, removes timestamp tokens from the lyric text, and sorts entries chronologically. Kotlin retains only the UI model adapter and current-line presentation lookup. Sidecar document discovery and file access continue to use Android's Storage Access Framework.
