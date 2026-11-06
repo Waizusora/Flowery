@@ -21,7 +21,11 @@ internal data class UsbDacPlaybackProfile(
     val protocol: Int,
     val sampleRates: List<Int>,
     val sampleRateRange: Pair<Int, Int>?,
-    val samplingFrequencyControl: Boolean
+    val samplingFrequencyControl: Boolean,
+    val formatType: Int,
+    val formatTag: Int,
+    val feedbackEndpoint: Int?,
+    val feedbackMaxPacketBytes: Int
 ) {
     val endpointHex: String
         get() = "0x%02X".format(endpointAddress)
@@ -44,7 +48,11 @@ internal data class UsbDacPlaybackProfile(
             sampleRateRange = value.optJSONArray("sampleRateRange")?.let { range ->
                 if (range.length() >= 2) range.getInt(0) to range.getInt(1) else null
             },
-            samplingFrequencyControl = value.optBoolean("samplingFrequencyControl", false)
+            samplingFrequencyControl = value.optBoolean("samplingFrequencyControl", false),
+            formatType = value.optInt("formatType", if (value.optInt("protocol", 0x20) == 0x00) 1 else 0),
+            formatTag = value.optInt("formatTag", 0),
+            feedbackEndpoint = if (value.isNull("feedbackEndpoint")) null else value.optInt("feedbackEndpoint"),
+            feedbackMaxPacketBytes = value.optInt("feedbackMaxPacketBytes", 0)
         )
     }
 }
