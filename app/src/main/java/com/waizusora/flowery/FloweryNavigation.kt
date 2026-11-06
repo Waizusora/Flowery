@@ -142,12 +142,12 @@ fun FloweryNavigation(
                 lyricsVisible = !lyricsVisible
             }
             val usbTransportActive = status.contains("USB exclusive")
-            val sourceBitPerfectActive = status.contains("source samples unchanged")
+            val unityGainDirectPcm = status.contains("unity gain")
             IconButton(onClick = onUsbDacClick) {
                 Icon(
                     Icons.Default.Usb,
                     contentDescription = when {
-                        sourceBitPerfectActive -> "USB DAC direct PCM active; source samples unchanged"
+                        unityGainDirectPcm -> "USB DAC direct PCM active at unity gain; EQ bypassed"
                         usbTransportActive -> "USB DAC direct transport active; decoded PCM is not bit-perfect"
                         else -> "USB DAC"
                     },
