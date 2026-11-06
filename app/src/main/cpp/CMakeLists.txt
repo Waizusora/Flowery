@@ -17,9 +17,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(libusb_cmake)
 
-add_library(flowery_aaudio SHARED aaudio_output.cpp)
-target_compile_features(flowery_aaudio PRIVATE cxx_std_17)
-target_link_libraries(flowery_aaudio PRIVATE aaudio)
 
 add_library(flowery_usb SHARED usb_audio_jni.cpp)
 target_compile_features(flowery_usb PRIVATE cxx_std_17)
