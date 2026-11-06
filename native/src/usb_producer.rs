@@ -1,5 +1,5 @@
 use crate::streaming::StreamDecoder;
-use crate::usb_pcm::{queue_ref, PcmBlock, UsbPcmQueue};
+use crate::usb_pcm::{queue_ref, PcmBlock, PcmFormat, UsbPcmQueue};
 use jni::objects::JClass;
 use jni::sys::{jfloat, jint, jlong};
 use jni::JNIEnv;
@@ -13,6 +13,7 @@ struct ProducerState {
     queue: &'static UsbPcmQueue,
     source_rate: u64,
     channels: usize,
+    format: PcmFormat,
     segment_start_ms: u64,
     segment_end_ms: Option<u64>,
     segment_remaining_frames: Option<u64>,
@@ -57,10 +58,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     queue_handle: jlong,
     source_rate: jint,
     channels: jint,
+    bit_resolution: jint,
+    subslot_bytes: jint,
     segment_start_ms: jlong,
     segment_end_ms: jlong,
 ) -> jlong {
     if decoder_handle == 0 || source_rate <= 0 || channels != 2
+        || !(16..=32).contains(&bit_resolution) || !matches!(bit_resolution, 16 | 24 | 32)
+        || subslot_bytes != bit_resolution.div_ceil(8)
         || segment_start_ms < 0 || segment_end_ms < -1
         || (segment_end_ms >= 0 && segment_end_ms < segment_start_ms)
     {
@@ -80,6 +85,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
             queue,
             source_rate: source_rate as u64,
             channels: channels as usize,
+            format: PcmFormat { sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8, subslot_bytes: subslot_bytes as u8, signed: true, little_endian: true },
             segment_start_ms: start,
             segment_end_ms: end,
             segment_remaining_frames: remaining,
@@ -173,7 +179,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
     }
 
     let decoder = unsafe { &mut *state.decoder };
-    let pcm = match decoder.read_usb_pcm24(USB_DECODE_CHUNK_FRAMES, target_gain) {
+    let pcm = match decoder.read_usb_pcm(USB_DECODE_CHUNK_FRAMES, target_gain, state.format) {
         Ok(value) => value,
         Err(error) => {
             let _ = env.throw_new("java/lang/IllegalStateException", error);
@@ -190,7 +196,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         return 0;
     }
 
-    let bytes_per_frame = state.channels * 3;
+    let bytes_per_frame = state.format.bytes_per_frame();
     if pcm.len() % bytes_per_frame != 0 {
         let _ = env.throw_new("java/lang/IllegalStateException", "Rust decoder returned an incomplete packed PCM frame");
         return -2;
