@@ -37,7 +37,7 @@ internal object UsbDacNative {
  * Owns the Android USB connection for the full lifetime of a claimed UAC2
  * streaming interface. Calls must be made off the UI thread. A write returns
  * once the PCM has been staged and the bounded isochronous window has accepted
- * it, so up to roughly 128 ms of previously written audio may still be queued
+ * it, so up to roughly 256 ms of previously written audio may still be queued
  * on the endpoint. Use [drain] at natural end of playback and [flush] on seek.
  * Closing the session cancels queued transfers and releases native resources.
  */
