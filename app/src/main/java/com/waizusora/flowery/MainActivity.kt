@@ -139,13 +139,13 @@ class MainActivity : ComponentActivity() {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
                         .apply()
-                    "USB permission granted for \${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC2 playback profile from its descriptors. Decoded audio is converted to the DAC's supported PCM format and clock rate; WAV passthrough is used only when the source format matches exactly."
+                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC2 playback profile from its descriptors. Decoded audio is converted to the DAC's supported PCM format and clock rate; WAV passthrough is used only when the source format matches exactly."
                 }
                 granted -> {
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", false)
                         .apply()
-                    "Flowery recognized \${usbDacController.describeDevice(device)}, but its descriptors do not expose a usable stereo UAC2 playback profile and linked clock source. The DAC remains available through Android's normal audio route."
+                    "Flowery recognized ${usbDacController.describeDevice(device)}, but its descriptors do not expose a usable stereo UAC2 playback profile and linked clock source. The DAC remains available through Android's normal audio route."
                 }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
@@ -336,7 +336,7 @@ class MainActivity : ComponentActivity() {
         val device = detected.usbDevice
         if (usbDacController.hasPermission(device)) {
             if (!usbDacController.hasCompatibleUac2PlaybackProfile(device)) {
-                usbDacMessage = "Flowery recognized \${detected.displayName}, but direct USB playback requires a stereo UAC2 profile with a linked clock source. Android's regular audio route remains available."
+                usbDacMessage = "Flowery recognized ${detected.displayName}, but direct USB playback requires a stereo UAC2 profile with a linked clock source. Android's regular audio route remains available."
                 return
             }
             val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
