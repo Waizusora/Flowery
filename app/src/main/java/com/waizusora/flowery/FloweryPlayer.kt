@@ -834,6 +834,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
     }
 
+    fun stopAndJoin(timeoutMs: Long = 4_000L): Boolean {
+        val activeWorker = worker
+        stop()
+        if (activeWorker == null || activeWorker === Thread.currentThread()) return true
+        return try {
+            activeWorker.join(timeoutMs.coerceAtLeast(0L))
+            !activeWorker.isAlive
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)

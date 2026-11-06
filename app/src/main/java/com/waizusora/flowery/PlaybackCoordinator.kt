@@ -2,6 +2,7 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.net.Uri
+import kotlin.concurrent.thread
 
 /**
  * Android service adapter for the native playback lifecycle controller.
@@ -74,7 +75,18 @@ internal class PlaybackCoordinator(
     }
 
     override fun close() {
-        stop()
-        NativeAudio.nativeDestroyPlaybackController(nativeController)
+        setState(State.STOPPING)
+        val stopped = engine.stopAndJoin()
+        if (stopped) {
+            setState(State.IDLE)
+            NativeAudio.nativeDestroyPlaybackController(nativeController)
+        } else {
+            // Keep the native handle alive until the worker can no longer publish state.
+            thread(name = "FloweryPlaybackControllerCleanup") {
+                engine.stopAndJoin(Long.MAX_VALUE)
+                NativeAudio.nativeSetPlaybackControllerState(nativeController, State.IDLE.ordinal)
+                NativeAudio.nativeDestroyPlaybackController(nativeController)
+            }
+        }
     }
 }

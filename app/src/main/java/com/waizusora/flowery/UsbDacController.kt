@@ -167,47 +167,54 @@ class UsbDacController(context: Context) {
         try {
             val descriptors = connection.rawDescriptors
             val profiles = parseNativePlaybackProfiles(descriptors, bitResolution)
-            val profile = profiles.firstOrNull()
-                ?: throw IllegalStateException(
+            if (profiles.isEmpty()) {
+                throw IllegalStateException(
                     "No descriptor-validated stereo UAC2 OUT profile supports " +
                         bitResolution + "-bit PCM."
-                )
-            val clocks = parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
-            if (clocks.isEmpty()) {
-                throw IllegalStateException(
-                    "No UAC2 clock source descriptor was linked to playback interface ${profile.interfaceNumber}. " +
-                        "Descriptor trace:\\n" +
-                        UsbAudioDescriptorParser.playbackDescriptorTrace(descriptors, profile.interfaceNumber)
                 )
             }
 
             var lastError: Throwable? = null
-            for ((clockId, controlInterface) in clocks) {
-                try {
-                    val nativeHandle = UsbDacNative.nativeOpen(
-                        connection.fileDescriptor,
-                        profile.interfaceNumber,
-                        profile.alternateSetting,
-                        profile.endpointAddress,
-                        profile.maxPacketBytes,
-                        profile.interval,
-                        profile.channels,
-                        profile.subslotBytes,
-                        sampleRate,
-                        clockId,
-                        controlInterface
+            for (profile in profiles) {
+                val clocks = parseNativePlaybackClocks(descriptors, profile.interfaceNumber)
+                if (clocks.isEmpty()) {
+                    lastError = IllegalStateException(
+                        "No UAC2 clock source descriptor was linked to playback interface " +
+                            "${profile.interfaceNumber}. Descriptor trace:\\n" +
+                            UsbAudioDescriptorParser.playbackDescriptorTrace(descriptors, profile.interfaceNumber)
                     )
-                    if (nativeHandle != 0L) {
-                        return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                    continue
+                }
+                for ((clockId, controlInterface) in clocks) {
+                    try {
+                        val nativeHandle = UsbDacNative.nativeOpen(
+                            connection.fileDescriptor,
+                            profile.interfaceNumber,
+                            profile.alternateSetting,
+                            profile.endpointAddress,
+                            profile.maxPacketBytes,
+                            profile.interval,
+                            profile.channels,
+                            profile.subslotBytes,
+                            sampleRate,
+                            clockId,
+                            controlInterface
+                        )
+                        if (nativeHandle != 0L) {
+                            return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                        }
+                        lastError = IllegalStateException(
+                            "Native USB transport rejected alternate setting ${profile.alternateSetting} " +
+                                "and clock source $clockId."
+                        )
+                    } catch (error: Throwable) {
+                        lastError = error
                     }
-                    lastError = IllegalStateException("Native USB transport returned an invalid session.")
-                } catch (error: Throwable) {
-                    lastError = error
                 }
             }
             throw IllegalStateException(
-                "The DAC did not accept and confirm the requested UAC2 clock rate. " +
-                    "No USB playback session was started.",
+                "No descriptor-derived UAC2 playback profile accepted and confirmed " +
+                    "${sampleRate} Hz. No USB playback session was started.",
                 lastError
             )
         } catch (error: Throwable) {
