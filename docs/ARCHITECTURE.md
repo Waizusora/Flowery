@@ -9,7 +9,7 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio-
 | Component | Responsibility |
 | --- | --- |
 | `MainActivity` | Compose UI, folder selection and management, library presentation, player controls, EQ controls, metadata display and tag editor |
-| `LibraryScanner` | Recursive traversal of configured SAF document trees and sidecar LRC association |
+| `LibraryScanner` | SAF traversal, playlist-text reads, and URI-to-model mapping; Rust owns catalog policy |
 | `LrcParser` | Convert native LRC results into UI models and request current-line lookup from Rust |
 | `PlaybackService` | Foreground playback lifecycle, media session, notification actions, audio focus, queue and playback modes |
 | `FloweryPlayer` | Open document descriptors, coordinate the streaming worker, manage output selection, volume, pause/resume and seeking |
