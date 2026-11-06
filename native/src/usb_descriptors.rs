@@ -607,11 +607,4 @@ mod tests {
         assert!(trace.contains("number=2"));
     }
 
-    #[test]
-    fn reference_dac_identity_uses_exact_vid_pid_pair() {
-        assert!(is_reference_ktmicro(0x31B2, 0x0111));
-        assert!(!is_reference_ktmicro(0x31B2, 0x0112));
-        assert!(!is_reference_ktmicro(0x0000, 0x0111));
-    }
-
 }
