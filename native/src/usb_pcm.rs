@@ -6,6 +6,7 @@ use jni::objects::{JByteArray, JClass};
 use jni::sys::{jboolean, jbyteArray, jint, jlong, jsize, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 
+#[derive(Clone)]
 struct PcmBlock {
     pcm: Vec<u8>,
     frames: u32,
@@ -102,8 +103,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOfferUsbPcmB
     let Some(queue) = queue_ref(handle) else { return JNI_FALSE; };
     if frames < 0 || timeout_ms < 0 { return JNI_FALSE; }
     let length = match env.get_array_length(&pcm) { Ok(value) => value as usize, Err(_) => return JNI_FALSE };
+    let expected_length = (frames as usize).checked_mul(6);
     if (end_of_stream == JNI_TRUE && (frames != 0 || length != 0))
-        || (end_of_stream != JNI_TRUE && (frames == 0 || length == 0)) {
+        || (end_of_stream != JNI_TRUE && (frames == 0 || length == 0 || expected_length != Some(length))) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB PCM queue block");
         return JNI_FALSE;
     }
@@ -192,7 +194,7 @@ mod tests {
         let first = PcmBlock { pcm: vec![1, 2], frames: 1, epoch: 0, start_frames: 0, end_of_stream: false };
         let second = PcmBlock { pcm: vec![3, 4], frames: 1, epoch: 0, start_frames: 1, end_of_stream: false };
         assert!(queue.offer(first, Duration::ZERO));
-        assert!(!queue.offer(second, Duration::ZERO));
+        assert!(!queue.offer(second.clone(), Duration::ZERO));
         let block = queue.poll(Duration::ZERO).unwrap();
         assert_eq!(block.pcm, vec![1, 2]);
         assert!(queue.offer(second, Duration::ZERO));
