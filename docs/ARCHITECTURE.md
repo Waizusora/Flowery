@@ -19,6 +19,7 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio 
 | `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
 | `native/src/usb_producer.rs` | Direct USB decoded-playback segment bounds, seek epochs, packed PCM production and bounded-queue publication |
 | `native/src/usb_descriptors.rs` | UAC descriptor parsing, playback profiles, clock links, GET_RANGE responses and diagnostic traces |
+| `native/src/playback_policy.rs` | Output sample-rate preference, ring capacity, frame conversion and playback watermarks |
  
 ## Playback sequence
 
@@ -26,7 +27,7 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio 
 2. The playback service receives the request and delegates playback to `FloweryPlayer`.
 3. `FloweryPlayer` opens a read-only `ParcelFileDescriptor` and passes its file descriptor and file extension to the native streaming decoder.
 4. Rust probes the container, selects the default audio track, creates the Symphonia decoder, and reports source format information.
-5. Kotlin reads Android output-device capabilities; Rust applies native output-format selection and AAudio probing.
+5. Kotlin reads Android output-device capabilities; Rust selects the preferred supported rate, computes output-buffer sizing and playback watermarks, and probes AAudio.
 6. Rust configures the output conversion and 31-band EQ. If the rates match, no sample-rate conversion is needed.
 7. A worker thread reads decoded PCM chunks and writes available frames into the native ring buffer.
 8. The AAudio callback consumes frames and writes them to the active output stream.
