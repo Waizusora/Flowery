@@ -23,7 +23,7 @@ namespace {
 //
 // Keep fewer, longer isochronous URBs queued to reduce completion/event-loop
 // overhead while retaining a bounded scheduling horizon. At a 125 us service
-// interval, one 128-packet URB covers 16 ms; the adaptive window targets about
+// interval, one 64-packet URB covers 8 ms; the adaptive window targets about
 // 192 ms of queued audio and is replenished as URBs complete.
 constexpr size_t kPacketsPerUrb = 64;
 constexpr size_t kMaxUrbsInFlight = 24;
@@ -34,6 +34,8 @@ constexpr uint64_t kTargetQueuedAudioUs = 192000ULL;
 constexpr int kStallTimeoutMs = 1500;
 // Upper bound on how long teardown waits for cancelled URBs to be reaped.
 constexpr int kTeardownTimeoutMs = 2000;
+
+struct UsbAudioSession;
 
 struct InFlightTransfer {
     std::vector<unsigned char> buffer;
