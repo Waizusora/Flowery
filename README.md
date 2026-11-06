@@ -193,7 +193,7 @@ The application uses the incremental Rust streaming decoder and native output ri
 ## Current limitations
 
 - Bit Perfect is only reported for supported lossless 8/16/24-bit stereo sources when the DAC's negotiated sample rate, valid-bit depth, and subslot width exactly match. Digital EQ, gain, software volume, ducking, and resampling are bypassed in this mode. The implementation has not yet been validated by external digital capture on physical DAC models; 32-bit sources, multichannel playback, and unsupported lossless codecs do not qualify.
-- Direct USB playback supports stereo UAC1 Type-I PCM and UAC2 profiles with signed PCM valid-bit resolutions of 8–32 bits and 1–4 byte subslots. UAC1 formats other than Type-I PCM, multichannel output, and automatic DAC hardware-volume capability detection remain unsupported.
+- Direct USB decoded-PCM playback supports descriptor-selected UAC1 Type-I PCM and UAC2 profiles with 1–8 channels, signed PCM valid-bit resolutions of 8–32 bits, and 1–4 byte subslots. UAC1 Type-II/III formats, complete endpoint feedback/synchronization handling, and automatic DAC hardware-volume capability detection remain unsupported.
 - USB descriptor profiles are stored locally by VID/PID and SHA-256 descriptor fingerprint. Standard USB descriptors do not reliably identify the physical silicon chipset, so the database records descriptor families rather than asserting an unverified chipset model.
 - AAudio exclusive mode is requested but may fall back to shared mode.
 - Multichannel output beyond mono and stereo is not supported by the current streaming output path.
