@@ -4,7 +4,7 @@
 
 Flowery uses the Android Storage Access Framework (SAF), not MediaStore. Users select folder trees through the system document picker. Configured roots can be enabled, disabled, or removed; only enabled roots are scanned. `LibraryScanner` recursively traverses trees through `DocumentFile` and deduplicates tracks by document URI.
 
-Rust owns audio classification, same-directory sidecar matching, playlist parsing and association, root-confined path resolution, virtual-track construction, CUE time-range calculation, and catalog deduplication. `LibraryScanner` passes directory filename snapshots to Rust for sidecar association and asks Rust to normalize playlist paths before resolving them through SAF. Kotlin remains responsible for traversing `DocumentFile` trees, opening SAF documents, and associating Android `Uri` values; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
+Rust owns audio classification, same-directory sidecar matching, playlist parsing and association, root-confined path resolution, virtual-track construction, CUE time-range calculation, and catalog deduplication. Kotlin traverses SAF trees, reads playlist text using the selected charset, and maps Rust catalog URI values back to Android `Uri` models. Rust parses CUE/M3U/M3U8/PLS entries, resolves paths within the selected root, and builds virtual playlist tracks; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
 
 ## Sidecar LRC
 
