@@ -254,7 +254,11 @@ mod tests {
 
     #[test]
     fn parses_bom_prefixed_cue_and_unicode_metadata() {
-        let cue = "\u{FEFF}TITLE \\"Álbum\\"\\nFILE \\"disc one.flac\\" WAVE\\nTRACK 01 AUDIO\\nTITLE \\"Café\\"\\nINDEX 01 00:00:00";
+        let cue = r#"﻿TITLE "Álbum"
+FILE "disc one.flac" WAVE
+TRACK 01 AUDIO
+TITLE "Café"
+INDEX 01 00:00:00"#;
         let parsed = parse_cue(cue);
         assert_eq!(parsed.title.as_deref(), Some("Álbum"));
         assert_eq!(parsed.tracks[0].title, "Café");
@@ -263,11 +267,18 @@ mod tests {
 
     #[test]
     fn parses_bom_prefixed_m3u_and_quoted_pls_paths() {
-        let m3u = parse_m3u("\\u{FEFF}#EXTM3U\\n#EXTINF:-1,東京\\naudio.flac");
+        let m3u = r#"﻿#EXTM3U
+#EXTINF:-1,東京
+audio.flac"#;
+        let m3u = parse_m3u(m3u);
         assert_eq!(m3u.len(), 1);
         assert_eq!(m3u[0].title.as_deref(), Some("東京"));
 
-        let pls = parse_pls("[playlist]\\nFile10=\\\"ten.flac\\\"\\nFile2=\\\"two.flac\\\"\\nTitle2=Second");
+        let pls = r#"[playlist]
+File10="ten.flac"
+File2="two.flac"
+Title2=Second"#;
+        let pls = parse_pls(pls);
         assert_eq!(pls.len(), 2);
         assert_eq!(pls[0].path, "two.flac");
         assert_eq!(pls[0].title.as_deref(), Some("Second"));
