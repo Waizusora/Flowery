@@ -100,7 +100,11 @@ class UsbDacController(context: Context) {
                     response.size,
                     1_000
                 )
-                val ranges = JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
+                val ranges = if (transferred >= 2) {
+                    JSONArray(NativeAudio.nativeParseUsbClockRanges(response, transferred))
+                } else {
+                    JSONArray()
+                }
                 val formattedRanges = (0 until ranges.length()).map { index ->
                     val range = ranges.getJSONObject(index)
                     "${range.getLong("minimum")}-${range.getLong("maximum")} Hz " +
