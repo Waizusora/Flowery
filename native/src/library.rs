@@ -1,4 +1,4 @@
-use jni::objects::{JClass, JIntArray, JObjectArray, JString};
+use jni::objects::{JClass, JObjectArray, JString};
 use jni::sys::{jboolean, jintArray, jstring};
 use jni::JNIEnv;
 
@@ -75,7 +75,7 @@ fn normalize_playlist_path(raw: &str) -> Option<String> {
     if path.is_empty()
         || path.starts_with('/')
         || path.starts_with("//")
-        || path.starts_with("http://") 
+        || path.starts_with("http://")
         || path.starts_with("https://")
     {
         return None;
