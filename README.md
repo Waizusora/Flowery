@@ -132,6 +132,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │       ├── queue.rs             # Shuffle, repeat, and queue transitions
 │       ├── usb_pcm.rs           # Bounded direct-USB PCM block queue
 │       ├── usb_producer.rs      # Rust-owned decoded USB segment and producer policy
+│       ├── usb_descriptors.rs   # UAC descriptor and clock-response parsing
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
 ├── docs/                        # Project and implementation documentation
 └── .github/workflows/build.yml  # Android and native CI
