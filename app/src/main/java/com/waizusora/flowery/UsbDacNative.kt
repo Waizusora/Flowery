@@ -47,8 +47,56 @@ internal class UsbDacSession internal constructor(
     private val connection: UsbDeviceConnection,
     private val nativeHandle: Long,
     val profile: UsbDacPlaybackProfile,
-    val sampleRate: Int
+    val sampleRate: Int,
+    private val volumeUnit: UsbFeatureUnit? = null
 ) : AutoCloseable {
+    val hardwareVolumeAvailable: Boolean get() = volumeUnit != null
+
+    private fun volumeControl(request: Int, data: ByteArray): Int {
+        val unit = volumeUnit ?: return -1
+        val value = 0x0200
+        val index = (unit.unitId shl 8) or unit.controlInterface
+        val requestType = if (request == 0x01) 0x21 else 0xA1
+        return connection.controlTransfer(requestType, request, value, index, data, data.size, 500)
+    }
+
+    private fun volumeRange(): Pair<Int, Int>? {
+        val unit = volumeUnit ?: return null
+        val minimum = ByteArray(2)
+        val maximum = ByteArray(2)
+        if (unit.protocol == 0x20) {
+            val range = ByteArray(8)
+            val transferred = volumeControl(0x82, range)
+            if (transferred < 8) return null
+            val buffer = java.nio.ByteBuffer.wrap(range).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            if (buffer.short.toInt() < 1) return null
+            return buffer.short.toInt() to buffer.short.toInt()
+        }
+        if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) return null
+        val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+        val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+        return if (max > min) min to max else null
+    }
+
+    @Synchronized
+    fun readHardwareVolumeFraction(): Float? {
+        check(!closed) { "USB DAC session is closed" }
+        if (volumeUnit == null) return null
+        val range = volumeRange() ?: return null
+        val current = ByteArray(2)
+        if (volumeControl(0x81, current) != 2) return null
+        val raw = java.nio.ByteBuffer.wrap(current).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+        return ((raw - range.first).toFloat() / (range.second - range.first).toFloat()).coerceIn(0f, 1f)
+    }
+
+    @Synchronized
+    fun setHardwareVolumeFraction(fraction: Float): Boolean {
+        check(!closed) { "USB DAC session is closed" }
+        val range = volumeRange() ?: return false
+        val raw = (range.first + (range.second - range.first) * fraction.coerceIn(0f, 1f)).toInt()
+        val data = java.nio.ByteBuffer.allocate(2).order(java.nio.ByteOrder.LITTLE_ENDIAN).putShort(raw.toShort()).array()
+        return volumeControl(0x01, data) == 2
+    }
     @Volatile
     private var closed = false
 
