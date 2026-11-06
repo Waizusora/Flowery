@@ -138,9 +138,12 @@ class MainActivity : ComponentActivity() {
                     run {
                         val volumeController = OutputVolumeController(this@MainActivity)
                         val key = usbDacController.deviceIdentity(device)
-                        val hardwareVolume = usbDacController.readHardwareVolumeFraction(device)
-                        volumeController.usbProfile(key, hardwareVolume != null)
-                        volume = hardwareVolume ?: volumeController.usbVolume(key)
+                        volume = volumeController.usbVolume(key)
+                        io.execute {
+                            val hardwareVolume = usbDacController.readHardwareVolumeFraction(device)
+                            volumeController.usbProfile(key, hardwareVolume != null)
+                            runOnUiThread { volume = hardwareVolume ?: volumeController.usbVolume(key) }
+                        }
                     }
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
                         .putBoolean("usb_bit_perfect_enabled", true)
@@ -328,11 +331,18 @@ class MainActivity : ComponentActivity() {
         val directUsbEnabled = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
             .getBoolean("usb_bit_perfect_enabled", false)
         val connectedDac = if (directUsbEnabled) usbDacController.audioDevices().singleOrNull() else null
-        volume = connectedDac?.let { device ->
-            val hardwareVolume = usbDacController.readHardwareVolumeFraction(device.usbDevice)
-            volumeController.usbProfile(device.identity, hardwareVolume != null)
-            hardwareVolume ?: volumeController.usbVolume(device.identity)
-        } ?: volumeController.systemVolumeFraction()
+        if (connectedDac == null) {
+            volume = volumeController.systemVolumeFraction()
+            return
+        }
+        volume = volumeController.usbVolume(connectedDac.identity)
+        io.execute {
+            val hardwareVolume = usbDacController.readHardwareVolumeFraction(connectedDac.usbDevice)
+            volumeController.usbProfile(connectedDac.identity, hardwareVolume != null)
+            runOnUiThread {
+                volume = hardwareVolume ?: volumeController.usbVolume(connectedDac.identity)
+            }
+        }
     }
 
     private fun requestUsbDacAccess() {
