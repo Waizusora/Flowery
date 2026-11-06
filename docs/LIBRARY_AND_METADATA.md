@@ -20,7 +20,7 @@ The extension list is a discovery filter only. Successful playback depends on Sy
 
 During traversal of a directory, the scanner indexes files ending in `.lrc` by their filename without the extension. An audio file is associated with an LRC file when the base filenames match, ignoring case.
 
-`LrcParser` recognizes timestamps in the form `[minutes:seconds]` with an optional fractional component of one to three digits. Multiple timestamps on one line are expanded into separate lyric entries. The parser sorts entries by timestamp. The current lyric entry is the last entry whose timestamp is less than or equal to the current playback position.
+`LrcParser` delegates parsing to Rust, which recognizes timestamps in the form `[minutes:seconds]` with an optional fractional component of one to three digits. Multiple timestamps on one line are expanded into separate lyric entries and sorted by timestamp. Current-line lookup is also performed in Rust using a binary search over the sorted timestamp array; Kotlin only maps the returned index to the UI model. Equal timestamps resolve to the last entry at that timestamp.
 
 The current implementation does not search embedded lyrics or remote lyric providers, and it does not download or write LRC files.
 
