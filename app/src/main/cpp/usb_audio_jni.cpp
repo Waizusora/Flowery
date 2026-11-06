@@ -767,8 +767,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         uint64_t feedback_phase = session->feedback_phase;
         size_t planned_frames = 0;
         while (packet_bytes.size() < kPacketsPerUrb) {
-            uint64_t accumulated = 0;
             unsigned int frames = 0;
+            uint64_t next_phase = phase;
+            uint64_t next_feedback_phase = feedback_phase;
             if (session->feedback_endpoint != 0 &&
                 session->feedback_valid.load(std::memory_order_acquire)) {
                 const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -781,13 +782,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
                 const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
                 const uint64_t scaled = feedback * session->interval_us /
                                         session->feedback_base_interval_us;
-                accumulated = feedback_phase + scaled;
+                const uint64_t accumulated = feedback_phase + scaled;
                 frames = static_cast<unsigned int>(accumulated >> session->feedback_fraction_bits);
-                feedback_phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+                next_feedback_phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
             } else {
-                accumulated = phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
+                const uint64_t accumulated =
+                    phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
                 frames = static_cast<unsigned int>(accumulated / 1000000ULL);
-                phase = accumulated % 1000000ULL;
+                next_phase = accumulated % 1000000ULL;
             }
             if (frames == 0 || planned_frames + frames > available_frames) break;
             const unsigned int packet_size = static_cast<unsigned int>(frames * bytes_per_frame);
@@ -797,6 +799,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             }
             packet_bytes.push_back(packet_size);
             planned_frames += frames;
+            phase = next_phase;
+            feedback_phase = next_feedback_phase;
         }
         if (failure.failed || packet_bytes.empty()) break;
 
