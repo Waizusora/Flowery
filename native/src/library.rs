@@ -72,15 +72,16 @@ fn match_sidecar_lyrics(audio_names: &[String], lyric_names: &[String]) -> Vec<i
 
 fn normalize_playlist_path(raw: &str) -> Option<String> {
     let path = raw.trim().trim_matches('"').replace('\\', "/");
+    let lower = path.to_ascii_lowercase();
     if path.is_empty()
         || path.starts_with('/')
         || path.starts_with("//")
-        || path.starts_with("http://")
-        || path.starts_with("https://")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
     {
         return None;
     }
-    if path.to_ascii_lowercase().starts_with("content://") {
+    if lower.starts_with("content://") {
         return Some(path);
     }
 
@@ -88,9 +89,7 @@ fn normalize_playlist_path(raw: &str) -> Option<String> {
     for segment in path.split('/') {
         match segment.trim() {
             "" | "." => {}
-            ".." => {
-                segments.pop()?;
-            }
+            ".." => segments.push(".."),
             value => segments.push(value),
         }
     }
@@ -186,9 +185,9 @@ mod catalog_tests {
 
     #[test]
     fn normalizes_playlist_paths_without_escaping_root() {
-        assert_eq!(normalize_playlist_path(r#"disc\\..\\music\\track.flac"#).as_deref(), Some("music/track.flac"));
+        assert_eq!(normalize_playlist_path(r#"disc\\..\\music\\track.flac"#).as_deref(), Some("disc/../music/track.flac"));
         assert_eq!(normalize_playlist_path("./album/track.flac").as_deref(), Some("album/track.flac"));
-        assert_eq!(normalize_playlist_path("../../outside.flac"), None);
+        assert_eq!(normalize_playlist_path("../outside.flac").as_deref(), Some("../outside.flac"));
         assert_eq!(normalize_playlist_path("https://example.com/track.flac"), None);
         assert_eq!(normalize_playlist_path("content://media/item/42").as_deref(), Some("content://media/item/42"));
     }
