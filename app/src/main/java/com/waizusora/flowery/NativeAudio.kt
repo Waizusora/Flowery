@@ -12,6 +12,10 @@ object NativeAudio {
     external fun nativeMatchSidecarLyrics(audioNames: Array<String>, lyricNames: Array<String>): IntArray
     external fun nativeNormalizePlaylistPath(path: String): String?
     external fun nativeQueueTransition(currentIndex: Int, queueSize: Int, shuffle: Boolean, repeatMode: Int, action: Int): Int
+    external fun nativeSelectPreferredSampleRate(sourceRate: Int, supportedRates: IntArray): Int
+    external fun nativeRingCapacityFrames(sampleRate: Int): Int
+    external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
+    external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
