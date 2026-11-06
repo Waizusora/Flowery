@@ -270,6 +270,11 @@ pub fn playback_descriptor_trace(raw: &[u8], streaming_interface: u8) -> String 
     lines.join("\n")
 }
 
+/// Identifies the explicitly supported reference DAC by its USB vendor and product IDs.
+pub fn is_reference_ktmicro(vendor_id: u16, product_id: u16) -> bool {
+    vendor_id == 0x31B2 && product_id == 0x0111
+}
+
 pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String {
     let profiles = parse_playback_profiles(raw, requested_bit_resolution);
     let values: Vec<Value> = profiles.iter().map(|p| json!({
@@ -603,6 +608,13 @@ mod tests {
         let trace = playback_descriptor_trace(&descriptors, 2);
         assert!(trace.contains("SELECTED_STREAM"));
         assert!(trace.contains("number=2"));
+    }
+
+    #[test]
+    fn reference_dac_identity_uses_exact_vid_pid_pair() {
+        assert!(is_reference_ktmicro(0x31B2, 0x0111));
+        assert!(!is_reference_ktmicro(0x31B2, 0x0112));
+        assert!(!is_reference_ktmicro(0x0000, 0x0111));
     }
 
 }
