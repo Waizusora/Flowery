@@ -20,7 +20,7 @@ const EVENT_FAIL: i32 = 6;
 
 fn transition(current: i32, event: i32) -> i32 {
     match event {
-        EVENT_PREPARE if current != STOPPING => PREPARING,
+        EVENT_PREPARE => PREPARING,
         EVENT_START if current == PREPARING => PLAYING,
         EVENT_RESUME if current == PAUSED => PLAYING,
         EVENT_PAUSE if current == PLAYING => PAUSED,
@@ -96,6 +96,7 @@ mod tests {
         assert_eq!(transition(PLAYING, EVENT_FAIL), FAILED);
         assert_eq!(transition(FAILED, EVENT_PREPARE), PREPARING);
         assert_eq!(transition(PAUSED, EVENT_PREPARE), PREPARING);
+        assert_eq!(transition(STOPPING, EVENT_PREPARE), PREPARING);
     }
 
     #[test]
