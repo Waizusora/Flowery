@@ -107,13 +107,18 @@ class UsbDacController(context: Context) {
                     "${range.getLong("minimum")}-${range.getLong("maximum")} Hz " +
                         "(step ${range.getLong("resolution")})"
                 }
+                val rawResponseHex = response.take(transferred.coerceIn(0, response.size))
+                    .joinToString("") { "%02X".format(it.toInt() and 0xff) }
                 when {
                     transferred < 2 ->
-                        "Clock source $clockId on control interface $controlInterface: GET_RANGE unavailable (USB result $transferred)."
+                        "Clock source $clockId on control interface $controlInterface: GET_RANGE unavailable " +
+                            "(USB result $transferred, responseHex=$rawResponseHex)."
                     formattedRanges.isEmpty() ->
-                        "Clock source $clockId on control interface $controlInterface: no valid ranges returned."
+                        "Clock source $clockId on control interface $controlInterface: no valid ranges returned " +
+                            "(transferred=$transferred, responseHex=$rawResponseHex)."
                     else ->
-                        "Clock source $clockId on control interface $controlInterface: ${formattedRanges.joinToString()}."
+                        "Clock source $clockId on control interface $controlInterface: ${formattedRanges.joinToString()} " +
+                            "(transferred=$transferred, responseHex=$rawResponseHex)."
                 }
             }
             val descriptorReport = UsbAudioDescriptorParser.report(
@@ -137,7 +142,16 @@ class UsbDacController(context: Context) {
                     } +
                     "\n  Sample rates remain unverified until UAC2 clock negotiation succeeds."
             }
-            val completeReport = descriptorReport + profileReport
+            val interfaceSummary = (0 until device.interfaceCount).joinToString(separator = "\n") { index ->
+                val intf = device.getInterface(index)
+                "USB interface ${intf.id}: alternate=${intf.alternateSetting}, class=0x${intf.interfaceClass.toString(16)}, " +
+                    "subclass=0x${intf.interfaceSubclass.toString(16)}, protocol=0x${intf.protocol.toString(16)}, " +
+                    "endpoints=${intf.endpointCount}"
+            }
+            val deviceSummary = "Android USB device ID: ${device.deviceId}\nUSB device class: 0x${device.deviceClass.toString(16)}\n" +
+                "USB device subclass: 0x${device.deviceSubclass.toString(16)}\nUSB device protocol: 0x${device.deviceProtocol.toString(16)}\n" +
+                "USB interface count: ${device.interfaceCount}\n" + interfaceSummary
+            val completeReport = deviceSummary + "\n\n" + descriptorReport + profileReport
             val databaseSummary = runCatching {
                 val profileDatabase = UsbDacProfileDatabase(appContext)
                 try {
