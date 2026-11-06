@@ -106,7 +106,7 @@ fun FloweryNavigation(
                 val devices = controller.audioDevices()
                 if (devices.isEmpty()) "No USB Audio Class device was detected when Record Log started."
                 else devices.joinToString(separator = "\n\n") { device ->
-                    "===== \${device.displayName} · \${device.identity} =====\n" +
+                    "===== ${device.displayName} · ${device.identity} =====\n" +
                         if (controller.hasPermission(device.usbDevice)) controller.inspectDescriptors(device.usbDevice)
                         else "USB permission not granted; raw descriptors and clock ranges are unavailable."
                 }
@@ -464,9 +464,9 @@ fun FloweryNavigation(
                         val usbDirectLog = prefs.getString("usb_direct_diagnostics", "").orEmpty()
                         usbDiagnosticPendingLog = buildString {
                             appendLine("# Flowery USB diagnostic record")
-                            appendLine("# Recorded at: \${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
-                            appendLine("# AAudio telemetry samples: \${usbDiagnosticLines.size}")
-                            appendLine("# Direct USB events: \${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
+                            appendLine("# Recorded at: ${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
+                            appendLine("# AAudio telemetry samples: ${usbDiagnosticLines.size}")
+                            appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
                             appendLine()
                             appendLine("===== USB descriptor and DAC profile database snapshot =====")
                             appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
@@ -478,7 +478,7 @@ fun FloweryNavigation(
                             if (usbDirectLog.isBlank()) appendLine("No direct USB playback events were recorded.")
                             else appendLine(usbDirectLog)
                         }
-                        usbDiagnosticSaveLauncher.launch("flowery-usb-diagnostic-\${System.currentTimeMillis()}.txt")
+                        usbDiagnosticSaveLauncher.launch("flowery-usb-diagnostic-${System.currentTimeMillis()}.txt")
                     },
                     usbBitPerfectEnabled = usbBitPerfectEnabled,
                     onUsbBitPerfectChanged = { enabled ->
