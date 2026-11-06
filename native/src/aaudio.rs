@@ -17,14 +17,14 @@ extern "C" {
     fn AAudio_createStreamBuilder(builder: *mut *mut AAudioStreamBuilder) -> ResultCode;
     fn AAudioStreamBuilder_delete(builder: *mut AAudioStreamBuilder);
     fn AAudioStreamBuilder_setDirection(builder: *mut AAudioStreamBuilder, direction: i32);
-    fn AAudioStreamBuilder_setDeviceId(builder: *mut AAudioStreamBuilder, id: i32);
+
     fn AAudioStreamBuilder_setFormat(builder: *mut AAudioStreamBuilder, format: i32);
     fn AAudioStreamBuilder_setSampleRate(builder: *mut AAudioStreamBuilder, rate: i32);
     fn AAudioStreamBuilder_setChannelCount(builder: *mut AAudioStreamBuilder, channels: i32);
     fn AAudioStreamBuilder_setSharingMode(builder: *mut AAudioStreamBuilder, mode: i32);
     fn AAudioStreamBuilder_setPerformanceMode(builder: *mut AAudioStreamBuilder, mode: i32);
-    fn AAudioStreamBuilder_setUsage(builder: *mut AAudioStreamBuilder, usage: i32);
-    fn AAudioStreamBuilder_setContentType(builder: *mut AAudioStreamBuilder, content: i32);
+
+
     fn AAudioStreamBuilder_setDataCallback(builder: *mut AAudioStreamBuilder, cb: DataCallback, data: *mut c_void);
     fn AAudioStreamBuilder_setErrorCallback(builder: *mut AAudioStreamBuilder, cb: ErrorCallback, data: *mut c_void);
     fn AAudioStreamBuilder_openStream(builder: *mut AAudioStreamBuilder, stream: *mut *mut AAudioStream) -> ResultCode;
@@ -82,7 +82,7 @@ impl Engine {
         let mut result=AAudio_createStreamBuilder(&mut builder);
         if result!=OK || builder.is_null(){return result;}
         AAudioStreamBuilder_setDirection(builder,0);
-        if device>0 { AAudioStreamBuilder_setDeviceId(builder,device); }
+        if device>0 {\n            if let Ok(name)=std::ffi::CString::new("AAudioStreamBuilder_setDeviceId") {\n                let symbol=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr());\n                if !symbol.is_null(){let setter:unsafe extern "C" fn(*mut AAudioStreamBuilder,i32)=std::mem::transmute(symbol);setter(builder,device);}\n            }\n        }
         AAudioStreamBuilder_setFormat(builder,out.format);
         AAudioStreamBuilder_setSampleRate(builder,rate);
         AAudioStreamBuilder_setChannelCount(builder,out.channels as i32);
