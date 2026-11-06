@@ -187,6 +187,89 @@ pub fn playback_clock_sources(raw: &[u8], streaming_interface: u8) -> Vec<ClockS
     result
 }
 
+/// Parses a UAC2 clock-source GET_RANGE control-transfer response.
+pub fn clock_ranges_json(response: &[u8], transferred: usize) -> String {
+    let available = transferred.min(response.len());
+    if available < 2 {
+        return "[]".to_string();
+    }
+    let count = le16(response, 0) as usize;
+    let valid_count = count.min((available - 2) / 12);
+    let ranges: Vec<Value> = (0..valid_count).map(|index| {
+        let offset = 2 + index * 12;
+        json!({
+            "minimum": le32(response, offset),
+            "maximum": le32(response, offset + 4),
+            "resolution": le32(response, offset + 8)
+        })
+    }).collect();
+    serde_json::to_string(&ranges).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn le32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes([
+        bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]
+    ])
+}
+
+/// Builds a bounded diagnostic trace for one UAC streaming interface.
+pub fn playback_descriptor_trace(raw: &[u8], streaming_interface: u8) -> String {
+    let mut lines = Vec::<String>::new();
+    let mut current_interface = -1i32;
+    let mut current_class = -1i32;
+    let mut current_subclass = -1i32;
+    let mut offset = 0usize;
+
+    while offset + 2 <= raw.len() && lines.len() < 100 {
+        let length = raw[offset] as usize;
+        let descriptor_type = raw[offset + 1] as usize;
+        if length < 2 || offset + length > raw.len() {
+            lines.push(format!(
+                "offset={offset} malformed_length={length} remaining={}",
+                raw.len() - offset
+            ));
+            break;
+        }
+        if descriptor_type == 0x04 && length >= 9 {
+            current_interface = raw[offset + 2] as i32;
+            current_class = raw[offset + 5] as i32;
+            current_subclass = raw[offset + 6] as i32;
+            if current_class == 0x01 {
+                lines.push(format!(
+                    "IF offset={offset} number={current_interface} alt={} subclass={current_subclass} protocol=0x{:x}",
+                    raw[offset + 3], raw[offset + 7]
+                ));
+            }
+        } else if current_class == 0x01 && (descriptor_type == 0x24 || descriptor_type == 0x05) {
+            let bytes = raw[offset..(offset + length).min(offset + 24)]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let scope = if current_interface == streaming_interface as i32 {
+                "SELECTED_STREAM"
+            } else {
+                "AUDIO"
+            };
+            lines.push(format!(
+                "{scope} offset={offset} type=0x{descriptor_type:x} subclass={current_subclass} bytes={bytes}"
+            ));
+        }
+        offset += length;
+    }
+
+    if lines.is_empty() {
+        return format!(
+            "No audio descriptors found in raw descriptor block (bytes={}).",
+            raw.len()
+        );
+    }
+    if offset < raw.len() && lines.len() >= 100 {
+        lines.push("Trace truncated at 100 entries.".to_string());
+    }
+    lines.join("\\n")
+}
+
 pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String {
     let profiles = parse_playback_profiles(raw, requested_bit_resolution);
     let values: Vec<Value> = profiles.iter().map(|p| json!({
