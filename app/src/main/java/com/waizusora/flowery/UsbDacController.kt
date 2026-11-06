@@ -402,7 +402,16 @@ class UsbDacController(context: Context) {
                 if (selected in 1..Int.MAX_VALUE.toLong()) discovered += selected.toInt()
             }
         }
-        if (discovered.isEmpty()) return listOf(sourceRate)
+        if (discovered.isEmpty()) {
+            // RANGE may be unsupported by otherwise usable UAC2 clocks. Probe common
+            // rates only as candidates; native SET_CUR/GET_CUR readback must confirm
+            // every selected rate before a session can start.
+            return (listOf(sourceRate) + listOf(
+                44_100, 48_000, 88_200, 96_000, 176_400, 192_000,
+                352_800, 384_000, 32_000, 64_000, 128_000, 256_000,
+                8_000, 11_025, 16_000, 22_050, 24_000
+            )).distinct().sortedBy { kotlin.math.abs(it.toLong() - sourceRate.toLong()) }
+        }
         return discovered.sortedBy { kotlin.math.abs(it.toLong() - sourceRate.toLong()) }
     }
 
