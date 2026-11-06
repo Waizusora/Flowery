@@ -68,8 +68,10 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 && (8..=32).contains(&a.bit_resolution)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
-                && a.max_packet_bytes > 0 && a.interval > 0
-                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some_and(|endpoint| a.synchronization_address == 0 || endpoint == a.synchronization_address))
+                && a.max_packet_bytes > 0 && (1..=16).contains(&a.interval)
+                && matches!(a.synchronization, "asynchronous" | "adaptive" | "synchronous")
+                && (a.synchronization != "asynchronous" ||
+                    (a.feedback_max_packet_bytes >= 3 && a.feedback_endpoint.is_some_and(|endpoint| a.synchronization_address == 0 || endpoint == a.synchronization_address)))
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
                 out.push(PlaybackProfile {
@@ -178,10 +180,10 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 let transfer_type = attributes & 0x03;
                 let usage_type = (attributes >> 4) & 0x03;
                 let transactions = ((packet >> 11) & 0x03) as u16;
-                if transfer_type == 1 && address & 0x80 != 0 && usage_type == 1 && transactions < 3 {
+                if transfer_type == 1 && address & 0x80 != 0 && address & 0x70 == 0 && address & 0x0f != 0 && usage_type == 1 && transactions < 3 {
                     alt.feedback_endpoint = Some(address);
                     alt.feedback_max_packet_bytes = (packet & 0x07ff) * (transactions + 1);
-                } else if address & 0x80 == 0 && transfer_type == 1 && usage_type == 0 && transactions < 3 {
+                } else if address & 0x80 == 0 && address & 0x70 == 0 && address & 0x0f != 0 && transfer_type == 1 && usage_type == 0 && transactions < 3 {
                     alt.endpoint_address = Some(address);
                     alt.synchronization_address = if length >= 9 { raw[offset + 8] } else { 0 };
                     alt.max_packet_bytes = (packet & 0x07ff) * (transactions + 1);
@@ -506,7 +508,7 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
                     "usage": match usage_type { 0 => "data", 1 => "feedback", 2 => "implicit_feedback", _ => "reserved" },
                     "synchronizationAddress": if length >= 9 { raw[offset + 8] } else { 0 },
                     "transactionsPerMicroframe": transactions + 1,
-                    "validIsochronousEndpoint": transfer_type == 1 && base_packet > 0 && transactions < 3 && sync_type != 0
+                    "validIsochronousEndpoint": transfer_type == 1 && base_packet > 0 && transactions < 3 && (1..=3).contains(&sync_type) && usage_type != 3
                 }));
             }
             0x24 if current.is_some() && length >= 3 => {
