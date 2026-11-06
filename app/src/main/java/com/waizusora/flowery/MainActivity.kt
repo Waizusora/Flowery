@@ -903,10 +903,15 @@ private fun FloweryApp(
                     }
                 }
                 if (lyrics.isNotEmpty()) {
+                    val currentLyric = LrcParser.currentLine(lyrics, playbackPositionMs)
                     Card(colors = CardDefaults.cardColors(containerColor = Color(0x44FFFFFF))) {
                         Column(Modifier.padding(12.dp)) {
                             Text("LYRICS · LRC", color = Color.White, fontWeight = FontWeight.Bold)
-                            lyrics.take(3).forEach { Text(it.text, color = Color.White) }
+                            Text(
+                                currentLyric?.text ?: "Waiting for the first lyric timestamp…",
+                                color = Color.White,
+                                style = MaterialTheme.typography.bodyLarge
+                            )
                         }
                     }
                 }
