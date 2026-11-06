@@ -87,20 +87,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPlaybackD
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsReferenceUsbDac(
-    _env: JNIEnv, _class: JClass, vendor_id: jint, product_id: jint,
-) -> jboolean {
-    if (0..=u16::MAX as jint).contains(&vendor_id)
-        && (0..=u16::MAX as jint).contains(&product_id)
-        && usb_descriptors::is_reference_ktmicro(vendor_id as u16, product_id as u16)
-    {
-        JNI_TRUE
-    } else {
-        JNI_FALSE
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDescribeUsbAudioDescriptors(
     mut env: JNIEnv, _class: JClass, input: JByteArray,
 ) -> jstring {
