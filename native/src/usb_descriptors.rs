@@ -14,6 +14,7 @@ pub struct PlaybackProfile {
     pub protocol: u8,
     pub sample_rates: Vec<u32>,
     pub sample_rate_range: Option<(u32, u32)>,
+    pub sampling_frequency_control: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +38,7 @@ struct Alternate {
     synchronization: &'static str,
     sample_rates: Vec<u32>,
     sample_rate_range: Option<(u32, u32)>,
+    sampling_frequency_control: bool,
 }
 
 fn le16(bytes: &[u8], offset: usize) -> u16 {
@@ -72,6 +74,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     protocol: a.protocol,
                     sample_rates: a.sample_rates.clone(),
                     sample_rate_range: a.sample_rate_range,
+                    sampling_frequency_control: a.sampling_frequency_control,
                 });
             }
         }
@@ -141,6 +144,12 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                         }
                     }
                     _ => {}
+                }
+            }
+            0x25 if current.is_some() && length >= 4 => {
+                let alt = current.as_mut().unwrap();
+                if alt.protocol == 0x00 && raw[offset + 2] == 0x01 {
+                    alt.sampling_frequency_control = raw[offset + 3] & 0x01 != 0;
                 }
             }
             0x05 if current.is_some() && length >= 7 => {
@@ -373,7 +382,8 @@ pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String
         "synchronization": p.synchronization,
         "protocol": p.protocol,
         "sampleRates": p.sample_rates,
-        "sampleRateRange": p.sample_rate_range.map(|(minimum, maximum)| json!([minimum, maximum]))
+        "sampleRateRange": p.sample_rate_range.map(|(minimum, maximum)| json!([minimum, maximum])),
+        "samplingFrequencyControl": p.sampling_frequency_control
     })).collect();
     serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string())
 }
