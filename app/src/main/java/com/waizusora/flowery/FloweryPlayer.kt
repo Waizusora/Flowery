@@ -970,6 +970,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Playback finished")
             }
         } finally {
+            usbSoftwareGainEnabled = false
             usbPlaybackMode = false
             try {
                 session?.close()
