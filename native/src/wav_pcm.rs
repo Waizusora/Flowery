@@ -86,7 +86,8 @@ fn read_wav_header<R: Read + Seek>(reader: &mut R) -> Result<WavHeader, String> 
     if !matches!(bit_depth, 16 | 24 | 32) {
         return Err("USB direct PCM supports integer PCM at 16, 24, or 32 bits.".into());
     }
-    if sample_rate == 0 || block_align != channels * (bit_depth / 8) {
+    let expected_block_align = (channels as u32) * (bit_depth as u32 / 8);
+    if sample_rate == 0 || block_align as u32 != expected_block_align {
         return Err("WAV sample rate or PCM block alignment is invalid.".into());
     }
     if data_bytes % block_align as u64 != 0 {
@@ -238,7 +239,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetWavPcmInf
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadWavPcmFrames(
     mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint, gain: jni::sys::jfloat
 ) -> jbyteArray {
-    if handle == 0 || max_frames <= 0 {
+    if handle == 0 || max_frames <= 0 || !gain.is_finite() {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid WAV PCM read arguments");
         return std::ptr::null_mut();
     }
@@ -294,7 +295,7 @@ mod tests {
         let block_align = channels * (bit_depth / 8);
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"RIFF");
-        let riff_size = 4 + 8 + 16 + 8 + data.len() as u32;
+        let riff_size = 4 + 8 + 16 + 8 + data.len() as u32 + (data.len() as u32 & 1);
         bytes.extend_from_slice(&riff_size.to_le_bytes());
         bytes.extend_from_slice(b"WAVEfmt ");
         bytes.extend_from_slice(&16_u32.to_le_bytes());
@@ -307,6 +308,7 @@ mod tests {
         bytes.extend_from_slice(b"data");
         bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
         bytes.extend_from_slice(data);
+        if data.len() & 1 != 0 { bytes.push(0); }
         bytes
     }
 
