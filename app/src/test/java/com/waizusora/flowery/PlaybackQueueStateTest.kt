@@ -39,7 +39,7 @@ class PlaybackQueueStateTest {
         assertEquals(1, queue.cycleRepeatMode())
         assertEquals(2, queue.cycleRepeatMode())
         assertEquals(0, queue.cycleRepeatMode())
-        assertFalse(queue.toggleShuffle().not())
+        assertTrue(queue.toggleShuffle())
         assertTrue(queue.shuffleEnabled)
     }
 
