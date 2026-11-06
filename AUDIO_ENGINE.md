@@ -78,3 +78,11 @@ CUE, M3U, and PLS parsing runs in Rust through JNI. The native parser produces s
 ## Playback queue policy
 
 Next, previous, natural-completion, shuffle, and repeat transition decisions are implemented in `native/src/queue.rs` and exposed through JNI. `PlaybackService` retains Android service state and the URI/metadata arrays required by notifications and media sessions, but delegates queue index transitions to Rust. The native transition function returns an explicit stop result or a replay-current result for repeat-one completion; queue state remains owned by the service adapter while the transition policy is native.
+
+## Playback orchestration and queue state
+
+`PlaybackCoordinator` owns the application-facing playback lifecycle and delegates audio work to `FloweryPlayer`. `PlaybackService` routes media-session commands through this coordinator. Queue selection, repeat mode, shuffle state, and navigation requests are held by `PlaybackQueueState`; transition policy remains implemented and tested in Rust.
+
+## USB Audio Class descriptor parsing
+
+UAC2 stereo playback alternate-setting selection and playback-terminal clock-source resolution are implemented in `native/src/usb_descriptors.rs`. Android retains USB permission and connection ownership, while the native parser validates descriptor boundaries, endpoint direction/type, channel count, PCM subslot/bit resolution, packet capacity, and terminal-to-clock relationships. Kotlin maps the native JSON result into Android USB session parameters. Descriptor parsing alone does not prove that a device accepts a clock rate or that the resulting signal is bit-perfect; the libusb SET_CUR/GET_CUR check remains mandatory.
