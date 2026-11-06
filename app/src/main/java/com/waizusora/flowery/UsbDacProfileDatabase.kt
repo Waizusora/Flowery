@@ -22,6 +22,7 @@ internal class UsbDacProfileDatabase(context: Context) :
         val descriptorHex: String,
         val seenCount: Long,
         val totalProfiles: Int,
+        val previouslyObserved: Boolean,
         val lastSeenEpochMs: Long
     ) {
         fun diagnosticSummary(): String = buildString {
@@ -29,6 +30,7 @@ internal class UsbDacProfileDatabase(context: Context) :
             appendLine("Descriptor SHA-256: $descriptorFingerprint")
             appendLine("Observed connections: $seenCount")
             appendLine("Profiles stored in local database: $totalProfiles")
+            appendLine("Previously observed descriptor profile: $previouslyObserved")
             appendLine("Last observed (epoch ms): $lastSeenEpochMs")
             appendLine("Raw configuration descriptor bytes (hex):")
             appendLine(descriptorHex)
@@ -118,7 +120,7 @@ internal class UsbDacProfileDatabase(context: Context) :
         } finally {
             writableDatabase.endTransaction()
         }
-        return StoredProfile(profileKey, fingerprint, rawHex, existingCountFor(profileKey), profileCount(), now)
+        return StoredProfile(profileKey, fingerprint, rawHex, existingCountFor(profileKey), profileCount(), existing != null, now)
     }
 
     private fun existingCountFor(profileKey: String): Long =
