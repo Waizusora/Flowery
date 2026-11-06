@@ -4,7 +4,7 @@ use jni::JNIEnv;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicI32, AtomicU32, AtomicF32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicI32, AtomicU32, Ordering};
 
 #[repr(C)] struct AAudioStream(c_void);
 #[repr(C)] struct AAudioStreamBuilder(c_void);
@@ -93,8 +93,6 @@ impl Engine {
         AAudioStreamBuilder_setChannelCount(builder,out.channels as i32);
         AAudioStreamBuilder_setSharingMode(builder,sharing);
         AAudioStreamBuilder_setPerformanceMode(builder,12);
-        AAudioStreamBuilder_setUsage(builder,1);
-        AAudioStreamBuilder_setContentType(builder,2);
         let data=(out as *mut Output).cast::<c_void>();
         AAudioStreamBuilder_setDataCallback(builder,Some(data_callback),data);
         AAudioStreamBuilder_setErrorCallback(builder,Some(error_callback),data);
@@ -178,7 +176,8 @@ fn result_or_throw(env:&mut JNIEnv, code:i32, message:&str)->i32 {
  let read=o.read.load(Ordering::Acquire);let write=o.write.load(Ordering::Relaxed);let queued=write.saturating_sub(read);let count=(frames as u64).min(o.capacity.saturating_sub(queued));if count==0{return 0;}
  let start=offset as usize*o.channels;let n=count as usize*o.channels;let len=env.get_array_length(&input).unwrap_or(0) as usize;if start+n>len{return -1;}
  let mut temp=vec![0.0f32;n];if env.get_float_array_region(&input, start as i32, &mut temp).is_err(){return -1;}
- for (i,v) in temp.into_iter().enumerate(){o.ring[((write as usize*o.channels+i)%o.ring.len())]=v;}
+ let ring_len=o.ring.len();
+ for (i,v) in temp.into_iter().enumerate(){let index=(write as usize*o.channels+i)%ring_len;o.ring[index]=v;}
  o.write.store(write+count,Ordering::Release);count as i32
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(_:JNIEnv,_:JClass,position:jlong,start:jboolean)->jint{
