@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use jni::objects::{JByteArray, JClass};
+use jni::objects::JClass;
 use jni::sys::{jbyteArray, jint, jlong, jsize};
 use jni::JNIEnv;
 
