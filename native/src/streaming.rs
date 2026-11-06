@@ -237,6 +237,9 @@ impl StreamDecoder {
     }
 
     fn apply_eq(&mut self, samples: &mut [f32]) {
+        // A flat EQ must be a true bypass: even unity biquad arithmetic can alter
+        // low-order sample bits and invalidate source-sample preservation.
+        if self.gains.iter().all(|gain| *gain == 0.0) { return; }
         apply_eq_samples(samples, self.channels, &self.coefficients, &mut self.eq_state);
     }
 
