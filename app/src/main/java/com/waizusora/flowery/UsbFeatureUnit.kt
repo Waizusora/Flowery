@@ -32,9 +32,12 @@ internal object UsbFeatureUnitParser {
                     (raw[offset + 2].toInt() and 0xff) == 0x06) {
                     val unitId = raw[offset + 3].toInt() and 0xff
                     val hasVolume = when (protocol) {
-                        0x00 -> length >= 7 &&
-                            ((raw[offset + 6].toInt() and 0xff) and 0x02) != 0
-                        0x20 -> length >= 10 &&
+                        0x00 -> {
+                            val controlSize = if (length >= 6) raw[offset + 5].toInt() and 0xff else 0
+                            controlSize > 0 && length >= 7 + controlSize &&
+                                ((raw[offset + 6].toInt() and 0xff) and 0x02) != 0
+                        }
+                        0x20 -> length >= 11 &&
                             (ByteBuffer.wrap(raw, offset + 5, 4).order(ByteOrder.LITTLE_ENDIAN).int and 0x02) != 0
                         else -> false
                     }
