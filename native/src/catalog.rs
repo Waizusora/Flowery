@@ -158,16 +158,16 @@ mod tests {
     use super::{build, Snapshot};
     #[test]
     fn matches_sidecars_by_directory_and_builds_playlist_and_cue_tracks() {
-        let input = r#"{"roots":[{"name":"Music","entries":[
+        let input = r##"{"roots":[{"name":"Music","entries":[
             {"path":"Album/list.m3u","name":"list.m3u","uri":"content://list","mimeType":null,"directory":false,"text":"#EXTM3U\n#EXTINF:1,First\nsong.flac\n"},
             {"path":"Album/disc.cue","name":"disc.cue","uri":"content://cue","mimeType":null,"directory":false,"text":"FILE \"disc.flac\" WAVE\nTRACK 01 AUDIO\nTITLE \"Intro\"\nINDEX 01 00:00:00\nTRACK 02 AUDIO\nINDEX 01 01:00:00\n"},
             {"path":"Album/song.flac","name":"song.flac","uri":"content://song","mimeType":"audio/flac","directory":false,"text":null},
             {"path":"Album/SONG.lrc","name":"SONG.lrc","uri":"content://lyric","mimeType":"text/plain","directory":false,"text":null},
             {"path":"Album/disc.flac","name":"disc.flac","uri":"content://disc","mimeType":"audio/flac","directory":false,"text":null}
-        ]}]}"#;
+        ]}]}"##;
         let catalog = build(serde_json::from_str::<Snapshot>(input).unwrap());
         assert_eq!(catalog.tracks.len(), 5);
-        assert_eq!(catalog.tracks[0].sidecar_lyrics_uri.as_deref(), Some("content://lyric"));
+        assert_eq!(catalog.tracks[1].sidecar_lyrics_uri.as_deref(), Some("content://lyric"));
         assert_eq!(catalog.tracks[2].title, "First");
         assert_eq!(catalog.tracks[3].title, "Intro");
         assert_eq!(catalog.tracks[3].cue_end_ms, Some(60_000));
