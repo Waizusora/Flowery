@@ -3,6 +3,8 @@ mod lyrics;
 mod library;
 mod queue;
 mod playlists;
+mod wav_pcm;
+mod usb_pcm;
 #[cfg(target_os = "android")]
 mod aaudio;
 use std::io::Cursor;
