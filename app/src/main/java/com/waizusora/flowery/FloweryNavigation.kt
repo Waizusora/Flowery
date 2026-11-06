@@ -141,12 +141,17 @@ fun FloweryNavigation(
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
                 lyricsVisible = !lyricsVisible
             }
-            val usbExclusiveActive = status.contains("USB exclusive")
+            val usbTransportActive = status.contains("USB exclusive")
+            val sourceBitPerfectActive = status.contains("source samples unchanged")
             IconButton(onClick = onUsbDacClick) {
                 Icon(
                     Icons.Default.Usb,
-                    contentDescription = if (usbExclusiveActive) "USB DAC bit-perfect active" else "USB DAC",
-                    tint = if (usbExclusiveActive) Color(0xFF1E90FF) else foreground
+                    contentDescription = when {
+                        sourceBitPerfectActive -> "USB DAC direct PCM active; source samples unchanged"
+                        usbTransportActive -> "USB DAC direct transport active; decoded PCM is not bit-perfect"
+                        else -> "USB DAC"
+                    },
+                    tint = if (usbTransportActive) Color(0xFF1E90FF) else foreground
                 )
             }
             NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
@@ -670,12 +675,12 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("USB Bit-Perfect", color = color, fontWeight = FontWeight.SemiBold)
-                            Text("Use the connected KT Micro DAC through the strict USB-exclusive path for supported files.", color = muted, style = MaterialTheme.typography.bodySmall)
+                            Text("USB Exclusive / Bit-Perfect", color = color, fontWeight = FontWeight.SemiBold)
+                            Text("Use a compatible UAC2 stereo DAC through direct USB transport. Source-bit-preserving output is limited to supported WAV PCM at unity gain.", color = muted, style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(checked = usbBitPerfectEnabled, onCheckedChange = onUsbBitPerfectChanged)
                     }
-                    Text("Decoded FLAC is converted to 24-bit PCM for direct USB transport. EQ/DSP processing means this is not source-bit-perfect passthrough. Playback stops if strict USB-exclusive setup fails; no Shared/AAudio fallback is used.", color = muted, style = MaterialTheme.typography.bodySmall)
+                    Text("WAV integer PCM16/24/32 can be sent without decoding or DSP when the DAC accepts the exact format and sample rate. Any software gain or ducking changes the samples. Other decoded formats are sent as processed 24-bit PCM and are not bit-perfect. Playback stops if strict USB setup fails; there is no AAudio fallback.", color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }

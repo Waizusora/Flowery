@@ -136,19 +136,11 @@ class MainActivity : ComponentActivity() {
                 device == null -> "Android did not return the USB audio device."
                 granted -> {
                     volume = OutputVolumeController(this@MainActivity).usbVolume(usbDacController.deviceIdentity(device))
-                    if (usbDacController.isReferenceKtmicro(device)) {
-                        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                            .putBoolean("usb_bit_perfect_enabled", true)
-                            .apply()
-                        inspectUsbDevice(device)
-                        "USB permission granted for ${usbDacController.describeDevice(device)}. This grants USB device access only. Direct USB exclusive bit-perfect mode is available for supported PCM WAV tracks when the USB interface and clock negotiation succeed. FLAC, ALAC, MP3 and other decoded formats use the Android AAudio route; AAudio reports whether its stream opened in EXCLUSIVE or SHARED mode."
-                    } else {
-                        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                            .putBoolean("usb_bit_perfect_enabled", false)
-                            .apply()
-                        inspectUsbDevice(device)
-                        "USB permission granted for ${usbDacController.describeDevice(device)}. This grants USB device access for inspection. Direct USB exclusive bit-perfect playback is currently implemented only for the KT Micro KT-384/32 HIFI and supported PCM WAV files. Other formats use the Android AAudio route."
-                    }
+                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                        .putBoolean("usb_bit_perfect_enabled", true)
+                        .apply()
+                    inspectUsbDevice(device)
+                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery will attempt direct USB playback when the device exposes a compatible UAC2 stereo PCM profile and accepts the requested clock rate. Supported WAV PCM can preserve source samples at unity gain; decoded formats are processed 24-bit PCM and are not bit-perfect."
                 }
                 else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
@@ -325,36 +317,29 @@ class MainActivity : ComponentActivity() {
     private fun requestUsbDacAccess() {
         val devices = usbDacController.audioDevices()
         refreshOutputVolume()
-        when {
-            devices.isEmpty() -> usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
-            devices.size > 1 -> usbDacMessage = "More than one USB Audio Class device is connected. Disconnect other USB audio devices and retry so Flowery can request permission for the intended DAC."
-            else -> {
-                val detected = devices.single()
-                val device = detected.usbDevice
-                val referenceNote = if (detected.isReferenceKtmicro) {
-                    " The connected device matches the configured KT Micro KT-384/32 reference VID/PID."
-                } else {
-                    ""
-                }
-                if (usbDacController.hasPermission(device)) {
-                    if (detected.isReferenceKtmicro) {
-                        val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-                        val enabled = preferences.getBoolean("usb_bit_perfect_enabled", false)
-                        preferences.edit().putBoolean("usb_bit_perfect_enabled", !enabled).apply()
-                        usbDacMessage = if (enabled) {
-                            "USB exclusive bit-perfect mode disabled. Playback will use the regular Flowery DSP and AAudio path."
-                        } else {
-                            "Direct USB exclusive mode is enabled. Supported PCM WAV tracks are sent bit-perfect with digital volume at unity. FLAC and other decoded formats are decoded and sent over the same USB transport with the per-DAC software volume applied."
-                        }
-                    } else {
-                        usbDacMessage = "USB access is already granted for ${detected.displayName}. Exclusive bit-perfect playback is currently configured for the KT Micro KT-384/32 HIFI only."
-                    }
-                    inspectUsbDevice(device)
-                } else {
-                    usbDacController.requestPermission(device)
-                    usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}.$referenceNote USB permission is device access, not an audio-mode selection. After permission, supported PCM WAV can use direct USB exclusive bit-perfect; decoded formats use AAudio, whose actual EXCLUSIVE or SHARED mode is reported during playback."
-                }
+        if (devices.isEmpty()) {
+            usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
+            return
+        }
+
+        // Prefer a device for which Android permission is already granted. If none is
+        // authorized yet, request access to the first enumerated device.
+        val detected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) }
+            ?: devices.first()
+        val device = detected.usbDevice
+        if (usbDacController.hasPermission(device)) {
+            val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+            val enabled = preferences.getBoolean("usb_bit_perfect_enabled", false)
+            preferences.edit().putBoolean("usb_bit_perfect_enabled", !enabled).apply()
+            usbDacMessage = if (enabled) {
+                "Direct USB exclusive mode disabled. Playback will use the normal Flowery DSP and Android AAudio route."
+            } else {
+                "Direct USB exclusive mode enabled for compatible UAC2 DACs. WAV integer PCM can preserve source samples at unity gain; decoded formats use processed 24-bit PCM and are not bit-perfect. Flowery tries permitted devices until one accepts the exact PCM profile and clock rate."
             }
+            inspectUsbDevice(device)
+        } else {
+            usbDacController.requestPermission(device)
+            usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}. Permission grants device access only. Direct playback requires a compatible UAC2 stereo PCM profile and successful clock negotiation; decoded formats are not bit-perfect."
         }
     }
 
@@ -363,9 +348,9 @@ class MainActivity : ComponentActivity() {
             val report = usbDacController.inspectDescriptors(device) +
                 "\n\nUSB permission status: granted. Permission authorizes USB device access; it does not select an audio mode." +
                 "\n\nPlayback mode by source:" +
-                "\n• Supported PCM WAV on the configured KT Micro DAC: Flowery can attempt direct USB exclusive bit-perfect. The mode becomes active only after the USB interface and DAC clock negotiation succeed." +
-                "\n• FLAC, ALAC, MP3 and other decoded formats: with USB exclusive mode enabled they are decoded by Symphonia and sent over the direct USB transport with software volume (not bit-perfect); otherwise they use Android AAudio. Check Settings → Audio → AAudio Diagnostics for the AAudio EXCLUSIVE or SHARED mode and device ID." +
-                "\n• If AAudio cannot open EXCLUSIVE, Flowery retries with SHARED mode."
+                "\n• Stereo WAV integer PCM16/24/32: Flowery attempts direct USB output only when a connected UAC2 DAC exposes a matching profile and accepts the source sample rate. Source samples remain unchanged only at unity gain with ducking disabled; EQ is bypassed." +
+                "\n• FLAC, ALAC, MP3 and other decoded formats: with direct USB enabled they are decoded by Symphonia, processed as configured, converted to packed 24-bit PCM, and sent over the USB transport. This is not bit-perfect. Otherwise they use Android AAudio." +
+                "\n• Direct USB setup failures stop playback rather than silently falling back to AAudio."
             runOnUiThread { usbDacMessage = report }
         }
     }
