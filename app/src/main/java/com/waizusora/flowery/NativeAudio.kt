@@ -37,11 +37,6 @@ object NativeAudio {
     external fun nativePumpStreamChunk(handle: Long, maxFrames: Int): Int
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
-    external fun nativeOpenWavPcm(fileDescriptor: Int): Long
-    external fun nativeGetWavPcmInfo(handle: Long): LongArray
-    external fun nativeReadWavPcmFrames(handle: Long, maxFrames: Int, gain: Float): ByteArray
-    external fun nativeSeekWavPcmFrame(handle: Long, frame: Long): Long
-    external fun nativeCloseWavPcm(handle: Long)
     external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
     external fun nativePollUsbPcmBlock(queue: Long, timeoutMs: Int): ByteArray?
     external fun nativeUsbPcmQueueSize(queue: Long): Int
