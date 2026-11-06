@@ -47,7 +47,8 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
             if a.protocol == 0x20 && a.channels == 2 && a.subslot_bytes > 0
-                && a.bit_resolution > 0 && a.terminal_link > 0 && a.endpoint_address.is_some()
+                && a.bit_resolution > 0 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
+                && a.terminal_link > 0 && a.endpoint_address.is_some()
                 && a.max_packet_bytes > 0 && a.interval > 0
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
