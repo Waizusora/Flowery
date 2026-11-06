@@ -25,7 +25,7 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio 
  
 ## USB DAC discovery and PCM format contract
 
-DAC discovery does not depend on a hard-coded VID/PID or product name. Kotlin enumerates USB Audio Class devices and manages Android USB Host permission; Rust parses descriptors and derives stereo UAC2 playback profiles, valid-bit resolutions, subslot widths, endpoints, packet capacity, synchronization, and clock-source links. Kotlin performs the required class-specific clock RANGE requests, while the native C++ libusb transport performs SET_CUR/GET_CUR negotiation and isochronous transfers.
+DAC discovery does not depend on a hard-coded VID/PID or product name. Kotlin enumerates USB Audio Class devices and manages Android USB Host permission; Rust parses descriptors and derives/prioritizes stereo UAC2 playback profiles, valid-bit resolutions, subslot widths, endpoints, packet capacity, synchronization, and clock-source links. Kotlin performs the required class-specific clock RANGE requests, Rust selects rate candidates from those parsed ranges, and the native C++ libusb transport verifies each selected rate through SET_CUR/GET_CUR before isochronous streaming.
 
 The local SQLite profile database stores VID/PID, manufacturer/product strings, raw descriptor bytes, parsed descriptor reports, clock ranges, SHA-256 descriptor fingerprints, and observation history. USB descriptors do not reliably identify physical silicon, so Flowery stores descriptor-family identity rather than guessing a chipset model.
 
