@@ -1,5 +1,5 @@
-use jni::objects::{JClass, JString};
-use jni::sys::jstring;
+use jni::objects::{JClass, JLongArray, JString};
+use jni::sys::{jint, jstring};
 use jni::JNIEnv;
 use serde::Serialize;
 
@@ -143,9 +143,43 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLrc(
     }
 }
 
+
+/// Finds the final lyric timestamp at or before the requested playback position.
+fn current_lyric_index(timestamps: &[i64], position_ms: i64) -> Option<usize> {
+    if position_ms < 0 {
+        return None;
+    }
+    let upper_bound = timestamps.partition_point(|timestamp| *timestamp <= position_ms);
+    upper_bound.checked_sub(1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFindCurrentLyricIndex(
+    mut env: JNIEnv,
+    _class: JClass,
+    timestamps: JLongArray,
+    position_ms: jni::sys::jlong,
+) -> jint {
+    let length = match env.get_array_length(&timestamps) {
+        Ok(value) => value as usize,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string());
+            return -1;
+        }
+    };
+    let mut values = vec![0_i64; length];
+    if let Err(error) = env.get_long_array_region(&timestamps, 0, &mut values) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string());
+        return -1;
+    }
+    current_lyric_index(&values, position_ms)
+        .and_then(|index| i32::try_from(index).ok())
+        .unwrap_or(-1)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_lrc;
+    use super::{current_lyric_index, parse_lrc};
 
     #[test]
     fn parses_multiple_timestamps_and_sorts_entries() {
@@ -172,4 +206,17 @@ mod tests {
         assert_eq!(lines[0].text, "");
         assert_eq!(lines[1].text, "Next");
     }
+
+    #[test]
+    fn finds_current_lyric_with_binary_search_semantics() {
+        let timestamps = [1_000, 2_000, 2_000, 4_500];
+        assert_eq!(current_lyric_index(&timestamps, -1), None);
+        assert_eq!(current_lyric_index(&timestamps, 0), None);
+        assert_eq!(current_lyric_index(&timestamps, 1_000), Some(0));
+        assert_eq!(current_lyric_index(&timestamps, 2_000), Some(2));
+        assert_eq!(current_lyric_index(&timestamps, 4_499), Some(2));
+        assert_eq!(current_lyric_index(&timestamps, 4_500), Some(3));
+        assert_eq!(current_lyric_index(&timestamps, 9_000), Some(3));
+    }
+
 }
