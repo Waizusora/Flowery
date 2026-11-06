@@ -17,15 +17,13 @@ namespace {
 
 // Isochronous transport tuning.
 //
-// The transport keeps a bounded sliding window of small URBs queued on the
-// endpoint instead of submitting a whole decoded block at once. Each URB carries
-// at most kPacketsPerUrb service intervals; at a 125 us interval this is 8 ms of
-// audio. Up to kMaxUrbsInFlight URBs are queued, which yields roughly 128 ms of
-// look-ahead at a 125 us interval. The window is replenished as URBs complete
-// and is intentionally left queued between JNI writes, so the endpoint does not
-// run dry while the producer decodes the next block.
-constexpr size_t kPacketsPerUrb = 64;
-constexpr size_t kMaxUrbsInFlight = 32;
+// Keep fewer, longer isochronous URBs queued to reduce completion/event-loop
+// overhead while retaining a bounded scheduling horizon. At a 125 us service
+// interval, one 128-packet URB covers 16 ms; the adaptive window targets about
+// 192 ms of queued audio and is replenished as URBs complete.
+constexpr size_t kPacketsPerUrb = 128;
+constexpr size_t kMaxUrbsInFlight = 12;
+constexpr uint64_t kTargetQueuedAudioUs = 192000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
 // because it cancels queued isochronous URBs and breaks the scheduling chain.
@@ -211,6 +209,15 @@ uint32_t service_interval_us(int speed, uint8_t b_interval) {
         return 125U << exponent;
     }
     return 1000U << exponent;
+}
+
+size_t max_urbs_in_flight(const UsbAudioSession* session) {
+    const uint64_t urb_duration_us =
+        static_cast<uint64_t>(kPacketsPerUrb) * session->interval_us;
+    if (urb_duration_us == 0) return 1;
+    const uint64_t target =
+        (kTargetQueuedAudioUs + urb_duration_us - 1ULL) / urb_duration_us;
+    return static_cast<size_t>(std::clamp<uint64_t>(target, 1ULL, kMaxUrbsInFlight));
 }
 
 bool set_and_verify_clock(UsbAudioSession* session, int clock_id,
@@ -505,7 +512,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         if (failure.failed || packet_bytes.empty()) break;
 
         // Back-pressure: block until the window has room for another URB.
-        if (session->in_flight.size() >= kMaxUrbsInFlight) {
+        if (session->in_flight.size() >= max_urbs_in_flight(session)) {
             if (!wait_for_progress(session, &failure)) break;
             continue;
         }
