@@ -7,6 +7,7 @@ mod playlists;
 mod wav_pcm;
 mod usb_pcm;
 mod usb_producer;
+mod playback_policy;
 mod usb_descriptors;
 #[cfg(target_os = "android")]
 mod aaudio;
