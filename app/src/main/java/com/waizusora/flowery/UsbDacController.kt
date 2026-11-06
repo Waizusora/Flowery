@@ -226,8 +226,10 @@ class UsbDacController(context: Context) {
             }
             val descriptorReport = UsbAudioDescriptorParser.report(
                 raw = descriptors,
-                manufacturer = device.manufacturerName,
+                vid = device.vendorId,
+                pid = device.productId,
                 product = device.productName,
+                manufacturer = device.manufacturerName,
                 clockRangeReports = clockRangeReports
             ) + "\n\nDescriptor-derived stereo UAC2 OUT profiles:" +
                 discoveredProfiles.joinToString(separator = "") { profile ->
