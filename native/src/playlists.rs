@@ -7,26 +7,26 @@ use std::collections::BTreeMap;
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CueTrack {
-    number: i64,
-    title: String,
-    performer: Option<String>,
-    file_name: String,
-    start_frame: i64,
-    end_frame: Option<i64>,
+    pub(super) number: i64,
+    pub(super) title: String,
+    pub(super) performer: Option<String>,
+    pub(super) file_name: String,
+    pub(super) start_frame: i64,
+    pub(super) end_frame: Option<i64>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct CueSheet {
-    title: Option<String>,
-    performer: Option<String>,
-    tracks: Vec<CueTrack>,
+    pub(super) title: Option<String>,
+    pub(super) performer: Option<String>,
+    pub(super) tracks: Vec<CueTrack>,
 }
 
 #[derive(Serialize)]
 pub(super) struct PlaylistEntry {
-    path: String,
-    title: Option<String>,
+    pub(super) path: String,
+    pub(super) title: Option<String>,
 }
 
 #[derive(Default)]
