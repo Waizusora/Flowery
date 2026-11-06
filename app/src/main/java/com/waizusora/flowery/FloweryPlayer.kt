@@ -16,7 +16,6 @@ import java.nio.ByteOrder
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
-        private const val MIN_OUTPUT_RING_CAPACITY_FRAMES = 32_768
         private const val DECODE_CHUNK_FRAMES = 8_192
         private const val USB_DECODE_CHUNK_FRAMES = 32_768
         // Decoded blocks buffered between the decoder thread and the USB writer thread.
@@ -57,13 +56,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 "manufacturer=${device.manufacturerName ?: "unknown"}," +
                 "interfaces=${device.interfaceCount},path=${device.deviceName}"
         }
-    }
-
-    private fun ringCapacityFrames(sampleRate: Int): Int {
-        val required = maxOf(sampleRate.toLong() * 2L, MIN_OUTPUT_RING_CAPACITY_FRAMES.toLong())
-        var capacity = 1L
-        while (capacity < required) capacity = capacity shl 1
-        return capacity.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     private var worker: Thread? = null
@@ -228,8 +220,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // Shared Android output is handled by Rust AAudio. USB exclusive playback
                 // uses the separate libusb path above and never falls back to Android mixer mode.
                 val outputFormat = 2 // AAUDIO_FORMAT_PCM_FLOAT
-                val preferredRate = if (sourceRate in supportedRates) sourceRate
-                    else supportedRates.minByOrNull { kotlin.math.abs(it - sourceRate) } ?: sourceRate
+                val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates.toIntArray())
                 val targetRate = NativeAudio.nativeSelectOutputSampleRate(
                     preferredRate, channels, deviceId, outputFormat, false
                 )
@@ -249,7 +240,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                val outputRingCapacityFrames = ringCapacityFrames(targetRate)
+                val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
                     targetRate, channels,
                     softwareVolume,
@@ -298,7 +289,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
-                val segmentFrameLimit = segmentLengthMs?.let { framesAtMilliseconds(it, targetRate) }
+                val segmentFrameLimit = segmentLengthMs?.let { NativeAudio.nativeFramesAtMilliseconds(it, targetRate) }
 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
@@ -311,10 +302,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Playing · Rust AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
                 // Keep at least 1.5 seconds of decoded PCM queued to tolerate scheduler and decoder delays.
-                val lowWatermarkFrames = (targetRate.toLong() * 3L / 2L)
-                    .coerceAtLeast(MIN_OUTPUT_RING_CAPACITY_FRAMES.toLong() / 2L)
-                    .coerceAtMost((outputRingCapacityFrames * 3L) / 4L)
-                    .toInt()
+                val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
+                    targetRate, outputRingCapacityFrames
+                )
                 var outputStarted = false
                 var reachedEnd = false
                 var eofSignalled = false
@@ -326,7 +316,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     pendingSeekMs.getAndSet(null)?.let { requested ->
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
-                        val targetFrame = framesAtMilliseconds(target, targetRate)
+                        val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) { "Unable to flush the AAudio output stream for seeking" }
                         outputStarted = false
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
@@ -775,7 +765,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 pendingSeekMs.getAndSet(null)?.let { requested ->
-                    val targetFrame = framesAtMilliseconds(requested, sampleRate)
+                    val targetFrame = NativeAudio.nativeFramesAtMilliseconds(requested, sampleRate)
                     usbPositionFrames = NativeAudio.nativeSeekWavPcmFrame(wavHandle, targetFrame)
                     check(usbPositionFrames >= 0L) { "Rust could not seek within the WAV PCM source." }
                     usbSession.flush()
@@ -826,17 +816,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L && !usbPlaybackMode) return
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
-    }
-
-    private fun framesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long {
-        if (milliseconds <= 0L || sampleRate <= 0) return 0L
-        val seconds = milliseconds / 1_000L
-        val remainder = milliseconds % 1_000L
-        if (seconds > Long.MAX_VALUE / sampleRate) return Long.MAX_VALUE
-        val wholeFrames = seconds * sampleRate
-        val fractionalFrames = remainder * sampleRate / 1_000L
-        return if (wholeFrames > Long.MAX_VALUE - fractionalFrames) Long.MAX_VALUE
-        else wholeFrames + fractionalFrames
     }
 
     fun pause() {
