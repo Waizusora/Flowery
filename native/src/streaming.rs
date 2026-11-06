@@ -5,8 +5,8 @@ use std::time::Duration;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
-use jni::objects::{JClass, JFloatArray, JString};
-use jni::sys::{jfloatArray, jint, jlong};
+use jni::objects::{JByteArray, JClass, JFloatArray, JString};
+use jni::sys::{jbyteArray, jfloatArray, jint, jlong};
 use jni::JNIEnv;
 use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
@@ -92,6 +92,7 @@ struct StreamDecoder {
     discard_source_frames: u64,
     discard_output_frames: u64,
     consecutive_decode_errors: u32,
+    usb_last_gain: f32,
 }
 
 impl StreamDecoder {
@@ -120,7 +121,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: 1.0,
         })
     }
 
@@ -439,6 +440,53 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamCh
     let samples=match decoder.read_frames(max_frames as usize) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);return std::ptr::null_mut();} };
     let output=match env.new_float_array(samples.len() as i32) { Ok(v)=>v,Err(_)=>return std::ptr::null_mut() };
     if env.set_float_array_region(&output,0,&samples).is_err() { return std::ptr::null_mut(); }
+    output.into_raw()
+}
+
+/// Reads a bounded decoded chunk, applies a stateful software-gain ramp, and packs
+/// stereo samples as signed 24-bit little-endian PCM for the direct USB transport.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadStreamChunkPcm24(
+    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint, target_gain: jni::sys::jfloat
+) -> jbyteArray {
+    if handle == 0 || max_frames <= 0 || !target_gain.is_finite() {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid packed PCM read arguments");
+        return std::ptr::null_mut();
+    }
+    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
+    if decoder.channels != 2 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Direct USB packed PCM currently requires stereo audio");
+        return std::ptr::null_mut();
+    }
+    let samples = match decoder.read_frames(max_frames as usize) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let gain = target_gain.clamp(0.0, 1.0);
+    let mut packed = Vec::<i8>::with_capacity(samples.len().saturating_mul(3));
+    let start_gain = decoder.usb_last_gain;
+    let sample_count = samples.len();
+    for (index, sample) in samples.into_iter().enumerate() {
+        let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
+        let ramp_gain = start_gain + (gain - start_gain) * fraction;
+        let finite_sample = if sample.is_finite() { sample } else { 0.0 };
+        let scaled = (finite_sample * ramp_gain).clamp(-1.0, 1.0);
+        let value = if scaled <= -1.0 { -8_388_608 } else { (scaled * 8_388_607.0) as i32 };
+        packed.push(value as i8);
+        packed.push((value >> 8) as i8);
+        packed.push((value >> 16) as i8);
+    }
+    decoder.usb_last_gain = gain;
+    let output = match env.new_byte_array(packed.len() as i32) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    if env.set_byte_array_region(&output, 0, &packed).is_err() {
+        return std::ptr::null_mut();
+    }
     output.into_raw()
 }
 
