@@ -63,7 +63,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val volumeController = OutputVolumeController(context)
 
     /**
-     * One decoded, gain-adjusted block of packed signed 24-bit little-endian PCM that is
+     * One decoded, gain-adjusted block of negotiated signed integer PCM that is
      * handed from the decoder thread to the USB writer thread. [epoch] changes on every
      * seek so that the writer flushes the transport exactly once per discontinuity.
      */
@@ -463,7 +463,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     /**
      * Sends Symphonia-decoded PCM directly to USB without Android's AudioTrack/AAudio
-     * mixer. Float samples are quantized to the DAC's 24-bit integer transport format;
+     * mixer. Float samples are quantized to the DAC's negotiated integer PCM format;
      * this is not source-bit-perfect passthrough.
      */
     private fun playUsbDecodedDirect(
@@ -495,7 +495,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: negotiating a supported stereo PCM format at ${sourceRate} Hz…")
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=auto sampleRate=${sourceRate} channels=${channels}")
             val (selectedDevice, usbSession) =
-                controller.openFirstCompatiblePlaybackSession(discovered, 0, sourceRate)
+                controller.openFirstCompatiblePlaybackSession(discovered, 0, sourceRate, allowSampleRateConversion = true)
             val device = selectedDevice.usbDevice
             session = usbSession
             recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
@@ -504,8 +504,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
             onState("USB exclusive: decoding and processing PCM (not bit-perfect)…")
-            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, bandGainsDb)
-            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sampleRate=${sourceRate} eqActive=${bandGainsDb.any { abs(it) > 0.001f }}")
+            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, usbSession.sampleRate, bandGainsDb)
+            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${usbSession.sampleRate} eqActive=${bandGainsDb.any { abs(it) > 0.001f }}")
             check(decoderConfigResult == 0) {
                 "Unable to configure the streaming decoder and DSP for direct USB output."
             }
@@ -515,7 +515,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_FLOAT_TO_S${usbSession.profile.bitResolution}_LE")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
-            outputSampleRate = sourceRate
+            outputSampleRate = usbSession.sampleRate
             val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
             val segmentDurationMs = segmentEndMs?.let {
                 (it - segmentStartMs).coerceAtLeast(0L)
@@ -540,7 +540,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
-                handle, queueHandle, sourceRate, channels, usbSession.profile.bitResolution,
+                handle, queueHandle, usbSession.sampleRate, channels, usbSession.profile.bitResolution,
                 usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
@@ -599,10 +599,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val acceptedFrames = usbSession.writePcm(block.pcm, frames)
                 val transportDurationNs =
                     (android.os.SystemClock.elapsedRealtimeNanos() - writeStartedNs).coerceAtLeast(0L)
-                val audioDurationMs = frames * 1_000.0 / sourceRate
+                val audioDurationMs = frames * 1_000.0 / usbSession.sampleRate
                 val transportDurationMs = transportDurationNs / 1_000_000.0
                 val throughputRatio = if (transportDurationNs > 0L) {
-                    frames.toDouble() * 1_000_000_000.0 / (sourceRate * transportDurationNs)
+                    frames.toDouble() * 1_000_000_000.0 / (usbSession.sampleRate * transportDurationNs)
                 } else {
                     Double.POSITIVE_INFINITY
                 }
@@ -664,7 +664,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     /**
      * Producer coordinator for the decoded direct USB path. Rust decodes a bounded chunk,
-     * applies the per-DAC gain ramp, packs signed 24-bit PCM, and stores it in the native
+     * applies the per-DAC gain ramp, packs the negotiated PCM format, and stores it in the native
      * bounded queue. Seek requests are serviced here because this thread is the sole user
      * of the decoder [handle] while it runs.
      *
