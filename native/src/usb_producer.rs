@@ -23,6 +23,8 @@ struct ProducerState {
     pending_block: Option<PcmBlock>,
 }
 
+// The decoder and queue pointers are borrowed from handles owned by FloweryPlayer.
+// The caller must stop and join its producer worker before destroying either handle.
 struct UsbPcmProducer {
     state: Mutex<ProducerState>,
 }
@@ -30,6 +32,11 @@ struct UsbPcmProducer {
 fn frames_at_ms(milliseconds: u64, sample_rate: u64) -> u64 {
     ((milliseconds as u128 * sample_rate as u128) / 1_000)
         .min(u64::MAX as u128) as u64
+}
+
+fn absolute_seek_target(segment_start_ms: u64, segment_end_ms: Option<u64>, relative_ms: u64) -> u64 {
+    let duration = segment_end_ms.map(|end| end.saturating_sub(segment_start_ms));
+    segment_start_ms.saturating_add(relative_ms.min(duration.unwrap_or(u64::MAX)))
 }
 
 fn end_block(epoch: i32, position_frames: u64) -> PcmBlock {
@@ -117,10 +124,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
 
     if let Some(relative_ms) = state.pending_seek_ms.take() {
-        let segment_duration = state.segment_end_ms
-            .map(|end| end.saturating_sub(state.segment_start_ms));
-        let relative_ms = relative_ms.min(segment_duration.unwrap_or(u64::MAX));
-        let absolute_ms = state.segment_start_ms.saturating_add(relative_ms);
+        let absolute_ms = absolute_seek_target(
+            state.segment_start_ms, state.segment_end_ms, relative_ms
+        );
         let decoder = unsafe { &mut *state.decoder };
         match decoder.seek_to(absolute_ms) {
             Ok(actual_ms) => {
@@ -235,12 +241,19 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbPc
 
 #[cfg(test)]
 mod tests {
-    use super::frames_at_ms;
+    use super::{absolute_seek_target, frames_at_ms};
 
     #[test]
     fn segment_frame_conversion_is_exact_for_common_audio_rates() {
         assert_eq!(frames_at_ms(1_000, 44_100), 44_100);
         assert_eq!(frames_at_ms(1_500, 48_000), 72_000);
         assert_eq!(frames_at_ms(u64::MAX, 192_000), u64::MAX);
+    }
+
+    #[test]
+    fn segment_seek_is_relative_and_clamped_to_segment_end() {
+        assert_eq!(absolute_seek_target(1_000, Some(4_000), 500), 1_500);
+        assert_eq!(absolute_seek_target(1_000, Some(4_000), 9_000), 4_000);
+        assert_eq!(absolute_seek_target(1_000, None, 500), 1_500);
     }
 }
