@@ -543,7 +543,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
 
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
-        while (session->in_flight.size() >= kMaxUrbsInFlight) {
+        while (session->in_flight.size() >= max_urbs_in_flight(session)) {
             if (!wait_for_progress(session, &failure)) break;
         }
         if (!failure.failed) {
