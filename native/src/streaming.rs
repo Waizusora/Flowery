@@ -5,7 +5,7 @@ use std::time::Duration;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
-use jni::objects::{JByteArray, JClass, JFloatArray, JString};
+use jni::objects::{JClass, JFloatArray, JString};
 use jni::sys::{jbyteArray, jfloatArray, jint, jlong};
 use jni::JNIEnv;
 use rubato::{Fft, FixedSync, Resampler};
