@@ -31,11 +31,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     private fun recordUsbDiagnostic(event: String) {
+        val preferences = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
+        if (!preferences.getBoolean("usb_diagnostic_recording", false)) return
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US)
             .format(java.util.Date())
         val line = "${timestamp} ${event}".replace('\n', ' ').replace('\r', ' ')
         synchronized(USB_DIAGNOSTIC_LOCK) {
-            val preferences = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
             val lines = preferences.getString("usb_direct_diagnostics", "").orEmpty()
                 .lineSequence().filter { it.isNotBlank() }.toMutableList()
             lines.add(line)
@@ -150,11 +151,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stop()
         stopped.set(false)
         val generation = playbackGeneration.incrementAndGet()
-        if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-                .getBoolean("usb_bit_perfect_enabled", false)) {
-            context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE).edit()
-                .putString("usb_direct_diagnostics", "").apply()
-        }
         worker = thread(name = "FloweryStreamPlayer") {
             runCatching {
                 // Keep decoding below the real-time AAudio callback thread to reduce scheduler contention.
