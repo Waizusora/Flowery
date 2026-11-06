@@ -14,7 +14,7 @@ The user selects a folder through the system document picker. The application re
 
 Tracks are represented by their document URI, filename-derived title, root folder name, MIME type, and optional sidecar-lyrics URI. Entries are deduplicated by document URI.
 
-The extension list is a discovery filter only. Successful playback depends on Symphonia's actual container and codec support. The scanner does not transcode or modify files.
+The extension list is a discovery filter only. Successful playback depends on Symphonia's actual container and codec support. Kotlin submits a flat SAF document snapshot to Rust. Rust classifies audio files, associates same-directory sidecar lyrics, parses CUE/M3U/M3U8/PLS content, resolves playlist paths without allowing traversal outside the selected root, creates virtual playlist/CUE entries, calculates CUE ranges, and deduplicates catalog identities. Kotlin maps returned document URIs into Android models.
 
 ## Sidecar LRC files
 
