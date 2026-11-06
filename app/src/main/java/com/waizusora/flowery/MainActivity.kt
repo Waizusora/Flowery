@@ -9,6 +9,8 @@ import android.net.Uri
 import android.media.MediaMetadataRetriever
 import android.hardware.usb.UsbManager
 import android.os.Bundle
+import android.os.Build
+import android.hardware.usb.UsbDevice
 import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -94,6 +96,14 @@ import org.json.JSONArray
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
+    @Suppress("DEPRECATION")
+    private fun Intent.usbDeviceExtra(): UsbDevice? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+        } else {
+            getParcelableExtra(UsbManager.EXTRA_DEVICE)
+        }
+
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) addFolder(uri)
     }
@@ -120,7 +130,7 @@ class MainActivity : ComponentActivity() {
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != UsbDacController.ACTION_USB_PERMISSION) return
-            val device = intent.getParcelableExtra<android.hardware.usb.UsbDevice>(UsbManager.EXTRA_DEVICE)
+            val device = intent.usbDeviceExtra()
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
             usbDacMessage = when {
                 device == null -> "Android did not return the USB audio device."
