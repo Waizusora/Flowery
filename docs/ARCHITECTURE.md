@@ -18,7 +18,7 @@ Flowery is an Android application with a Kotlin application layer, a Rust audio 
 | `native/src/lib.rs` | JNI exports and Lofty tag read/write operations |
 | `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
 | `native/src/usb_producer.rs` | Direct USB decoded-playback segment bounds, seek epochs, packed PCM production and bounded-queue publication |
-| `native/src/usb_descriptors.rs` | UAC descriptor parsing, playback profiles, clock links, GET_RANGE responses and diagnostic traces |
+| `native/src/usb_descriptors.rs` | UAC descriptor parsing, reference-DAC identification, playback profiles, clock links, GET_RANGE responses and diagnostic traces |
 | `native/src/playback_policy.rs` | Output sample-rate preference, ring capacity, frame conversion and playback watermarks |
  
 ## Playback sequence
