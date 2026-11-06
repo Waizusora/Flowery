@@ -192,7 +192,7 @@ void event_loop_main(UsbAudioSession* session) {
     }
 }
 
-void stop_event_thread(UsbAudioSession* session) {
+bool stop_event_thread(UsbAudioSession* session) {
     {
         std::lock_guard<std::mutex> lock(session->event_mutex);
         session->feedback_stopped.store(true, std::memory_order_release);
@@ -209,6 +209,11 @@ void stop_event_thread(UsbAudioSession* session) {
             std::unique_lock<std::mutex> lock(session->event_mutex);
             session->event_condition.wait_for(lock, std::chrono::milliseconds(10));
         }
+        if (session->feedback_in_flight.load(std::memory_order_acquire)) {
+            // Keep the session, transfer buffer, and event loop alive rather than
+            // freeing memory that the USB controller may still reference.
+            return false;
+        }
     }
     session->event_thread_running.store(false, std::memory_order_release);
     session->event_condition.notify_all();
@@ -218,6 +223,7 @@ void stop_event_thread(UsbAudioSession* session) {
         libusb_free_transfer(session->feedback_transfer);
         session->feedback_transfer = nullptr;
     }
+    return true;
 }
 
 // Releases every completed transfer and records the first transport failure.
@@ -292,7 +298,7 @@ void close_session(UsbAudioSession* session) {
     if (session == nullptr) return;
     if (session->handle != nullptr) {
         abort_in_flight(session);
-        stop_event_thread(session);
+        if (!stop_event_thread(session)) return;
         if (session->claimed) {
             // Restore the zero-bandwidth alternate setting before releasing the streaming interface.
             libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
