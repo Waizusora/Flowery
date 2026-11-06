@@ -15,6 +15,10 @@ pub struct PlaybackProfile {
     pub sample_rates: Vec<u32>,
     pub sample_rate_range: Option<(u32, u32)>,
     pub sampling_frequency_control: bool,
+    pub format_type: u8,
+    pub format_tag: u16,
+    pub feedback_endpoint: Option<u8>,
+    pub feedback_max_packet_bytes: u16,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +43,11 @@ struct Alternate {
     sample_rates: Vec<u32>,
     sample_rate_range: Option<(u32, u32)>,
     sampling_frequency_control: bool,
+    format_type: u8,
+    format_tag: u16,
+    feedback_endpoint: Option<u8>,
+    feedback_max_packet_bytes: u16,
+    synchronization_address: u8,
 }
 
 fn le16(bytes: &[u8], offset: usize) -> u16 {
@@ -59,6 +68,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
                 && a.terminal_link > 0 && a.endpoint_address.is_some()
                 && a.max_packet_bytes > 0 && a.interval > 0
+                && (a.synchronization != "asynchronous" || a.feedback_endpoint.is_some() || a.synchronization_address != 0)
                 && requested_bit_resolution.map_or(true, |bits| bits == a.bit_resolution)
             {
                 out.push(PlaybackProfile {
@@ -75,6 +85,10 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     sample_rates: a.sample_rates.clone(),
                     sample_rate_range: a.sample_rate_range,
                     sampling_frequency_control: a.sampling_frequency_control,
+                    format_type: a.format_type,
+                    format_tag: a.format_tag,
+                    feedback_endpoint: a.feedback_endpoint,
+                    feedback_max_packet_bytes: a.feedback_max_packet_bytes,
                 });
             }
         }
@@ -118,7 +132,12 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     }
                     // UAC1 Type-I format descriptor. Only PCM (format tag 0x0001)
                     // is accepted by the direct integer-PCM transport.
-                    (0x00, 0x02) if length >= 8 && raw[offset + 3] == 0x01 => {
+                    (0x00, 0x02) if length >= 4 => {
+                        alt.format_type = raw[offset + 3];
+                        if alt.format_type == 0x02 && length >= 7 {
+                            alt.format_tag = le16(raw, offset + 5);
+                        }
+                        if alt.format_type != 0x01 || length < 8 { offset += length; continue; }
                         alt.channels = raw[offset + 4];
                         alt.subslot_bytes = raw[offset + 5];
                         alt.bit_resolution = raw[offset + 6];
@@ -158,9 +177,14 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                 let attributes = raw[offset + 3];
                 let packet = le16(raw, offset + 4);
                 let transfer_type = attributes & 0x03;
+                let usage_type = (attributes >> 4) & 0x03;
                 let transactions = ((packet >> 11) & 0x03) as u16;
-                if address & 0x80 == 0 && transfer_type == 1 && transactions < 3 {
+                if transfer_type == 1 && address & 0x80 != 0 && usage_type == 1 && transactions < 3 {
+                    alt.feedback_endpoint = Some(address);
+                    alt.feedback_max_packet_bytes = (packet & 0x07ff) * (transactions + 1);
+                } else if address & 0x80 == 0 && transfer_type == 1 && usage_type == 0 && transactions < 3 {
                     alt.endpoint_address = Some(address);
+                    alt.synchronization_address = if length >= 9 { raw[offset + 8] } else { 0 };
                     alt.max_packet_bytes = (packet & 0x07ff) * (transactions + 1);
                     alt.interval = raw[offset + 6];
                     alt.synchronization = match (attributes >> 2) & 0x03 {
@@ -383,7 +407,11 @@ pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String
         "protocol": p.protocol,
         "sampleRates": p.sample_rates,
         "sampleRateRange": p.sample_rate_range.map(|(minimum, maximum)| json!([minimum, maximum])),
-        "samplingFrequencyControl": p.sampling_frequency_control
+        "samplingFrequencyControl": p.sampling_frequency_control,
+        "formatType": p.format_type,
+        "formatTag": p.format_tag,
+        "feedbackEndpoint": p.feedback_endpoint,
+        "feedbackMaxPacketBytes": p.feedback_max_packet_bytes
     })).collect();
     serde_json::to_string(&values).unwrap_or_else(|_| "[]".to_string())
 }
@@ -409,6 +437,8 @@ struct StreamDescriptor {
     sample_rates: std::collections::BTreeSet<u32>,
     sample_rate_ranges: Vec<(u32, u32)>,
     endpoints: Vec<Value>,
+    uac1_format_types: std::collections::BTreeSet<u8>,
+    uac1_format_tags: std::collections::BTreeSet<u16>,
 }
 
 fn le24(bytes: &[u8], offset: usize) -> u32 {
@@ -458,8 +488,10 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
                 let transfer = match transfer_type {
                     1 => "isochronous", 2 => "bulk", 3 => "interrupt", _ => "control"
                 };
+                let sync_type = (attributes >> 2) & 0x03;
+                let usage_type = (attributes >> 4) & 0x03;
                 let synchronization = if transfer_type == 1 {
-                    match (attributes >> 2) & 0x03 {
+                    match sync_type {
                         1 => "asynchronous", 2 => "adaptive", 3 => "synchronous", _ => "none"
                     }
                 } else { "n/a" };
@@ -469,7 +501,11 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
                     "transfer": transfer,
                     "maxPacketBytes": max_packet_bytes,
                     "interval": raw[offset + 6],
-                    "synchronization": synchronization
+                    "synchronization": synchronization,
+                    "usage": match usage_type { 0 => "data", 1 => "feedback", 2 => "implicit_feedback", _ => "reserved" },
+                    "synchronizationAddress": if length >= 9 { raw[offset + 8] } else { 0 },
+                    "transactionsPerMicroframe": transactions + 1,
+                    "validIsochronousEndpoint": transfer_type == 1 && base_packet > 0 && transactions < 3 && sync_type != 0
                 }));
             }
             0x24 if current.is_some() && length >= 3 => {
@@ -489,9 +525,17 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
                         }
                         _ => {}
                     }
-                } else if stream.protocol == 0x00 && subtype == 0x02 && length >= 8
-                    && raw[offset + 3] == 0x01
-                {
+                } else if stream.protocol == 0x00 && subtype == 0x02 && length >= 4 {
+                    let format_type = raw[offset + 3];
+                    if format_type != 0 { stream.uac1_format_types.insert(format_type); }
+                    if format_type == 0x02 && length >= 7 {
+                        let tag = le16(raw, offset + 5);
+                        if tag != 0 { stream.uac1_format_tags.insert(tag); }
+                    }
+                    if format_type != 0x01 || length < 8 {
+                        offset += length;
+                        continue;
+                    }
                     let channels = raw[offset + 4];
                     let subslot = raw[offset + 5];
                     let bits = raw[offset + 6];
@@ -575,6 +619,8 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
         "bitResolutions": stream.bit_resolutions.iter().copied().collect::<Vec<_>>(),
         "sampleRates": stream.sample_rates.iter().copied().collect::<Vec<_>>(),
         "sampleRateRanges": stream.sample_rate_ranges.iter().map(|(min, max)| vec![min, max]).collect::<Vec<_>>(),
+        "uac1FormatTypes": stream.uac1_format_types.iter().copied().collect::<Vec<_>>(),
+        "uac1FormatTags": stream.uac1_format_tags.iter().copied().collect::<Vec<_>>(),
         "endpoints": stream.endpoints.clone()
     })).collect();
     serde_json::to_string(&json!({
