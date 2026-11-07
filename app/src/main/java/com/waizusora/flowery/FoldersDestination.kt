@@ -43,7 +43,7 @@ internal fun FoldersDestination(
                             Heading("Folders", foreground)
                             Spacer(Modifier.weight(1f))
                             IconButton(onClick = onScan, enabled = !libraryScanActive) {
-                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A),
+                                Icon(Icons.Default.Refresh, "Refresh library", tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
@@ -96,7 +96,7 @@ internal fun FoldersDestination(
                                 Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
                                     Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
+                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = MaterialTheme.colorScheme.primary)
                                 }
                                 HorizontalDivider(color = muted.copy(alpha = .16f))
                             }
