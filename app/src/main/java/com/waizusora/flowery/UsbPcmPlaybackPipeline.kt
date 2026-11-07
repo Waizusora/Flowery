@@ -141,7 +141,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         onPrebufferReady: (queuedBlocks: Int, endReached: Boolean, waitMs: Double) -> Unit,
         onFirstTransfer: (frames: Int) -> Unit,
         onStarvation: (queueWaitMs: Double, events: Long) -> Unit,
-        onWrite: (result: UsbPcmWriteResult, chunk: Long, totalFrames: Long, throughputRatio: Double, audioDurationMs: Double) -> Unit,
+        onWrite: (result: UsbPcmWriteResult, chunk: Long, totalFrames: Long, starvationEvents: Long, throughputRatio: Double, audioDurationMs: Double) -> Unit,
         onBitPerfectChanged: (bitPerfect: Boolean) -> Unit,
         onHardwareVolume: (volume: Float) -> Unit,
         onEndOfStream: (chunks: Long, totalFrames: Long) -> Unit,
@@ -195,7 +195,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
             check(result.acceptedFrames == result.frames) {
                 "The USB DAC transport accepted ${result.acceptedFrames} of ${result.frames} frames."
             }
-            onWrite(result, chunks + 1L, totalFramesSent + result.acceptedFrames, throughputRatio, audioDurationMs)
+            onWrite(result, chunks + 1L, totalFramesSent + result.acceptedFrames, starvationEvents, throughputRatio, audioDurationMs)
 
             val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
             if (dacSession.hardwareVolumeAvailable &&
