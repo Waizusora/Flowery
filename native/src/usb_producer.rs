@@ -188,9 +188,12 @@ fn pump_once(producer: &UsbPcmProducer, target_gain: f32) -> Result<jint, String
     }
     let session_epoch = state_epoch(&state.session);
     if session_epoch != state.epoch {
-        state.epoch = session_epoch;
         state.pending_block = None;
         state.queue.clear();
+        if state.pending_seek_ms.is_none() {
+            return Ok(0);
+        }
+        state.epoch = session_epoch;
     }
 
     if let Some(relative_ms) = state.pending_seek_ms.take() {
