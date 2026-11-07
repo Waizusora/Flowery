@@ -31,6 +31,16 @@ internal object UsbDacNative {
         samplingFrequencyControl: Boolean
     ): Long
 
+    external fun nativeOpenEncoded(
+        fileDescriptor: Int,
+        interfaceNumber: Int,
+        alternateSetting: Int,
+        endpoint: Int,
+        maxPacketBytes: Int,
+        interval: Int,
+        encodedBytesPerSecond: Long
+    ): Long
+    external fun nativeWriteEncodedPacket(handle: Long, encoded: ByteArray): Int
     external fun nativeWriteIsochronous(handle: Long, pcm: ByteArray, frameCount: Int): Int
     external fun nativeDrain(handle: Long): Int
     external fun nativeFlush(handle: Long)
