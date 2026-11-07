@@ -1054,7 +1054,7 @@ mod tests {
                 };
                 let float_actual = float_stream.read_usb_pcm(2, 1.0, padded_format).unwrap();
                 let float_expected: Vec<u8> = values.iter()
-                    .flat_map(|value| value.wrapping_shl(8).to_le_bytes())
+                    .flat_map(|value| (*value).wrapping_shl(8).to_le_bytes())
                     .collect();
                 assert_eq!(float_actual, float_expected, "float32 fallback did not left-justify padded 24-bit PCM");
                 assert!(!float_stream.native_pcm_active());
