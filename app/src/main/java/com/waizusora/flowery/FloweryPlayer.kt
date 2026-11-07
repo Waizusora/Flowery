@@ -429,33 +429,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
                 !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
-            var transportDrainedForPause = false
-            while (playbackActive()) {
-                if (paused) {
-                    if (!transportDrainedForPause) {
-                        openedPipeline.drainTransport()
-                        transportDrainedForPause = true
-                    }
-                    Thread.sleep(10)
-                    continue
-                }
-                transportDrainedForPause = false
-
-                pendingSeekMs.getAndSet(null)?.let { requested ->
-                    val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
-                        ?: requested.coerceAtLeast(0L)
-                    val actual = openedPipeline.seekTo(bounded)
+            openedPipeline.playUntil(
+                playbackActive = { playbackActive() },
+                isPaused = { paused },
+                takePendingSeekMs = { pendingSeekMs.getAndSet(null) },
+                segmentStartMs = segmentStartMs,
+                segmentEndMs = segmentEndMs,
+                onSeek = { bounded, actual ->
                     diagnostics.record("ENCODED_SEEK requestedMs=${bounded} actualMs=${actual} packetBoundary=true")
-                }
-
-                val submitted = openedPipeline.pump(maxPackets = 1)
-                if (segmentEndMs != null && openedPipeline.positionMs() >= segmentEndMs) break
-                if (openedPipeline.isEnded) break
-                if (submitted == 0) Thread.sleep(2)
-            }
-
+                },
+            )
             if (!stopped.get() && playbackGeneration.get() == generation) {
-                openedPipeline.drainTransport()
                 onState("Playback finished · AC-3 encoded USB")
             }
         } catch (error: Throwable) {
