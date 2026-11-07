@@ -10,13 +10,13 @@ const ROUTE_USB_SOURCE_PRESERVING: i32 = 2;
 const ROUTE_USB_FLOAT32: i32 = 3;
 
 pub(super) fn select_playback_route(
-    bit_perfect_requested: bool,
+    usb_direct_available: bool,
     is_ac3: bool,
     lossless_source: bool,
     source_bits: i32,
     channels: i32,
 ) -> i32 {
-    if !bit_perfect_requested {
+    if !usb_direct_available {
         return ROUTE_ANDROID_FLOAT32;
     }
     if is_ac3 {
@@ -35,14 +35,14 @@ pub(super) fn select_playback_route(
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectPlaybackRoute(
     _env: JNIEnv,
     _class: JClass,
-    bit_perfect_requested: jboolean,
+    usb_direct_available: jboolean,
     is_ac3: jboolean,
     lossless_source: jboolean,
     source_bits: jint,
     channels: jint,
 ) -> jint {
     select_playback_route(
-        bit_perfect_requested != 0,
+        usb_direct_available != 0,
         is_ac3 != 0,
         lossless_source != 0,
         source_bits,
