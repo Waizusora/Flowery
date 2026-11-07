@@ -90,7 +90,6 @@ fun FloweryNavigation(
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
-    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
     var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
@@ -130,7 +129,7 @@ fun FloweryNavigation(
                     append("routeStatus=\"${logField(status)}\" ")
                     append("usbDacConnected=$usbDacConnected usbPermissionGranted=$usbDacPermissionGranted ")
                     append("usbDacName=\"${logField(usbDacDeviceName)}\" ")
-                    append("bitPerfectRequested=$usbBitPerfectEnabled")
+                    append("bitPerfectStatus=automatic route detection")
                 }
                 if (sample != null && sample.size >= 36) {
                     usbDiagnosticLines.add(
@@ -283,7 +282,7 @@ fun FloweryNavigation(
                             appendLine("# Current track: ${currentTag?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
                             appendLine("# Current route status: $status")
                             appendLine("# USB DAC: connected=$usbDacConnected permissionGranted=$usbDacPermissionGranted name=$usbDacDeviceName")
-                            appendLine("# Bit-perfect requested: $usbBitPerfectEnabled")
+                            appendLine("# Bit-perfect policy: automatic DAC capability and playback-path detection")
                             appendLine()
                             appendLine("===== USB descriptor and DAC profile database snapshot =====")
                             appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
@@ -304,11 +303,6 @@ fun FloweryNavigation(
                     onConnectUsbDac = onConnectUsbDac,
                     onReleaseUsbDac = onReleaseUsbDac,
                     audioSourceLabel = audioSourceLabel,
-                    usbBitPerfectEnabled = usbBitPerfectEnabled,
-                    onUsbBitPerfectChanged = { enabled ->
-                        usbBitPerfectEnabled = enabled
-                        prefs.edit().putBoolean("usb_bit_perfect_enabled", enabled).apply()
-                    },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO, SettingsPage.USB_DIAGNOSTICS -> SettingsPage.AUDIO
