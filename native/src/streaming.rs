@@ -197,6 +197,41 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
+    /// Reads the original demuxed compressed packet without invoking the PCM decoder.
+    /// This is an exclusive source mode: callers must not interleave it with decode_packet().
+    pub(super) fn read_encoded_packet(&mut self) -> Result<Option<(Vec<u8>, u64, u64)>, String> {
+        loop {
+            let packet = match self.format.next_packet() {
+                Ok(packet) => packet,
+                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => return Ok(None),
+                Err(Error::ResetRequired) => continue,
+                Err(Error::IoError(error)) => return Err(format!("Compressed packet I/O failed: {error}")),
+                Err(error) => return Err(format!("Compressed packet read failed: {error}")),
+            };
+            if packet.track_id() != self.track_id { continue; }
+            if packet.data.is_empty() {
+                return Err("The demuxer returned an empty compressed packet".into());
+            }
+            let timestamp_us = self.time_base
+                .map(|base| {
+                    let time = base.calc_time(packet.ts());
+                    ((time.seconds as u128 * 1_000_000)
+                        + (time.frac as f64 * 1_000_000.0) as u128)
+                        .min(u64::MAX as u128) as u64
+                })
+                .unwrap_or(0);
+            let duration_us = self.time_base
+                .map(|base| {
+                    let time = base.calc_time(packet.dur());
+                    ((time.seconds as u128 * 1_000_000)
+                        + (time.frac as f64 * 1_000_000.0) as u128)
+                        .min(u64::MAX as u128) as u64
+                })
+                .unwrap_or(0);
+            return Ok(Some((packet.data.to_vec(), timestamp_us, duration_us)));
+        }
+    }
+
     fn decode_packet(&mut self) -> Result<bool,String> {
         loop {
             let packet = match self.format.next_packet() {
