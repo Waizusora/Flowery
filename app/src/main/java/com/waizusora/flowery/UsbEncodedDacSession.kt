@@ -63,7 +63,9 @@ internal class UsbEncodedDacSession private constructor(
             encodedFrameRate: Int,
             encodedFrameBytes: Int,
             sourceSampleRate: Int,
-            samplingFrequencyControl: Boolean
+            samplingFrequencyControl: Boolean,
+            feedbackEndpoint: Int,
+            feedbackMaxPacketBytes: Int
         ): UsbEncodedDacSession {
             require(interfaceNumber >= 0 && alternateSetting > 0)
             require(endpoint in 1..0x7f)
@@ -81,7 +83,9 @@ internal class UsbEncodedDacSession private constructor(
                 encodedFrameRate,
                 encodedFrameBytes,
                 sourceSampleRate,
-                samplingFrequencyControl
+                samplingFrequencyControl,
+                feedbackEndpoint,
+                feedbackMaxPacketBytes
             )
             check(handle != 0L) { "Unable to open encoded USB transport" }
             return UsbEncodedDacSession(connection, handle)

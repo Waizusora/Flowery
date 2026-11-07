@@ -33,12 +33,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbE
     match validate_uac1_encoded_descriptor(
         &raw, interface_number as u8, alternate_setting as u8,
         format_type as u8, format_tag as u16, sample_rate as u32) {
-        Ok((endpoint, max_packet, interval, maximum_bitrate, sampling_frequency_control)) => {
+        Ok((endpoint, max_packet, interval, maximum_bitrate, sampling_frequency_control, feedback_endpoint, feedback_max_packet)) => {
             let json = serde_json::json!({
                 "valid": true, "endpoint": endpoint,
                 "maxPacketBytes": max_packet, "interval": interval,
                 "maximumBitrate": maximum_bitrate,
                 "samplingFrequencyControl": sampling_frequency_control,
+                "feedbackEndpoint": feedback_endpoint,
+                "feedbackMaxPacketBytes": feedback_max_packet,
                 "formatType": format_type, "formatTag": format_tag
             });
             match env.new_string(json.to_string()) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
@@ -158,7 +160,7 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
 pub(super) fn validate_uac1_encoded_descriptor(
     raw: &[u8], interface_number: u8, alternate_setting: u8,
     expected_format_type: u8, expected_format_tag: u16, sample_rate: u32,
-) -> Result<(u8, u16, u8, u16, bool), &'static str> {
+) -> Result<(u8, u16, u8, u16, bool, u8, u16), &'static str> {
     if !matches!(expected_format_type, UAC1_FORMAT_TYPE_II | UAC1_FORMAT_TYPE_III) {
         return Err("Only UAC1 Type-II and Type-III encoded descriptors are accepted");
     }
@@ -166,7 +168,8 @@ pub(super) fn validate_uac1_encoded_descriptor(
     let mut selected = false;
     let mut format_tag = None;
     let mut format_type = None;
-    let mut endpoint: Option<(u8,u16,u8)> = None;
+    let mut endpoint: Option<(u8,u16,u8,u8)> = None;
+    let mut feedback_endpoint: Option<(u8,u16)> = None;
     let mut maximum_bitrate = 0u16;
     let mut sample_rate_supported = false;
     let mut sampling_frequency_control = false;
@@ -233,15 +236,20 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 let packet_bytes = (packet_raw & 0x07ff) * ((transactions + 1) as u16);
                 let interval = raw[offset + 6];
                 let synchronization_type = (attributes >> 2) & 0x03;
+                let usage_type = (attributes >> 4) & 0x03;
                 if transactions == 3 { return Err("Encoded endpoint uses a reserved high-bandwidth transaction count"); }
-                if synchronization_type == 1 {
-                    return Err("Asynchronous encoded endpoints are not enabled without a verified feedback scheduler");
+                if attributes & 0x03 == 0x01 && address & 0x80 != 0 &&
+                    address & 0x0f != 0 && usage_type == 0 && packet_bytes >= 3 &&
+                    (1..=16).contains(&interval) {
+                    if feedback_endpoint.replace((address, packet_bytes)).is_some() {
+                        return Err("Multiple explicit feedback endpoints are ambiguous for the encoded alternate setting");
+                    }
                 }
                 if address & 0x80 == 0 && address & 0x0f != 0 &&
-                    attributes & 0x03 == 0x01 && ((attributes >> 4) & 0x03) == 0 &&
-                    (synchronization_type == 2 || synchronization_type == 3) &&
+                    attributes & 0x03 == 0x01 && usage_type == 0 &&
+                    (synchronization_type == 1 || synchronization_type == 2 || synchronization_type == 3) &&
                     packet_bytes > 0 && (1..=16).contains(&interval) {
-                    endpoint = Some((address, packet_bytes, interval));
+                    endpoint = Some((address, packet_bytes, interval, synchronization_type));
                 }
             }
             _ => {}
@@ -257,8 +265,13 @@ pub(super) fn validate_uac1_encoded_descriptor(
     if !sample_rate_supported {
         return Err("The selected source sample rate is not advertised by this encoded UAC1 alternate setting");
     }
-    let (address, packet, interval) = endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")?;
-    Ok((address, packet, interval, maximum_bitrate, sampling_frequency_control))
+    let (address, packet, interval, synchronization_type) = endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")?;
+    let (feedback_address, feedback_packet) = if synchronization_type == 1 {
+        feedback_endpoint.ok_or("Asynchronous encoded OUT endpoint has no explicit feedback IN endpoint")?
+    } else {
+        (0, 0)
+    };
+    Ok((address, packet, interval, maximum_bitrate, sampling_frequency_control, feedback_address, feedback_packet))
 }
 
 #[cfg(test)]
@@ -298,7 +311,7 @@ mod tests {
         let descriptor = uac1_type_ii_descriptor();
         assert_eq!(
             validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, 48_000),
-            Ok((1, 192, 1, 640, true))
+            Ok((1, 192, 1, 640, true, 0, 0))
         );
         assert!(validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, 44_100).is_err());
         assert!(validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, 0x1001, 48_000).is_err());
@@ -309,11 +322,31 @@ mod tests {
         let descriptor = uac1_type_iii_ac3_descriptor();
         assert_eq!(
             validate_uac1_encoded_descriptor(&descriptor, 2, 1, UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_IEC61937_AC3, 48_000),
-            Ok((2, 192, 1, 0, true))
+            Ok((2, 192, 1, 0, true, 0, 0))
         );
         let mut invalid = descriptor;
         invalid[20] = 3; // Type-III channel count must be exactly two.
         assert!(validate_uac1_encoded_descriptor(&invalid, 2, 1, UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_IEC61937_AC3, 48_000).is_err());
+    }
+
+    #[test]
+    fn asynchronous_encoded_endpoint_requires_and_reports_explicit_feedback() {
+        let mut descriptor = uac1_type_iii_ac3_descriptor();
+        descriptor[27 + 3] = 0x05;
+        descriptor.splice(34..34, [7, 0x05, 0x82, 0x11, 4, 0, 1]);
+        assert_eq!(
+            validate_uac1_encoded_descriptor(
+                &descriptor, 2, 1, UAC1_FORMAT_TYPE_III,
+                UAC1_FORMAT_TAG_IEC61937_AC3, 48_000
+            ),
+            Ok((2, 192, 1, 0, true, 0x82, 4))
+        );
+        let mut missing_feedback = uac1_type_iii_ac3_descriptor();
+        missing_feedback[27 + 3] = 0x05;
+        assert!(validate_uac1_encoded_descriptor(
+            &missing_feedback, 2, 1, UAC1_FORMAT_TYPE_III,
+            UAC1_FORMAT_TAG_IEC61937_AC3, 48_000
+        ).is_err());
     }
 
     #[test]

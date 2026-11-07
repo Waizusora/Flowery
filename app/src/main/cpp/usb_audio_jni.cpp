@@ -80,6 +80,7 @@ struct UsbAudioSession {
     uint32_t encoded_frame_rate = 0;
     uint8_t encoded_frame_bytes = 0;
     uint64_t encoded_rate_phase = 0;
+    uint64_t encoded_feedback_phase = 0;
     int encoded_mode = 0; // 0=PCM, 1=UAC1 Type-II, 2=IEC 61937 Type-III
     std::chrono::steady_clock::time_point next_encoded_frame_due{};
     bool encoded_frame_deadline_valid = false;
@@ -777,7 +778,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
     jint framing_kind, jlong encoded_bytes_per_second,
     jint encoded_frame_rate, jint encoded_frame_bytes,
-    jint source_sample_rate, jboolean sampling_frequency_control) {
+    jint source_sample_rate, jboolean sampling_frequency_control,
+    jint feedback_endpoint, jint feedback_max_packet_bytes) {
     if ((framing_kind != 1 && framing_kind != 2) || encoded_bytes_per_second <= 0 ||
         (framing_kind == 2 && (encoded_frame_rate <= 0 || encoded_frame_bytes != 4)) ||
         (framing_kind == 1 && (encoded_frame_rate != 0 || encoded_frame_bytes != 0)) ||
@@ -790,8 +792,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     // The PCM writer is disabled for this session immediately after opening.
     const jlong handle = Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
         env, object, file_descriptor, interface_number, alternate_setting,
-        endpoint, max_packet_bytes, interval, 0, 0, 1, 1, 1, 0,
-        interface_number, 0, JNI_FALSE);
+        endpoint, max_packet_bytes, interval, feedback_endpoint, feedback_max_packet_bytes,
+        1, 1, 1, 0, interface_number, 0, JNI_FALSE);
     if (handle == 0 || env->ExceptionCheck()) return 0;
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (sampling_frequency_control == JNI_TRUE) {
@@ -956,9 +958,25 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame exceeds the bounded isochronous URB packet count");
             return -1;
         }
+        uint64_t effective_duration_us = static_cast<uint64_t>(duration_us);
+        if (session->feedback_endpoint != 0) {
+            const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            const int64_t feedback_ns = session->feedback_last_update_ns.load(std::memory_order_acquire);
+            const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
+            if (!session->feedback_valid.load(std::memory_order_acquire) || feedback == 0 ||
+                feedback_ns <= 0 || now_ns - feedback_ns > 100000000LL) {
+                jclass exception = env->FindClass("java/lang/IllegalStateException");
+                if (exception != nullptr) env->ThrowNew(exception, "Asynchronous encoded endpoint feedback is stale or unavailable");
+                return -1;
+            }
+            const uint64_t numerator = 1536ULL * session->feedback_base_interval_us *
+                (1ULL << session->feedback_fraction_bits);
+            effective_duration_us = (numerator + feedback - 1ULL) / feedback;
+        }
         const uint64_t frame_service_time_us =
             static_cast<uint64_t>(packet_count) * session->interval_us;
-        if (frame_service_time_us > static_cast<uint64_t>(duration_us)) {
+        if (effective_duration_us == 0 || frame_service_time_us > effective_duration_us) {
             jclass exception = env->FindClass("java/lang/IllegalArgumentException");
             if (exception != nullptr) env->ThrowNew(
                 exception, "UAC1 Type-II frame cannot be transmitted within its encoded frame duration");
@@ -999,7 +1017,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         }
         session->pending_encoded.clear();
         session->encoded_offset = 0;
-        session->next_encoded_frame_due = frame_start + std::chrono::microseconds(duration_us);
+        session->next_encoded_frame_due = frame_start + std::chrono::microseconds(effective_duration_us);
         session->encoded_frame_deadline_valid = true;
         return byte_count;
     }
@@ -1032,12 +1050,31 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         packet_bytes.clear();
         const size_t available = session->pending_encoded.size() - session->encoded_offset;
         while (packet_bytes.size() < kPacketsPerUrb) {
-            const uint64_t scaled = static_cast<uint64_t>(session->encoded_frame_rate) *
-                                   session->interval_us + phase;
-            const uint64_t frames = scaled / 1000000ULL;
+            uint64_t frames = 0;
+            uint64_t next_phase = phase;
+            if (session->feedback_endpoint != 0) {
+                const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count();
+                const int64_t feedback_ns = session->feedback_last_update_ns.load(std::memory_order_acquire);
+                const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
+                if (!session->feedback_valid.load(std::memory_order_acquire) || feedback == 0 ||
+                    feedback_ns <= 0 || now_ns - feedback_ns > 100000000LL) {
+                    record_failure(&failure, "encoded_feedback_timeout", LIBUSB_ERROR_TIMEOUT);
+                    break;
+                }
+                const uint64_t scaled = feedback * session->interval_us /
+                    session->feedback_base_interval_us + session->encoded_feedback_phase;
+                frames = scaled >> session->feedback_fraction_bits;
+                session->encoded_feedback_phase =
+                    scaled & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+            } else {
+                const uint64_t scaled = static_cast<uint64_t>(session->encoded_frame_rate) *
+                                       session->interval_us + phase;
+                frames = scaled / 1000000ULL;
+                next_phase = scaled % 1000000ULL;
+            }
             const unsigned int expected = static_cast<unsigned int>(
                 frames * session->encoded_frame_bytes);
-            const uint64_t next_phase = scaled % 1000000ULL;
             if (expected == 0 || expected > session->max_packet_bytes ||
                 total + expected > available) break;
             packet_bytes.push_back(expected);
@@ -1147,6 +1184,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     session->pending_encoded.clear();
     session->encoded_offset = 0;
     session->encoded_rate_phase = 0;
+    session->encoded_feedback_phase = 0;
     session->encoded_frame_deadline_valid = false;
     session->frame_phase = 0;
     session->feedback_phase = 0;
