@@ -1279,6 +1279,7 @@ mod tests {
     #[test]
     fn aaudio_seek_target_is_clamped_to_the_active_segment() {
         let bounded = crate::playback_session::AAudioSeekRequest {
+            max_frames: 8192,
             position_ms: 900,
             segment_start_ms: 1_000,
             segment_end_ms: 4_000,
