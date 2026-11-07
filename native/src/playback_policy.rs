@@ -6,7 +6,7 @@ const MIN_OUTPUT_RING_CAPACITY_FRAMES: u64 = 32_768;
 
 const ROUTE_ANDROID_FLOAT32: i32 = 0;
 const ROUTE_USB_ENCODED_AC3: i32 = 1;
-const ROUTE_USB_NATIVE_INTEGER: i32 = 2;
+const ROUTE_USB_SOURCE_PRESERVING: i32 = 2;
 const ROUTE_USB_FLOAT32: i32 = 3;
 
 fn select_playback_route(
@@ -26,7 +26,7 @@ fn select_playback_route(
         && matches!(source_bits, 8 | 16 | 20 | 24 | 32)
         && (1..=8).contains(&channels)
     {
-        return ROUTE_USB_NATIVE_INTEGER;
+        return ROUTE_USB_SOURCE_PRESERVING;
     }
     ROUTE_USB_FLOAT32
 }

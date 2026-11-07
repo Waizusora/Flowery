@@ -107,6 +107,8 @@ Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-fi
 
 ## Audio pipeline
 
+Rust selects the playback route from the source codec/sample representation and the direct-USB setting: Android Float32 output, encoded AC-3 USB, a source-preserving USB sample candidate (integer PCM or IEEE Float32), or decoded Float32 USB. Kotlin executes the selected Android/USB operations, Rust remains the owner of route eligibility and audio processing, and C++ remains the libusb transport.
+
 The streaming playback path is:
 
 `SAF document URI → ParcelFileDescriptor → Rust/Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring buffer → Rust AAudio callback → Android audio route`

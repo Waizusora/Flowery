@@ -167,7 +167,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     2 -> {
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=true")
-                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_SOURCE_PRESERVING_CANDIDATE sourceBits=${sourceBits}")
                         usbPlaybackMode = true
                         playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
                         return@thread

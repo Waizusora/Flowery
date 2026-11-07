@@ -48,7 +48,7 @@ The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_j
 
 ## Playback route policy
 
-The route eligibility decision is implemented in Rust through `nativeSelectPlaybackRoute` in `native/src/playback_policy.rs`. It selects Android Float32 output when direct USB mode is not requested, the UAC1 encoded AC-3 path for eligible AC-3 input when direct USB is requested, the native integer candidate for supported lossless integer sources, and the decoded Float32 USB path for other direct-USB sources. Kotlin performs the Android-specific work for the selected route, including opening SAF descriptors, discovering Android output devices, requesting USB permission and coordinating the transport. The Rust decision is covered by native unit tests and its JNI declaration is checked by the CI bridge-contract script.
+The route eligibility decision is implemented in Rust through `nativeSelectPlaybackRoute` in `native/src/playback_policy.rs`. It selects Android Float32 output when direct USB mode is not requested, the UAC1 encoded AC-3 path for eligible AC-3 input when direct USB is requested, the source-preserving sample candidate for supported lossless integer sources, and the decoded Float32 USB path for other direct-USB sources. Kotlin performs the Android-specific work for the selected route, including opening SAF descriptors, discovering Android output devices, requesting USB permission and coordinating the transport. The Rust decision is covered by native unit tests and its JNI declaration is checked by the CI bridge-contract script.
 
 ## Playback data paths
 
