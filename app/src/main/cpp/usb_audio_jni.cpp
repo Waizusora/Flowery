@@ -283,7 +283,7 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
 // Cancels all queued transfers and waits (bounded) for them to be reaped. A
 // transfer that cannot be reaped within the bound is intentionally leaked rather
 // than freed, because the kernel may still reference its buffer.
-void abort_in_flight(UsbAudioSession* session) {
+bool abort_in_flight(UsbAudioSession* session) {
     for (auto& entry : session->in_flight) {
         if (!entry->completed.load(std::memory_order_acquire)) {
             libusb_cancel_transfer(entry->transfer);
@@ -299,17 +299,16 @@ void abort_in_flight(UsbAudioSession* session) {
         session->event_condition.wait_for(lock, std::chrono::milliseconds(20));
     }
     reap_completed(session, &ignored);
-    for (auto& entry : session->in_flight) {
-        (void)entry.release();
-    }
-    session->in_flight.clear();
+    // Keep the session and transfer owners alive if libusb has not delivered all
+    // cancellation callbacks. A late callback still references its owner session.
+    return session->in_flight.empty();
 }
 
-void close_session(UsbAudioSession* session) {
-    if (session == nullptr) return;
+bool close_session(UsbAudioSession* session) {
+    if (session == nullptr) return true;
     if (session->handle != nullptr) {
-        abort_in_flight(session);
-        if (!stop_event_thread(session)) return;
+        if (!abort_in_flight(session)) return false;
+        if (!stop_event_thread(session)) return false;
         if (session->claimed) {
             // Restore the zero-bandwidth alternate setting before releasing the streaming interface.
             libusb_set_interface_alt_setting(session->handle, session->interface_number, 0);
@@ -319,9 +318,14 @@ void close_session(UsbAudioSession* session) {
             libusb_release_interface(session->handle, session->control_interface);
         }
         libusb_close(session->handle);
+        session->handle = nullptr;
     }
-    if (session->context != nullptr) libusb_exit(session->context);
+    if (session->context != nullptr) {
+        libusb_exit(session->context);
+        session->context = nullptr;
+    }
     delete session;
+    return true;
 }
 
 jlong throw_usb_error(JNIEnv* env, const char* operation, int code) {
@@ -1174,12 +1178,12 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
 
 // Discards staged PCM and cancels queued URBs. Called on seek so that audio
 // from the previous position is not played after the new position is selected.
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     JNIEnv*, jobject, jlong handle) {
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
-    if (session == nullptr) return;
-    abort_in_flight(session);
+    if (session == nullptr) return -1;
+    if (!abort_in_flight(session)) return -1;
     session->pending_pcm.clear();
     session->pending_offset = 0;
     session->pending_encoded.clear();
@@ -1189,10 +1193,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     session->encoded_frame_deadline_valid = false;
     session->frame_phase = 0;
     session->feedback_phase = 0;
+    return 0;
 }
 
-extern "C" JNIEXPORT void JNICALL
+extern "C" JNIEXPORT jboolean JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeClose(
     JNIEnv*, jobject, jlong handle) {
-    close_session(reinterpret_cast<UsbAudioSession*>(handle));
+    return close_session(reinterpret_cast<UsbAudioSession*>(handle)) ? JNI_TRUE : JNI_FALSE;
 }
