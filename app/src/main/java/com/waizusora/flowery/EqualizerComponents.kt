@@ -67,7 +67,7 @@ internal fun VerticalEqualizerSlider(
             style = Stroke(width = 2.5.dp.toPx())
         )
         drawLine(
-            color = Color.White,
+            color = palette.primary,
             start = Offset(centerX - 5.dp.toPx(), thumbY),
             end = Offset(centerX + 5.dp.toPx(), thumbY),
             strokeWidth = 2.dp.toPx(),
