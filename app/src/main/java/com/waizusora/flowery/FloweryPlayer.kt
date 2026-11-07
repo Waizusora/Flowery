@@ -700,8 +700,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     activeEpoch = requestedEpoch
                     continue
                 }
-                val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs) / 1_000_000.0
-                if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS) {
+                val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs).toDouble() / 1_000_000.0
+                if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS.toDouble()) {
                     starvationEvents++
                     diagnostics.record(
                         "USB_PRODUCER_STARVED waitMs=${"%.2f".format(java.util.Locale.US, queueWaitMs)} " +
