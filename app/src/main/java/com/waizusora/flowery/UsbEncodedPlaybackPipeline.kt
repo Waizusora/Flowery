@@ -164,6 +164,13 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     decoderHandle, framingKind
                 )
                 check(encodedBytesPerSecond > 0L) { "Unable to derive a safe encoded transport rate" }
+                if (framingKind == FRAMING_UAC1_TYPE_II) {
+                    val maximumBitrateKbps = validation.optInt("maximumBitrate")
+                    val sourceBitrateKbps = (encodedBytesPerSecond * 8L + 999L) / 1000L
+                    check(maximumBitrateKbps > 0 && sourceBitrateKbps <= maximumBitrateKbps) {
+                        "AC-3 source bitrate exceeds the selected UAC1 Type-II descriptor limit"
+                    }
+                }
                 session = UsbEncodedDacSession.open(
                     connection,
                     interfaceNumber,
