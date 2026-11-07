@@ -375,23 +375,27 @@ pub(crate) fn pause_output_for_session() -> Option<i32> {
     let e=engine().lock().unwrap_or_else(|p|p.into_inner());
     if e.stream.is_null() { return None; }
     Some(unsafe {
-        let mut s=AAudioStream_getState(e.stream);
-        if s==STATE_OPEN || s==STATE_PAUSED { OK }
-        else {
-            if s==STATE_STARTING {
-                let result=wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);
-                if result!=OK { return result; }
-                s=STATE_STARTED;
-            }
-            if s==STATE_STARTED {
-                let result=AAudioStream_requestPause(e.stream);
-                if result!=OK { result } else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
-            } else if s==STATE_PAUSING {
-                wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED)
+        let state=AAudioStream_getState(e.stream);
+        if state==STATE_OPEN || state==STATE_PAUSED { OK }
+        else if state==STATE_STARTED {
+            let result=AAudioStream_requestPause(e.stream);
+            if result!=OK { result } else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
+        } else if state==STATE_PAUSING {
+            wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED)
+        } else if state==STATE_STARTING {
+            let mut next=state;
+            let result=AAudioStream_waitForStateChange(e.stream,state,&mut next,1_000_000_000);
+            if result!=OK { result }
+            else if next==STATE_PAUSED { OK }
+            else if next==STATE_STARTED {
+                let pause_result=AAudioStream_requestPause(e.stream);
+                if pause_result!=OK { pause_result }
+                else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
             } else { INVALID_STATE }
-        }
+        } else { INVALID_STATE }
     })
 }
+
 pub(crate) fn resume_output_for_session() -> Option<i32> {
     let e=engine().lock().unwrap_or_else(|p|p.into_inner());
     if e.stream.is_null() { return None; }
