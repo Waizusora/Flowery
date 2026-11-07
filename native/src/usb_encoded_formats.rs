@@ -68,15 +68,37 @@ pub(super) fn validate_uac1_type_ii(
     Ok(())
 }
 
+/// Returns the AC-3 frame size from fscod/frmsizecod. Unsupported
+/// reserved header values are rejected instead of being passed to the DAC.
+pub(super) fn ac3_frame_size(frame: &[u8]) -> Result<usize, &'static str> {
+    if frame.len() < 7 || frame[0] != 0x0b || frame[1] != 0x77 {
+        return Err("AC-3 sync word or minimum header is invalid");
+    }
+    let fscod = frame[4] >> 6;
+    let frame_size_code = frame[4] & 0x3f;
+    if fscod == 3 || frame_size_code > 37 {
+        return Err("AC-3 frame header contains a reserved sample-rate or frame-size code");
+    }
+    const WORDS_48K: [usize; 19] = [64,80,96,112,128,160,192,224,256,320,384,448,512,640,768,896,1024,1152,1280];
+    const WORDS_44K: [usize; 19] = [69,87,104,121,139,174,208,243,278,348,417,487,557,696,835,975,1114,1253,1393];
+    const WORDS_32K: [usize; 19] = [96,120,144,168,192,240,288,336,384,480,576,672,768,960,1152,1344,1536,1728,1920];
+    let index = (frame_size_code / 2) as usize;
+    let words = match fscod {
+        0 => WORDS_48K[index],
+        1 => WORDS_44K[index] + (frame_size_code as usize & 1),
+        2 => WORDS_32K[index],
+        _ => unreachable!(),
+    };
+    Ok(words * 2)
+}
+
 /// Wraps one complete AC-3 sync frame in an IEC 61937 Type-III burst.
 /// The carrier is 16-bit stereo (4 bytes per sample period), 1536 periods
 /// per AC-3 burst. Payload length in Pd is expressed in bits.
 pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static str> {
-    if frame.len() < 7 || frame.len() > (IEC61937_AC3_BURST_BYTES - 8) {
-        return Err("AC-3 frame length is outside the IEC 61937 burst envelope");
-    }
-    if frame[0] != 0x0b || frame[1] != 0x77 {
-        return Err("AC-3 frame sync word is missing");
+    let expected_frame_bytes = ac3_frame_size(frame)?;
+    if frame.len() != expected_frame_bytes || frame.len() > (IEC61937_AC3_BURST_BYTES - 8) {
+        return Err("Demuxed AC-3 packet is not exactly one complete frame or exceeds the IEC 61937 burst envelope");
     }
     let payload_bits = frame.len().checked_mul(8)
         .filter(|bits| *bits <= u16::MAX as usize)
