@@ -23,6 +23,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     private var ended = false
     private var closed = false
     private var expectedSequence = 0L
+    @Volatile private var lastPositionMs = 0L
+
+    val isEnded: Boolean get() = ended
+    fun positionMs(): Long = lastPositionMs
 
     /**
      * Pumps source frames into the bounded Rust queue and submits available
@@ -50,7 +54,8 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             val kind = header.get().toInt() and 0xff
             val code = header.short.toInt() and 0xffff
             val sequence = header.long
-            header.long // presentation timestamp in microseconds
+            val presentationTimeUs = header.long // presentation timestamp in microseconds
+            if (presentationTimeUs > 0L) lastPositionMs = presentationTimeUs / 1000L
             val durationUs = header.long // packet/burst duration in microseconds
             check(kind == framingKind && code == formatCode) {
                 "Encoded packet framing does not match the opened USB profile"
@@ -76,7 +81,15 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         val actual = NativeAudio.nativeSeekUsbEncodedProducer(producerHandle, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
         ended = false
+        lastPositionMs = actual
         return actual
+    }
+
+    /** Waits for currently submitted encoded data without advancing the source decoder. */
+    @Synchronized
+    fun drainTransport() {
+        check(!closed) { "Encoded playback pipeline is closed" }
+        session.drain()
     }
 
     /** Pumps remaining source packets, then waits for the encoded endpoint to drain. */
@@ -87,7 +100,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             val submitted = pump()
             if (submitted == 0 && !ended) Thread.yield()
         }
-        session.drain()
+        drainTransport()
     }
 
     @Synchronized
