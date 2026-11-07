@@ -184,3 +184,8 @@ Kotlin continues to own Android document descriptors, USB permission and device 
 ## Automatic Bit-perfect status
 
 There is no manual Bit-perfect toggle. When a USB Audio Class device is connected and Flowery has Android USB permission, playback route selection automatically evaluates the source and negotiates a compatible DAC profile. The UI reports Bit-perfect as active only after the native USB PCM producer confirms source-preserving output. A decoded or converted USB PCM route is reported as not Bit-perfect; when direct USB permission is unavailable, playback uses the Android-managed route. The Connect DAC action remains the explicit Android permission step, while the Bit-perfect decision itself is automatic. Descriptor compatibility and producer confirmation are runtime indicators, not a substitute for external digital capture when validating the physical signal path.
+
+
+## AAudio decode-worker error propagation
+
+The Rust-owned AAudio stream-pump retains a diagnostic message when channel validation, incremental Symphonia decoding, or bounded ring-buffer submission fails. JNI exposes both the worker status and its error detail. The Kotlin AAudio playback loop checks the stream-pump status independently of the output-scheduler status and terminates the playback session with the decoder error instead of waiting indefinitely for PCM that will never arrive. End-of-stream and session-cancellation states remain distinct from worker failure.
