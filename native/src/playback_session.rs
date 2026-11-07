@@ -188,6 +188,14 @@ mod tests {
     }
 
     #[test]
+    fn epoch_overflow_is_rejected_without_wrapping() {
+        let epoch = AtomicU64::new(u64::MAX);
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(advance_epoch(&epoch, &cancelled), None);
+        assert_eq!(epoch.load(Ordering::Acquire), u64::MAX);
+    }
+
+    #[test]
     fn all_supported_output_routes_share_the_same_session_contract() {
         for route in 0..=3 { assert!(valid_route(route)); }
         assert!(!valid_route(-1));
