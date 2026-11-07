@@ -31,6 +31,13 @@ object NativeAudio {
     external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
+    external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
+    external fun nativePlaybackSessionBeginSeek(session: Long): Long
+    external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
+    external fun nativePlaybackSessionEpoch(session: Long): Long
+    external fun nativePlaybackSessionIsCancelled(session: Long): Boolean
+    external fun nativeCancelPlaybackSession(session: Long)
+    external fun nativeClosePlaybackSession(session: Long)
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeIsAc3Source(handle: Long): Boolean
     external fun nativeIsIeeeFloat32Source(handle: Long): Boolean
