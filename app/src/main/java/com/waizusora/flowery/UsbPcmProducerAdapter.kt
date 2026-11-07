@@ -29,6 +29,7 @@ internal class UsbPcmProducerAdapter(
         fun active() = !stop.get() && playbackActive()
         try {
             var appliedEqualizerRevision = equalizerRevision()
+            var appliedGain = Float.NaN
             while (active()) {
                 pendingSeekMs.getAndSet(null)?.let { requested ->
                     NativeAudio.nativeRequestUsbPcmProducerSeek(producerHandle, requested.coerceAtLeast(0L))
@@ -40,16 +41,16 @@ internal class UsbPcmProducerAdapter(
                     }
                     appliedEqualizerRevision = equalizerRevision()
                 }
-                when (NativeAudio.nativePumpUsbPcmProducer(producerHandle, currentGain())) {
-                    1 -> Unit
-                    0 -> Thread.sleep(2)
-                    -1 -> {
-                        endReached.set(true)
-                        Thread.sleep(20)
+                val gain = currentGain().coerceIn(0f, 1f)
+                if (gain != appliedGain) {
+                    check(NativeAudio.nativeSetUsbPcmProducerGain(producerHandle, gain) == 0) {
+                        "Unable to update the Rust USB PCM producer gain"
                     }
-                    -3 -> break
-                    else -> throw IllegalStateException("The Rust direct USB producer failed.")
+                    appliedGain = gain
                 }
+                val workerError = NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle)
+                check(workerError.isBlank()) { "Rust USB PCM producer worker failed: $workerError" }
+                Thread.sleep(5)
             }
         } catch (error: InterruptedException) {
             Thread.currentThread().interrupt()
