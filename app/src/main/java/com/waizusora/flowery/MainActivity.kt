@@ -383,6 +383,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         unregisterReceiver(usbPermissionReceiver)
+        io.shutdownNow()
         super.onDestroy()
     }
 
@@ -829,10 +830,7 @@ class MainActivity : ComponentActivity() {
             .apply()
     }
 
-    override fun onDestroy() {
-        io.shutdownNow()
-        super.onDestroy()
-    }
+
 }
 
 data class AudioTag(
