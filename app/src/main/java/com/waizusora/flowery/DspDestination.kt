@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import java.util.Locale
 
 @Composable
@@ -24,7 +25,7 @@ internal fun DspDestination(
     Heading("DSP", foreground)
     Text("Output volume", color = foreground, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
     Slider(value = volume, onValueChange = onVolume)
-    Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.align(Alignment.End))
+    Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
     Text(
         "USB DAC: software gain is saved separately for each DAC and remains available without a physical volume control. Speaker, AUX and Bluetooth follow Android media volume.",
         color = muted,
