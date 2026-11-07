@@ -437,7 +437,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val devices = controller.audioDevices()
             onState("USB exclusive: finding a matching UAC1 AC-3 encoded profile…")
             val (device, openedPipeline) =
-                controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sourceRate)
+                controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sessionHandle, sourceRate)
             pipeline = openedPipeline
             activeUsbEncodedPipeline = openedPipeline
             activeUsbSession = null
