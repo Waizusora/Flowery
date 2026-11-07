@@ -20,6 +20,7 @@ struct ProducerState {
     at_end: bool,
     pending_seek_ms: Option<u64>,
     pending_block: Option<PcmBlock>,
+    bit_perfect_active: bool,
 }
 
 // The decoder and queue pointers are borrowed from handles owned by FloweryPlayer.
@@ -92,6 +93,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
             at_end: false,
             pending_seek_ms: None,
             pending_block: None,
+            bit_perfect_active: false,
         }),
     };
     Box::into_raw(Box::new(producer)) as jlong
@@ -138,6 +140,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
                 state.epoch = state.epoch.wrapping_add(1);
                 state.at_end = false;
                 state.pending_block = None;
+                state.bit_perfect_active = false;
                 state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.format.sample_rate as u64);
                 state.segment_remaining_frames = state.segment_end_ms
                     .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.format.sample_rate as u64));
@@ -184,6 +187,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
             return -2;
         }
     };
+    state.bit_perfect_active = decoder.native_pcm_active();
     if pcm.is_empty() {
         let block = end_block(state.epoch, state.position_frames);
         if state.queue.offer(block.clone(), Duration::ZERO) {
@@ -230,6 +234,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         state.pending_block = Some(block);
         0
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsUsbPcmProducerBitPerfect(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jni::sys::jboolean {
+    if handle == 0 { return jni::sys::JNI_FALSE; }
+    let producer = unsafe { &*(handle as *const UsbPcmProducer) };
+    let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.bit_perfect_active { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
 }
 
 #[no_mangle]
