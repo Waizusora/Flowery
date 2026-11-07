@@ -10,8 +10,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
@@ -765,6 +763,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
         if (interrupted) Thread.currentThread().interrupt()
     }
+
+    /** Software gain for decoded USB output; unity is required for source-preserving output. */
+    private fun currentUsbGain(): Float =
+        if (usbBitPerfectActive) 1f
+        else (softwareVolume * if (outputDucked) DUCK_GAIN else 1f).coerceIn(0f, 1f)
 
     /** Returns the latest cached volume; USB control transfers run on the playback worker. */
     fun currentVolumeFraction(): Float =
