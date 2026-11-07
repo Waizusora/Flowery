@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def declarations(path: Path) -> set[str]:
     source = path.read_text(encoding="utf-8")
-    return set(re.findall(r"external\\s+fun\\s+(native[A-Za-z0-9_]+)\\s*\\(", source))
+    return set(re.findall(r"external\s+fun\s+(native[A-Za-z0-9_]+)\s*\(", source))
 
 
 def exports(paths: list[Path], pattern: str) -> set[str]:
