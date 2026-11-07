@@ -152,7 +152,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         "segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}"
                 )
                 if (bitPerfectRequested) {
-                    recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_SYMPHONIA_PCM extension=${extension}")
+                    diagnostics.record("ROUTE_SELECTED route=LIBUSB_SYMPHONIA_PCM extension=${extension}")
                     onState("USB exclusive: decoding ${extension} through Symphonia into the shared PCM path…")
                 }
 
@@ -167,7 +167,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(sourceRate > 0 && channels in 1..8) { "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels." }
 
                 if (bitPerfectRequested && NativeAudio.nativeIsAc3Source(handle)) {
-                    recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
+                    diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
                     usbPlaybackMode = true
                     playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs)
                     return@thread
@@ -178,13 +178,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
                     val losslessSource = (sourceInfo ushr 32) != 0L
                     val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 20, 24, 32) && channels in 1..8
-                    recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
+                    diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
                     usbPlaybackMode = true
                     if (eligibleSource) {
-                        recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
                         playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
                     } else {
-                        recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
                         playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs)
                     }
                     return@thread
@@ -391,7 +391,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             } catch (error: Throwable) {
                 val usbEnabled = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
-                if (usbEnabled) recordUsbDiagnostic("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
+                if (usbEnabled) diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 if (handle != 0L) {
@@ -458,7 +458,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
                         ?: requested.coerceAtLeast(0L)
                     val actual = openedPipeline.seekTo(bounded)
-                    recordUsbDiagnostic("ENCODED_SEEK requestedMs=${bounded} actualMs=${actual} packetBoundary=true")
+                    diagnostics.record("ENCODED_SEEK requestedMs=${bounded} actualMs=${actual} packetBoundary=true")
                 }
 
                 val submitted = openedPipeline.pump(maxPackets = 1)
@@ -472,7 +472,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Playback finished · AC-3 encoded USB")
             }
         } catch (error: Throwable) {
-            recordUsbDiagnostic("ENCODED_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
+            diagnostics.record("ENCODED_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
             throw error
         } finally {
             activeUsbEncodedPipeline = null
@@ -514,20 +514,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val producerStop = AtomicBoolean(false)
         val producerFailure = AtomicReference<Throwable?>(null)
         try {
-            recordUsbDiagnostic("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
+            diagnostics.record("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
             check(channels in 1..8) { "Direct USB decoded playback supports one through eight channels." }
-            recordUsbDiagnostic("SOURCE_VALIDATED format=symphonia_decoded_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
+            diagnostics.record("SOURCE_VALIDATED format=symphonia_decoded_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
             val controller = UsbDacController(context)
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
-            recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
+            diagnostics.record("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
             val ieeeFloatSource = NativeAudio.nativeIsIeeeFloat32Source(handle)
             var ieeeFloatCandidate = ieeeFloatSource && bandGainsDb.all { it == 0f }
             var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32 && bandGainsDb.all { it == 0f }
             var outputEncoding = "signed_integer"
             onState(if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…" else if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
-            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
+            diagnostics.record("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
             val selected = if (ieeeFloatCandidate) {
                 try {
                     controller.openFirstCompatiblePlaybackSession(
@@ -536,7 +536,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ).also { outputEncoding = "ieee_float32" }
                 } catch (floatError: Throwable) {
                     ieeeFloatCandidate = false
-                    recordUsbDiagnostic("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${floatError.message ?: floatError.javaClass.simpleName} fallback=signed_integer_pcm")
+                    diagnostics.record("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${floatError.message ?: floatError.javaClass.simpleName} fallback=signed_integer_pcm")
                     controller.openFirstCompatiblePlaybackSession(
                         discovered, 0, sourceRate, allowSampleRateConversion = true,
                         requiredSubslotBytes = null, channels = channels
@@ -550,7 +550,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     )
                 } catch (nativeError: Throwable) {
                     nativeCandidate = false
-                    recordUsbDiagnostic("NATIVE_PROFILE_UNAVAILABLE reason=${nativeError.message ?: nativeError.javaClass.simpleName} fallback=float32")
+                    diagnostics.record("NATIVE_PROFILE_UNAVAILABLE reason=${nativeError.message ?: nativeError.javaClass.simpleName} fallback=float32")
                     controller.openFirstCompatiblePlaybackSession(
                         discovered, 0, sourceRate, allowSampleRateConversion = true,
                         requiredSubslotBytes = null, channels = channels
@@ -565,8 +565,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val (selectedDevice, usbSession) = selected
             val device = selectedDevice.usbDevice
             session = usbSession
-            recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
-            recordUsbDiagnostic("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
+            diagnostics.record("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
+            diagnostics.record("SESSION_OPEN_OK interface=${usbSession.profile.interfaceNumber} alternate=${usbSession.profile.alternateSetting} endpoint=${usbSession.profile.endpointHex} channels=${usbSession.profile.channels} bitResolution=${usbSession.profile.bitResolution} subslotBytes=${usbSession.profile.subslotBytes} maxPacketBytes=${usbSession.profile.maxPacketBytes} interval=${usbSession.profile.interval} synchronization=${usbSession.profile.synchronization} sampleRate=${usbSession.sampleRate}")
             check(usbSession.profile.channels == channels && usbSession.sampleRate > 0) {
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
@@ -583,7 +583,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState(if (nativeCandidate) "USB exclusive: preparing native integer PCM…" else "USB exclusive: preparing float32 PCM decoding…")
             val initialGains = if (nativeCandidate || ieeeFloatCandidate) FloatArray(31) { 0f } else bandGainsDb.copyOf()
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, initialGains)
-            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=${initialGains.any { it != 0f }} gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
+            diagnostics.record("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=${initialGains.any { it != 0f }} gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
             check(decoderConfigResult == 0) {
                 "Unable to configure the streaming decoder and DSP for direct USB output."
             }
@@ -591,7 +591,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=${if (outputEncoding == "ieee_float32") "IEEE_FLOAT32_LE" else "PCM_INTEGER_S${outputBits}_LE"} decoderPath=automatic nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate} sourceSamplePreservation=conditional")
+            diagnostics.record("DECODER_CONFIGURED outputFormat=${if (outputEncoding == "ieee_float32") "IEEE_FLOAT32_LE" else "PCM_INTEGER_S${outputBits}_LE"} decoderPath=automatic nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate} sourceSamplePreservation=conditional")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
             usbOutputBitDepth = usbSession.profile.bitResolution
@@ -615,8 +615,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbBitPerfectActive = false
                 usbSoftwareGainEnabled = true
             }
-            recordUsbDiagnostic("USB_VOLUME_PROFILE profile=${if (hardwareVolume != null) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${hardwareVolume != null}")
-            recordUsbDiagnostic("USB_PCM_GAIN gainBypass=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} nativeBitPerfect=awaiting_producer queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} blockFrames=${USB_DECODE_CHUNK_FRAMES}")
+            diagnostics.record("USB_VOLUME_PROFILE profile=${if (hardwareVolume != null) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${hardwareVolume != null}")
+            diagnostics.record("USB_PCM_GAIN gainBypass=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} nativeBitPerfect=awaiting_producer queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} blockFrames=${USB_DECODE_CHUNK_FRAMES}")
 
             // The writer (this thread) must never wait on decoding. Rust produces packed PCM blocks
             // into its bounded queue; this Kotlin thread only drains blocks into the libusb
@@ -648,7 +648,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 NativeAudio.nativeUsbPcmQueueSize(queueHandle) < USB_PREBUFFER_BLOCKS) {
                 Thread.sleep(5)
             }
-            recordUsbDiagnostic(
+            diagnostics.record(
                 "USB_PREBUFFER_READY queuedBlocks=${NativeAudio.nativeUsbPcmQueueSize(queueHandle)} endReached=${endReached.get()} " +
                     "waitMs=${"%.2f".format(java.util.Locale.US,
                         (android.os.SystemClock.elapsedRealtimeNanos() - prebufferStartedNs) / 1_000_000.0)}"
@@ -667,13 +667,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs) / 1_000_000.0
                 if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS) {
                     starvationEvents++
-                    recordUsbDiagnostic(
+                    diagnostics.record(
                         "USB_PRODUCER_STARVED waitMs=${"%.2f".format(java.util.Locale.US, queueWaitMs)} " +
                             "events=${starvationEvents}"
                     )
                 }
                 if (block.endOfStream) {
-                    recordUsbDiagnostic("DECODER_EOF chunks=${chunkCount} totalFramesSent=${totalFramesSent}")
+                    diagnostics.record("DECODER_EOF chunks=${chunkCount} totalFramesSent=${totalFramesSent}")
                     break
                 }
                 if (block.epoch != activeEpoch) {
@@ -695,7 +695,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 } else {
                     Double.POSITIVE_INFINITY
                 }
-                recordUsbDiagnostic(
+                diagnostics.record(
                     "USB_WRITE chunk=${chunkCount + 1} requestedFrames=${frames} " +
                         "acceptedFrames=${acceptedFrames} pcmBytes=${block.pcm.size} " +
                         "audioMs=${"%.2f".format(java.util.Locale.US, audioDurationMs)} " +
@@ -715,7 +715,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 chunkCount++
                 totalFramesSent += acceptedFrames
-                if (chunkCount % 32L == 0L) recordUsbDiagnostic("USB_TRANSFER_PROGRESS chunks=${chunkCount} totalFramesSent=${totalFramesSent} starvationEvents=${starvationEvents}")
+                if (chunkCount % 32L == 0L) diagnostics.record("USB_TRANSFER_PROGRESS chunks=${chunkCount} totalFramesSent=${totalFramesSent} starvationEvents=${starvationEvents}")
                 usbPositionFrames += frames
                 val nativeBitPerfectNow = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
                 if (firstTransfer || nativeBitPerfectNow != usbNativeBitPerfectConfirmed) {
@@ -726,7 +726,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         usbNativeBitPerfectConfirmed -> "integer"
                         else -> "float32"
                     }
-                    recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${decoderPath}")
+                    diagnostics.record("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${decoderPath}")
                     onState(if (usbNativeBitPerfectConfirmed) {
                         "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · " +
                             if (outputEncoding == "ieee_float32") "IEEE Float32" else "native integer PCM"
@@ -735,10 +735,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }
             if (!stopped.get() && playbackGeneration.get() == generation) usbSession.drain()
-            recordUsbDiagnostic("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
+            diagnostics.record("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
             if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
         } catch (error: Throwable) {
-            recordUsbDiagnostic("DIRECT_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"} causeType=${error.cause?.javaClass?.simpleName ?: "none"} cause=${error.cause?.message ?: "none"}")
+            diagnostics.record("DIRECT_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"} causeType=${error.cause?.javaClass?.simpleName ?: "none"} cause=${error.cause?.message ?: "none"}")
             throw error
         } finally {
             // The producer owns the native decoder handle until it has exited; the caller
@@ -817,7 +817,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             Thread.currentThread().interrupt()
         } catch (error: Throwable) {
             if (active()) {
-                recordUsbDiagnostic(
+                diagnostics.record(
                     "USB_PRODUCER_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}"
                 )
                 failure.compareAndSet(null, error)
