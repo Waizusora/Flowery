@@ -296,6 +296,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet queue is no longer valid");
         return std::ptr::null_mut();
     };
+    let producer_status = encoded_worker_registry()
+        .lock().unwrap_or_else(|error| error.into_inner())
+        .get(&producer_handle)
+        .map(|worker| worker.status.load(Ordering::Acquire))
+        .unwrap_or(-1);
+    if producer_status != 0 && producer_status != 1 {
+        let _ = env.throw_new(
+            "java/lang/IllegalStateException",
+            if producer_status == 2 { "Encoded packet producer was cancelled" } else { "Encoded packet producer is unavailable" },
+        );
+        return std::ptr::null_mut();
+    }
     let mut submitted = 0_i64;
     let mut sequence = expected_sequence as u64;
     let mut position_ms = last_position_ms;
@@ -353,11 +365,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         }
         submitted += 1;
     }
-    let producer_status = encoded_worker_registry()
-        .lock().unwrap_or_else(|error| error.into_inner())
-        .get(&producer_handle)
-        .map(|worker| worker.status.load(Ordering::Acquire))
-        .unwrap_or(-1);
     let ended = producer_status == 1 && queue.is_empty();
     let result = match env.new_long_array(4) {
         Ok(array) => array,
