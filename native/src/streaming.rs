@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -695,13 +697,39 @@ fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],Str
     let mut gains=[0.0_f32;31]; gains.copy_from_slice(&values); Ok(gains)
 }
 
+static STREAM_DECODERS: OnceLock<Mutex<HashMap<i64, Arc<Mutex<StreamDecoder>>>>> = OnceLock::new();
+static NEXT_STREAM_DECODER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn decoder_registry() -> &'static Mutex<HashMap<i64, Arc<Mutex<StreamDecoder>>>> {
+    STREAM_DECODERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
+    if handle <= 0 { return None; }
+    decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
+}
+
+fn register_decoder(decoder: StreamDecoder) -> jlong {
+    let decoder = Arc::new(Mutex::new(decoder));
+    loop {
+        let candidate = NEXT_STREAM_DECODER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 { return 0; }
+        let handle = candidate as i64;
+        let mut registry = decoder_registry().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::clone(&decoder));
+            return handle as jlong;
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStreamDecoder(
     mut env: JNIEnv, _class: JClass, fd: jint, extension: JString
 ) -> jlong {
     let ext=match env.get_string(&extension) { Ok(v)=>v.to_string_lossy().into_owned(),Err(_)=>return 0 };
     match StreamDecoder::new(fd,&ext) {
-        Ok(decoder)=>Box::into_raw(Box::new(decoder)) as jlong,
+        Ok(decoder)=>register_decoder(decoder),
         Err(error)=>{let _=env.throw_new("java/lang/IllegalArgumentException",error);0}
     }
 }
@@ -710,9 +738,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDecoder(
     mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong
 ) -> jlong {
-    if handle == 0 || position_ms < 0 { return -1; }
-    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
-    match decoder.seek_to(position_ms as u64) {
+    if position_ms < 0 { return -1; }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    match decoder.lock().unwrap_or_else(|error| error.into_inner()).seek_to(position_ms as u64) {
         Ok(position) => position as jlong,
         Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
     }
@@ -722,26 +750,24 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsIeeeFloat32Source(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jboolean {
-    if handle == 0 { return jni::sys::JNI_FALSE; }
-    let decoder = unsafe { &*(handle as *const StreamDecoder) };
-    if decoder.is_ieee_float32_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
+    let Some(decoder) = decoder_ref(handle) else { return jni::sys::JNI_FALSE; };
+    if decoder.lock().unwrap_or_else(|error| error.into_inner()).is_ieee_float32_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsAc3Source(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jboolean {
-    if handle == 0 { return jni::sys::JNI_FALSE; }
-    let decoder = unsafe { &*(handle as *const StreamDecoder) };
-    if decoder.is_ac3_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
+    let Some(decoder) = decoder_ref(handle) else { return jni::sys::JNI_FALSE; };
+    if decoder.lock().unwrap_or_else(|error| error.into_inner()).is_ac3_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInfo(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
-    if handle==0 { return 0; }
-    let decoder=unsafe { &*(handle as *mut StreamDecoder) };
+    let Some(decoder) = decoder_ref(handle) else { return 0; };
+    let decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     (((decoder.source_rate as u64)<<32) | decoder.channels as u64) as jlong
 }
 
@@ -749,8 +775,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfectSourceInfo(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
-    if handle == 0 { return 0; }
-    let decoder = unsafe { &*(handle as *mut StreamDecoder) };
+    let Some(decoder) = decoder_ref(handle) else { return 0; };
+    let decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let lossless = if decoder.lossless_source { 1_u64 } else { 0_u64 };
     ((lossless << 32) | decoder.source_bits as u64) as jlong
 }
@@ -758,33 +784,32 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfec
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDurationMs(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
-    if handle==0 { return 0; }
-    let decoder=unsafe { &*(handle as *mut StreamDecoder) };
-    decoder.duration_ms as jlong
+    let Some(decoder) = decoder_ref(handle) else { return 0; };
+    decoder.lock().unwrap_or_else(|error| error.into_inner()).duration_ms as jlong
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeConfigureStreamDecoder(
     mut env: JNIEnv, _class: JClass, handle: jlong, output_rate: jint, gains: JFloatArray
 ) -> jint {
-    if handle==0 { return -1; }
     let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
-    let decoder=unsafe { &mut *(handle as *mut StreamDecoder) };
-    match decoder.configure(output_rate as usize,&gains) { Ok(())=>0,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);-1} }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    match decoder.lock().unwrap_or_else(|error| error.into_inner()).configure(output_rate as usize,&gains) {
+        Ok(())=>0,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);-1}
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStreamGains(
     mut env: JNIEnv, _class: JClass, handle: jlong, gains: JFloatArray
 ) -> jint {
-    if handle==0 { return -1; }
     let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
-    let decoder=unsafe { &mut *(handle as *mut StreamDecoder) };
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     decoder.gains.copy_from_slice(&gains);
     decoder.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], decoder.gains[i], decoder.output_rate));
     0
 }
-
 
 /// Decodes one bounded chunk and copies it directly into the Rust-owned AAudio ring.
 /// Returns produced frames, 0 when the ring is full, and -1 at end of stream.
@@ -793,33 +818,25 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamChunk(
     mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
 ) -> jint {
-    if handle == 0 || max_frames <= 0 {
+    if max_frames <= 0 {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid streaming pump arguments");
         return -2;
     }
     let available = crate::aaudio::available_output_frames();
-    if available == 0 {
-        return 0;
-    }
-    let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
+    if available == 0 { return 0; }
+    let Some(decoder) = decoder_ref(handle) else { return -2; };
+    let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     if decoder.channels > 2 {
-        let _ = env.throw_new(
-            "java/lang/IllegalStateException",
-            "AAudio output currently supports mono/stereo; multichannel PCM must use a validated direct USB route.",
-        );
+        let _ = env.throw_new("java/lang/IllegalStateException",
+            "AAudio output currently supports mono/stereo; multichannel PCM must use a validated direct USB route.");
         return -2;
     }
     let frames = (max_frames as usize).min(available);
     let samples = match decoder.read_frames(frames) {
         Ok(samples) => samples,
-        Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error);
-            return -2;
-        }
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); return -2; }
     };
-    if samples.is_empty() {
-        return -1;
-    }
+    if samples.is_empty() { return -1; }
     let channels = decoder.channels;
     match crate::aaudio::write_output_samples(&samples) {
         Ok(written) if written == samples.len() / channels => written as jint,
@@ -834,20 +851,33 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamCh
     }
 }
 
-fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
-    let finite_sample = if sample.is_finite() { sample } else { 0.0 };
-    let scaled = (finite_sample * gain).clamp(-1.0, 1.0);
-    let negative_limit = -(1_i64 << (valid_bits - 1));
-    let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
-    let scale = (1_i64 << (valid_bits - 1)) as f64;
-    ((scaled as f64 * scale).round() as i64).clamp(negative_limit, positive_limit)
+fn remove_decoder(handle: jlong) {
+    if handle <= 0 { return; }
+    decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseStreamDecoder(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) {
-    if handle!=0 { unsafe { drop(Box::from_raw(handle as *mut StreamDecoder)); } }
+    remove_decoder(handle);
+}
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn decoder_registry_rejects_invalid_and_stale_handles() {
+        assert!(decoder_ref(0).is_none());
+        assert!(decoder_ref(-1).is_none());
+    }
+
+    #[test]
+    fn decoder_reference_survives_handle_close_until_inflight_owner_releases_it() {
+        let decoder = StreamDecoder::new(-1, "invalid").err();
+        assert!(decoder.is_some());
+    }
 }
 
 #[cfg(test)]
