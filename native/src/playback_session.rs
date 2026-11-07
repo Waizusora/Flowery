@@ -256,9 +256,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
                 return result as jlong;
             }
         }
-        if command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint {
-            crate::aaudio::stop_output_for_session();
-        }
+    }
+    #[cfg(target_os = "android")]
+    let stop_output = session.route == 0 &&
+        (command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint);
+    drop(_gate);
+    #[cfg(target_os = "android")]
+    if stop_output {
+        crate::aaudio::stop_output_for_session();
     }
     0
 }
@@ -287,6 +292,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlayba
         let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         session.cancelled.store(true, Ordering::Release);
         session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+        drop(_gate);
         #[cfg(target_os = "android")]
         if session.route == 0 {
             crate::aaudio::stop_output_for_session();
@@ -307,6 +313,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+            drop(_gate);
             #[cfg(target_os = "android")]
             if session.route == 0 {
                 crate::aaudio::stop_output_for_session();
