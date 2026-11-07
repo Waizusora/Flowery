@@ -132,6 +132,9 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             queueBytes: Int = 256 * 1024
         ): UsbEncodedPlaybackPipeline {
             require(decoderHandle != 0L)
+            require(queuePackets > 0 && queueBytes >= 6144) {
+                "Encoded queue must hold at least one complete IEC 61937 AC-3 burst"
+            }
             val streamInfo = NativeAudio.nativeGetStreamInfo(decoderHandle)
             val sourceRate = (streamInfo ushr 32).toInt()
             require(sourceRate > 0) { "Source sample rate is unavailable" }
