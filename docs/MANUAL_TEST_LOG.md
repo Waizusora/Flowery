@@ -155,19 +155,27 @@ The exact track, elapsed position, and detailed queue transition were not separa
 
 ### TEST 9 — Playback across supported file formats
 
-**Status: IN PROGRESS — partial format verification**
+**Status: RETEST REQUIRED — partial format verification**
 
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
 - M4A (ALAC): **FAIL**. The Play button changes state, but no audio is audible and the playback duration/progress does not advance. This is a decoder/playback-path failure symptom and requires investigation; the exact underlying cause has not yet been established.
 
+Investigation and code change (2026-11-08):
+- The uploaded `flowery-alac.txt` confirms that Android identifies the selected item as `audio/mp4` with codec MIME `audio/alac`, and that `libflowery_audio.so` loads successfully.
+- The log does not contain a Symphonia packet/decode error, because the AAudio decode worker did not publish its failure detail to Android.
+- Code inspection found that the Kotlin AAudio loop polled only the output scheduler and did not inspect the Rust stream-pump status. A decoder worker failure could therefore leave output waiting without surfacing the decoder failure.
+- The stream-pump now retains its error detail, exposes it through JNI, and the Kotlin playback loop fails promptly when the decode worker reports an error.
+- Fix commits: `80352ac`, `06194ca`, `1cbe4d5`.
+- This is a playback error-reporting and stalled-session fix; it does not yet prove the ALAC decoder itself is compatible with this sample. User retest remains required.
+
 Unavailable in the user's test library:
 - WAV: no test file available.
 - M4A (AAC): no test file available.
 
 Remaining:
-- Investigate and fix M4A/ALAC playback, then request a user retest.
+- Retest M4A/ALAC with the diagnostic fix installed; do not mark PASS until the user confirms audible playback and advancing progress.
 - Verify seeking where supported after playback works.
 - Record sample rate, bit depth (if known), and any errors.
 
