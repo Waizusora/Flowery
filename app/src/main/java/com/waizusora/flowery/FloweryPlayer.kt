@@ -315,11 +315,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it
                         }
                         val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
-                        NativeAudio.nativeStopStreamPump(handle)
-                        check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) {
-                            "Unable to flush the AAudio output stream for seeking"
-                        }
-                        val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
+                        val actual = NativeAudio.nativeSeekPlaybackSession(
+                            handle, sessionHandle, segmentStartMs + target, targetFrame
+                        )
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
                         val remainingFrames = segmentFrameLimit?.let {
                             (it - targetFrame).coerceAtLeast(0L)
