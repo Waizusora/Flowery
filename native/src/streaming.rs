@@ -1004,8 +1004,17 @@ fn start_stream_pump_worker(
             thread_status.store(2, Ordering::Release);
         }
     }).map_err(|error| error.to_string())?;
+    let session_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if session.cancelled.load(Ordering::Acquire) ||
+        session.epoch.load(Ordering::Acquire) != worker_epoch {
+        stop.store(true, Ordering::Release);
+        drop(session_gate);
+        let _ = worker.join();
+        return Err("Playback session changed while the AAudio decode worker was starting".into());
+    }
     stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
         .insert(handle, StreamPumpWorker { stop, status, epoch: worker_epoch, thread: worker });
+    drop(session_gate);
     Ok(())
 }
 
