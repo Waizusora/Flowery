@@ -127,8 +127,12 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     (0x20, 0x01) if length >= 16 => {
                         alt.terminal_link = raw[offset + 3];
                         let formats = le32(raw, offset + 6);
-                        alt.encoding = if formats & 0x0000_0004 != 0 { "ieee_float32" } else { "signed_integer" };
-                        alt.format_tag = if formats & 0x0000_0004 != 0 { 0x0003 } else { 0x0001 };
+                        // Preserve the established integer profile when the alternate setting
+                        // advertises both PCM and IEEE_FLOAT. Float is selected only when the
+                        // descriptor identifies it as the sole supported Type-I encoding.
+                        let float_only = formats & 0x0000_0004 != 0 && formats & 0x0000_0001 == 0;
+                        alt.encoding = if float_only { "ieee_float32" } else { "signed_integer" };
+                        alt.format_tag = if float_only { 0x0003 } else { 0x0001 };
                         alt.channels = raw[offset + 10];
                     }
                     (0x20, 0x02) if length >= 6 && raw[offset + 3] == 0x01 => {
@@ -686,6 +690,16 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].encoding, "ieee_float32");
         assert_eq!(profiles[0].format_tag, 3);
+    }
+
+    #[test]
+    fn preserves_integer_profile_when_uac2_advertises_pcm_and_float_together() {
+        let raw = [9,4,2,2,1,1,2,0x20,0, 16,0x24,1,5,0,1,5,0,0,0,2,0,0,0,0,0,
+            6,0x24,2,1,4,32, 7,5,4,9,0x40,0,1];
+        let profiles = parse_playback_profiles(&raw, Some(32));
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].encoding, "signed_integer");
+        assert_eq!(profiles[0].format_tag, 1);
     }
 
     #[test]
