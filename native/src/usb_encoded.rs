@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_session::{session_ref, SessionState};
@@ -194,7 +195,17 @@ fn register_producer(producer: EncodedProducer) -> jlong {
 }
 
 fn remove_producer(handle: jlong) {
-    if handle > 0 { producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle); }
+    if handle <= 0 { return; }
+    let producer = producer_registry()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(&handle);
+    if let Some(producer) = producer {
+        producer.cancelled.store(true, Ordering::Release);
+        let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = None;
+        state.queue.close();
+    }
 }
 
 struct EncodedProducerState {
@@ -206,10 +217,12 @@ struct EncodedProducerState {
     sequence: u64,
     pending: Option<EncodedPacket>,
     ended: bool,
+    epoch: u64,
 }
 
 struct EncodedProducer {
     state: Mutex<EncodedProducerState>,
+    cancelled: AtomicBool,
 }
 
 #[no_mangle]
@@ -314,7 +327,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
             session,
             queue, framing, maximum_bitrate_kbps: maximum_bitrate,
             sequence: 0, pending: None, ended: false,
+            epoch: session.epoch.load(Ordering::Acquire),
         }),
+        cancelled: AtomicBool::new(false),
     };
     register_producer(producer)
 }
@@ -329,7 +344,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     }
     let Some(producer) = producer_ref(handle) else { return -2; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-    if state.session.cancelled.load(Ordering::Acquire) { return -3; }
+    if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -3; }
+    let session_epoch = state.session.epoch.load(Ordering::Acquire);
+    if session_epoch != state.epoch {
+        state.pending = None;
+        state.queue.clear();
+        state.epoch = session_epoch;
+        return 0;
+    }
     if state.ended { return -1; }
     if state.pending.is_none() {
         let decoder_owner = Arc::clone(&state.decoder);
@@ -430,7 +452,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
     }
     let Some(producer) = producer_ref(handle) else { return -1; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-    if state.session.cancelled.load(Ordering::Acquire) { return -1; }
+    if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -1; }
     let decoder_owner = Arc::clone(&state.decoder);
     let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
     if let Err(error) = decoder.begin_encoded_stream() {
@@ -444,6 +466,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
             state.pending = None;
             state.ended = false;
             state.queue.clear();
+            state.epoch = state.session.epoch.load(Ordering::Acquire);
             actual_position as jlong
         }
         Err(error) => {
