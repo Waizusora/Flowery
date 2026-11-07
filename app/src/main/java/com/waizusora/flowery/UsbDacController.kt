@@ -64,7 +64,7 @@ class UsbDacController(context: Context) {
      * Opens the first descriptor-validated UAC1 AC-3 encoded alternate setting.
      * Type-III IEC 61937 is preferred; Type-II raw AC-3 is the fallback.
      */
-    fun openFirstCompatibleEncodedPlaybackPipeline(
+    internal fun openFirstCompatibleEncodedPlaybackPipeline(
         devices: List<Device>,
         decoderHandle: Long,
         sourceRate: Int
@@ -89,7 +89,7 @@ class UsbDacController(context: Context) {
                     it.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
                         it.interfaceSubclass == 2 && it.interfaceProtocol == 0
                 }
-                .distinctBy { it.interfaceNumber to it.alternateSetting }
+                .distinctBy { it.id to it.alternateSetting }
 
             // Prefer IEC 61937 Type-III, then the codec-matched Type-II bitstream.
             val formats = listOf(
@@ -103,7 +103,7 @@ class UsbDacController(context: Context) {
                     val validation = try {
                         org.json.JSONObject(
                             NativeAudio.nativeValidateUsbEncodedDescriptor(
-                                descriptors, alternate.interfaceNumber, alternate.alternateSetting,
+                                descriptors, alternate.id, alternate.alternateSetting,
                                 formatType, formatTag, sourceRate
                             )
                         )
@@ -116,7 +116,7 @@ class UsbDacController(context: Context) {
                     try {
                         val pipeline = UsbEncodedPlaybackPipeline.open(
                             connection, decoderHandle, descriptors,
-                            alternate.interfaceNumber, alternate.alternateSetting,
+                            alternate.id, alternate.alternateSetting,
                             formatType, formatTag, framingKind, formatCode
                         )
                         return device to pipeline
