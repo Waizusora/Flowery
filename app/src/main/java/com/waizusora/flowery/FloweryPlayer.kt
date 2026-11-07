@@ -18,6 +18,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private var worker: Thread? = null
     private val volumeController = OutputVolumeController(context)
+    private val usbVolumePolicy = UsbPlaybackVolumePolicy(volumeController)
     private val diagnostics = UsbPlaybackDiagnostics(context)
     private val sourceResolver = AudioSourceResolver(context)
 
@@ -66,27 +67,33 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbPlaybackMode) {
             val usbKey = activeUsbDeviceKey
             val session = activeUsbSession
-            if (session?.hardwareVolumeAvailable == true && session.setHardwareVolumeFraction(normalized)) {
-                softwareVolume = session.readHardwareVolumeFraction() ?: normalized
-                if (usbKey != null) volumeController.setUsbVolume(usbKey, softwareVolume)
-                usbBitPerfectActive = true
-                usbSoftwareGainEnabled = false
+            if (usbKey == null) {
+                onState("USB DAC volume is unavailable until a device session is active.")
+                return
+            }
+            val volumeState = usbVolumePolicy.setVolume(
+                deviceKey = usbKey,
+                session = session,
+                fraction = normalized,
+                softwareGainEnabled = usbSoftwareGainEnabled,
+            )
+            if (volumeState == null) {
+                onState("USB DAC hardware volume control is unavailable; software volume is disabled for this session.")
+                return
+            }
+            softwareVolume = volumeState.softwareVolume
+            usbBitPerfectActive = volumeState.bitPerfectActive
+            usbSoftwareGainEnabled = volumeState.softwareGainEnabled
+            if (volumeState.hardwareVolumeAvailable) {
                 onState("USB DAC hardware volume synchronized · ${(softwareVolume * 100).toInt()}%")
             } else {
-                if (!usbSoftwareGainEnabled) {
-                    onState("USB DAC hardware volume control is unavailable; software volume is disabled for this session.")
-                    return
-                }
-                softwareVolume = normalized
-                if (usbKey != null) volumeController.setUsbVolume(usbKey, normalized)
-                usbBitPerfectActive = false
                 usbNativeBitPerfectConfirmed = false
                 activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
                     check(NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain()) == 0) {
                         "Unable to update the active Rust USB PCM producer gain."
                     }
                 }
-                onState("USB DAC software volume · ${(normalized * 100).toInt()}%")
+                onState("USB DAC software volume · ${(softwareVolume * 100).toInt()}%")
             }
             publishUsbPlaybackModeStatus()
             return
@@ -563,18 +570,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             activeUsbDeviceKey = controller.deviceIdentity(device)
             activeUsbSession = usbSession
             usbNativeBitPerfectConfirmed = false
-            val hardwareVolume = usbSession.readHardwareVolumeFraction()
-            volumeController.usbProfile(activeUsbDeviceKey!!, hardwareVolume != null)
-            if (hardwareVolume != null) {
-                softwareVolume = hardwareVolume
-                usbBitPerfectActive = true
-                usbSoftwareGainEnabled = false
-            } else {
-                softwareVolume = volumeController.usbVolume(activeUsbDeviceKey!!)
-                usbBitPerfectActive = false
-                usbSoftwareGainEnabled = true
-            }
-            diagnostics.record("USB_VOLUME_PROFILE profile=${if (hardwareVolume != null) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${hardwareVolume != null}")
+            val volumeState = usbVolumePolicy.attach(activeUsbDeviceKey!!, usbSession)
+            softwareVolume = volumeState.softwareVolume
+            usbBitPerfectActive = volumeState.bitPerfectActive
+            usbSoftwareGainEnabled = volumeState.softwareGainEnabled
+            diagnostics.record("USB_VOLUME_PROFILE profile=${if (volumeState.hardwareVolumeAvailable) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${volumeState.hardwareVolumeAvailable}")
             diagnostics.record("USB_PCM_GAIN gainBypass=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} nativeBitPerfect=awaiting_producer queueDepthBlocks=${UsbPcmPlaybackPipeline.QUEUE_DEPTH_BLOCKS} prebufferBlocks=${UsbPcmPlaybackPipeline.PREBUFFER_BLOCKS}")
 
             // The pipeline owns the bounded Rust producer/queue and the libusb writer boundary.
