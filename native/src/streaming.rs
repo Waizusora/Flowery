@@ -576,7 +576,7 @@ impl StreamDecoder {
     }
 
     fn move_native_remainder_to_float(&mut self, format: crate::usb_pcm::PcmFormat) {
-        if !self.native_pcm_active || self.native_pcm_pending.is_empty() { return; }
+        if !self.native_pcm_active { return; }
         let bytes_per_sample = format.subslot_bytes as usize;
         let scale = (1_u64 << (format.valid_bits - 1)) as f32;
         let bytes: Vec<u8> = self.native_pcm_pending.drain(..).collect();
