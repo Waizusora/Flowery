@@ -973,4 +973,53 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    #[test]
+    fn uncompressed_wav_24_and_32_bit_pcm_reach_usb_bytes_bit_exact() {
+        for bits in [24_u16, 32_u16] {
+            let path = std::env::temp_dir().join(format!("flowery-native-pcm-{bits}-{}.wav", std::process::id()));
+            let values = if bits == 24 {
+                vec![-8_388_608_i32, -1, 0, 8_388_607]
+            } else {
+                vec![i32::MIN, -1, 0, i32::MAX]
+            };
+            let subslot = (bits / 8) as usize;
+            let data_bytes = (values.len() * subslot) as u32;
+            {
+                let mut file = std::fs::File::create(&path).unwrap();
+                file.write_all(b"RIFF").unwrap();
+                file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+                file.write_all(b"WAVEfmt ").unwrap();
+                file.write_all(&16_u32.to_le_bytes()).unwrap();
+                file.write_all(&1_u16.to_le_bytes()).unwrap();
+                file.write_all(&2_u16.to_le_bytes()).unwrap();
+                file.write_all(&48_000_u32.to_le_bytes()).unwrap();
+                file.write_all(&(48_000_u32 * 2 * subslot as u32).to_le_bytes()).unwrap();
+                file.write_all(&((2 * subslot) as u16).to_le_bytes()).unwrap();
+                file.write_all(&bits.to_le_bytes()).unwrap();
+                file.write_all(b"data").unwrap();
+                file.write_all(&data_bytes.to_le_bytes()).unwrap();
+                for value in &values {
+                    let bytes = value.to_le_bytes();
+                    file.write_all(&bytes[..subslot]).unwrap();
+                }
+            }
+
+            let source_file = std::fs::File::open(&path).unwrap();
+            let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
+            assert_eq!(stream.source_bits, bits as u8);
+            stream.configure(48_000, &[0.0; 31]).unwrap();
+            let format = crate::usb_pcm::PcmFormat {
+                sample_rate: 48_000, channels: 2, valid_bits: bits as u8,
+                subslot_bytes: subslot as u8, signed: true, little_endian: true,
+            };
+            let actual = stream.read_usb_pcm(2, 1.0, format).unwrap();
+            let expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()[..subslot].to_vec()).collect();
+            assert_eq!(actual, expected, "{bits}-bit WAV samples changed in the USB path");
+            assert!(stream.native_pcm_active());
+            drop(stream);
+            drop(source_file);
+            std::fs::remove_file(path).unwrap();
+        }
+    }
+
 }
