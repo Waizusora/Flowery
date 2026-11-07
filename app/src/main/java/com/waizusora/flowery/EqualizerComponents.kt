@@ -74,19 +74,3 @@ internal fun VerticalEqualizerSlider(
         )
     }
 }
-
-@androidx.compose.runtime.Composable
-private fun TagEditorField(
-    label: String,
-    value: String,
-    singleLine: Boolean = true,
-    onValueChange: (String) -> Unit
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        label = { Text(label) },
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = singleLine
-    )
-}
