@@ -1,4 +1,5 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
+use crate::playback_session::{session_ref, SessionState};
 use crate::usb_pcm::{queue_ref, PcmBlock, PcmEncoding, PcmFormat, UsbPcmQueue};
 use jni::objects::JClass;
 use jni::sys::{jfloat, jint, jlong};
@@ -12,6 +13,7 @@ const USB_DECODE_CHUNK_FRAMES: usize = 32_768;
 
 struct ProducerState {
     decoder: Arc<Mutex<StreamDecoder>>,
+    session: Arc<SessionState>,
     queue: Arc<UsbPcmQueue>,
     format: PcmFormat,
     segment_start_ms: u64,
@@ -61,6 +63,10 @@ fn destroy_producer(handle: jlong) {
     }
 }
 
+fn state_epoch(session: &SessionState) -> i32 {
+    session.epoch.load(std::sync::atomic::Ordering::Acquire).min(i32::MAX as u64) as i32
+}
+
 fn frames_at_ms(milliseconds: u64, sample_rate: u64) -> u64 {
     ((milliseconds as u128 * sample_rate as u128) / 1_000)
         .min(u64::MAX as u128) as u64
@@ -87,6 +93,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     _class: JClass,
     decoder_handle: jlong,
     queue_handle: jlong,
+    session_handle: jlong,
     source_rate: jint,
     channels: jint,
     bit_resolution: jint,
@@ -112,6 +119,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return 0;
     };
+    let Some(session) = session_ref(session_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
+        return 0;
+    };
     let end = (segment_end_ms >= 0).then_some(segment_end_ms as u64);
     let start = segment_start_ms as u64;
     let remaining = end.map(|value| frames_at_ms(value.saturating_sub(start), source_rate as u64));
@@ -122,13 +133,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     let producer = UsbPcmProducer {
         state: Mutex::new(ProducerState {
             decoder,
+            session,
             queue,
             format,
             segment_start_ms: start,
             segment_end_ms: end,
             segment_remaining_frames: remaining,
             position_frames: 0,
-            epoch: 0,
+            epoch: state_epoch(&session),
             at_end: false,
             pending_seek_ms: None,
             pending_block: None,
@@ -168,6 +180,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
     let Some(producer) = producer_ref(handle) else { return -2; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
 
+    if state.session.cancelled.load(std::sync::atomic::Ordering::Acquire) { return -3; }
+
     if let Some(relative_ms) = state.pending_seek_ms.take() {
         let absolute_ms = absolute_seek_target(
             state.segment_start_ms, state.segment_end_ms, relative_ms
@@ -176,7 +190,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         match decoder.seek_to(absolute_ms) {
             Ok(actual_ms) => {
                 state.queue.clear();
-                state.epoch = state.epoch.wrapping_add(1);
+                state.epoch = state_epoch(&state.session);
                 state.at_end = false;
                 state.pending_block = None;
                 state.bit_perfect_active = false;
