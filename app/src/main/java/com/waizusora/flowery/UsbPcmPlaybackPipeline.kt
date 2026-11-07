@@ -1,0 +1,189 @@
+package com.waizusora.flowery
+
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+internal data class UsbPcmBlock(
+    val endOfStream: Boolean,
+    val epoch: Int,
+    val frames: Int,
+    val startFrames: Long,
+    val pcm: ByteArray,
+)
+
+internal object UsbPcmBlockDecoder {
+    fun decode(encoded: ByteArray): UsbPcmBlock {
+        // Keep this layout in sync with native/src/usb_pcm.rs: flag + epoch + frames + start frame.
+        require(encoded.size >= 17) { "Rust USB PCM block header is truncated." }
+        val header = ByteBuffer.wrap(encoded, 0, 17).order(ByteOrder.LITTLE_ENDIAN)
+        val endOfStream = header.get().toInt() != 0
+        val epoch = header.int
+        val frames = header.int
+        val startFrames = header.long
+        require(frames >= 0 && startFrames >= 0L) { "Rust USB PCM block contains invalid frame metadata." }
+        val payload = encoded.copyOfRange(17, encoded.size)
+        require(!endOfStream || (frames == 0 && payload.isEmpty())) {
+            "Rust USB PCM end-of-stream block must not contain audio payload."
+        }
+        require(endOfStream || frames > 0) { "Rust USB PCM data block must contain at least one frame." }
+        return UsbPcmBlock(endOfStream, epoch, frames, startFrames, payload)
+    }
+}
+
+internal data class UsbPcmWriteResult(
+    val endOfStream: Boolean,
+    val epochChanged: Boolean,
+    val epoch: Int,
+    val startFrames: Long,
+    val frames: Int,
+    val acceptedFrames: Int,
+    val pcmBytes: Int,
+    val queuedBlocks: Int,
+)
+
+/**
+ * Owns the Rust PCM producer/queue and the Android-to-libusb PCM writer boundary.
+ *
+ * Rust remains responsible for decoding, DSP, packing, bounded queue policy, and
+ * producer scheduling. This adapter only polls complete blocks and submits them
+ * to the already-open USB transport session.
+ */
+internal class UsbPcmPlaybackPipeline private constructor(
+    private val queueHandle: Long,
+    private val producerHandle: Long,
+    val dacSession: UsbDacSession,
+    private val playbackSessionHandle: Long,
+) : AutoCloseable {
+    private var closed = false
+    private var activeEpoch = 0
+
+    val queueSize: Int
+        get() = NativeAudio.nativeUsbPcmQueueSize(queueHandle)
+
+    val workerError: String
+        get() = NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle)
+
+    val isAtEnd: Boolean
+        get() = NativeAudio.nativeIsUsbPcmProducerAtEnd(producerHandle)
+
+    val isBitPerfect: Boolean
+        get() = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
+
+    fun pollAndWrite(timeoutMs: Int): UsbPcmWriteResult? {
+        check(!closed) { "USB PCM playback pipeline is closed" }
+        val encoded = NativeAudio.nativePollUsbPcmBlock(queueHandle, timeoutMs) ?: return null
+        val block = UsbPcmBlockDecoder.decode(encoded)
+        val requestedEpoch = NativeAudio.nativePlaybackSessionEpoch(playbackSessionHandle).toInt()
+        if (requestedEpoch >= 0 && block.epoch != requestedEpoch) {
+            dacSession.flush()
+            activeEpoch = requestedEpoch
+            return null
+        }
+
+        var epochChanged = false
+        if (block.epoch != activeEpoch) {
+            // A seek happened: discard audio that is still queued on the endpoint.
+            dacSession.flush()
+            activeEpoch = block.epoch
+            epochChanged = true
+        }
+        if (block.endOfStream) {
+            return UsbPcmWriteResult(
+                endOfStream = true,
+                epochChanged = epochChanged,
+                epoch = block.epoch,
+                startFrames = block.startFrames,
+                frames = 0,
+                acceptedFrames = 0,
+                pcmBytes = 0,
+                queuedBlocks = queueSize,
+            )
+        }
+
+        val acceptedFrames = dacSession.writePcm(block.pcm, block.frames)
+        return UsbPcmWriteResult(
+            endOfStream = false,
+            epochChanged = epochChanged,
+            epoch = block.epoch,
+            startFrames = block.startFrames,
+            frames = block.frames,
+            acceptedFrames = acceptedFrames,
+            pcmBytes = block.pcm.size,
+            queuedBlocks = queueSize,
+        )
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        try {
+            NativeAudio.nativeStopUsbPcmProducerWorker(producerHandle)
+        } finally {
+            try {
+                NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
+            } finally {
+                try {
+                    NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
+                } finally {
+                    try {
+                        NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
+                    } finally {
+                        dacSession.close()
+                    }
+                }
+            }
+        }
+    }
+
+    companion object {
+        const val QUEUE_DEPTH_BLOCKS = 6
+        const val PREBUFFER_BLOCKS = 3
+        const val QUEUE_POLL_MS = 50L
+
+        fun open(
+            decoderHandle: Long,
+            playbackSessionHandle: Long,
+            dacSession: UsbDacSession,
+            channels: Int,
+            segmentStartMs: Long,
+            segmentEndMs: Long?,
+            initialGain: Float,
+            encoding: Int,
+        ): UsbPcmPlaybackPipeline {
+            require(decoderHandle != 0L && playbackSessionHandle != 0L)
+            val queue = NativeAudio.nativeCreateUsbPcmQueue(QUEUE_DEPTH_BLOCKS)
+            check(queue != 0L) { "Unable to create the native USB PCM queue." }
+            var producer = 0L
+            try {
+                producer = NativeAudio.nativeCreateUsbPcmProducer(
+                    decoderHandle,
+                    queue,
+                    playbackSessionHandle,
+                    dacSession.sampleRate,
+                    channels,
+                    dacSession.profile.bitResolution,
+                    dacSession.profile.subslotBytes,
+                    segmentStartMs,
+                    segmentEndMs ?: -1L,
+                    encoding,
+                )
+                check(producer != 0L) { "Unable to create the Rust direct USB producer." }
+                check(NativeAudio.nativeSetUsbPcmProducerGain(producer, initialGain) == 0) {
+                    "Unable to configure the initial Rust USB PCM producer gain."
+                }
+                check(NativeAudio.nativeStartUsbPcmProducerWorker(producer) == 0) {
+                    "Unable to start the Rust direct USB producer worker."
+                }
+                return UsbPcmPlaybackPipeline(queue, producer, dacSession, playbackSessionHandle)
+            } catch (error: Throwable) {
+                if (producer != 0L) {
+                    runCatching { NativeAudio.nativeStopUsbPcmProducerWorker(producer) }
+                    runCatching { NativeAudio.nativeDestroyUsbPcmProducer(producer) }
+                }
+                runCatching { NativeAudio.nativeCloseUsbPcmQueue(queue) }
+                runCatching { NativeAudio.nativeDestroyUsbPcmQueue(queue) }
+                throw error
+            }
+        }
+    }
+}
