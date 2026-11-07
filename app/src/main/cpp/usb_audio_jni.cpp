@@ -1046,6 +1046,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         reap_completed(session, &failure);
         if (failure.failed) break;
         uint64_t phase = session->encoded_rate_phase;
+        uint64_t feedback_phase = session->encoded_feedback_phase;
         size_t total = 0;
         packet_bytes.clear();
         const size_t available = session->pending_encoded.size() - session->encoded_offset;
@@ -1063,10 +1064,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
                     break;
                 }
                 const uint64_t scaled = feedback * session->interval_us /
-                    session->feedback_base_interval_us + session->encoded_feedback_phase;
+                    session->feedback_base_interval_us + feedback_phase;
                 frames = scaled >> session->feedback_fraction_bits;
-                session->encoded_feedback_phase =
-                    scaled & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+                feedback_phase = scaled & ((1ULL << session->feedback_fraction_bits) - 1ULL);
             } else {
                 const uint64_t scaled = static_cast<uint64_t>(session->encoded_frame_rate) *
                                        session->interval_us + phase;
@@ -1088,6 +1088,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         }
         if (!submit_encoded_urb(session, packet_bytes, total, &failure)) break;
         session->encoded_rate_phase = phase;
+        session->encoded_feedback_phase = feedback_phase;
     }
     if (failure.failed) {
         abort_in_flight(session);

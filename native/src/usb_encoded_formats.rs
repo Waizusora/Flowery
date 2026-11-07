@@ -239,7 +239,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 let usage_type = (attributes >> 4) & 0x03;
                 if transactions == 3 { return Err("Encoded endpoint uses a reserved high-bandwidth transaction count"); }
                 if attributes & 0x03 == 0x01 && address & 0x80 != 0 &&
-                    address & 0x0f != 0 && usage_type == 0 && packet_bytes >= 3 &&
+                    address & 0x0f != 0 && usage_type == 1 && packet_bytes >= 3 &&
                     (1..=16).contains(&interval) {
                     if feedback_endpoint.replace((address, packet_bytes)).is_some() {
                         return Err("Multiple explicit feedback endpoints are ambiguous for the encoded alternate setting");
