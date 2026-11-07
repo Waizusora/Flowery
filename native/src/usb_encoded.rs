@@ -383,7 +383,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbEncodedPacket(
-    mut env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint,
+    env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint,
 ) -> jbyteArray {
     if timeout_ms < 0 { return std::ptr::null_mut(); }
     let Some(queue) = queue_ref(handle) else { return std::ptr::null_mut(); };
@@ -438,7 +438,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is already cancelled");
         return 0;
     }
-    let mut decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+    let decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let framing = match framing_kind {
         1 if format_code != 0 => {
             if let Err(error) = decoder_guard.validate_encoded_uac1_type_ii(
