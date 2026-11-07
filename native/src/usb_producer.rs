@@ -363,7 +363,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetUsbPcmPro
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPcmProducerWorkerError(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
+    env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jstring {
     let Some(producer) = producer_ref(handle) else { return std::ptr::null_mut(); };
     let error = producer.worker_error.lock().unwrap_or_else(|poison| poison.into_inner())
