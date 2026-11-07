@@ -883,6 +883,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputSampleRate = 0
         usbOutputBitDepth = 0
         pendingSeekMs.set(null)
+        seekInProgress.set(false)
         paused = false
         usbPlaybackMode = false
         usbPositionFrames = 0L
