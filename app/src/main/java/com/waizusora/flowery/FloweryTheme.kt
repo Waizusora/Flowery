@@ -7,8 +7,14 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.LocalTextStyle
+
+private val FloweryNotoSans = FontFamily(
+    Font(R.font.noto_sans, weight = FontWeight.Normal)
+)
 
 private val FloweryLightColors = lightColorScheme(
     primary = Color(0xFFB66D83),
@@ -71,22 +77,21 @@ private fun Typography.withFloweryFont(fontFamily: FontFamily): Typography = cop
 )
 
 /**
- * Applies the Flowery palette and a platform sans-serif family.
- * Android's script fallback chain supplies Noto families for scripts not
- * covered by the primary Latin sans-serif face.
+ * Applies the Flowery palette and the bundled Noto Sans typeface.
+ * Android's native font fallback chain supplies additional Noto script
+ * families for glyphs not covered by the bundled Latin/Greek/Cyrillic face.
  */
 @Composable
 internal fun FloweryTheme(
     darkTheme: Boolean,
     content: @Composable () -> Unit
 ) {
-    val fontFamily = FontFamily.SansSerif
     MaterialTheme(
         colorScheme = if (darkTheme) FloweryDarkColors else FloweryLightColors,
-        typography = Typography().withFloweryFont(fontFamily),
+        typography = Typography().withFloweryFont(FloweryNotoSans),
         content = {
             CompositionLocalProvider(
-                LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = fontFamily),
+                LocalTextStyle provides LocalTextStyle.current.copy(fontFamily = FloweryNotoSans),
                 content = content
             )
         }
