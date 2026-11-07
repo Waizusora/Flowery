@@ -576,13 +576,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
             check(channels in 1..8) { "Direct USB decoded playback supports one through eight channels." }
-            recordUsbDiagnostic("SOURCE_VALIDATED format=symphonia_lossless_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
+            recordUsbDiagnostic("SOURCE_VALIDATED format=symphonia_decoded_pcm sourceBits=${sourceBits} channels=${channels} sampleRate=${sourceRate}")
             val controller = UsbDacController(context)
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
             val nativeCandidate = sourceBits in 8..32
-            onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz PCM match…" else "USB exclusive: selecting a DAC PCM profile for float32 decoding…")
+            onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (nativeCandidate) sourceBits else "automatic"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate}")
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
                 discovered, if (nativeCandidate) sourceBits else 0, sourceRate,
