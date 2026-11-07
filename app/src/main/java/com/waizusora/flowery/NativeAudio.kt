@@ -34,6 +34,7 @@ object NativeAudio {
     external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
     external fun nativePlaybackSessionBeginSeek(session: Long): Long
     external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
+    external fun nativePlaybackSessionCommand(session: Long, command: Int): Long
     external fun nativePlaybackSessionEpoch(session: Long): Long
     external fun nativePlaybackSessionIsCancelled(session: Long): Boolean
     external fun nativeCancelPlaybackSession(session: Long)
