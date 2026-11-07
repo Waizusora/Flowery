@@ -173,7 +173,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     1 -> {
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
                         usbPlaybackMode = true
-                        playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs)
+                        playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
                     2 -> {
@@ -450,7 +450,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             if (segmentStartMs > 0L) openedPipeline.seekTo(segmentStartMs)
             onState("USB exclusive · AC-3 encoded passthrough · UAC1 Type-II/IEC 61937 Type-III · ${sourceRate} Hz")
 
-            fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation
+            fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
+                !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
             var transportDrainedForPause = false
             while (playbackActive()) {
                 if (paused) {
@@ -512,7 +513,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         channels: Int,
         generation: Int,
         segmentStartMs: Long,
-        segmentEndMs: Long?
+        segmentEndMs: Long?,
+        sessionHandle: Long
     ) {
         var session: UsbDacSession? = null
         var totalFramesSent = 0L
@@ -659,7 +661,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 producerAdapter.run(endReached, producerStop, producerFailure)
             }
 
-            fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation
+            fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
+                !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
 
             // Prebuffer: do not prime the USB window until enough decoded audio is ready.
             val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
