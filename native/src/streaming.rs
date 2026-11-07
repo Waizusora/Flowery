@@ -98,6 +98,7 @@ pub(super) struct StreamDecoder {
     source_rate: usize,
     source_bits: u8,
     lossless_source: bool,
+    codec_type: symphonia::core::codecs::CodecType,
     channels: usize,
     output_rate: usize,
     resampler: Option<Fft<f32>>,
@@ -143,7 +144,7 @@ impl StreamDecoder {
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported audio codec: {e}"))?;
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, lossless_source, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
@@ -205,7 +206,20 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
-    /// Reads the original demuxed compressed packet without invoking the PCM decoder.
+    pub(super) fn validate_encoded_uac1_type_ii(&self, format_type: u8, format_tag: u16) -> Result<(), String> {
+        crate::usb_encoded_formats::validate_uac1_type_ii(format_type, format_tag, self.codec_type)
+            .map_err(str::to_owned)
+    }
+
+    pub(super) fn validate_iec61937_ac3(&self, data_type: u16) -> Result<(), String> {
+        if data_type != crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 ||
+            self.codec_type != symphonia::core::codecs::CODEC_TYPE_AC3 {
+            return Err("IEC 61937 passthrough is currently restricted to AC-3 source frames and data type 0x0001".into());
+        }
+        Ok(())
+    }
+
+
     /// This is an exclusive source mode: callers must not interleave it with decode_packet().
     pub(super) fn read_encoded_packet(&mut self) -> Result<Option<(Vec<u8>, u64, u64)>, String> {
         match self.source_mode {
