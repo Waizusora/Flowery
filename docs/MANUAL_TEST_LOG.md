@@ -160,7 +160,8 @@ The exact track, elapsed position, and detailed queue transition were not separa
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
-- M4A (ALAC): **PARTIAL PASS after fix**. The original Tipe-X file and a separate free 1 MB ALAC sample initially produced no audible output, and playback duration/progress did not advance. After the ALAC magic-cookie channel-count fix was installed, the user confirmed that the separate 1 MB ALAC sample now plays. Progress advancement, seeking, and playback completion have not yet been separately reconfirmed.
+- M4A (ALAC): **PASS for sample playback and progress**. The original Tipe-X file and a separate free 1 MB ALAC sample initially produced no audible output, and playback duration/progress did not advance. After the ALAC magic-cookie channel-count fix was installed, the user confirmed that the 1 MB ALAC sample plays and its duration advances normally. Seeking and playback completion have not yet been separately reconfirmed.
+- AAC: **PASS for sample playback**. User confirmed that a 256 kbps AAC sample from the Files-Sample AAC page plays. Progress advancement and seeking were not separately recorded.
 
 Investigation and code changes (2026-11-08):
 - Android identifies the source as `audio/mp4` with codec MIME `audio/alac`, and `libflowery_audio.so` loads successfully.
@@ -170,11 +171,11 @@ Investigation and code changes (2026-11-08):
 - Symphonia 0.5.4's ALAC decoder reads the channel count from its mandatory 24-byte or extended 48-byte ALAC magic-cookie configuration, but its decoder parameters remain a clone of the original track parameters. Flowery now reads the declared channel count from byte offset 9 of that validated ALAC configuration when the track channel fields are absent. It accepts only declared counts from 1 through 8 and does not assume stereo.
 - The new helper has unit coverage for 24-byte and 48-byte configurations and rejects missing, malformed, and out-of-range channel data.
 - Earlier diagnostic fixes: `80352ac`, `06194ca`, `1cbe4d5`. Channel metadata fallback: `8f49bc5`. ALAC magic-cookie channel-count fix: `b9aa04c`.
-- The ALAC magic-cookie fix was installed and the user subsequently confirmed that the 1 MB ALAC sample plays. This confirms recovery of ALAC playback for that sample; progress advancement, seeking, and completion still need confirmation.
+- The ALAC magic-cookie fix was installed and the user subsequently confirmed that the 1 MB ALAC sample plays and its duration advances normally. Seeking and completion still need confirmation.
 
 Unavailable in the user's test library:
 - WAV: no test file available.
-- M4A (AAC): no test file available.
+- M4A (AAC): a 256 kbps sample was played successfully; broader AAC profile coverage remains unverified.
 
 Remaining:
 - Retest M4A/ALAC with the diagnostic fix installed; do not mark PASS until the user confirms audible playback and advancing progress.
