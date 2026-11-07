@@ -19,6 +19,7 @@ pub(super) enum EncodedFraming {
 pub(super) struct EncodedPacket {
     pub sequence: u64,
     pub presentation_time_us: Option<u64>,
+    pub duration_us: u64,
     pub framing: EncodedFraming,
     pub bytes: Vec<u8>,
 }
@@ -128,6 +129,164 @@ impl EncodedPacketQueue {
     }
 }
 
+
+
+pub(super) fn queue_ref(handle: jlong) -> Option<&'static EncodedPacketQueue> {
+    if handle == 0 { None } else { Some(unsafe { &*(handle as *const EncodedPacketQueue) }) }
+}
+
+struct EncodedProducerState {
+    decoder: *mut crate::streaming::StreamDecoder,
+    queue: &'static EncodedPacketQueue,
+    framing: EncodedFraming,
+    sequence: u64,
+    pending: Option<EncodedPacket>,
+    ended: bool,
+}
+
+struct EncodedProducer {
+    state: Mutex<EncodedProducerState>,
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEncodedQueue(
+    _env: JNIEnv, _class: JClass, max_packets: jint, max_bytes: jint,
+) -> jlong {
+    if max_packets <= 0 || max_bytes <= 0 { return 0; }
+    match EncodedPacketQueue::new(max_packets as usize, max_bytes as usize) {
+        Ok(queue) => Box::into_raw(Box::new(queue)) as jlong,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbEncodedPacket(
+    mut env: JNIEnv, _class: JClass, handle: jlong, timeout_ms: jint,
+) -> jbyteArray {
+    if timeout_ms < 0 { return std::ptr::null_mut(); }
+    let Some(queue) = queue_ref(handle) else { return std::ptr::null_mut(); };
+    let Some(packet) = queue.poll(Duration::from_millis(timeout_ms as u64)) else {
+        return std::ptr::null_mut();
+    };
+    let (kind, format) = match packet.framing {
+        EncodedFraming::Uac1TypeIi { format_tag } => (1u8, format_tag),
+        EncodedFraming::Iec61937 { data_type } => (2u8, data_type),
+    };
+    let mut bytes = Vec::<i8>::with_capacity(23 + packet.bytes.len());
+    bytes.push(kind as i8);
+    bytes.extend_from_slice(&format.to_le_bytes().map(|value| value as i8));
+    bytes.extend_from_slice(&packet.sequence.to_le_bytes().map(|value| value as i8));
+    bytes.extend_from_slice(&packet.presentation_time_us.unwrap_or(0).to_le_bytes().map(|value| value as i8));
+    bytes.extend_from_slice(&packet.duration_us.to_le_bytes().map(|value| value as i8));
+    bytes.extend(packet.bytes.into_iter().map(|value| value as i8));
+    let output = match env.new_byte_array(bytes.len() as i32) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    if env.set_byte_array_region(&output, 0, &bytes).is_err() { return std::ptr::null_mut(); }
+    output.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEncodedProducer(
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, queue_handle: jlong,
+    framing_kind: jint, format_code: jint,
+) -> jlong {
+    if decoder_handle == 0 || !(0..=0xffff).contains(&format_code) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer configuration");
+        return 0;
+    }
+    let Some(queue) = queue_ref(queue_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB packet queue");
+        return 0;
+    };
+    let framing = match framing_kind {
+        1 if format_code != 0 => EncodedFraming::Uac1TypeIi { format_tag: format_code as u16 },
+        2 if format_code != 0 => EncodedFraming::Iec61937 { data_type: format_code as u16 },
+        _ => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Unsupported compressed USB framing identifier");
+            return 0;
+        }
+    };
+    let producer = EncodedProducer {
+        state: Mutex::new(EncodedProducerState {
+            decoder: decoder_handle as *mut crate::streaming::StreamDecoder,
+            queue, framing, sequence: 0, pending: None, ended: false,
+        }),
+    };
+    Box::into_raw(Box::new(producer)) as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncodedProducer(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    if handle == 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
+        return -2;
+    }
+    let producer = unsafe { &*(handle as *const EncodedProducer) };
+    let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.ended { return -1; }
+    if state.pending.is_none() {
+        let decoder = unsafe { &mut *state.decoder };
+        match decoder.read_encoded_packet() {
+            Ok(Some((bytes, timestamp_us, duration_us))) => {
+                let packet = EncodedPacket {
+                    sequence: state.sequence,
+                    presentation_time_us: Some(timestamp_us),
+                    duration_us,
+                    framing: state.framing,
+                    bytes,
+                };
+                state.sequence = state.sequence.wrapping_add(1);
+                state.pending = Some(packet);
+            }
+            Ok(None) => {
+                state.ended = true;
+                return -1;
+            }
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -2;
+            }
+        }
+    }
+    let packet = state.pending.take().unwrap();
+    match state.queue.offer(packet) {
+        Ok(()) => 1,
+        Err(packet) => { state.pending = Some(packet); 0 }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut EncodedProducer)); } }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbEncodedQueue(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    if let Some(queue) = queue_ref(handle) { queue.close(); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClearUsbEncodedQueue(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    if let Some(queue) = queue_ref(handle) { queue.clear(); }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedQueue(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut EncodedPacketQueue)); } }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{EncodedFraming, EncodedPacket, EncodedPacketQueue};
@@ -137,6 +296,7 @@ mod tests {
         EncodedPacket {
             sequence,
             presentation_time_us: Some(sequence * 20_000),
+            duration_us: 20_000,
             framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
             bytes: bytes.to_vec(),
         }
