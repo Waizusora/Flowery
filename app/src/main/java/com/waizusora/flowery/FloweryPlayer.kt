@@ -3,7 +3,6 @@ package com.waizusora.flowery
 import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
-import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -27,40 +26,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         // A writer wait longer than this after prebuffering is reported as producer starvation.
         private const val USB_STARVATION_REPORT_MS = 5L
         private const val DUCK_GAIN = 0.25f
-        private val USB_DIAGNOSTIC_LOCK = Any()
-    }
-
-    private fun recordUsbDiagnostic(event: String) {
-        val preferences = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-        if (!preferences.getBoolean("usb_diagnostic_recording", false)) return
-        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", java.util.Locale.US)
-            .format(java.util.Date())
-        val line = "${timestamp} ${event}".replace('\n', ' ').replace('\r', ' ')
-        synchronized(USB_DIAGNOSTIC_LOCK) {
-            val lines = preferences.getString("usb_direct_diagnostics", "").orEmpty()
-                .lineSequence().filter { it.isNotBlank() }.toMutableList()
-            lines.add(line)
-            preferences.edit().putString("usb_direct_diagnostics", lines.takeLast(1200).joinToString("\n")).apply()
-        }
-        android.util.Log.i("FloweryUsbDiag", line)
-    }
-
-    private fun usbHostDeviceSummary(): String {
-        val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
-            ?: return "usbHostDevices=unavailable"
-        val devices = runCatching { manager.deviceList.values.toList() }.getOrDefault(emptyList())
-        if (devices.isEmpty()) return "usbHostDevices=none"
-        return devices.joinToString(prefix = "usbHostDevices=[", postfix = "]") { device ->
-            val vendor = "%04X".format(java.util.Locale.ROOT, device.vendorId)
-            val product = "%04X".format(java.util.Locale.ROOT, device.productId)
-            "vid=$vendor,pid=$product,name=${device.productName ?: "unknown"}," +
-                "manufacturer=${device.manufacturerName ?: "unknown"}," +
-                "interfaces=${device.interfaceCount},path=${device.deviceName}"
-        }
     }
 
     private var worker: Thread? = null
     private val volumeController = OutputVolumeController(context)
+    private val diagnostics = UsbPlaybackDiagnostics(context)
+    private val sourceResolver = AudioSourceResolver(context)
 
     /**
      * One decoded, gain-adjusted block of negotiated signed integer PCM that is
@@ -173,10 +144,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onState("Opening audio stream…")
                 descriptor = context.contentResolver.openFileDescriptor(uri, "r")
                     ?: throw IllegalStateException("Unable to open the selected audio document")
-                val extension = resolveAudioExtension(uri)
+                val extension = sourceResolver.resolveExtension(uri)
                 val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
-                recordUsbDiagnostic(
+                diagnostics.record(
                     "PLAY_REQUEST extension=${extension} usbBitPerfectEnabled=${bitPerfectRequested} " +
                         "segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}"
                 )
@@ -295,7 +266,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "address=${runCatching { it.address }.getOrNull() ?: "unknown"}, " +
                             "rates=${it.sampleRates?.joinToString() ?: "unknown"}"
                     } ?: "no USB output device selected"
-                    val usbHost = usbHostDeviceSummary()
+                    val usbHost = diagnostics.hostDeviceSummary()
                     val reason = if (opened == -10001 && deviceId != 0) {
                         "Android did not provide the required USB DAC EXCLUSIVE mode."
                     } else if (deviceId != 0) {
@@ -433,36 +404,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 descriptor?.close()
             }
-        }
-    }
-
-    private fun resolveAudioExtension(uri: Uri): String {
-        val displayName = runCatching {
-            context.contentResolver.query(
-                uri,
-                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
-                null,
-                null,
-                null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            }
-        }.getOrNull().orEmpty()
-        val nameExtension = displayName.substringAfterLast('.', "").lowercase()
-        if (nameExtension.isNotBlank()) return nameExtension
-
-        val uriExtension = Uri.decode(uri.lastPathSegment.orEmpty())
-            .substringAfterLast('.', "").lowercase()
-        if (uriExtension.isNotBlank()) return uriExtension
-
-        return when (context.contentResolver.getType(uri)?.lowercase()) {
-            "audio/mp4", "video/mp4", "audio/x-m4a" -> "m4a"
-            "audio/aac" -> "aac"
-            "audio/flac" -> "flac"
-            "audio/wav", "audio/x-wav" -> "wav"
-            "audio/ogg", "application/ogg" -> "ogg"
-            "audio/mpeg" -> "mp3"
-            else -> ""
         }
     }
 
