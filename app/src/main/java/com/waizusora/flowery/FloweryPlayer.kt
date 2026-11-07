@@ -491,46 +491,38 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val discovered = controller.audioDevices()
             diagnostics.record("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
             val ieeeFloatSource = NativeAudio.nativeIsIeeeFloat32Source(handle)
-            var ieeeFloatCandidate = ieeeFloatSource && bandGainsDb.all { it == 0f }
-            var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32 && bandGainsDb.all { it == 0f }
-            var outputEncoding = "signed_integer"
-            onState(if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…" else if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
+            val equalizerFlat = bandGainsDb.all { it == 0f }
+            var ieeeFloatCandidate = ieeeFloatSource && equalizerFlat
+            var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32 && equalizerFlat
+            onState(
+                if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…"
+                else if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…"
+                else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…"
+            )
             diagnostics.record("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
-            val selected = if (ieeeFloatCandidate) {
-                try {
-                    controller.openFirstCompatiblePlaybackSession(
-                        discovered, 32, sourceRate, allowSampleRateConversion = false,
-                        requiredSubslotBytes = 4, channels = channels, encoding = "ieee_float32"
-                    ).also { outputEncoding = "ieee_float32" }
-                } catch (floatError: Throwable) {
-                    ieeeFloatCandidate = false
-                    diagnostics.record("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${floatError.message ?: floatError.javaClass.simpleName} fallback=signed_integer_pcm")
-                    controller.openFirstCompatiblePlaybackSession(
-                        discovered, 0, sourceRate, allowSampleRateConversion = true,
-                        requiredSubslotBytes = null, channels = channels
-                    )
-                }
-            } else if (nativeCandidate) {
-                try {
-                    controller.openFirstCompatiblePlaybackSession(
-                        discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
-                        requiredSubslotBytes = null, channels = channels
-                    )
-                } catch (nativeError: Throwable) {
-                    nativeCandidate = false
-                    diagnostics.record("NATIVE_PROFILE_UNAVAILABLE reason=${nativeError.message ?: nativeError.javaClass.simpleName} fallback=float32")
-                    controller.openFirstCompatiblePlaybackSession(
-                        discovered, 0, sourceRate, allowSampleRateConversion = true,
-                        requiredSubslotBytes = null, channels = channels
-                    )
-                }
-            } else {
-                controller.openFirstCompatiblePlaybackSession(
-                    discovered, 0, sourceRate, allowSampleRateConversion = true,
-                    requiredSubslotBytes = null, channels = channels
-                )
-            }
-            val (selectedDevice, usbSession) = selected
+            val negotiation = UsbPcmRouteNegotiator(controller).open(
+                devices = discovered,
+                decoderHandle = handle,
+                sourceBits = sourceBits,
+                sourceRate = sourceRate,
+                channels = channels,
+                ieeeFloatSource = ieeeFloatSource,
+                equalizerFlat = equalizerFlat,
+                onFallback = { error ->
+                    if (ieeeFloatCandidate) {
+                        ieeeFloatCandidate = false
+                        diagnostics.record("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=signed_integer_pcm")
+                    } else if (nativeCandidate) {
+                        nativeCandidate = false
+                        diagnostics.record("NATIVE_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=float32")
+                    }
+                },
+            )
+            ieeeFloatCandidate = negotiation.ieeeFloatCandidate
+            nativeCandidate = negotiation.nativeCandidate
+            val outputEncoding = negotiation.outputEncoding
+            val selectedDevice = negotiation.device
+            val usbSession = negotiation.session
             session = usbSession
             val device = selectedDevice.usbDevice
             diagnostics.record("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
