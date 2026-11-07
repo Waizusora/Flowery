@@ -101,6 +101,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
         bandGainsDb = gains.copyOf()
+        if (usbPlaybackMode) usbNativeBitPerfectConfirmed = false
         equalizerRevision++
     }
 
@@ -123,6 +124,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 softwareVolume = normalized
                 if (usbKey != null) volumeController.setUsbVolume(usbKey, normalized)
                 usbBitPerfectActive = false
+                usbNativeBitPerfectConfirmed = false
                 onState("USB DAC software volume · ${(normalized * 100).toInt()}%")
             }
             publishUsbPlaybackModeStatus()
@@ -141,6 +143,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun setDucked(ducked: Boolean) {
         outputDucked = ducked
+        if (ducked && usbPlaybackMode) usbNativeBitPerfectConfirmed = false
         applyOutputVolume()
         publishUsbPlaybackModeStatus()
     }
