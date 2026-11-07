@@ -136,6 +136,40 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
     0
 }
 
+/// Applies a playback lifecycle command under the session gate. Commands 0..=7
+/// are lifecycle phases; command 8 advances the seek epoch without changing phase.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSessionCommand(
+    mut env: JNIEnv, _class: JClass, handle: jlong, command: jint,
+) -> jlong {
+    let Some(session) = session_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
+        return -1;
+    };
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if command == 8 {
+        return advance_epoch(&session.epoch, &session.cancelled)
+            .map(|epoch| epoch as jlong).unwrap_or(-1);
+    }
+    if !(0..=7).contains(&command) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session command");
+        return -1;
+    }
+    if session.cancelled.load(Ordering::Acquire) && command != SessionPhase::Cancelled as jint {
+        return -1;
+    }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, command) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
+        return -1;
+    }
+    session.phase.store(command as i64, Ordering::Release);
+    if command == SessionPhase::Cancelled as jint {
+        session.cancelled.store(true, Ordering::Release);
+    }
+    0
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSessionEpoch(
     _env: JNIEnv, _class: JClass, handle: jlong,
