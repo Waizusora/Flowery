@@ -140,6 +140,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         isPaused: () -> Boolean,
         onPrebufferReady: (queuedBlocks: Int, endReached: Boolean, waitMs: Double) -> Unit,
         onFirstTransfer: (frames: Int) -> Unit,
+        onEpochChanged: (startFrames: Long) -> Unit,
         onStarvation: (queueWaitMs: Double, events: Long) -> Unit,
         onWrite: (result: UsbPcmWriteResult, chunk: Long, totalFrames: Long, starvationEvents: Long, throughputRatio: Double, audioDurationMs: Double) -> Unit,
         onBitPerfectChanged: (bitPerfect: Boolean) -> Unit,
@@ -179,6 +180,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
                 starvationEvents++
                 onStarvation(result.queueWaitMs, starvationEvents)
             }
+            if (result.epochChanged) onEpochChanged(result.startFrames)
             if (result.endOfStream) {
                 onEndOfStream(chunks, totalFramesSent)
                 break
