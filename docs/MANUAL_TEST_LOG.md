@@ -157,8 +157,9 @@ The exact track, elapsed position, and detailed queue transition were not separa
 
 **Status: IN PROGRESS — partial format verification**
 
-User-confirmed result:
+User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
+- MP3: **PASS for playback**. User confirmed normal playback.
 
 Remaining:
 - Test each other available format for at least 15–30 seconds.
