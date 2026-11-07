@@ -5,6 +5,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -12,6 +14,30 @@ import kotlin.concurrent.thread
 import kotlin.math.abs
 
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
+    private data class UsbPcmBlock(
+        val endOfStream: Boolean,
+        val epoch: Int,
+        val frames: Int,
+        val startFrames: Long,
+        val pcm: ByteArray,
+    )
+
+    private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock {
+        // Keep this layout in sync with native/src/usb_pcm.rs: flag + epoch + frames + start frame.
+        require(encoded.size >= 17) { "Rust USB PCM block header is truncated." }
+        val header = ByteBuffer.wrap(encoded, 0, 17).order(ByteOrder.LITTLE_ENDIAN)
+        val endOfStream = header.get().toInt() != 0
+        val epoch = header.int
+        val frames = header.int
+        val startFrames = header.long
+        require(frames >= 0 && startFrames >= 0L) { "Rust USB PCM block contains invalid frame metadata." }
+        val payload = encoded.copyOfRange(17, encoded.size)
+        require(!endOfStream || (frames == 0 && payload.isEmpty())) {
+            "Rust USB PCM end-of-stream block must not contain audio payload."
+        }
+        require(endOfStream || frames > 0) { "Rust USB PCM data block must contain at least one frame." }
+        return UsbPcmBlock(endOfStream, epoch, frames, startFrames, payload)
+    }
     companion object {
         private const val DECODE_CHUNK_FRAMES = 8_192
         private const val USB_DECODE_CHUNK_FRAMES = 32_768
@@ -667,7 +693,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(producerError.isBlank()) { "Rust USB PCM producer worker failed: $producerError" }
                 val waitStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
                 val encodedBlock = NativeAudio.nativePollUsbPcmBlock(queueHandle, USB_QUEUE_POLL_MS.toInt()) ?: continue
-                val block = UsbPcmProducerAdapter.decodeBlock(encodedBlock)
+                val block = decodeUsbPcmBlock(encodedBlock)
                 val requestedEpoch = NativeAudio.nativePlaybackSessionEpoch(sessionHandle).toInt()
                 if (requestedEpoch >= 0 && block.epoch != requestedEpoch) {
                     usbSession.flush()
