@@ -689,6 +689,21 @@ impl StreamDecoder {
 
 }
 
+fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
+    if !sample.is_finite() || !gain.is_finite() || !(2..=32).contains(&valid_bits) {
+        return 0;
+    }
+    let value = (sample * gain.clamp(0.0, 1.0)).clamp(-1.0, 1.0);
+    let negative_limit = -(1_i64 << (valid_bits - 1));
+    let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
+    let scale = if value < 0.0 {
+        (1_u64 << (valid_bits - 1)) as f64
+    } else {
+        positive_limit as f64
+    };
+    ((value as f64 * scale).round() as i64).clamp(negative_limit, positive_limit)
+}
+
 fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],String> {
     let len=env.get_array_length(array).map_err(|e|e.to_string())? as usize;
     if len!=31 { return Err("31 equalizer gains are required".into()); }
@@ -740,7 +755,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
 ) -> jlong {
     if position_ms < 0 { return -1; }
     let Some(decoder) = decoder_ref(handle) else { return -1; };
-    match decoder.lock().unwrap_or_else(|error| error.into_inner()).seek_to(position_ms as u64) {
+    let result = { let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner()); guard.seek_to(position_ms as u64) };
+    match result {
         Ok(position) => position as jlong,
         Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
     }
@@ -785,7 +801,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDur
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
     let Some(decoder) = decoder_ref(handle) else { return 0; };
-    decoder.lock().unwrap_or_else(|error| error.into_inner()).duration_ms as jlong
+    let duration = decoder.lock().unwrap_or_else(|error| error.into_inner()).duration_ms as jlong;
+    duration
 }
 
 #[no_mangle]
@@ -794,7 +811,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeConfigureStr
 ) -> jint {
     let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
     let Some(decoder) = decoder_ref(handle) else { return -1; };
-    match decoder.lock().unwrap_or_else(|error| error.into_inner()).configure(output_rate as usize,&gains) {
+    let result = { let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner()); guard.configure(output_rate as usize,&gains) };
+    match result {
         Ok(())=>0,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);-1}
     }
 }
