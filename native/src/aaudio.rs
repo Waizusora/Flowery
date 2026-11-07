@@ -293,11 +293,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 match crate::streaming::stream_pump_status(worker_session.decoder_handle) {
                     Some(0 | 1) => {}
                     Some(error) => {
+                        worker_session.error_code.store(if error < 0 { error } else { -901 }, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
                         thread_status.store(if error < 0 { error } else { -901 }, Ordering::Release);
                         break;
                     }
                     None => {
+                        worker_session.error_code.store(-902, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
                         thread_status.store(-902, Ordering::Release);
                         break;
@@ -315,6 +317,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     }
                     Ok(false) => {}
                     Err(error) => {
+                        worker_session.error_code.store(if error < 0 { error } else { -error }, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
                         thread_status.store(if error < 0 { error } else { -error }, Ordering::Release);
                         break;
