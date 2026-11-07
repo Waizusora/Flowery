@@ -3,14 +3,14 @@ use crate::usb_pcm::{queue_ref, PcmBlock, PcmEncoding, PcmFormat, UsbPcmQueue};
 use jni::objects::JClass;
 use jni::sys::{jfloat, jint, jlong};
 use jni::JNIEnv;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const USB_DECODE_CHUNK_FRAMES: usize = 32_768;
 
 struct ProducerState {
     decoder: *mut StreamDecoder,
-    queue: &'static UsbPcmQueue,
+    queue: Arc<UsbPcmQueue>,
     format: PcmFormat,
     segment_start_ms: u64,
     segment_end_ms: Option<u64>,
