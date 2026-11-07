@@ -648,8 +648,10 @@ impl StreamDecoder {
             let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
             let ramp_gain = start_gain + (gain - start_gain) * fraction;
             let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
+            let subslot_shift = (format.subslot_bytes as u32 * 8) - format.valid_bits as u32;
+            let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
             for byte in 0..format.subslot_bytes {
-                packed.push((value >> (byte * 8)) as u8);
+                packed.push((encoded >> (byte * 8)) as u8);
             }
         }
         self.usb_last_gain = gain;
