@@ -25,7 +25,7 @@ pub(super) struct SessionState {
     pub(super) cancelled: AtomicBool,
     pub(super) phase: AtomicI64,
     pub(super) route: i32,
-    gate: Mutex<()>,
+    pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
 }
 
