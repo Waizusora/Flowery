@@ -217,6 +217,27 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
         return -1;
     }
+    if session.route == 0 {
+        let output_result = match command {
+            value if value == SessionPhase::Paused as jint =>
+                crate::aaudio::pause_output_for_session(),
+            value if value == SessionPhase::Running as jint =>
+                crate::aaudio::resume_output_for_session(),
+            _ => None,
+        };
+        if let Some(result) = output_result {
+            if result != 0 {
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!("Unable to apply AAudio session command (error {result})"),
+                );
+                return result as jlong;
+            }
+        }
+        if command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint {
+            crate::aaudio::stop_output_for_session();
+        }
+    }
     session.phase.store(command as i64, Ordering::Release);
     if command == SessionPhase::Cancelled as jint {
         session.cancelled.store(true, Ordering::Release);
@@ -248,6 +269,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlayba
         let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         session.cancelled.store(true, Ordering::Release);
         session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+        if session.route == 0 {
+            crate::aaudio::stop_output_for_session();
+        }
     }
 }
 
@@ -264,6 +288,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+            if session.route == 0 {
+                crate::aaudio::stop_output_for_session();
+            }
             // Keep the shared decoder alive until every producer and in-flight JNI
             // operation releases its session reference.
             let _ = session.route;
