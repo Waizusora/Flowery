@@ -130,6 +130,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
         sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8,
         subslot_bytes: subslot_bytes as u8, signed: encoding == 0, little_endian: true };
     if format.validate().is_err() { return 0; }
+    let initial_epoch = state_epoch(&session);
     let producer = UsbPcmProducer {
         state: Mutex::new(ProducerState {
             decoder,
@@ -140,7 +141,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
             segment_end_ms: end,
             segment_remaining_frames: remaining,
             position_frames: 0,
-            epoch: state_epoch(&session),
+            epoch: initial_epoch,
             at_end: false,
             pending_seek_ms: None,
             pending_block: None,
