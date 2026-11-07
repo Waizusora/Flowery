@@ -339,6 +339,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         lastReportedSeekPositionMs = completedSeekPosition
                         onState("Seeking · ${completedSeekPosition / 1000}s")
                     }
+                    when (NativeAudio.nativeGetStreamPumpStatus(handle)) {
+                        -2 -> {
+                            val detail = NativeAudio.nativeGetStreamPumpError(handle)
+                            throw IllegalStateException(
+                                if (detail.isBlank()) "Rust audio decoder failed without an error detail."
+                                else "Rust audio decoder failed: $detail"
+                            )
+                        }
+                        -1 -> throw IllegalStateException("The Rust audio decode worker is unavailable.")
+                    }
                     when (NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)) {
                         0 -> Thread.sleep(8)
                         1 -> break
