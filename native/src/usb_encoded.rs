@@ -279,7 +279,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
     let mut decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let framing = match framing_kind {
         1 if format_code != 0 => {
-            if let Err(error) = decoder.validate_encoded_uac1_type_ii(
+            if let Err(error) = decoder_guard.validate_encoded_uac1_type_ii(
                 crate::usb_encoded_formats::UAC1_FORMAT_TYPE_II, format_code as u16) {
                 let _ = env.throw_new("java/lang/IllegalArgumentException", error);
                 return 0;
@@ -287,7 +287,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
             EncodedFraming::Uac1TypeIi { format_tag: format_code as u16 }
         }
         2 if format_code == crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 as jint => {
-            if let Err(error) = decoder.validate_iec61937_ac3(format_code as u16) {
+            if let Err(error) = decoder_guard.validate_iec61937_ac3(format_code as u16) {
                 let _ = env.throw_new("java/lang/IllegalArgumentException", error);
                 return 0;
             }
