@@ -823,7 +823,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlayback
         }
     };
     let flush_result = crate::aaudio::flush_output_for_seek(output_frame);
-    if flush_result != crate::aaudio::OK {
+    if flush_result != 0 {
         let _ = env.throw_new(
             "java/lang/IllegalStateException",
             format!("Unable to flush AAudio output for seek (error {flush_result})"),
