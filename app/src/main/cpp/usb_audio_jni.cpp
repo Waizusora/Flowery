@@ -432,7 +432,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
     char message[768];
     std::snprintf(
         message, sizeof(message),
-        "USB isochronous PCM transfer failed: reason=%s; %s (%d); "
+        "USB isochronous transfer failed: reason=%s; %s (%d); "
         "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X",
@@ -785,6 +785,16 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         interface_number, 0, JNI_FALSE);
     if (handle == 0 || env->ExceptionCheck()) return 0;
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    const uint64_t bytes_per_interval =
+        (static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
+        1000000ULL;
+    if (bytes_per_interval == 0 || bytes_per_interval > session->max_packet_bytes) {
+        close_session(session);
+        jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+        if (exception != nullptr) env->ThrowNew(
+            exception, "Encoded transport rate exceeds the selected endpoint service-interval capacity");
+        return 0;
+    }
     session->encoded_mode = true;
     session->encoded_bytes_per_second = static_cast<uint64_t>(encoded_bytes_per_second);
     return handle;
