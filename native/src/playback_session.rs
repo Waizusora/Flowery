@@ -188,6 +188,30 @@ mod tests {
     }
 
     #[test]
+    fn session_gate_rejects_seek_after_teardown_for_every_route() {
+        for route in 0..=3 {
+            assert!(valid_route(route));
+            let gate = Mutex::new(());
+            let epoch = AtomicU64::new(0);
+            let cancelled = AtomicBool::new(false);
+
+            {
+                let _guard = gate.lock().unwrap();
+                assert_eq!(advance_epoch(&epoch, &cancelled), Some(1));
+            }
+            {
+                let _guard = gate.lock().unwrap();
+                cancelled.store(true, Ordering::Release);
+            }
+            {
+                let _guard = gate.lock().unwrap();
+                assert_eq!(advance_epoch(&epoch, &cancelled), None);
+            }
+            assert_eq!(epoch.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
     fn epoch_overflow_is_rejected_without_wrapping() {
         let epoch = AtomicU64::new(u64::MAX);
         let cancelled = AtomicBool::new(false);
