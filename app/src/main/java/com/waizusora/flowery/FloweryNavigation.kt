@@ -144,12 +144,18 @@ fun FloweryNavigation(
             }
         }
     }
-    var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
+    var theme by remember {
+        mutableStateOf(when (prefs.getString("theme", "System")) {
+            "Light" -> "Light"
+            "Black", "Dark" -> "Dark"
+            else -> "System"
+        })
+    }
     var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
-    val lightTheme = theme == "Light" || (theme == "Auto" && !systemDark)
+    val lightTheme = theme == "Light" || (theme == "System" && !systemDark)
     val foreground = if (lightTheme) Color(0xFF292629) else Color(0xFFF4F0F0)
     val muted = if (lightTheme) Color(0xFF746A6E) else Color(0xFFC8B9BF)
     val background = if (lightTheme) Color(0xFFF7F6F4) else Color(0xFF171719)
@@ -310,7 +316,10 @@ fun FloweryNavigation(
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
                     navigate = { settingsPage = it },
-                    changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
+                    changeTheme = { selected ->
+                        theme = selected
+                        prefs.edit().putString("theme", when (selected) { "Dark" -> "Black"; "Light" -> "Light"; else -> "Auto" }).apply()
+                    },
                     libraryEncoding = libraryEncoding,
                     availableEncodings = availableEncodings,
                     changeEncoding = { libraryEncoding = it; prefs.edit().putString("library_text_encoding", it).apply() },
