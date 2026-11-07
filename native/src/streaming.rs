@@ -84,6 +84,13 @@ fn apply_eq_samples(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StreamSourceMode {
+    Unselected,
+    DecodedPcm,
+    EncodedPackets,
+}
+
 pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
@@ -109,6 +116,7 @@ pub(super) struct StreamDecoder {
     discard_output_frames: u64,
     consecutive_decode_errors: u32,
     usb_last_gain: f32,
+    source_mode: StreamSourceMode,
 }
 
 impl StreamDecoder {
@@ -139,7 +147,7 @@ impl StreamDecoder {
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: -1.0,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: -1.0, source_mode: StreamSourceMode::Unselected,
         })
     }
 
@@ -200,6 +208,13 @@ impl StreamDecoder {
     /// Reads the original demuxed compressed packet without invoking the PCM decoder.
     /// This is an exclusive source mode: callers must not interleave it with decode_packet().
     pub(super) fn read_encoded_packet(&mut self) -> Result<Option<(Vec<u8>, u64, u64)>, String> {
+        match self.source_mode {
+            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::EncodedPackets,
+            StreamSourceMode::EncodedPackets => {}
+            StreamSourceMode::DecodedPcm => {
+                return Err("A stream decoder cannot switch from decoded PCM to encoded packet mode".into());
+            }
+        }
         loop {
             let packet = match self.format.next_packet() {
                 Ok(packet) => packet,
@@ -233,6 +248,13 @@ impl StreamDecoder {
     }
 
     fn decode_packet(&mut self) -> Result<bool,String> {
+        match self.source_mode {
+            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::DecodedPcm,
+            StreamSourceMode::DecodedPcm => {}
+            StreamSourceMode::EncodedPackets => {
+                return Err("A stream decoder cannot switch from encoded packet mode to decoded PCM".into());
+            }
+        }
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
