@@ -917,7 +917,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
-    JNIEnv* env, jobject, jlong handle, jbyteArray encoded) {
+    JNIEnv* env, jobject, jlong handle, jbyteArray encoded, jlong duration_us) {
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (session == nullptr || encoded == nullptr || !session->encoded_mode) return -1;
     const jsize byte_count = env->GetArrayLength(encoded);
@@ -937,13 +937,16 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame exceeds the bounded isochronous URB packet count");
             return -1;
         }
-        const jlong duration_us = 0; // replaced by the duration-aware overload below
-        (void)duration_us;
-        const auto frame_start = std::chrono::steady_clock::now();
+        if (duration_us <= 0 || duration_us > 1000000) {
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame duration is invalid");
+            return -1;
+        }
         if (session->encoded_frame_deadline_valid &&
-            frame_start < session->next_encoded_frame_due) {
+            std::chrono::steady_clock::now() < session->next_encoded_frame_due) {
             std::this_thread::sleep_until(session->next_encoded_frame_due);
         }
+        const auto frame_start = std::chrono::steady_clock::now();
         compact_encoded(session);
         session->pending_encoded.resize(frame_bytes);
         env->GetByteArrayRegion(encoded, 0, byte_count,
@@ -969,10 +972,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         }
         session->pending_encoded.clear();
         session->encoded_offset = 0;
-        session->next_encoded_frame_due = std::chrono::steady_clock::now() +
-            std::chrono::microseconds(session->encoded_bytes_per_second > 0
-                ? (static_cast<uint64_t>(frame_bytes) * 1000000ULL /
-                   session->encoded_bytes_per_second) : 0);
+        session->next_encoded_frame_due = frame_start + std::chrono::microseconds(duration_us);
         session->encoded_frame_deadline_valid = true;
         return byte_count;
     }
