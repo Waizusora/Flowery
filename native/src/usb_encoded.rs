@@ -296,6 +296,31 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedProducer(
+    mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
+) -> jlong {
+    if handle == 0 || position_ms < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded seek request");
+        return -1;
+    }
+    let producer = unsafe { &*(handle as *const EncodedProducer) };
+    let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    let decoder = unsafe { &mut *state.decoder };
+    match decoder.seek_to(position_ms as u64) {
+        Ok(actual_position) => {
+            state.pending = None;
+            state.ended = false;
+            state.queue.clear();
+            actual_position as jlong
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
