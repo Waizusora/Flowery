@@ -13,16 +13,16 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
-class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
-    private data class UsbPcmBlock(
-        val endOfStream: Boolean,
-        val epoch: Int,
-        val frames: Int,
-        val startFrames: Long,
-        val pcm: ByteArray,
-    )
+internal data class UsbPcmBlock(
+    val endOfStream: Boolean,
+    val epoch: Int,
+    val frames: Int,
+    val startFrames: Long,
+    val pcm: ByteArray,
+)
 
-    private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock {
+internal object UsbPcmBlockDecoder {
+    fun decode(encoded: ByteArray): UsbPcmBlock {
         // Keep this layout in sync with native/src/usb_pcm.rs: flag + epoch + frames + start frame.
         require(encoded.size >= 17) { "Rust USB PCM block header is truncated." }
         val header = ByteBuffer.wrap(encoded, 0, 17).order(ByteOrder.LITTLE_ENDIAN)
@@ -38,6 +38,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         require(endOfStream || frames > 0) { "Rust USB PCM data block must contain at least one frame." }
         return UsbPcmBlock(endOfStream, epoch, frames, startFrames, payload)
     }
+}
+
+class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
+    private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock =
+        UsbPcmBlockDecoder.decode(encoded)
     companion object {
         private const val DECODE_CHUNK_FRAMES = 8_192
         private const val USB_DECODE_CHUNK_FRAMES = 32_768
