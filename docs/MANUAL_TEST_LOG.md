@@ -98,29 +98,24 @@ Steps and observations:
 
 ### TEST 5 — Repeat One
 
-**Status: FAIL — retest required after fix**
+**Status: PASS — retest completed after fix**
 
-Steps and observations:
+Initial failure:
+- Repeat One mode appeared active, but the track did not restart automatically at the end and playback did not return to `0:00`.
+- The audio result was not evaluated during the initial failed test.
 
-1. Open Now Playing.
-2. Activate Repeat One.
-   - Result: Repeat One mode appeared active.
-3. Allow the current track to reach its end.
-   - Result: Track did not restart automatically.
-4. Check the playback position.
-   - Result: Playback did not return to `0:00`.
-
-Failure details:
-- UI mode activation was observed to work.
-- Automatic replay at end-of-track did not work.
-- The audio result was not evaluated (`-`).
-
-Follow-up:
-- Code inspection confirmed that the playback completion callback was handling the queue transition synchronously on the audio worker thread. The Repeat One path calls `player.stop()`, which interrupts the current worker while it is still unwinding and closing its native playback session.
-- Updated `PlaybackService.kt` to post completion handling to the main thread. This allows the completed audio worker to return through its cleanup path before the service stops/restarts playback.
+Fix:
+- Code inspection found that the playback completion callback handled the queue transition synchronously on the audio worker thread. The Repeat One path called `player.stop()`, interrupting the worker while it was unwinding and closing its native playback session.
+- Updated `PlaybackService.kt` to post completion handling to the main thread, allowing the completed worker to finish cleanup before playback is restarted.
 - Fix commit: `6e64ff807f9d4363021870ff4dc92ceb9af8b306`.
-- Status remains **RETEST REQUIRED** until a new CI build is installed and Repeat One is observed restarting from the beginning.
-- Do not mark this test as passed until the full test is repeated successfully.
+
+Retest observations (user-confirmed):
+1. Repeat One mode active: **Yes**.
+2. Track restarted automatically: **Yes**.
+3. Playback position returned to `0:00`: **Yes**.
+4. Audio sounded normal: **Yes**.
+
+Result: all expected Repeat One behaviors were observed on retest.
 
 ## Remaining manual test plan
 
