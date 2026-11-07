@@ -70,7 +70,7 @@ fn valid_phase_transition(current: i32, next: i32) -> bool {
     }
 }
 
-fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
+pub(super) fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
     loop {
         if cancelled.load(Ordering::Acquire) { return None; }
         let current = epoch.load(Ordering::Acquire);
