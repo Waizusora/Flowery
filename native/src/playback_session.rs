@@ -238,29 +238,35 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         session.cancelled.store(true, Ordering::Release);
     }
     #[cfg(target_os = "android")]
-    if session.route == 0 {
-        let output_result = match command {
+    let output_result = if session.route == 0 {
+        match command {
             value if value == SessionPhase::Paused as jint =>
                 crate::aaudio::pause_output_for_session(),
             value if value == SessionPhase::Running as jint =>
                 crate::aaudio::resume_output_for_session(),
             _ => None,
-        };
-        if let Some(result) = output_result {
-            if result != 0 {
-                session.phase.store(current as i64, Ordering::Release);
-                let _ = env.throw_new(
-                    "java/lang/IllegalStateException",
-                    format!("Unable to apply AAudio session command (error {result})"),
-                );
-                return result as jlong;
-            }
         }
-    }
+    } else { None };
     #[cfg(target_os = "android")]
     let stop_output = session.route == 0 &&
         (command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint);
     drop(_gate);
+    #[cfg(target_os = "android")]
+    if let Some(result) = output_result {
+        if result != 0 {
+            let rollback_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+            if session.phase.load(Ordering::Acquire) as i32 == command &&
+                !session.cancelled.load(Ordering::Acquire) {
+                session.phase.store(current as i64, Ordering::Release);
+            }
+            drop(rollback_gate);
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                format!("Unable to apply AAudio session command (error {result})"),
+            );
+            return result as jlong;
+        }
+    }
     #[cfg(target_os = "android")]
     if stop_output {
         crate::aaudio::stop_output_for_session();
