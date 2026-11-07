@@ -101,6 +101,7 @@ Embedded-lyrics extraction, remote lyric search, lyric downloading, and lyric-fi
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md)
+- [Architecture refactor status](docs/REFACTOR_STATUS.md)
 - [Audio engine](AUDIO_ENGINE.md)
 - [Library, metadata, and lyrics](LIBRARY_AND_METADATA.md)
 - [Build instructions](BUILDING.md)
