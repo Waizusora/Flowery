@@ -212,3 +212,8 @@ Review the repository's license file and the license terms of all bundled depend
 USB Diagnostics → Record Log is the single diagnostic capture/export workflow. It combines periodic AAudio runtime telemetry, direct USB/libusb playback events, and the current connected-device descriptor/clock snapshot. Descriptor records are stored in the local SQLite database `usb_dac_profiles.db`, keyed by VID/PID and a SHA-256 fingerprint of the raw descriptor block. This is a descriptor-family identity, not proof of a silicon chipset model.
 
 Playback service commands are coordinated through an Android adapter backed by a Rust playback lifecycle controller. Rust owns queue index, shuffle/repeat state, transition decisions, and UAC1/UAC2 profile parsing; Android retains USB permission, device connection, foreground-service lifecycle, and URI/metadata presentation. The application does not infer sample-rate support from a device name, and direct USB playback still requires a successful device clock negotiation.
+
+
+### Encoded queue ownership and JNI packet envelope
+
+The encoded queue is reference-counted across JNI handles. A producer retains its own shared queue reference, so releasing the Kotlin queue handle does not invalidate a producer that is still alive. The packet envelope returned to Kotlin is 27 bytes before the opaque payload: framing kind (1 byte), format/data-type code (2-byte little-endian), sequence (8-byte little-endian), presentation timestamp in microseconds (8-byte little-endian; zero means unavailable), and duration in microseconds (8-byte little-endian). The envelope describes metadata only; it does not establish codec compatibility or USB wire framing.
