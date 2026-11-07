@@ -1,4 +1,4 @@
-use symphonia::core::codecs::{CodecType, CODEC_TYPE_AC3};
+use symphonia::core::codecs::{CodecType, CODEC_TYPE_EAC3};
 use jni::objects::{JByteArray, JClass};
 use jni::sys::{jint, jstring};
 use jni::JNIEnv;
@@ -63,7 +63,7 @@ pub(super) fn validate_uac1_type_ii(
     if format_tag != UAC1_FORMAT_TAG_AC3 {
         return Err("The UAC1 Type-II format tag is not in the supported codec allow-list");
     }
-    if codec != CODEC_TYPE_AC3 {
+    if codec != CODEC_TYPE_EAC3 {
         return Err("The source codec does not match the UAC1 Type-II AC-3 descriptor");
     }
     Ok(())
