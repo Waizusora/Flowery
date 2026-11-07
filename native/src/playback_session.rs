@@ -19,9 +19,9 @@ enum SessionPhase {
     Failed = 7,
 }
 
-struct SessionState {
-    epoch: AtomicU64,
-    cancelled: AtomicBool,
+pub(super) struct SessionState {
+    pub(super) epoch: AtomicU64,
+    pub(super) cancelled: AtomicBool,
     phase: AtomicI64,
     route: i32,
     decoder: Arc<Mutex<StreamDecoder>>,
@@ -34,7 +34,7 @@ fn registry() -> &'static Mutex<HashMap<i64, Arc<SessionState>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn session_ref(handle: jlong) -> Option<Arc<SessionState>> {
+pub(super) fn session_ref(handle: jlong) -> Option<Arc<SessionState>> {
     if handle <= 0 { return None; }
     registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
 }
