@@ -132,9 +132,12 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             queueBytes: Int = 256 * 1024
         ): UsbEncodedPlaybackPipeline {
             require(decoderHandle != 0L)
+            val streamInfo = NativeAudio.nativeGetStreamInfo(decoderHandle)
+            val sourceRate = (streamInfo ushr 32).toInt()
+            require(sourceRate > 0) { "Source sample rate is unavailable" }
             val validation = JSONObject(
                 NativeAudio.nativeValidateUsbEncodedDescriptor(
-                    descriptors, interfaceNumber, alternateSetting, formatType, formatTag
+                    descriptors, interfaceNumber, alternateSetting, formatType, formatTag, sourceRate
                 )
             )
             check(validation.optBoolean("valid")) {
