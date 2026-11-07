@@ -139,7 +139,7 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_bits = params.bits_per_sample.unwrap_or(0).min(u8::MAX as u32) as u8;
+        let source_bits = params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8;
         let lossless_source = is_lossless_codec(params.codec);
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
