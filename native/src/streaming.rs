@@ -192,6 +192,17 @@ impl StreamDecoder {
         let actual_output_frames = milliseconds_to_frames(actual_ms as u64, self.output_rate);
         self.source_frames_decoded = actual_source_frames;
 
+        if self.source_mode == StreamSourceMode::EncodedPackets {
+            // Encoded seeking is demuxer/frame-boundary based. No PCM DSP or
+            // resampler state is configured for this exclusive source mode.
+            self.produced_frames = requested_source_frames;
+            self.discard_source_frames = 0;
+            self.discard_output_frames = 0;
+            self.resampler = None;
+            self.resampler_delay_frames = 0;
+            return Ok(actual_ms as u64);
+        }
+
         let rate = self.output_rate;
         let gains = self.gains;
         self.configure(rate, &gains)?;
@@ -224,6 +235,17 @@ impl StreamDecoder {
                     .ok_or_else(|| "IEC 61937 carrier rate overflow".into())
             }
             _ => Err("No encoded transport rate is defined for this source codec and framing".into()),
+        }
+    }
+
+    pub(super) fn begin_encoded_stream(&mut self) -> Result<(), String> {
+        match self.source_mode {
+            StreamSourceMode::Unselected => {
+                self.source_mode = StreamSourceMode::EncodedPackets;
+                Ok(())
+            }
+            StreamSourceMode::EncodedPackets => Ok(()),
+            StreamSourceMode::DecodedPcm => Err("A decoded PCM stream cannot be switched to encoded passthrough".into()),
         }
     }
 
