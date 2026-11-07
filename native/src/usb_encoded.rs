@@ -296,6 +296,28 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncodedTransportRate(
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, framing_kind: jint,
+) -> jlong {
+    if decoder_handle == 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
+        return 0;
+    }
+    let decoder = unsafe { &*(decoder_handle as *const crate::streaming::StreamDecoder) };
+    match decoder.encoded_transport_bytes_per_second(framing_kind) {
+        Ok(rate) if rate > 0 && rate <= jlong::MAX as u64 => rate as jlong,
+        Ok(_) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Invalid encoded transport rate");
+            0
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            0
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedProducer(
     mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
 ) -> jlong {
