@@ -832,7 +832,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlayback
         }
     };
     let target_frame = milliseconds_to_frames((actual - segment_start_ms).max(0) as u64, output_rate);
-    let flush_result = crate::aaudio::flush_output_for_seek(target_frame);
+    let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
+    let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
     if flush_result != 0 {
         let _ = env.throw_new("java/lang/IllegalStateException",
             format!("Unable to flush AAudio output for seek (error {flush_result})"));
