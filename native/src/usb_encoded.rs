@@ -7,8 +7,8 @@ use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_session::{session_ref, SessionState};
 use std::time::{Duration, Instant};
 
-use jni::objects::JClass;
-use jni::sys::{jbyteArray, jint, jlong};
+use jni::objects::{JClass, JObject, JValue};
+use jni::sys::{jbyteArray, jint, jlong, jlongArray};
 use jni::JNIEnv;
 
 /// Identifies the framing contract of a compressed USB payload.
@@ -272,6 +272,102 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         Ok(queue) => register_queue(queue),
         Err(_) => 0,
     }
+}
+
+/// Drains a bounded batch of encoded packets from Rust and submits each packet
+/// through the already-open Android USB session. Kotlin supplies the transport
+/// object only as an Android/libusb bridge; packet scheduling stays native.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncodedTransport(
+    mut env: JNIEnv, _class: JClass, queue_handle: jlong, producer_handle: jlong,
+    transport: JObject, max_packets: jint, expected_sequence: jlong,
+    framing_kind: jint, format_code: jint, last_position_ms: jlong,
+) -> jlongArray {
+    if max_packets <= 0 || expected_sequence < 0 || last_position_ms < 0 ||
+        (framing_kind != 1 && framing_kind != 2) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded transport scheduler configuration");
+        return std::ptr::null_mut();
+    }
+    let Some(queue) = queue_ref(queue_handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet queue is no longer valid");
+        return std::ptr::null_mut();
+    };
+    let mut submitted = 0_i64;
+    let mut sequence = expected_sequence as u64;
+    let mut position_ms = last_position_ms;
+    while submitted < max_packets as i64 {
+        let Some(packet) = queue.poll(Duration::ZERO) else { break; };
+        let framing_matches = match packet.framing {
+            EncodedFraming::Uac1TypeIi { format_tag } => framing_kind == 1 && format_code == format_tag as jint,
+            EncodedFraming::Iec61937 { data_type } => framing_kind == 2 && format_code == data_type as jint,
+        };
+        if !framing_matches || packet.sequence != sequence || packet.bytes.is_empty() {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet framing or sequence is invalid");
+            return std::ptr::null_mut();
+        }
+        let payload = match env.byte_array_from_slice(&packet.bytes) {
+            Ok(array) => array,
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+                return std::ptr::null_mut();
+            }
+        };
+        let payload_object = JObject::from(payload);
+        let result = env.call_method(
+            &transport,
+            "writePacket",
+            "([BIIJ)I",
+            &[
+                JValue::Object(&payload_object),
+                JValue::Int(0),
+                JValue::Int(packet.bytes.len() as jint),
+                JValue::Long(packet.duration_us as jlong),
+            ],
+        );
+        let written = match result.and_then(|value| value.i()) {
+            Ok(value) => value,
+            Err(error) => {
+                if !env.exception_check().unwrap_or(false) {
+                    let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+                }
+                return std::ptr::null_mut();
+            }
+        };
+        if written != packet.bytes.len() as jint {
+            let _ = env.throw_new("java/lang/IllegalStateException", "USB transport did not accept a complete encoded packet");
+            return std::ptr::null_mut();
+        }
+        sequence = match sequence.checked_add(1) {
+            Some(next) => next,
+            None => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet sequence exhausted");
+                return std::ptr::null_mut();
+            }
+        };
+        if let Some(presentation_time) = packet.presentation_time_us {
+            position_ms = (presentation_time / 1000).min(i64::MAX as u64) as jlong;
+        }
+        submitted += 1;
+    }
+    let producer_status = encoded_worker_registry()
+        .lock().unwrap_or_else(|error| error.into_inner())
+        .get(&producer_handle)
+        .map(|worker| worker.status.load(Ordering::Acquire))
+        .unwrap_or(-1);
+    let ended = producer_status == 1 && queue.poll(Duration::ZERO).is_none();
+    let result = match env.new_long_array(4) {
+        Ok(array) => array,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let values = [submitted, sequence as jlong, position_ms, if ended { 1 } else { 0 }];
+    if let Err(error) = env.set_long_array_region(&result, 0, &values) {
+        let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+        return std::ptr::null_mut();
+    }
+    result.into_raw()
 }
 
 #[no_mangle]
