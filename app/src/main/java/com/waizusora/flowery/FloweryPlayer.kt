@@ -149,15 +149,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 sourceDescriptor = openedSourceDescriptor
                 val extension = openedSourceDescriptor.extension
-                val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-                    .getBoolean("usb_bit_perfect_enabled", false)
+                val usbController = UsbDacController(context)
+                val usbDirectAvailable = usbController.audioDevices().any { device ->
+                    usbController.hasPermission(device.usbDevice)
+                }
                 diagnostics.record(
-                    "PLAY_REQUEST extension=${extension} usbBitPerfectEnabled=${bitPerfectRequested} " +
+                    "PLAY_REQUEST extension=${extension} usbDirectAvailable=${usbDirectAvailable} " +
                         "segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}"
                 )
-                if (bitPerfectRequested) {
-                    diagnostics.record("ROUTE_SELECTED route=LIBUSB_SYMPHONIA_PCM extension=${extension}")
-                    onState("USB exclusive: decoding ${extension} through Symphonia into the shared PCM path…")
+                if (usbDirectAvailable) {
+                    diagnostics.record("USB_AUTO_DETECTION result=permissioned_audio_device_found")
+                    onState("USB DAC detected · evaluating source and DAC capabilities…")
+                } else {
+                    diagnostics.record("USB_AUTO_DETECTION result=direct_transport_unavailable fallback=android_route")
                 }
 
                 handle = NativeAudio.nativeCreateStreamDecoder(openedSourceDescriptor.fileDescriptor, extension)
@@ -165,7 +169,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
-                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, bitPerfectRequested)
+                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, usbDirectAvailable)
                 check(preparedSession.size == 7) { "Rust returned an invalid prepared playback session" }
                 sessionHandle = preparedSession[0]
                 val playbackRoute = preparedSession[1].toInt()
@@ -356,9 +360,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 sessionFailed = true
-                val usbEnabled = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-                    .getBoolean("usb_bit_perfect_enabled", false)
-                if (usbEnabled) diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
+                diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 // Closing the native session stops and joins its AAudio decode/output workers.
