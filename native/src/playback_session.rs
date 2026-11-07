@@ -128,7 +128,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
     };
     let is_ac3 = usb_direct_available != 0 && source_is_ac3;
     let route = select_playback_route(
-        bit_perfect_requested != 0,
+        usb_direct_available != 0,
         is_ac3,
         lossless_source,
         source_bits as i32,
