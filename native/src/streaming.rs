@@ -243,6 +243,15 @@ impl StreamDecoder {
     pub(super) fn is_ac3_source(&self) -> bool {
         self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3
     }
+    pub(super) fn playback_metadata(&self) -> (usize, usize, u8, bool, bool) {
+        (
+            self.source_rate,
+            self.channels,
+            self.source_bits,
+            self.lossless_source,
+            self.is_ac3_source(),
+        )
+    }
     pub(super) fn is_ieee_float32_source(&self) -> bool { self.ieee_float_source }
 
     pub(super) fn encoded_transport_bytes_per_second(&self, framing_kind: i32) -> Result<u64, String> {
