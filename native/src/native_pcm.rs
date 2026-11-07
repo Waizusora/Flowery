@@ -93,7 +93,6 @@ pub(super) fn pack_native_integer_pcm(
         return Err("Native PCM block contains an incomplete interleaved frame".into());
     }
 
-    let shift = 32 - source_bits as u32;
     let minimum = -(1_i64 << (source_bits - 1));
     let maximum = (1_i64 << (source_bits - 1)) - 1;
     let mut output = Vec::with_capacity(samples.len() * format.subslot_bytes as usize);
@@ -110,7 +109,6 @@ pub(super) fn pack_native_integer_pcm(
         // least-significant subslot bits are zero, not sign-extension bits.
         let subslot_shift = (format.subslot_bytes as u32 * 8) - source_bits as u32;
         let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
-        let _ = shift;
         let bytes = encoded.to_le_bytes();
         output.extend_from_slice(&bytes[..format.subslot_bytes as usize]);
     }
@@ -288,6 +286,30 @@ mod tests {
                 0x00, 0xff, 0xff, 0xff,
                 0x00, 0x00, 0x00, 0x00,
                 0x00, 0xff, 0xff, 0x7f
+            ]
+        );
+    }
+
+
+    #[test]
+    fn packs_native_20_bit_samples_left_justified_in_three_byte_subslots() {
+        let samples = NativePcmSamples::I20(vec![-524_288, -1, 0, 524_287]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(20, 3)).unwrap(),
+            vec![0x00, 0x00, 0x80, 0xf0, 0xff, 0xff, 0x00, 0x00, 0x00, 0xf0, 0xff, 0x7f]
+        );
+    }
+
+    #[test]
+    fn packs_native_20_bit_samples_left_justified_in_four_byte_subslots() {
+        let samples = NativePcmSamples::I20(vec![-524_288, -1, 0, 524_287]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(20, 4)).unwrap(),
+            vec![
+                0x00, 0x00, 0x00, 0x80,
+                0x00, 0xf0, 0xff, 0xff,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0xf0, 0xff, 0x7f
             ]
         );
     }
