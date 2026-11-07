@@ -43,6 +43,12 @@ internal data class UsbPcmWriteResult(
     val transportDurationMs: Double,
 )
 
+internal data class UsbPcmPlaybackSummary(
+    val chunks: Long,
+    val totalFramesSent: Long,
+    val starvationEvents: Long,
+)
+
 /**
  * Owns the Rust PCM producer/queue and the Android-to-libusb PCM writer boundary.
  *
@@ -124,6 +130,99 @@ internal class UsbPcmPlaybackPipeline private constructor(
         )
     }
 
+    /**
+     * Owns prebuffering and the direct PCM submission loop. Callbacks are
+     * notifications only; queue polling, pause handling, timing, and drain
+     * decisions remain inside this Android transport adapter.
+     */
+    fun playUntil(
+        playbackActive: () -> Boolean,
+        isPaused: () -> Boolean,
+        onPrebufferReady: (queuedBlocks: Int, endReached: Boolean, waitMs: Double) -> Unit,
+        onFirstTransfer: (frames: Int) -> Unit,
+        onStarvation: (queueWaitMs: Double, events: Long) -> Unit,
+        onWrite: (result: UsbPcmWriteResult, chunk: Long, totalFrames: Long, throughputRatio: Double, audioDurationMs: Double) -> Unit,
+        onBitPerfectChanged: (bitPerfect: Boolean) -> Unit,
+        onHardwareVolume: (volume: Float) -> Unit,
+        onEndOfStream: (chunks: Long, totalFrames: Long) -> Unit,
+    ): UsbPcmPlaybackSummary {
+        val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
+        while (playbackActive() && workerError.isBlank() &&
+            !isAtEnd && queueSize < PREBUFFER_BLOCKS) {
+            Thread.sleep(5)
+        }
+        onPrebufferReady(
+            queueSize,
+            isAtEnd,
+            (android.os.SystemClock.elapsedRealtimeNanos() - prebufferStartedNs)
+                .coerceAtLeast(0L) / 1_000_000.0,
+        )
+
+        var firstTransfer = true
+        var lastHardwareVolumePollNs = 0L
+        var starvationEvents = 0L
+        var chunks = 0L
+        var totalFramesSent = 0L
+        var positionFrames = 0L
+        var lastBitPerfect: Boolean? = null
+
+        while (playbackActive()) {
+            if (isPaused()) {
+                Thread.sleep(10)
+                continue
+            }
+            val producerFailure = workerError
+            check(producerFailure.isBlank()) {
+                "Rust USB PCM producer worker failed: $producerFailure"
+            }
+            val result = pollAndWrite(QUEUE_POLL_MS.toInt()) ?: continue
+            if (!firstTransfer && result.queueWaitMs > USB_STARVATION_REPORT_MS) {
+                starvationEvents++
+                onStarvation(result.queueWaitMs, starvationEvents)
+            }
+            if (result.epochChanged) positionFrames = result.startFrames
+            if (result.endOfStream) {
+                onEndOfStream(chunks, totalFramesSent)
+                break
+            }
+
+            if (firstTransfer) onFirstTransfer(result.frames)
+            val audioDurationMs = result.frames * 1_000.0 / dacSession.sampleRate
+            val throughputRatio = if (result.transportDurationMs > 0.0) {
+                result.frames.toDouble() /
+                    (dacSession.sampleRate * result.transportDurationMs / 1_000.0)
+            } else Double.POSITIVE_INFINITY
+            check(result.acceptedFrames == result.frames) {
+                "The USB DAC transport accepted ${result.acceptedFrames} of ${result.frames} frames."
+            }
+            onWrite(result, chunks + 1L, totalFramesSent + result.acceptedFrames, throughputRatio, audioDurationMs)
+
+            val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
+            if (dacSession.hardwareVolumeAvailable &&
+                nowNs - lastHardwareVolumePollNs >= 500_000_000L) {
+                dacSession.readHardwareVolumeFraction()?.let(onHardwareVolume)
+                lastHardwareVolumePollNs = nowNs
+            }
+
+            chunks++
+            totalFramesSent += result.acceptedFrames
+            positionFrames += result.frames
+            val currentBitPerfect = isBitPerfect
+            if (firstTransfer || currentBitPerfect != lastBitPerfect) {
+                firstTransfer = false
+                lastBitPerfect = currentBitPerfect
+                onBitPerfectChanged(currentBitPerfect)
+            }
+        }
+
+        val producerFailure = workerError
+        check(producerFailure.isBlank() || !playbackActive()) {
+            "Rust USB PCM producer worker failed: $producerFailure"
+        }
+        if (playbackActive()) dacSession.drain()
+        return UsbPcmPlaybackSummary(chunks, totalFramesSent, starvationEvents)
+    }
+
     override fun close() {
         if (closed) return
         closed = true
@@ -150,6 +249,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         const val QUEUE_DEPTH_BLOCKS = 6
         const val PREBUFFER_BLOCKS = 3
         const val QUEUE_POLL_MS = 50L
+        private const val USB_STARVATION_REPORT_MS = 5.0
 
         fun open(
             decoderHandle: Long,
