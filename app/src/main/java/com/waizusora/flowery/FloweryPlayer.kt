@@ -137,10 +137,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "The previous playback session did not release its output device in time."
                 }
                 onState("Opening audio stream…")
-                sourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
+                val openedSourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
                     sourceResolver.resolveExtension(sourceUri)
                 }
-                val extension = sourceDescriptor.extension
+                sourceDescriptor = openedSourceDescriptor
+                val extension = openedSourceDescriptor.extension
                 val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
                 diagnostics.record(
@@ -152,7 +153,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     onState("USB exclusive: decoding ${extension} through Symphonia into the shared PCM path…")
                 }
 
-                handle = NativeAudio.nativeCreateStreamDecoder(sourceDescriptor.fileDescriptor, extension)
+                handle = NativeAudio.nativeCreateStreamDecoder(openedSourceDescriptor.fileDescriptor, extension)
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
