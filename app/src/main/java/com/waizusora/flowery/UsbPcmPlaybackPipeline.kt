@@ -40,6 +40,7 @@ internal data class UsbPcmWriteResult(
     val pcmBytes: Int,
     val queuedBlocks: Int,
     val queueWaitMs: Double,
+    val transportDurationMs: Double,
 )
 
 /**
@@ -101,10 +102,14 @@ internal class UsbPcmPlaybackPipeline private constructor(
                 pcmBytes = 0,
                 queuedBlocks = queueSize,
                 queueWaitMs = queueWaitMs,
+                transportDurationMs = 0.0,
             )
         }
 
+        val writeStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
         val acceptedFrames = dacSession.writePcm(block.pcm, block.frames)
+        val transportDurationMs = (android.os.SystemClock.elapsedRealtimeNanos() - writeStartedNs)
+            .coerceAtLeast(0L) / 1_000_000.0
         return UsbPcmWriteResult(
             endOfStream = false,
             epochChanged = epochChanged,
@@ -115,6 +120,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
             pcmBytes = block.pcm.size,
             queuedBlocks = queueSize,
             queueWaitMs = queueWaitMs,
+            transportDurationMs = transportDurationMs,
         )
     }
 
