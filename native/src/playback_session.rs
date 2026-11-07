@@ -25,6 +25,7 @@ pub(super) struct SessionState {
     pub(super) cancelled: AtomicBool,
     pub(super) phase: AtomicI64,
     pub(super) route: i32,
+    pub(super) decoder_handle: jlong,
     pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
 }
@@ -127,6 +128,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         cancelled: AtomicBool::new(false),
         phase: AtomicI64::new(SessionPhase::Created as i64),
         route,
+        decoder_handle,
         gate: Mutex::new(()),
         decoder,
     });
@@ -167,6 +169,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         cancelled: AtomicBool::new(false),
         phase: AtomicI64::new(SessionPhase::Created as i64),
         route,
+        decoder_handle,
         gate: Mutex::new(()),
         decoder,
     })
@@ -320,8 +323,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
             drop(_gate);
+            // The native session owns the AAudio decode worker lifetime. Stop and join
+            // it before releasing the session's retained decoder reference.
             #[cfg(target_os = "android")]
             if session.route == 0 {
+                crate::streaming::stop_stream_pump_worker(session.decoder_handle);
                 crate::aaudio::stop_output_for_session();
             }
             // Keep the shared decoder alive until every producer and in-flight JNI
