@@ -31,6 +31,7 @@ object NativeAudio {
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeGetStreamInfo(handle: Long): Long
+    external fun nativeIsAc3Source(handle: Long): Boolean
     external fun nativeGetBitPerfectSourceInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
