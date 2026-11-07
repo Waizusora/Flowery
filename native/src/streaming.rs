@@ -4,6 +4,8 @@ use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::thread::{self, JoinHandle};
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -720,6 +722,31 @@ pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
     decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
 }
 
+
+#[cfg(target_os = "android")]
+struct StreamPumpWorker {
+    stop: Arc<AtomicBool>,
+    status: Arc<AtomicI32>,
+    thread: JoinHandle<()>,
+}
+
+#[cfg(target_os = "android")]
+static STREAM_PUMP_WORKERS: OnceLock<Mutex<HashMap<i64, StreamPumpWorker>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn stream_pump_workers() -> &'static Mutex<HashMap<i64, StreamPumpWorker>> {
+    STREAM_PUMP_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(target_os = "android")]
+fn stop_stream_pump_worker(handle: jlong) {
+    let worker = stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+    if let Some(worker) = worker {
+        worker.stop.store(true, Ordering::Release);
+        let _ = worker.thread.join();
+    }
+}
+
 fn register_decoder(decoder: StreamDecoder) -> jlong {
     let decoder = Arc::new(Mutex::new(decoder));
     loop {
@@ -823,6 +850,113 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
     decoder.gains.copy_from_slice(&gains);
     decoder.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], decoder.gains[i], decoder.output_rate));
     0
+}
+
+
+/// Starts a Rust-owned scheduler that incrementally decodes into the bounded AAudio ring.
+/// total_frames < 0 means decode until the source reaches EOF.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPump(
+    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint, total_frames: jlong,
+) -> jint {
+    if handle <= 0 || max_frames <= 0 || total_frames < -1 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream pump configuration");
+        return -1;
+    }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    stop_stream_pump_worker(handle);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let chunk_frames = max_frames as usize;
+    let frame_limit = if total_frames < 0 { None } else { Some(total_frames as u64) };
+    let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
+        let mut produced_frames = 0_u64;
+        while !thread_stop.load(Ordering::Acquire) {
+            let available = crate::aaudio::available_output_frames();
+            if available == 0 {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
+            if decoder.channels > 2 {
+                thread_status.store(-2, Ordering::Release);
+                break;
+            }
+            let mut frames = chunk_frames.min(available);
+            if let Some(limit) = frame_limit {
+                let remaining = limit.saturating_sub(produced_frames);
+                if remaining == 0 {
+                    crate::aaudio::signal_stream_eof();
+                    thread_status.store(1, Ordering::Release);
+                    break;
+                }
+                frames = frames.min(remaining as usize);
+            }
+            let samples = match decoder.read_frames(frames) {
+                Ok(samples) => samples,
+                Err(_) => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            };
+            if samples.is_empty() {
+                crate::aaudio::signal_stream_eof();
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+            let channels = decoder.channels;
+            drop(decoder);
+            match crate::aaudio::write_output_samples(&samples) {
+                Ok(written) if written == samples.len() / channels => {
+                    produced_frames = produced_frames.saturating_add(written as u64);
+                }
+                _ => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            }
+            if frame_limit.is_some_and(|limit| produced_frames >= limit) {
+                crate::aaudio::signal_stream_eof();
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+        }
+        if thread_stop.load(Ordering::Acquire) {
+            thread_status.store(2, Ordering::Release);
+        }
+    }).map_err(|error| error.to_string());
+    match worker {
+        Ok(thread) => {
+            stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
+                .insert(handle, StreamPumpWorker { stop, status, thread });
+            0
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamPumpStatus(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
+        .get(&handle).map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopStreamPump(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    stop_stream_pump_worker(handle);
 }
 
 /// Decodes one bounded chunk and copies it directly into the Rust-owned AAudio ring.
