@@ -121,9 +121,17 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
     // IEC 61937 preamble words Pa, Pb, Pc and Pd, serialized little-endian.
     burst[0..2].copy_from_slice(&0xf872u16.to_le_bytes());
     burst[2..4].copy_from_slice(&0x4e1fu16.to_le_bytes());
-    burst[4..6].copy_from_slice(&IEC61937_DATATYPE_AC3.to_le_bytes());
+    // Pc carries the AC-3 bitstream mode in bits 8..10.
+    let bitstream_mode = (frame[5] & 0x07) as u16;
+    let data_type = IEC61937_DATATYPE_AC3 | (bitstream_mode << 8);
+    burst[4..6].copy_from_slice(&data_type.to_le_bytes());
     burst[6..8].copy_from_slice(&payload_bits.to_le_bytes());
-    burst[8..8 + frame.len()].copy_from_slice(frame);
+    // IEC 61937 little-endian output stores payload as little-endian 16-bit
+    // words; AC-3 elementary-stream bytes therefore swap within each word.
+    for (source, target) in frame.chunks_exact(2).zip(burst[8..8 + frame.len()].chunks_exact_mut(2)) {
+        target[0] = source[1];
+        target[1] = source[0];
+    }
     Ok(burst)
 }
 
@@ -296,11 +304,12 @@ mod tests {
         let mut frame = vec![0u8; 128];
         frame[0] = 0x0b;
         frame[1] = 0x77;
+        frame[5] = 0x05; // bsmod=5
         let burst = build_iec61937_ac3_burst(&frame).unwrap();
         assert_eq!(burst.len(), IEC61937_AC3_BURST_BYTES);
-        assert_eq!(&burst[0..8], &[0x72,0xf8,0x1f,0x4e,0x01,0x00,0x00,0x04]);
-        assert_eq!(&burst[8..136], frame.as_slice());
-        assert!(burst[136..].iter().all(|byte| *byte == 0));
+        assert_eq!(&burst[0..8], &[0x72,0xf8,0x1f,0x4e,0x01,0x05,0x00,0x04]);
+        assert_eq!(&burst[8..12], &[frame[1], frame[0], frame[3], frame[2]]);
+        assert!(burst[8 + frame.len()..].iter().all(|byte| *byte == 0));
     }
 
     #[test]
