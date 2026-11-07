@@ -278,6 +278,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 thread_status.store(2, Ordering::Release);
                 break;
             }
+            let phase = worker_session.phase.load(Ordering::Acquire) as i32;
+            if phase == 5 {
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+            if phase == 6 || phase == 7 {
+                thread_status.store(2, Ordering::Release);
+                break;
+            }
             let pending_seek = worker_session.seek_request
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -295,15 +304,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     }
                 }
                 continue;
-            }
-            let phase = worker_session.phase.load(Ordering::Acquire) as i32;
-            if phase == 5 {
-                thread_status.store(1, Ordering::Release);
-                break;
-            }
-            if phase == 6 || phase == 7 {
-                thread_status.store(2, Ordering::Release);
-                break;
             }
             if phase == 2 {
                 // The session scheduler owns decode-worker health monitoring. Kotlin
