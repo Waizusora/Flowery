@@ -200,6 +200,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
         return -1;
     };
+    if session.route == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio seeks must be submitted as native seek requests");
+        return -1;
+    }
     let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     advance_epoch(&session.epoch, &session.cancelled).map(|epoch| epoch as jlong).unwrap_or(-1)
 }
@@ -238,6 +242,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
     };
     let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     if command == 8 {
+        if session.route == 0 {
+            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio seeks must be submitted as native seek requests");
+            return -1;
+        }
         return advance_epoch(&session.epoch, &session.cancelled)
             .map(|epoch| epoch as jlong).unwrap_or(-1);
     }
