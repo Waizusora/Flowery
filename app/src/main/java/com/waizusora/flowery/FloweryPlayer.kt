@@ -581,14 +581,30 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            val nativeCandidate = sourceBits in 8..32
+            var nativeCandidate = sourceBits in 8..32
             onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (nativeCandidate) sourceBits else "automatic"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate}")
-            val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
-                discovered, if (nativeCandidate) sourceBits else 0, sourceRate,
-                allowSampleRateConversion = !nativeCandidate,
-                requiredSubslotBytes = null, channels = channels
-            )
+            val selected = if (nativeCandidate) {
+                try {
+                    controller.openFirstCompatiblePlaybackSession(
+                        discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
+                        requiredSubslotBytes = null, channels = channels
+                    )
+                } catch (nativeError: Throwable) {
+                    nativeCandidate = false
+                    recordUsbDiagnostic("NATIVE_PROFILE_UNAVAILABLE reason=${nativeError.message ?: nativeError.javaClass.simpleName} fallback=float32")
+                    controller.openFirstCompatiblePlaybackSession(
+                        discovered, 0, sourceRate, allowSampleRateConversion = true,
+                        requiredSubslotBytes = null, channels = channels
+                    )
+                }
+            } else {
+                controller.openFirstCompatiblePlaybackSession(
+                    discovered, 0, sourceRate, allowSampleRateConversion = true,
+                    requiredSubslotBytes = null, channels = channels
+                )
+            }
+            val (selectedDevice, usbSession) = selected
             val device = selectedDevice.usbDevice
             session = usbSession
             recordUsbDiagnostic("DAC_SELECTED vid=${device.vendorId.toString(16)} pid=${device.productId.toString(16)} name=${device.productName ?: "unknown"} interfaces=${device.interfaceCount} identity=${selectedDevice.identity}")
