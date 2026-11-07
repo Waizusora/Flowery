@@ -116,8 +116,11 @@ Failure details:
 - The audio result was not evaluated (`-`).
 
 Follow-up:
-- Investigate end-of-track handling and propagation of repeat mode between the Kotlin playback service and Rust playback engine.
-- Do not mark this test as passed until the fix is installed and the full test is repeated successfully.
+- Code inspection confirmed that the playback completion callback was handling the queue transition synchronously on the audio worker thread. The Repeat One path calls `player.stop()`, which interrupts the current worker while it is still unwinding and closing its native playback session.
+- Updated `PlaybackService.kt` to post completion handling to the main thread. This allows the completed audio worker to return through its cleanup path before the service stops/restarts playback.
+- Fix commit: `6e64ff807f9d4363021870ff4dc92ceb9af8b306`.
+- Status remains **RETEST REQUIRED** until a new CI build is installed and Repeat One is observed restarting from the beginning.
+- Do not mark this test as passed until the full test is repeated successfully.
 
 ## Remaining manual test plan
 
