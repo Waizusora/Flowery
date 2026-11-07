@@ -62,3 +62,10 @@ These checks require physical Android devices and a USB DAC. Record the device m
 - Keep software test results, device logs, USB traces, and external digital captures as separate evidence.
 - Do not describe playback as bit-perfect solely because the source is lossless, the route is exclusive, or the negotiated sample rate matches. Verify the captured digital stream against the source with a documented comparison procedure.
 - Mark a format or device combination as verified only after the complete relevant route, seek, cancellation, and capture checks pass.
+
+
+## Stage 7 progress
+
+The software verification and documentation audit is complete. CI [#1327](https://github.com/Waizusora/Flowery/actions/runs/42386890504) passed on commit `66176d2c50c7428c8f402b6b63d0fc4e6db9b60a`: native Rust unit tests, Kotlin/JNI declaration checks, Android JVM unit tests, native builds for all configured Android ABIs, debug/release APK builds, and APK artifact upload succeeded. GitHub Release publication was skipped as expected for a non-tag build.
+
+The test inventory and acceptance criteria are now recorded in the Stage 7 row and hardware matrix. **Stage 7 is not hardware-accepted yet.** Physical Android/USB DAC tests remain intentionally deferred until all seven software migrations are complete, then must be performed one by one using the matrix. This includes AAudio route/seek/underrun/disconnect behavior, USB PCM and encoded framing, in-flight cancellation/reap, repeated start/stop, and external digital capture. No hardware-level bit-perfect claim is made from CI results.
