@@ -153,4 +153,36 @@ mod tests {
     fn state_values_match_the_android_adapter_contract() {
         assert_eq!((IDLE, PREPARING, PLAYING, PAUSED, STOPPING, FAILED), (0, 1, 2, 3, 4, 5));
     }
+
+    #[test]
+    fn registered_handles_reject_stale_and_double_destroyed_values() {
+        let handle = create_controller();
+        assert!(handle > 0);
+        assert_eq!(state_for_handle(handle), IDLE);
+        assert_eq!(transition_handle(handle, EVENT_PREPARE), PREPARING);
+        destroy_controller(handle);
+        assert_eq!(state_for_handle(handle), FAILED);
+        assert_eq!(transition_handle(handle, EVENT_START), -1);
+        destroy_controller(handle);
+    }
+
+    #[test]
+    fn registered_controller_handles_are_unique() {
+        let first = create_controller();
+        let second = create_controller();
+        assert_ne!(first, 0);
+        assert_ne!(second, 0);
+        assert_ne!(first, second);
+        destroy_controller(first);
+        destroy_controller(second);
+    }
+
+    #[test]
+    fn non_positive_handles_are_rejected() {
+        assert_eq!(state_for_handle(0), FAILED);
+        assert_eq!(state_for_handle(-1), FAILED);
+        assert_eq!(transition_handle(0, EVENT_PREPARE), -1);
+        destroy_controller(0);
+        destroy_controller(-1);
+    }
 }
