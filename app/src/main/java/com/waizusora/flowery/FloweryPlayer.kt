@@ -581,7 +581,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            var nativeCandidate = sourceBits in 8..32
+            var nativeCandidate = sourceBits in 8..32 && bandGainsDb.all { it == 0f }
             onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (nativeCandidate) sourceBits else "automatic"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate}")
             val selected = if (nativeCandidate) {
@@ -623,8 +623,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val outputRate = usbSession.sampleRate
             val outputBits = usbSession.profile.bitResolution
             onState(if (nativeCandidate) "USB exclusive: preparing native integer PCM…" else "USB exclusive: preparing float32 PCM decoding…")
-            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, FloatArray(31) { 0f })
-            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=false gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
+            val initialGains = if (nativeCandidate) FloatArray(31) { 0f } else bandGainsDb.copyOf()
+            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, initialGains)
+            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=${initialGains.any { it != 0f }} gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
             check(decoderConfigResult == 0) {
                 "Unable to configure the streaming decoder and DSP for direct USB output."
             }
