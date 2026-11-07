@@ -108,3 +108,8 @@ Next, previous, natural-completion, shuffle, and repeat transition decisions are
 ## USB Audio Class descriptor parsing
 
 UAC1/UAC2 playback alternate-setting selection (up to eight channels) and UAC2 playback-terminal clock-source resolution are implemented in `native/src/usb_descriptors.rs`. Android retains USB permission and connection ownership, while the native parser validates descriptor boundaries, endpoint direction/type, channel count, PCM subslot/bit resolution, packet capacity, and terminal-to-clock relationships. Kotlin maps the native JSON result into Android USB session parameters. Descriptor parsing alone does not prove that a device accepts a clock rate or that the resulting signal is bit-perfect; the libusb SET_CUR/GET_CUR check remains mandatory.
+
+
+### Encoded queue ownership and JNI packet envelope
+
+The encoded queue is reference-counted across JNI handles. A producer retains its own shared queue reference, so releasing the Kotlin queue handle does not invalidate a producer that is still alive. The packet envelope returned to Kotlin is 27 bytes before the opaque payload: framing kind (1 byte), format/data-type code (2-byte little-endian), sequence (8-byte little-endian), presentation timestamp in microseconds (8-byte little-endian; zero means unavailable), and duration in microseconds (8-byte little-endian). The envelope describes metadata only; it does not establish codec compatibility or USB wire framing.
