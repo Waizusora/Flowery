@@ -23,6 +23,8 @@ enum SessionPhase {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AAudioSeekRequest {
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub(crate) max_frames: usize,
     pub(crate) position_ms: i64,
     pub(crate) segment_start_ms: i64,
     pub(crate) segment_end_ms: i64,
@@ -334,6 +336,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
     };
     *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
         Some(AAudioSeekRequest {
+            max_frames: max_frames as usize,
             position_ms,
             segment_start_ms,
             segment_end_ms,
