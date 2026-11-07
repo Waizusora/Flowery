@@ -631,6 +631,108 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncode
     }
 }
 
+/// Performs an encoded USB seek as one native operation. The Android
+/// transport bridge is asked to flush in-flight libusb transfers, while Rust
+/// advances the shared epoch, seeks the decoder, resets the bounded queue, and
+/// restarts the packet producer.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedSession(
+    mut env: JNIEnv, _class: JClass, handle: jlong, transport: JObject, position_ms: jlong,
+) -> jlong {
+    if handle <= 0 || position_ms < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded session seek request");
+        return -1;
+    }
+    let Some(producer) = producer_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer is no longer valid");
+        return -1;
+    };
+    stop_encoded_producer_worker(handle);
+    let session = {
+        let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback session is cancelled");
+            return -1;
+        }
+        Arc::clone(&state.session)
+    };
+    {
+        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+        if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback seek epoch is exhausted or cancelled");
+            return -1;
+        }
+    }
+    if let Err(error) = env.call_method(&transport, "flush", "()V", &[]) {
+        if !env.exception_check().unwrap_or(false) {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+        }
+        return -1;
+    }
+    let actual = {
+        let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        let decoder_owner = Arc::clone(&state.decoder);
+        let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Err(error) = decoder.begin_encoded_stream() {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            return -1;
+        }
+        let seek_result = decoder.seek_to(position_ms as u64);
+        drop(decoder);
+        match seek_result {
+            Ok(actual_position) => {
+                state.pending = None;
+                state.ended = false;
+                state.queue.clear();
+                state.epoch = session.epoch.load(Ordering::Acquire);
+                actual_position as jlong
+            }
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -1;
+            }
+        }
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
+        while !thread_stop.load(Ordering::Acquire) {
+            match pump_encoded_producer(handle) {
+                Ok(1) => {}
+                Ok(0) => thread::sleep(Duration::from_millis(2)),
+                Ok(-1) => {
+                    thread_status.store(1, Ordering::Release);
+                    break;
+                }
+                Ok(-3) => {
+                    thread_status.store(2, Ordering::Release);
+                    break;
+                }
+                Ok(_) | Err(_) => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            }
+        }
+        if thread_stop.load(Ordering::Acquire) {
+            thread_status.store(2, Ordering::Release);
+        }
+    });
+    match spawned {
+        Ok(thread) => {
+            encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
+                .insert(handle, EncodedProducerWorker { stop, status, thread });
+            actual
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            -1
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedProducer(
     mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
