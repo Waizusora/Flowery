@@ -737,6 +737,7 @@ pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
 struct StreamPumpWorker {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
+    epoch: u64,
     thread: JoinHandle<()>,
 }
 
@@ -749,12 +750,12 @@ fn stream_pump_workers() -> &'static Mutex<HashMap<i64, StreamPumpWorker>> {
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn stream_pump_status(handle: jlong) -> Option<i32> {
+pub(super) fn stream_pump_status(handle: jlong) -> Option<(i32, u64)> {
     stream_pump_workers()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .get(&handle)
-        .map(|worker| worker.status.load(Ordering::Acquire))
+        .map(|worker| (worker.status.load(Ordering::Acquire), worker.epoch))
 }
 
 #[cfg(target_os = "android")]
@@ -1070,7 +1071,7 @@ fn start_stream_pump_worker(
         }
     }).map_err(|error| error.to_string())?;
     stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
-        .insert(handle, StreamPumpWorker { stop, status, thread: worker });
+        .insert(handle, StreamPumpWorker { stop, status, epoch: worker_epoch, thread: worker });
     Ok(())
 }
 
