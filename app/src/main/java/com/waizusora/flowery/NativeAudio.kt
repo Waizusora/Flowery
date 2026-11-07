@@ -74,7 +74,6 @@ object NativeAudio {
     external fun nativeClearUsbEncodedQueue(queue: Long)
     external fun nativeDestroyUsbEncodedQueue(queue: Long)
     external fun nativeCreateUsbEncodedProducer(decoder: Long, queue: Long, session: Long, framingKind: Int, formatCode: Int, maximumBitrateKbps: Int): Long
-    external fun nativePumpUsbEncodedProducer(producer: Long): Int
     external fun nativeStartUsbEncodedProducerWorker(producer: Long): Int
     external fun nativeGetUsbEncodedProducerWorkerStatus(producer: Long): Int
     external fun nativeStopUsbEncodedProducerWorker(producer: Long)
