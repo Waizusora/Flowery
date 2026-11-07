@@ -977,6 +977,19 @@ mod tests {
         let expected: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
         assert_eq!(actual, expected);
         assert!(stream.native_pcm_active());
+
+        // Simulate a decoder classified as lossy: it must use the same USB
+        // producer's float32 conversion path rather than native integer packing.
+        let float_source = std::fs::File::open(&path).unwrap();
+        let mut float_stream = StreamDecoder::new(float_source.as_raw_fd(), "wav").unwrap();
+        float_stream.lossless_source = false;
+        float_stream.configure(48_000, &[0.0; 31]).unwrap();
+        let float_actual = float_stream.read_usb_pcm(3, 1.0, format).unwrap();
+        assert_eq!(float_actual, expected);
+        assert!(!float_stream.native_pcm_active());
+
+        drop(float_stream);
+        drop(float_source);
         drop(stream);
         drop(source_file);
         std::fs::remove_file(path).unwrap();
