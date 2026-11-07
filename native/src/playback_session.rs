@@ -20,6 +20,14 @@ enum SessionPhase {
     Failed = 7,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AAudioSeekRequest {
+    pub(crate) position_ms: i64,
+    pub(crate) max_frames: usize,
+    pub(crate) segment_start_ms: i64,
+    pub(crate) segment_end_ms: i64,
+}
+
 pub(super) struct SessionState {
     pub(super) epoch: AtomicU64,
     pub(super) cancelled: AtomicBool,
@@ -29,6 +37,8 @@ pub(super) struct SessionState {
     pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
     pub(super) error_code: AtomicI32,
+    pub(super) seek_request: Mutex<Option<AAudioSeekRequest>>,
+    pub(super) last_seek_position_ms: AtomicI64,
 }
 
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -133,6 +143,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         gate: Mutex::new(()),
         decoder,
         error_code: AtomicI32::new(0),
+        seek_request: Mutex::new(None),
+        last_seek_position_ms: AtomicI64::new(-1),
     });
     if session_handle == 0 {
         let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
@@ -175,6 +187,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         gate: Mutex::new(()),
         decoder,
         error_code: AtomicI32::new(0),
+        seek_request: Mutex::new(None),
+        last_seek_position_ms: AtomicI64::new(-1),
     })
 }
 
@@ -278,6 +292,53 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         crate::aaudio::stop_output_for_session();
     }
     0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlaybackSessionSeek(
+    mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
+    max_frames: jint, segment_start_ms: jlong, segment_end_ms: jlong,
+) -> jlong {
+    if position_ms < 0 || max_frames <= 0 || segment_start_ms < 0 ||
+        segment_end_ms < -1 || (segment_end_ms >= 0 && segment_end_ms < segment_start_ms) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid AAudio seek request");
+        return -1;
+    }
+    let Some(session) = session_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
+        return -1;
+    };
+    if session.route != 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Seek requests are only accepted by AAudio sessions");
+        return -1;
+    }
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if session.cancelled.load(Ordering::Acquire) ||
+        !matches!(session.phase.load(Ordering::Acquire) as i32, 2 | 3) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio session is not seekable in its current state");
+        return -1;
+    }
+    let Some(epoch) = advance_epoch(&session.epoch, &session.cancelled) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback seek epoch is exhausted or cancelled");
+        return -1;
+    };
+    *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
+        Some(AAudioSeekRequest {
+            position_ms,
+            max_frames: max_frames as usize,
+            segment_start_ms,
+            segment_end_ms,
+        });
+    epoch as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekPosition(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jlong {
+    session_ref(handle)
+        .map(|session| session.last_seek_position_ms.load(Ordering::Acquire) as jlong)
+        .unwrap_or(-1)
 }
 
 #[no_mangle]
