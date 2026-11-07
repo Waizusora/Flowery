@@ -647,6 +647,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (outputEncoding == "ieee_float32") 1 else 0
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
+            check(NativeAudio.nativeStartUsbPcmProducerWorker(producerHandle) == 0) {
+                "Unable to start the Rust direct USB producer worker."
+            }
             val endReached = AtomicBoolean(false)
             val producerAdapter = UsbPcmProducerAdapter(
                 decoderHandle = handle,
@@ -776,8 +779,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             // The producer owns the native decoder handle until it has exited; the caller
             // closes that handle immediately after this method returns.
             producerStop.set(true)
-            if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
+            if (producerHandle != 0L) NativeAudio.nativeStopUsbPcmProducerWorker(producerHandle)
             joinUninterruptibly(producerThread)
+            if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
             if (producerHandle != 0L) NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
             if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
             usbSoftwareGainEnabled = false
