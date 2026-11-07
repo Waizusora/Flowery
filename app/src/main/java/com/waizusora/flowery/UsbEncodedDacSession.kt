@@ -17,10 +17,10 @@ internal class UsbEncodedDacSession private constructor(
     private var closed = false
 
     @Synchronized
-    fun writePacket(packet: ByteArray): Int {
+    fun writePacket(packet: ByteArray, durationUs: Long): Int {
         check(!closed) { "Encoded USB session is closed" }
         require(packet.isNotEmpty()) { "Encoded packet must not be empty" }
-        return UsbDacNative.nativeWriteEncodedPacket(nativeHandle, packet)
+        return UsbDacNative.nativeWriteEncodedPacket(nativeHandle, packet, durationUs)
     }
 
     /** Waits until every staged encoded service interval has completed. */
@@ -58,7 +58,10 @@ internal class UsbEncodedDacSession private constructor(
             endpoint: Int,
             maxPacketBytes: Int,
             interval: Int,
-            encodedBytesPerSecond: Long
+            framingKind: Int,
+            encodedBytesPerSecond: Long,
+            encodedFrameRate: Int,
+            encodedFrameBytes: Int
         ): UsbEncodedDacSession {
             require(interfaceNumber >= 0 && alternateSetting > 0)
             require(endpoint in 1..0x7f)
@@ -71,7 +74,10 @@ internal class UsbEncodedDacSession private constructor(
                 endpoint,
                 maxPacketBytes,
                 interval,
-                encodedBytesPerSecond
+                framingKind,
+                encodedBytesPerSecond,
+                encodedFrameRate,
+                encodedFrameBytes
             )
             check(handle != 0L) { "Unable to open encoded USB transport" }
             return UsbEncodedDacSession(connection, handle)
