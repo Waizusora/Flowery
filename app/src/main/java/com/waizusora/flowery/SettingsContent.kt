@@ -82,6 +82,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             val usbDirectActive = status.contains("USB exclusive", ignoreCase = true)
             val bitPerfectStatus = when {
                 bitPerfectActive -> "ACTIVE · The native USB PCM producer confirmed source-preserving output."
+                status.startsWith("Playback error:", ignoreCase = true) && usbDacConnected ->
+                    "UNAVAILABLE · ${status.removePrefix("Playback error:").trim()}"
                 usbDirectActive -> "NOT ACTIVE · Direct USB playback is selected, but the current source or negotiated output path requires PCM conversion or processing."
                 usbDacConnected && !usbDacPermissionGranted -> "UNAVAILABLE · Connect the DAC and grant Flowery USB access to inspect its capabilities."
                 usbDacConnected -> "NOT ACTIVE · DAC detected. Start playback to evaluate the source format and negotiated DAC profile."
