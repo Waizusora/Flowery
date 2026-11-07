@@ -166,6 +166,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 1) == 0) {
                     "The native playback session could not enter the prepared state"
                 }
+                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 2) == 0) {
+                    "The native playback session could not enter the running state"
+                }
                 when (playbackRoute) {
                     1 -> {
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
@@ -224,7 +227,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 2) == 0) { "The native playback session was cancelled" }
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
                     "Unable to configure the streaming resampler and equalizer"
                 }
@@ -308,7 +310,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
                     }
                     pendingSeekMs.getAndSet(null)?.let { requested ->
-                        check(NativeAudio.nativePlaybackSessionBeginSeek(sessionHandle) > 0L) { "The native playback session rejected seek after cancellation" }
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) { "Unable to flush the AAudio output stream for seeking" }
