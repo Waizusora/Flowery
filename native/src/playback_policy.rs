@@ -131,7 +131,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackLowW
 mod tests {
     use super::{
         frames_at_milliseconds, low_watermark_frames, ring_capacity_frames,
-        select_preferred_sample_rate,
+        select_playback_route, select_preferred_sample_rate,
     };
 
     #[test]
