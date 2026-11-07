@@ -795,10 +795,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     ) {
         fun active() = !stop.get() && !stopped.get() && playbackGeneration.get() == generation
         try {
+            var appliedEqualizerRevision = equalizerRevision
             while (active()) {
                 pendingSeekMs.getAndSet(null)?.let { requested ->
                     NativeAudio.nativeRequestUsbPcmProducerSeek(producerHandle, requested.coerceAtLeast(0L))
                     endReached.set(false)
+                }
+                if (appliedEqualizerRevision != equalizerRevision) {
+                    check(NativeAudio.nativeUpdateStreamGains(decoderHandle, bandGainsDb) == 0) {
+                        "Unable to update the direct USB equalizer"
+                    }
+                    appliedEqualizerRevision = equalizerRevision
                 }
                 when (NativeAudio.nativePumpUsbPcmProducer(producerHandle, currentUsbGain())) {
                     1 -> Unit
