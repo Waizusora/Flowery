@@ -6,6 +6,7 @@ use jni::JNIEnv;
 pub(super) const UAC1_FORMAT_TYPE_II: u8 = 0x02;
 pub(super) const UAC1_FORMAT_TYPE_III: u8 = 0x03;
 pub(super) const UAC1_FORMAT_TAG_AC3: u16 = 0x1002;
+pub(super) const UAC1_FORMAT_TAG_IEC61937_AC3: u16 = 0x2001;
 pub(super) const IEC61937_DATATYPE_AC3: u16 = 0x0001;
 pub(super) const IEC61937_AC3_BURST_BYTES: usize = 6144;
 
@@ -119,7 +120,20 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 format_tag = Some(u16::from_le_bytes([raw[offset + 5], raw[offset + 6]]));
             }
             0x24 if selected && length >= 4 && raw[offset + 2] == 0x02 => {
-                format_type = Some(raw[offset + 3]);
+                let kind = raw[offset + 3];
+                if kind == UAC1_FORMAT_TYPE_II {
+                    if length < 9 { return Err("UAC1 Type-II format descriptor is truncated"); }
+                    let maximum_bitrate = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
+                    let samples_per_frame = u16::from_le_bytes([raw[offset + 6], raw[offset + 7]]);
+                    if maximum_bitrate == 0 || samples_per_frame == 0 {
+                        return Err("UAC1 Type-II descriptor has invalid bitrate or frame size");
+                    }
+                } else if kind == UAC1_FORMAT_TYPE_III {
+                    if length < 8 || raw[offset + 4] != 2 || raw[offset + 5] != 2 || raw[offset + 6] != 16 {
+                        return Err("UAC1 Type-III IEC 61937 requires two 16-bit subframes");
+                    }
+                }
+                format_type = Some(kind);
             }
             0x05 if selected && length >= 7 => {
                 let address = raw[offset + 2];
