@@ -834,10 +834,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             paused = true
             if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
             onState("Paused · USB exclusive")
-        } else if (NativeAudio.nativePauseOutput() == 0) {
-            paused = true
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
-            onState("Paused")
+        } else {
+            val session = nativeSessionHandle
+            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() == 0) {
+                paused = true
+                onState("Paused")
+            }
         }
     }
 
@@ -846,10 +848,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             paused = false
             if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
             onState("Playing · USB exclusive")
-        } else if (NativeAudio.nativeResumeOutput() == 0) {
-            paused = false
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
-            onState("Playing · AAudio streaming")
+        } else {
+            val session = nativeSessionHandle
+            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() == 0) {
+                paused = false
+                onState("Playing · AAudio streaming")
+            }
         }
     }
 
