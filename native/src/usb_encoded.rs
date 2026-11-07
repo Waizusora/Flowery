@@ -145,6 +145,7 @@ struct EncodedProducerState {
     decoder: *mut crate::streaming::StreamDecoder,
     queue: Arc<EncodedPacketQueue>,
     framing: EncodedFraming,
+    maximum_bitrate_kbps: Option<u16>,
     sequence: u64,
     pending: Option<EncodedPacket>,
     ended: bool,
@@ -196,9 +197,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbEncod
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEncodedProducer(
     mut env: JNIEnv, _class: JClass, decoder_handle: jlong, queue_handle: jlong,
-    framing_kind: jint, format_code: jint,
+    framing_kind: jint, format_code: jint, maximum_bitrate_kbps: jint,
 ) -> jlong {
-    if decoder_handle == 0 || !(0..=0xffff).contains(&format_code) {
+    if decoder_handle == 0 || !(0..=0xffff).contains(&format_code) || !(0..=0xffff).contains(&maximum_bitrate_kbps) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer configuration");
         return 0;
     }
@@ -228,10 +229,20 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
             return 0;
         }
     };
+    let maximum_bitrate = match framing {
+        EncodedFraming::Uac1TypeIi { .. } if maximum_bitrate_kbps > 0 =>
+            Some(maximum_bitrate_kbps as u16),
+        EncodedFraming::Iec61937 { .. } if maximum_bitrate_kbps == 0 => None,
+        _ => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", "Encoded profile bitrate limit does not match the selected framing");
+            return 0;
+        }
+    };
     let producer = EncodedProducer {
         state: Mutex::new(EncodedProducerState {
             decoder: decoder_handle as *mut crate::streaming::StreamDecoder,
-            queue, framing, sequence: 0, pending: None, ended: false,
+            queue, framing, maximum_bitrate_kbps: maximum_bitrate,
+            sequence: 0, pending: None, ended: false,
         }),
     };
     Box::into_raw(Box::new(producer)) as jlong
@@ -255,6 +266,20 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
                 if let Err(error) = unsafe { &*state.decoder }.validate_ac3_encoded_frame(&source_bytes) {
                     let _ = env.throw_new("java/lang/IllegalStateException", error);
                     return -2;
+                }
+                if let Some(maximum) = state.maximum_bitrate_kbps {
+                    match crate::usb_encoded_formats::ac3_frame_bitrate_kbps(&source_bytes) {
+                        Ok(actual) if actual <= maximum => {}
+                        Ok(actual) => {
+                            let _ = env.throw_new("java/lang/IllegalStateException",
+                                format!("AC-3 frame bitrate {actual} kbps exceeds UAC1 descriptor maximum {maximum} kbps"));
+                            return -2;
+                        }
+                        Err(error) => {
+                            let _ = env.throw_new("java/lang/IllegalStateException", error);
+                            return -2;
+                        }
+                    }
                 }
                 let bytes = match state.framing {
                     EncodedFraming::Uac1TypeIi { .. } => source_bytes,
