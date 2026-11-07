@@ -39,6 +39,7 @@ internal data class UsbPcmWriteResult(
     val acceptedFrames: Int,
     val pcmBytes: Int,
     val queuedBlocks: Int,
+    val queueWaitMs: Double,
 )
 
 /**
@@ -50,7 +51,7 @@ internal data class UsbPcmWriteResult(
  */
 internal class UsbPcmPlaybackPipeline private constructor(
     private val queueHandle: Long,
-    private val producerHandle: Long,
+    val producerHandle: Long,
     val dacSession: UsbDacSession,
     private val playbackSessionHandle: Long,
 ) : AutoCloseable {
@@ -71,7 +72,9 @@ internal class UsbPcmPlaybackPipeline private constructor(
 
     fun pollAndWrite(timeoutMs: Int): UsbPcmWriteResult? {
         check(!closed) { "USB PCM playback pipeline is closed" }
+        val pollStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
         val encoded = NativeAudio.nativePollUsbPcmBlock(queueHandle, timeoutMs) ?: return null
+        val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - pollStartedNs).coerceAtLeast(0L) / 1_000_000.0
         val block = UsbPcmBlockDecoder.decode(encoded)
         val requestedEpoch = NativeAudio.nativePlaybackSessionEpoch(playbackSessionHandle).toInt()
         if (requestedEpoch >= 0 && block.epoch != requestedEpoch) {
@@ -97,6 +100,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
                 acceptedFrames = 0,
                 pcmBytes = 0,
                 queuedBlocks = queueSize,
+                queueWaitMs = queueWaitMs,
             )
         }
 
@@ -110,6 +114,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
             acceptedFrames = acceptedFrames,
             pcmBytes = block.pcm.size,
             queuedBlocks = queueSize,
+            queueWaitMs = queueWaitMs,
         )
     }
 
