@@ -157,7 +157,12 @@ impl StreamDecoder {
         let lossless_source = is_lossless_codec(params.codec);
         let ieee_float_source = params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE;
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
-        let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
+        // MP4/M4A ALAC tracks may expose their channel count through channel_layout
+        // while leaving the explicit channels bitmask unset. Prefer the bitmask when
+        // present, then derive the count from the declared layout.
+        let channels = params.channels.map(|channels| channels.count())
+            .or_else(|| params.channel_layout.map(|layout| layout.into_channels().count()))
+            .ok_or("Audio channel layout is unavailable")?;
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
         let decoder = match symphonia::default::get_codecs().make(&params, &DecoderOptions::default()) {
             Ok(decoder) => Some(decoder),
