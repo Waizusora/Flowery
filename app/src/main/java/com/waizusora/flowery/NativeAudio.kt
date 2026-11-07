@@ -76,6 +76,7 @@ object NativeAudio {
     external fun nativeSelectUsbSampleRates(sourceRate: Int, rangesJson: String): String
     external fun nativeParseUsbDacPlaybackClocks(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeParseUsbDacClockSources(descriptors: ByteArray): String
+    external fun nativeFindUsbFeatureUnitVolumeControl(descriptors: ByteArray): String
     external fun nativeDescribeUsbAudioDescriptors(descriptors: ByteArray): String
     external fun nativeParseUsbClockRanges(response: ByteArray, transferred: Int): String
     external fun nativeUsbPlaybackDescriptorTrace(descriptors: ByteArray, streamingInterface: Int): String
