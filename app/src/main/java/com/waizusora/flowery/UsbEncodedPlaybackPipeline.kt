@@ -184,7 +184,9 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     framingKind,
                     encodedBytesPerSecond,
                     if (framingKind == FRAMING_IEC61937_TYPE_III) sourceRate else 0,
-                    if (framingKind == FRAMING_IEC61937_TYPE_III) 4 else 0
+                    if (framingKind == FRAMING_IEC61937_TYPE_III) 4 else 0,
+                    sourceRate,
+                    validation.optBoolean("samplingFrequencyControl")
                 )
                 return UsbEncodedPlaybackPipeline(
                     decoderHandle, queue, producer, session, framingKind, formatCode
