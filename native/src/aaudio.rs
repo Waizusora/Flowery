@@ -386,11 +386,8 @@ pub(crate) fn resume_output_for_session() -> Option<i32> {
     if e.stream.is_null() { return None; }
     Some(unsafe {
         let s=AAudioStream_getState(e.stream);
-        if s==STATE_OPEN || s==STATE_STARTED { OK }
-        else if s==STATE_PAUSED {
-            let r=AAudioStream_requestStart(e.stream);
-            if r!=OK { r } else { wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED) }
-        } else if s==STATE_STARTING { wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED) }
+        if s==STATE_OPEN || s==STATE_STARTED || s==STATE_PAUSED { OK }
+        else if s==STATE_STARTING { wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED) }
         else { INVALID_STATE }
     })
 }
