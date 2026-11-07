@@ -288,6 +288,21 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 break;
             }
             if phase == 2 {
+                // The session scheduler owns decode-worker health monitoring. Kotlin
+                // observes only this scheduler's terminal status, not a second worker.
+                match crate::streaming::stream_pump_status(worker_session.decoder_handle) {
+                    Some(0 | 1) => {}
+                    Some(error) => {
+                        crate::playback_session::transition_session_phase(&worker_session, 7);
+                        thread_status.store(if error < 0 { error } else { -901 }, Ordering::Release);
+                        break;
+                    }
+                    None => {
+                        crate::playback_session::transition_session_phase(&worker_session, 7);
+                        thread_status.store(-902, Ordering::Release);
+                        break;
+                    }
+                }
                 match output_scheduler_tick(watermark, phase, &mut start_requested) {
                     Ok(true) => {
                         if crate::playback_session::transition_session_phase(&worker_session, 4) &&
