@@ -146,7 +146,6 @@ mod tests {
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicU64, Ordering};
 use jni::sys::{jlong, jlongArray};
 
 struct QueueSnapshot {
