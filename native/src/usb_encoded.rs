@@ -321,13 +321,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         }
     };
     drop(decoder_guard);
+    let initial_epoch = session.epoch.load(Ordering::Acquire);
     let producer = EncodedProducer {
         state: Mutex::new(EncodedProducerState {
             decoder,
             session,
             queue, framing, maximum_bitrate_kbps: maximum_bitrate,
             sequence: 0, pending: None, ended: false,
-            epoch: session.epoch.load(Ordering::Acquire),
+            epoch: initial_epoch,
         }),
         cancelled: AtomicBool::new(false),
     };
