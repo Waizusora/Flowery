@@ -100,15 +100,15 @@ class UsbDacController(context: Context) {
                 val formatCode = if (framingKind == UsbEncodedPlaybackPipeline.FRAMING_IEC61937_TYPE_III)
                     UsbEncodedPlaybackPipeline.IEC61937_DATATYPE_AC3 else UsbEncodedPlaybackPipeline.UAC1_FORMAT_TAG_AC3
                 for (alternate in alternates) {
-                    val validation = runCatching {
+                    val validation = try {
                         org.json.JSONObject(
                             NativeAudio.nativeValidateUsbEncodedDescriptor(
                                 descriptors, alternate.interfaceNumber, alternate.alternateSetting,
                                 formatType, formatTag, sourceRate
                             )
                         )
-                    }.getOrElse {
-                        lastError = it
+                    } catch (error: Throwable) {
+                        lastError = error
                         continue
                     }
                     if (!validation.optBoolean("valid")) continue
