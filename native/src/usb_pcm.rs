@@ -201,7 +201,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPcmQueueS
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jint {
     let Some(queue) = queue_ref(handle) else { return 0; };
-    queue.state.lock().unwrap_or_else(|error| error.into_inner()).blocks.len() as jint
+    let size = queue.state.lock().unwrap_or_else(|error| error.into_inner()).blocks.len() as jint;
+    size
 }
 
 #[no_mangle]
