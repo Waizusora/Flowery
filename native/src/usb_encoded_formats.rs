@@ -93,6 +93,19 @@ pub(super) fn ac3_frame_size(frame: &[u8]) -> Result<usize, &'static str> {
     Ok(words * 2)
 }
 
+pub(super) fn ac3_frame_bitrate_kbps(frame: &[u8]) -> Result<u16, &'static str> {
+    if frame.len() < 5 || frame[0] != 0x0b || frame[1] != 0x77 {
+        return Err("AC-3 sync word or frame header is invalid");
+    }
+    const BITRATES_KBPS: [u16; 19] = [
+        32, 40, 48, 56, 64, 80, 96, 112, 128, 160,
+        192, 224, 256, 320, 384, 448, 512, 576, 640,
+    ];
+    let code = frame[4] & 0x3f;
+    if code > 37 { return Err("AC-3 frame-size code is reserved"); }
+    Ok(BITRATES_KBPS[(code / 2) as usize])
+}
+
 pub(super) fn ac3_frame_sample_rate(frame: &[u8]) -> Result<u32, &'static str> {
     if frame.len() < 5 || frame[0] != 0x0b || frame[1] != 0x77 {
         return Err("AC-3 sync word or frame header is invalid");
