@@ -217,3 +217,10 @@ Playback service commands are coordinated through an Android adapter backed by a
 ### Encoded queue ownership and JNI packet envelope
 
 The encoded queue is reference-counted across JNI handles. A producer retains its own shared queue reference, so releasing the Kotlin queue handle does not invalidate a producer that is still alive. The packet envelope returned to Kotlin is 27 bytes before the opaque payload: framing kind (1 byte), format/data-type code (2-byte little-endian), sequence (8-byte little-endian), presentation timestamp in microseconds (8-byte little-endian; zero means unavailable), and duration in microseconds (8-byte little-endian). The envelope describes metadata only; it does not establish codec compatibility or USB wire framing.
+
+
+### Native integer PCM and Bit Perfect policy
+
+The Rust engine now defines a native signed-integer PCM representation, range-checked USB subslot packer, and a strict bit-perfect eligibility predicate with unit coverage for 16-, 24-, and 32-bit sample packing, packed/padded 24-bit layouts, and processing/format-change rejection. This is the foundation for the native source-sample path; it is not yet wired into Symphonia decoder output or the live USB producer. The active decoded USB path therefore still uses normalized float PCM and must not be described as using native source bits or as newly supporting 32-bit bit-perfect playback.
+
+The intended routing policy is format- and decoder-capability-based, not extension-based: uncompressed integer PCM and lossless codecs may use native integer samples only when the decoder exposes exact integer samples and the negotiated output preserves sample rate, channel mapping, valid-bit depth, and sample values with no DSP, software gain, or resampling. Lossy codecs continue through the existing float32 decoded-PCM path. A source or output format that cannot satisfy these conditions remains ordinary decoded PCM and is never labelled Bit Perfect. Hardware-level verification still requires external digital capture on physical DACs.
