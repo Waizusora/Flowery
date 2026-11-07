@@ -106,13 +106,11 @@ pub(super) fn pack_native_integer_pcm(
             ));
         }
 
-        // USB PCM subslots carry valid signed bits least-significant-bit
-        // aligned; widening therefore sign-extends the integer value.
-        let encoded = if source_bits == 32 {
-            value as i32 as u32
-        } else {
-            ((value << shift) >> shift) as i32 as u32
-        };
+        // USB PCM subslots left-justify the valid sample bits. Any unused
+        // least-significant subslot bits are zero, not sign-extension bits.
+        let subslot_shift = (format.subslot_bytes as u32 * 8) - source_bits as u32;
+        let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
+        let _ = shift;
         let bytes = encoded.to_le_bytes();
         output.extend_from_slice(&bytes[..format.subslot_bytes as usize]);
     }
@@ -286,10 +284,10 @@ mod tests {
         assert_eq!(
             pack_native_integer_pcm(&samples, format(24, 4)).unwrap(),
             vec![
-                0x00, 0x00, 0x80, 0xff,
-                0xff, 0xff, 0xff, 0xff,
+                0x00, 0x00, 0x00, 0x80,
+                0x00, 0xff, 0xff, 0xff,
                 0x00, 0x00, 0x00, 0x00,
-                0xff, 0xff, 0x7f, 0x00
+                0x00, 0xff, 0xff, 0x7f
             ]
         );
     }
