@@ -78,7 +78,9 @@ struct UsbAudioSession {
     size_t encoded_offset = 0;
     uint64_t encoded_bytes_per_second = 0;
     uint64_t encoded_rate_phase = 0;
-    bool encoded_mode = false;
+    int encoded_mode = 0; // 0=PCM, 1=UAC1 Type-II, 2=IEC 61937 Type-III
+    std::chrono::steady_clock::time_point next_encoded_frame_due{};
+    bool encoded_frame_deadline_valid = false;
     // Transfers currently queued on the endpoint, in submission order.
     std::vector<std::unique_ptr<InFlightTransfer>> in_flight;
     uint64_t next_sequence = 0;
@@ -771,8 +773,8 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     JNIEnv* env, jobject object, jint file_descriptor, jint interface_number,
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
-    jlong encoded_bytes_per_second) {
-    if (encoded_bytes_per_second <= 0) {
+    jint framing_kind, jlong encoded_bytes_per_second) {
+    if ((framing_kind != 1 && framing_kind != 2) || encoded_bytes_per_second <= 0) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Encoded transport rate must be positive");
         return 0;
@@ -795,7 +797,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
             exception, "Encoded transport rate exceeds the selected endpoint service-interval capacity");
         return 0;
     }
-    session->encoded_mode = true;
+    session->encoded_mode = framing_kind;
     session->encoded_bytes_per_second = static_cast<uint64_t>(encoded_bytes_per_second);
     return handle;
 }
@@ -805,7 +807,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     JNIEnv* env, jobject, jlong handle, jbyteArray pcm, jint frame_count) {
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (session == nullptr || pcm == nullptr || frame_count <= 0) return -1;
-    if (session->encoded_mode) {
+    if (session->encoded_mode != 0) {
         jclass exception = env->FindClass("java/lang/IllegalStateException");
         if (exception != nullptr) env->ThrowNew(exception, "PCM writes are disabled for an encoded USB session");
         return -1;
@@ -920,6 +922,61 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
     if (session == nullptr || encoded == nullptr || !session->encoded_mode) return -1;
     const jsize byte_count = env->GetArrayLength(encoded);
     if (byte_count <= 0) return 0;
+
+    // UAC1 Type-II is a sequence of independently encoded frames. Every frame
+    // is split into full-size USB packets plus one short packet, followed by a
+    // zero-length transfer delimiter. A following frame is not submitted until
+    // this delimiter has completed and its presentation interval is due.
+    if (session->encoded_mode == 1) {
+        const size_t frame_bytes = static_cast<size_t>(byte_count);
+        const size_t full_packets = frame_bytes / session->max_packet_bytes;
+        const size_t remainder = frame_bytes % session->max_packet_bytes;
+        const size_t packet_count = full_packets + (remainder != 0 ? 1 : 0) + 1;
+        if (packet_count > kPacketsPerUrb) {
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame exceeds the bounded isochronous URB packet count");
+            return -1;
+        }
+        const jlong duration_us = 0; // replaced by the duration-aware overload below
+        (void)duration_us;
+        const auto frame_start = std::chrono::steady_clock::now();
+        if (session->encoded_frame_deadline_valid &&
+            frame_start < session->next_encoded_frame_due) {
+            std::this_thread::sleep_until(session->next_encoded_frame_due);
+        }
+        compact_encoded(session);
+        session->pending_encoded.resize(frame_bytes);
+        env->GetByteArrayRegion(encoded, 0, byte_count,
+            reinterpret_cast<jbyte*>(session->pending_encoded.data()));
+        if (env->ExceptionCheck()) { session->pending_encoded.clear(); return -1; }
+        std::vector<unsigned int> frame_packets;
+        frame_packets.reserve(packet_count);
+        for (size_t i = 0; i < full_packets; ++i) frame_packets.push_back(session->max_packet_bytes);
+        if (remainder != 0) frame_packets.push_back(static_cast<unsigned int>(remainder));
+        frame_packets.push_back(0); // UAC1 transfer delimiter between encoded frames
+        TransportFailure frame_failure;
+        if (!submit_encoded_urb(session, frame_packets, frame_bytes, &frame_failure)) {
+            throw_transport_failure(env, session, frame_failure);
+            return -1;
+        }
+        while (!frame_failure.failed && !session->in_flight.empty()) {
+            if (!wait_for_progress(session, &frame_failure)) break;
+        }
+        if (frame_failure.failed) {
+            abort_in_flight(session);
+            throw_transport_failure(env, session, frame_failure);
+            return -1;
+        }
+        session->pending_encoded.clear();
+        session->encoded_offset = 0;
+        session->next_encoded_frame_due = std::chrono::steady_clock::now() +
+            std::chrono::microseconds(session->encoded_bytes_per_second > 0
+                ? (static_cast<uint64_t>(frame_bytes) * 1000000ULL /
+                   session->encoded_bytes_per_second) : 0);
+        session->encoded_frame_deadline_valid = true;
+        return byte_count;
+    }
+
     const uint64_t max_buffer = session->encoded_bytes_per_second * 2ULL;
     const size_t live = session->pending_encoded.size() - session->encoded_offset;
     if (static_cast<uint64_t>(live) + static_cast<uint64_t>(byte_count) > max_buffer) {
@@ -985,7 +1042,16 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     TransportFailure failure;
     reap_completed(session, &failure);
 
-    if (session->encoded_mode) {
+    if (session->encoded_mode == 1) {
+        while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
+        if (failure.failed) {
+            abort_in_flight(session);
+            throw_transport_failure(env, session, failure);
+            return -1;
+        }
+        return 0;
+    }
+    if (session->encoded_mode == 2) {
         while (!failure.failed) {
             const size_t remaining_encoded = session->pending_encoded.size() - session->encoded_offset;
             if (remaining_encoded == 0) break;
@@ -1047,6 +1113,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     session->pending_encoded.clear();
     session->encoded_offset = 0;
     session->encoded_rate_phase = 0;
+    session->encoded_frame_deadline_valid = false;
     session->frame_phase = 0;
     session->feedback_phase = 0;
 }
