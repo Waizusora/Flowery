@@ -792,6 +792,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+fn clamp_aaudio_seek_target(request: &crate::playback_session::AAudioSeekRequest) -> i64 {
+    request.position_ms.max(request.segment_start_ms)
+        .min(if request.segment_end_ms >= 0 { request.segment_end_ms } else { i64::MAX })
+}
+
 /// Applies a queued AAudio seek on the native output scheduler thread.
 #[cfg(target_os = "android")]
 pub(super) fn process_aaudio_seek(
@@ -807,8 +812,7 @@ pub(super) fn process_aaudio_seek(
     if output_rate == 0 {
         return Err("The stream decoder has not been configured".into());
     }
-    let target_ms = request.position_ms.max(request.segment_start_ms)
-        .min(if request.segment_end_ms >= 0 { request.segment_end_ms } else { i64::MAX });
+    let target_ms = clamp_aaudio_seek_target(&request);
     stop_stream_pump_worker(decoder_handle);
     if session.cancelled.load(Ordering::Acquire) {
         return Err("AAudio playback session was cancelled during seek".into());
@@ -1256,6 +1260,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn aaudio_seek_target_is_clamped_to_the_active_segment() {
+        let bounded = crate::playback_session::AAudioSeekRequest {
+            position_ms: 900,
+            max_frames: 8192,
+            segment_start_ms: 1_000,
+            segment_end_ms: 4_000,
+        };
+        assert_eq!(clamp_aaudio_seek_target(&bounded), 1_000);
+
+        let beyond_end = crate::playback_session::AAudioSeekRequest {
+            position_ms: 9_000,
+            ..bounded
+        };
+        assert_eq!(clamp_aaudio_seek_target(&beyond_end), 4_000);
+
+        let unbounded = crate::playback_session::AAudioSeekRequest {
+            segment_end_ms: -1,
+            ..bounded
+        };
+        assert_eq!(clamp_aaudio_seek_target(&unbounded), 1_000);
     }
 
     #[test]
