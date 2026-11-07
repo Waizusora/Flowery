@@ -98,6 +98,7 @@ pub(super) struct StreamDecoder {
     source_rate: usize,
     source_bits: u8,
     lossless_source: bool,
+    ieee_float_source: bool,
     codec_type: symphonia::core::codecs::CodecType,
     channels: usize,
     output_rate: usize,
@@ -141,6 +142,7 @@ impl StreamDecoder {
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
         let source_bits = params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8;
         let lossless_source = is_lossless_codec(params.codec);
+        let ieee_float_source = params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE;
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
@@ -150,7 +152,7 @@ impl StreamDecoder {
             Err(error) => return Err(format!("Unsupported audio codec: {error}")),
         };
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, lossless_source, ieee_float_source, codec_type: params.codec, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
@@ -232,6 +234,7 @@ impl StreamDecoder {
     pub(super) fn is_ac3_source(&self) -> bool {
         self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3
     }
+    pub(super) fn is_ieee_float32_source(&self) -> bool { self.ieee_float_source }
 
     pub(super) fn encoded_transport_bytes_per_second(&self, framing_kind: i32) -> Result<u64, String> {
         match framing_kind {
@@ -517,15 +520,23 @@ impl StreamDecoder {
             }
             let discard = self.discard_source_frames.min(decoded_frames as u64) as usize;
             let fallback_decoded = decoded.clone();
-            let native = crate::native_pcm::from_symphonia_buffer(
-                decoded,
-                format.valid_bits,
-                self.channels,
-                discard,
-            );
             self.source_frames_decoded = self.source_frames_decoded.saturating_add(decoded_frames as u64);
             self.discard_source_frames -= discard as u64;
-
+            if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
+                if !self.ieee_float_source { return Err("IEEE Float32 USB output requires an IEEE Float32 source".into()); }
+                if let symphonia::core::audio::AudioBufferRef::F32(buffer) = fallback_decoded.clone() {
+                    let mut samples = Vec::with_capacity((decoded_frames - discard) * self.channels);
+                    for frame in discard..decoded_frames {
+                        for channel in 0..self.channels { samples.push(buffer.chan(channel)[frame]); }
+                    }
+                    self.native_pcm_pending.extend(crate::native_pcm::pack_native_ieee_float32(&samples, format)?);
+                    self.native_pcm_active = true;
+                    self.native_pcm_decided = true;
+                    return Ok(true);
+                }
+                return Err("Symphonia did not return an IEEE Float32 sample plane".into());
+            }
+            let native = crate::native_pcm::from_symphonia_buffer(decoded, format.valid_bits, self.channels, discard);
             match native {
                 Ok(samples) => {
                     let packed = crate::native_pcm::pack_native_integer_pcm(&samples, format)?;
@@ -577,21 +588,22 @@ impl StreamDecoder {
     fn move_native_remainder_to_float(&mut self, format: crate::usb_pcm::PcmFormat) {
         if !self.native_pcm_active { return; }
         let bytes_per_sample = format.subslot_bytes as usize;
-        let scale = (1_u64 << (format.valid_bits - 1)) as f32;
         let bytes: Vec<u8> = self.native_pcm_pending.drain(..).collect();
-        for sample in bytes.chunks_exact(bytes_per_sample) {
-            let mut raw = [0_u8; 4];
-            raw[..bytes_per_sample].copy_from_slice(sample);
-            let subslot_bits = bytes_per_sample as u32 * 8;
-            let padding_bits = subslot_bits - format.valid_bits as u32;
-            let aligned = u32::from_le_bytes(raw) >> padding_bits;
-            let signed = if format.valid_bits == 32 {
-                aligned as i32
-            } else {
-                let sign_shift = 32 - format.valid_bits as u32;
-                ((aligned << sign_shift) as i32) >> sign_shift
-            };
-            self.input_pending.push(signed as f32 / scale);
+        if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
+            for sample in bytes.chunks_exact(4) {
+                self.input_pending.push(f32::from_bits(u32::from_le_bytes([sample[0],sample[1],sample[2],sample[3]])));
+            }
+        } else {
+            let scale = (1_u64 << (format.valid_bits - 1)) as f32;
+            for sample in bytes.chunks_exact(bytes_per_sample) {
+                let mut raw = [0_u8; 4]; raw[..bytes_per_sample].copy_from_slice(sample);
+                let padding_bits = bytes_per_sample as u32 * 8 - format.valid_bits as u32;
+                let aligned = u32::from_le_bytes(raw) >> padding_bits;
+                let signed = if format.valid_bits == 32 { aligned as i32 } else {
+                    let sign_shift = 32 - format.valid_bits as u32; ((aligned << sign_shift) as i32) >> sign_shift
+                };
+                self.input_pending.push(signed as f32 / scale);
+            }
         }
         debug_assert_eq!(self.input_pending.len() % self.channels, 0);
         self.native_pcm_active = false;
@@ -623,9 +635,14 @@ impl StreamDecoder {
             channel_mapping_unchanged: true,
             resampling_disabled: self.resampler.is_none(),
         };
-        let native_eligible = self.lossless_source
-            && matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
-            && crate::native_pcm::is_bit_perfect_eligible(requirements, format);
+        let native_eligible = match format.encoding {
+            crate::usb_pcm::PcmEncoding::SignedInteger => self.lossless_source
+                && matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
+                && crate::native_pcm::is_bit_perfect_eligible(requirements, format),
+            crate::usb_pcm::PcmEncoding::IeeeFloat32 => self.ieee_float_source
+                && format.valid_bits == 32 && format.subslot_bytes == 4
+                && crate::native_pcm::is_bit_perfect_eligible(requirements, format),
+        };
 
         if native_eligible && (!self.native_pcm_decided || self.native_pcm_active) {
             if let Some(bytes) = self.read_native_pcm_bytes(max_frames, format)? {
@@ -651,11 +668,13 @@ impl StreamDecoder {
             let frame_index = index / self.channels;
             let fraction = if total_frames <= 1 { 1.0 } else { (frame_index + 1) as f32 / total_frames as f32 };
             let ramp_gain = start_gain + (gain - start_gain) * fraction;
-            let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
-            let subslot_shift = (format.subslot_bytes as u32 * 8) - format.valid_bits as u32;
-            let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
-            for byte in 0..format.subslot_bytes {
-                packed.push((encoded >> (byte * 8)) as u8);
+            if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
+                packed.extend_from_slice(&(sample * ramp_gain).to_le_bytes());
+            } else {
+                let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
+                let subslot_shift = (format.subslot_bytes as u32 * 8) - format.valid_bits as u32;
+                let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
+                for byte in 0..format.subslot_bytes { packed.push((encoded >> (byte * 8)) as u8); }
             }
         }
         self.usb_last_gain = gain;
@@ -693,6 +712,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
         Ok(position) => position as jlong,
         Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsIeeeFloat32Source(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jni::sys::jboolean {
+    if handle == 0 { return jni::sys::JNI_FALSE; }
+    let decoder = unsafe { &*(handle as *const StreamDecoder) };
+    if decoder.is_ieee_float32_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
 }
 
 #[no_mangle]

@@ -5,8 +5,9 @@ import android.hardware.usb.UsbDeviceConnection
 /**
  * JNI bridge to the native libusb USB Audio Class transport.
  *
- * PCM input must already be interleaved signed integer little-endian samples
- * in the exact bit depth and sample rate selected for the DAC.
+ * PCM input must already be interleaved little-endian samples in the exact
+ * encoding, subslot width, channel layout, and sample rate selected for the DAC.
+ * Integer and IEEE Float32 payloads are passed to libusb without sample conversion.
  */
 internal object UsbDacNative {
     init {

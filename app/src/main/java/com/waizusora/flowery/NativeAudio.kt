@@ -32,6 +32,7 @@ object NativeAudio {
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeIsAc3Source(handle: Long): Boolean
+    external fun nativeIsIeeeFloat32Source(handle: Long): Boolean
     external fun nativeGetBitPerfectSourceInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
@@ -44,7 +45,7 @@ object NativeAudio {
     external fun nativeUsbPcmQueueSize(queue: Long): Int
     external fun nativeCloseUsbPcmQueue(queue: Long)
     external fun nativeDestroyUsbPcmQueue(queue: Long)
-    external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, sourceRate: Int, channels: Int, bitResolution: Int, subslotBytes: Int, segmentStartMs: Long, segmentEndMs: Long): Long
+    external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, sourceRate: Int, channels: Int, bitResolution: Int, subslotBytes: Int, segmentStartMs: Long, segmentEndMs: Long, encoding: Int): Long
     external fun nativeRequestUsbPcmProducerSeek(producer: Long, positionMs: Long)
     external fun nativePumpUsbPcmProducer(producer: Long, targetGain: Float): Int
     external fun nativeIsUsbPcmProducerBitPerfect(producer: Long): Boolean

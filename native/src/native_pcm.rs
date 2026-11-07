@@ -77,6 +77,16 @@ pub(super) fn is_bit_perfect_eligible(
 ///
 /// Values are range-checked instead of clamped. Clamping would silently alter
 /// source samples and make a bit-perfect claim invalid.
+pub(super) fn pack_native_ieee_float32(samples: &[f32], format: PcmFormat) -> Result<Vec<u8>, String> {
+    let format = format.validate().map_err(str::to_string)?;
+    if format.encoding != crate::usb_pcm::PcmEncoding::IeeeFloat32 || samples.len() % format.channels as usize != 0 {
+        return Err("IEEE Float32 samples do not match the selected USB format or frame layout".into());
+    }
+    let mut output = Vec::with_capacity(samples.len() * 4);
+    for sample in samples { output.extend_from_slice(&sample.to_bits().to_le_bytes()); }
+    Ok(output)
+}
+
 pub(super) fn pack_native_integer_pcm(
     samples: &NativePcmSamples,
     format: PcmFormat,
@@ -249,6 +259,7 @@ mod tests {
 
     fn format(valid_bits: u8, subslot_bytes: u8) -> PcmFormat {
         PcmFormat {
+            encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
             sample_rate: 96_000,
             channels: 2,
             valid_bits,
@@ -256,6 +267,16 @@ mod tests {
             signed: true,
             little_endian: true,
         }
+    }
+
+    #[test]
+    fn ieee_float32_packing_preserves_all_sample_bits() {
+        let format = PcmFormat { encoding: crate::usb_pcm::PcmEncoding::IeeeFloat32,
+            sample_rate: 96_000, channels: 2, valid_bits: 32, subslot_bytes: 4, signed: false, little_endian: true };
+        let bits = [0x8000_0000_u32, 0x7fc0_1234, 1, 0x3f80_0000];
+        let bytes = pack_native_ieee_float32(&bits.map(f32::from_bits), format).unwrap();
+        let restored: Vec<u32> = bytes.chunks_exact(4).map(|v| u32::from_le_bytes([v[0],v[1],v[2],v[3]])).collect();
+        assert_eq!(restored, bits);
     }
 
     #[test]
@@ -380,6 +401,7 @@ mod tests {
         assert_eq!(samples, NativePcmSamples::I16(vec![i16::MIN, -1, 1234, i16::MAX]));
         assert_eq!(
             pack_native_integer_pcm(&samples, PcmFormat {
+                encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
                 sample_rate: 48_000, channels: 2, valid_bits: 16,
                 subslot_bytes: 2, signed: true, little_endian: true,
             }).unwrap(),

@@ -6,9 +6,14 @@ use jni::objects::JClass;
 use jni::sys::{jbyteArray, jint, jlong, jsize};
 use jni::JNIEnv;
 
+/// Encoding selected from the source representation and the DAC's class descriptors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PcmEncoding { SignedInteger, IeeeFloat32 }
+
 /// Format contract shared by direct USB PCM producers and the bounded transport queue.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PcmFormat {
+    pub encoding: PcmEncoding,
     pub sample_rate: u32,
     pub channels: u16,
     pub valid_bits: u8,
@@ -22,12 +27,15 @@ impl PcmFormat {
         if self.sample_rate == 0 || self.channels == 0 {
             return Err("PCM sample rate and channel count must be positive");
         }
-        if !(8..=32).contains(&self.valid_bits)
-            || !(1..=4).contains(&self.subslot_bytes)
-            || self.valid_bits as u16 > self.subslot_bytes as u16 * 8
-            || !self.signed || !self.little_endian
-        {
-            return Err("Unsupported PCM representation; expected signed little-endian PCM with 8-32 valid bits in 1-4 byte subslots");
+        if !(1..=4).contains(&self.subslot_bytes) || !self.little_endian {
+            return Err("Unsupported PCM subslot or byte order");
+        }
+        match self.encoding {
+            PcmEncoding::SignedInteger if (8..=32).contains(&self.valid_bits)
+                && self.valid_bits as u16 <= self.subslot_bytes as u16 * 8 && self.signed => {}
+            PcmEncoding::IeeeFloat32 if self.valid_bits == 32 && self.subslot_bytes == 4 && !self.signed => {}
+            PcmEncoding::SignedInteger => return Err("Unsupported signed integer PCM representation"),
+            PcmEncoding::IeeeFloat32 => return Err("IEEE Float USB PCM requires a 32-bit, four-byte subslot"),
         }
         Ok(self)
     }
@@ -192,6 +200,7 @@ mod tests {
     fn pcm_format_accepts_packed_and_padded_sample_layouts() {
         for (valid_bits, subslot_bytes) in [(8, 1), (16, 2), (20, 3), (24, 3), (24, 4), (32, 4)] {
             let format = PcmFormat {
+                encoding: PcmEncoding::SignedInteger,
                 sample_rate: 192_000,
                 channels: 2,
                 valid_bits,
@@ -205,8 +214,19 @@ mod tests {
     }
 
     #[test]
+    fn pcm_format_accepts_only_four_byte_ieee_float32() {
+        let format = PcmFormat { encoding: PcmEncoding::IeeeFloat32, sample_rate: 48_000,
+            channels: 2, valid_bits: 32, subslot_bytes: 4, signed: false, little_endian: true };
+        assert!(format.validate().is_ok());
+        assert_eq!(format.bytes_per_frame(), 8);
+        assert!(PcmFormat { subslot_bytes: 3, ..format }.validate().is_err());
+        assert!(PcmFormat { signed: true, ..format }.validate().is_err());
+    }
+
+    #[test]
     fn pcm_format_rejects_invalid_sample_representation() {
         let format = PcmFormat {
+            encoding: PcmEncoding::SignedInteger,
             sample_rate: 48_000,
             channels: 2,
             valid_bits: 32,

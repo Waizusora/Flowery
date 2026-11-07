@@ -581,10 +581,27 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            var nativeCandidate = sourceBits in 8..32 && bandGainsDb.all { it == 0f }
-            onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
-            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (nativeCandidate) sourceBits else "automatic"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate}")
-            val selected = if (nativeCandidate) {
+            val ieeeFloatSource = NativeAudio.nativeIsIeeeFloat32Source(handle)
+            var ieeeFloatCandidate = ieeeFloatSource && bandGainsDb.all { it == 0f }
+            var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32 && bandGainsDb.all { it == 0f }
+            var outputEncoding = "signed_integer"
+            onState(if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…" else if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…" else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…")
+            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
+            val selected = if (ieeeFloatCandidate) {
+                try {
+                    controller.openFirstCompatiblePlaybackSession(
+                        discovered, 32, sourceRate, allowSampleRateConversion = false,
+                        requiredSubslotBytes = 4, channels = channels, encoding = "ieee_float32"
+                    ).also { outputEncoding = "ieee_float32" }
+                } catch (floatError: Throwable) {
+                    ieeeFloatCandidate = false
+                    recordUsbDiagnostic("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${floatError.message ?: floatError.javaClass.simpleName} fallback=signed_integer_pcm")
+                    controller.openFirstCompatiblePlaybackSession(
+                        discovered, 0, sourceRate, allowSampleRateConversion = true,
+                        requiredSubslotBytes = null, channels = channels
+                    )
+                }
+            } else if (nativeCandidate) {
                 try {
                     controller.openFirstCompatiblePlaybackSession(
                         discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
@@ -623,7 +640,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val outputRate = usbSession.sampleRate
             val outputBits = usbSession.profile.bitResolution
             onState(if (nativeCandidate) "USB exclusive: preparing native integer PCM…" else "USB exclusive: preparing float32 PCM decoding…")
-            val initialGains = if (nativeCandidate) FloatArray(31) { 0f } else bandGainsDb.copyOf()
+            val initialGains = if (nativeCandidate || ieeeFloatCandidate) FloatArray(31) { 0f } else bandGainsDb.copyOf()
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, initialGains)
             recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=${initialGains.any { it != 0f }} gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
             check(decoderConfigResult == 0) {
@@ -633,7 +650,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${outputBits}_LE decoderPath=automatic nativeCandidate=${nativeCandidate} sourceSamplePreservation=conditional")
+            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=${if (outputEncoding == "ieee_float32") "IEEE_FLOAT32_LE" else "PCM_INTEGER_S${outputBits}_LE"} decoderPath=automatic nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate} sourceSamplePreservation=conditional")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
             usbOutputBitDepth = usbSession.profile.bitResolution
@@ -670,7 +687,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
                 handle, queueHandle, outputRate, channels, outputBits,
-                usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L
+                usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L,
+                if (outputEncoding == "ieee_float32") 1 else 0
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
             val endReached = AtomicBoolean(false)
@@ -762,8 +780,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (firstTransfer || nativeBitPerfectNow != usbNativeBitPerfectConfirmed) {
                     firstTransfer = false
                     usbNativeBitPerfectConfirmed = nativeBitPerfectNow
-                    recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${if (usbNativeBitPerfectConfirmed) "integer" else "float32"}")
-                    onState(if (usbNativeBitPerfectConfirmed) "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · native integer PCM" else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
+                    val decoderPath = when {
+                        outputEncoding == "ieee_float32" && usbNativeBitPerfectConfirmed -> "ieee_float32"
+                        usbNativeBitPerfectConfirmed -> "integer"
+                        else -> "float32"
+                    }
+                    recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${decoderPath}")
+                    onState(if (usbNativeBitPerfectConfirmed) {
+                        "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · " +
+                            if (outputEncoding == "ieee_float32") "IEEE Float32" else "native integer PCM"
+                    } else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
                 }
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }

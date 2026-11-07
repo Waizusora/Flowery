@@ -24,6 +24,7 @@ internal data class UsbDacPlaybackProfile(
     val samplingFrequencyControl: Boolean,
     val formatType: Int,
     val formatTag: Int,
+    val encoding: String,
     val feedbackEndpoint: Int?,
     val feedbackMaxPacketBytes: Int
 ) {
@@ -51,6 +52,7 @@ internal data class UsbDacPlaybackProfile(
             samplingFrequencyControl = value.optBoolean("samplingFrequencyControl", false),
             formatType = value.optInt("formatType", if (value.optInt("protocol", 0x20) == 0x00) 1 else 0),
             formatTag = value.optInt("formatTag", 0),
+            encoding = value.optString("encoding", "signed_integer"),
             feedbackEndpoint = if (value.isNull("feedbackEndpoint")) null else value.optInt("feedbackEndpoint"),
             feedbackMaxPacketBytes = value.optInt("feedbackMaxPacketBytes", 0)
         )

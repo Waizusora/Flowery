@@ -17,6 +17,7 @@ pub struct PlaybackProfile {
     pub sampling_frequency_control: bool,
     pub format_type: u8,
     pub format_tag: u16,
+    pub encoding: &'static str,
     pub feedback_endpoint: Option<u8>,
     pub feedback_max_packet_bytes: u16,
 }
@@ -45,6 +46,7 @@ struct Alternate {
     sampling_frequency_control: bool,
     format_type: u8,
     format_tag: u16,
+    encoding: &'static str,
     feedback_endpoint: Option<u8>,
     feedback_max_packet_bytes: u16,
     synchronization_address: u8,
@@ -63,7 +65,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
             let supported_protocol = a.protocol == 0x00 || a.protocol == 0x20;
-            if supported_protocol && (a.protocol != 0x00 || a.format_tag == 0x0001)
+            if supported_protocol && (a.protocol != 0x00 || matches!(a.format_tag, 0x0001 | 0x0003))
                 && (1..=8).contains(&a.channels) && (1..=4).contains(&a.subslot_bytes)
                 && (8..=32).contains(&a.bit_resolution)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
@@ -90,6 +92,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     sampling_frequency_control: a.sampling_frequency_control,
                     format_type: a.format_type,
                     format_tag: a.format_tag,
+                    encoding: a.encoding,
                     feedback_endpoint: a.feedback_endpoint,
                     feedback_max_packet_bytes: a.feedback_max_packet_bytes,
                 });
@@ -121,8 +124,11 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
             0x24 if current.is_some() && length >= 3 => {
                 let alt = current.as_mut().unwrap();
                 match (alt.protocol, raw[offset + 2]) {
-                    (0x20, 0x01) if length >= 11 => {
+                    (0x20, 0x01) if length >= 16 => {
                         alt.terminal_link = raw[offset + 3];
+                        let formats = le32(raw, offset + 6);
+                        alt.encoding = if formats & 0x0000_0004 != 0 { "ieee_float32" } else { "signed_integer" };
+                        alt.format_tag = if formats & 0x0000_0004 != 0 { 0x0003 } else { 0x0001 };
                         alt.channels = raw[offset + 10];
                     }
                     (0x20, 0x02) if length >= 6 && raw[offset + 3] == 0x01 => {
@@ -133,6 +139,7 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                     (0x00, 0x01) if length >= 7 => {
                         alt.terminal_link = raw[offset + 3];
                         alt.format_tag = le16(raw, offset + 5);
+                        alt.encoding = if alt.format_tag == 0x0003 { "ieee_float32" } else { "signed_integer" };
                     }
                     // UAC1 Type-I format descriptor. Only PCM (format tag 0x0001)
                     // is accepted by the direct integer-PCM transport.
@@ -411,6 +418,8 @@ pub fn profiles_json(raw: &[u8], requested_bit_resolution: Option<u8>) -> String
         "samplingFrequencyControl": p.sampling_frequency_control,
         "formatType": p.format_type,
         "formatTag": p.format_tag,
+        "encoding": p.encoding,
+        "supportsIeeeFloat32": p.encoding == "ieee_float32" && p.bit_resolution == 32 && p.subslot_bytes == 4,
         "feedbackEndpoint": p.feedback_endpoint,
         "feedbackMaxPacketBytes": p.feedback_max_packet_bytes
     })).collect();
@@ -658,6 +667,26 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
 mod tests {
     use super::{clock_ranges_json, clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace, select_usb_sample_rates_json};
     use serde_json::Value;
+
+    #[test]
+    fn parses_uac1_ieee_float32_profile() {
+        let raw = [9,4,2,1,1,1,2,0,0, 7,0x24,1,5,0,3,0,
+            14,0x24,2,1,2,4,32,2,0x44,0xac,0,0x80,0xbb,0, 7,5,1,9,0x40,0,1];
+        let profiles = parse_playback_profiles(&raw, Some(32));
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].encoding, "ieee_float32");
+        assert_eq!(profiles[0].format_tag, 3);
+    }
+
+    #[test]
+    fn parses_uac2_ieee_float32_bmformats_capability() {
+        let raw = [9,4,2,2,1,1,2,0x20,0, 16,0x24,1,5,0,1,4,0,0,0,2,0,0,0,0,0,
+            6,0x24,2,1,4,32, 7,5,4,9,0x40,0,1];
+        let profiles = parse_playback_profiles(&raw, Some(32));
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].encoding, "ieee_float32");
+        assert_eq!(profiles[0].format_tag, 3);
+    }
 
     #[test]
     fn parses_stereo_uac2_out_profile_and_packet_multiplier() {

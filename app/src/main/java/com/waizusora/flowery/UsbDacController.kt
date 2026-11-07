@@ -321,11 +321,15 @@ class UsbDacController(context: Context) {
         bitResolution: Int,
         sampleRate: Int,
         requiredSubslotBytes: Int? = null,
-        requiredChannels: Int? = null
+        requiredChannels: Int? = null,
+        requiredEncoding: String = "signed_integer"
     ): UsbDacSession {
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
         require(bitResolution == 0 || bitResolution in 8..32) { "PCM resolution must be automatic or between 8 and 32 bits." }
         require(sampleRate > 0) { "Sample rate must be positive." }
+        require(requiredEncoding == "signed_integer" || requiredEncoding == "ieee_float32") {
+            "Unsupported USB PCM encoding."
+        }
 
         val connection = manager.openDevice(device)
             ?: throw IllegalStateException("Android could not open the USB DAC connection.")
@@ -378,7 +382,9 @@ class UsbDacController(context: Context) {
             }
             val profiles = parseNativePlaybackProfiles(descriptors, bitResolution.takeIf { it > 0 })
                 .filter { (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) &&
-                    (requiredChannels == null || it.channels == requiredChannels) }
+                    (requiredChannels == null || it.channels == requiredChannels) &&
+                    it.encoding == requiredEncoding &&
+                    (requiredEncoding != "ieee_float32" || (it.bitResolution == 32 && it.subslotBytes == 4)) }
             if (profiles.isEmpty()) {
                 throw IllegalStateException(
                     "No descriptor-validated UAC1 Type-I/UAC2 OUT PCM profile supports " +
@@ -491,7 +497,8 @@ class UsbDacController(context: Context) {
         sampleRate: Int,
         allowSampleRateConversion: Boolean = false,
         requiredSubslotBytes: Int? = null,
-        channels: Int = 2
+        channels: Int = 2,
+        encoding: String = "signed_integer"
     ): Pair<Device, UsbDacSession> {
         val failures = mutableListOf<String>()
         for (device in devices) {
@@ -506,7 +513,9 @@ class UsbDacController(context: Context) {
                     val descriptors = connection.rawDescriptors
                     val profiles = parseNativePlaybackProfiles(descriptors, null)
                     val compatibleProfiles = profiles.filter {
-                        (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) && it.channels == channels
+                        (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) &&
+                            it.channels == channels && it.encoding == encoding &&
+                            (encoding != "ieee_float32" || (it.bitResolution == 32 && it.subslotBytes == 4))
                     }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
                         else compatibleProfiles.map { it.bitResolution }.distinct().sortedDescending()
@@ -536,7 +545,9 @@ class UsbDacController(context: Context) {
             for (candidateBits in candidateResolutions) {
                 for (candidateRate in candidateRates) {
                     try {
-                        val session = openExclusivePlaybackSession(device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes, channels)
+                        val session = openExclusivePlaybackSession(
+                            device.usbDevice, candidateBits, candidateRate, requiredSubslotBytes, channels, encoding
+                        )
                         if (session.profile.channels == channels &&
                             session.profile.bitResolution == candidateBits &&
                             session.sampleRate == candidateRate) {

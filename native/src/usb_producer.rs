@@ -1,5 +1,5 @@
 use crate::streaming::StreamDecoder;
-use crate::usb_pcm::{queue_ref, PcmBlock, PcmFormat, UsbPcmQueue};
+use crate::usb_pcm::{queue_ref, PcmBlock, PcmEncoding, PcmFormat, UsbPcmQueue};
 use jni::objects::JClass;
 use jni::sys::{jfloat, jint, jlong};
 use jni::JNIEnv;
@@ -61,10 +61,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     subslot_bytes: jint,
     segment_start_ms: jlong,
     segment_end_ms: jlong,
+    encoding: jint,
 ) -> jlong {
     if decoder_handle == 0 || source_rate <= 0 || !(1..=8).contains(&channels)
         || !(8..=32).contains(&bit_resolution) || !(1..=4).contains(&subslot_bytes)
-        || bit_resolution > subslot_bytes * 8
+        || bit_resolution > subslot_bytes * 8 || !(0..=1).contains(&encoding)
         || segment_start_ms < 0 || segment_end_ms < -1
         || (segment_end_ms >= 0 && segment_end_ms < segment_start_ms)
     {
@@ -78,7 +79,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     let end = (segment_end_ms >= 0).then_some(segment_end_ms as u64);
     let start = segment_start_ms as u64;
     let remaining = end.map(|value| frames_at_ms(value.saturating_sub(start), source_rate as u64));
-    let format = PcmFormat { sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8, subslot_bytes: subslot_bytes as u8, signed: true, little_endian: true };
+    let format = PcmFormat { encoding: if encoding == 1 { PcmEncoding::IeeeFloat32 } else { PcmEncoding::SignedInteger },
+        sample_rate: source_rate as u32, channels: channels as u16, valid_bits: bit_resolution as u8,
+        subslot_bytes: subslot_bytes as u8, signed: encoding == 0, little_endian: true };
     if format.validate().is_err() { return 0; }
     let producer = UsbPcmProducer {
         state: Mutex::new(ProducerState {
