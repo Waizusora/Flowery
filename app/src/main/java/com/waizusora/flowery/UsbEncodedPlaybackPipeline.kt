@@ -71,8 +71,8 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             }
             submitted++
         }
-        if (NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle) == 1 &&
-            NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) == null) {
+        if (submitted < maxPackets &&
+            NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle) == 1) {
             ended = true
         }
         return submitted
