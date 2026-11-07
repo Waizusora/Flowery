@@ -183,21 +183,37 @@ pub(super) fn from_symphonia_buffer(
         symphonia::core::audio::AudioBufferRef::U8(buffer) if valid_bits == 8 => {
             NativePcmSamples::I8(planes!(buffer, |v: &u8| Ok(*v as i32 - 128)).into_iter().map(|v| v as i8).collect())
         }
-        symphonia::core::audio::AudioBufferRef::S16(buffer) if valid_bits == 16 => {
-            NativePcmSamples::I16(planes!(buffer, |v: &i16| Ok(*v as i32)).into_iter().map(|v| v as i16).collect())
+        symphonia::core::audio::AudioBufferRef::S16(buffer) if matches!(valid_bits, 8 | 16) => {
+            let values = planes!(buffer, |v: &i16| signed_from_left_aligned(*v as i32, 16, valid_bits));
+            if valid_bits == 16 { NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()) }
+            else { NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()) }
         }
-        symphonia::core::audio::AudioBufferRef::U16(buffer) if valid_bits == 16 => {
-            NativePcmSamples::I16(planes!(buffer, |v: &u16| Ok(*v as i32 - 32_768)).into_iter().map(|v| v as i16).collect())
+        symphonia::core::audio::AudioBufferRef::U16(buffer) if matches!(valid_bits, 8 | 16) => {
+            let shift = 16 - valid_bits;
+            let midpoint = 1_i64 << (valid_bits - 1);
+            let values = planes!(buffer, |v: &u16| Ok(((*v as i64 >> shift) - midpoint) as i32));
+            if valid_bits == 16 { NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()) }
+            else { NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()) }
         }
-        symphonia::core::audio::AudioBufferRef::S24(buffer) if matches!(valid_bits, 20 | 24) => {
+        symphonia::core::audio::AudioBufferRef::S24(buffer) if matches!(valid_bits, 8 | 16 | 20 | 24) => {
             let values = planes!(buffer, |v: &symphonia::core::sample::i24| signed_from_left_aligned(v.inner(), 24, valid_bits));
-            if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+            match valid_bits {
+                8 => NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()),
+                16 => NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()),
+                20 => NativePcmSamples::I20(values),
+                _ => NativePcmSamples::I24(values),
+            }
         }
-        symphonia::core::audio::AudioBufferRef::U24(buffer) if matches!(valid_bits, 20 | 24) => {
+        symphonia::core::audio::AudioBufferRef::U24(buffer) if matches!(valid_bits, 8 | 16 | 20 | 24) => {
             let shift = 24 - valid_bits;
             let midpoint = 1_i64 << (valid_bits - 1);
             let values = planes!(buffer, |v: &symphonia::core::sample::u24| Ok(((v.inner() as i64 >> shift) - midpoint) as i32));
-            if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+            match valid_bits {
+                8 => NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()),
+                16 => NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()),
+                20 => NativePcmSamples::I20(values),
+                _ => NativePcmSamples::I24(values),
+            }
         }
         symphonia::core::audio::AudioBufferRef::S32(buffer) if matches!(valid_bits, 8 | 16 | 20 | 24 | 32) => {
             let values = planes!(buffer, |v: &i32| signed_from_left_aligned(*v, 32, valid_bits));
