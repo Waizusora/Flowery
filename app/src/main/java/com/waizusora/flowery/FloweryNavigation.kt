@@ -919,7 +919,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Lofty", "0.25.5 · audio metadata and tag editing · MIT OR Apache-2.0", color, muted)
             Detail("libusb", "1.0.30-0 · USB host transport · LGPL-2.1-or-later", color, muted)
             Detail("jni", "0.21 · Rust/JVM native interface · MIT OR Apache-2.0", color, muted)
-            Detail("audioadapter-buffers", "5.1 · audio buffer adapters · license details are in its package metadata", color, muted)
+            Detail("audioadapter-buffers", "5.1 · audio buffer adapters · MIT OR Apache-2.0", color, muted)
             Detail("serde / serde_json", "1.x · serialization and JSON · MIT OR Apache-2.0", color, muted)
             Detail("base64", "0.22 · Base64 encoding · MIT OR Apache-2.0", color, muted)
             Detail("libc", "0.2 · native platform bindings · MIT OR Apache-2.0", color, muted)
@@ -931,9 +931,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("AndroidX Core", "core-ktx 1.15.0 · Apache-2.0", color, muted)
             Detail("Android media", "androidx.media:media 1.7.0 · Apache-2.0", color, muted)
             Detail("Document provider", "androidx.documentfile:documentfile 1.0.1 · Apache-2.0", color, muted)
-            Detail("AAudio", "Android NDK platform API", color, muted)
-            Detail("JNI", "jni 0.21 · Rust/Java native interface", color, muted)
-            Detail("Android NDK", "AAudio platform API · Android platform component", color, muted)
+            Detail("AAudio", "Android NDK platform API · Android platform component", color, muted)
             Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
                 style = MaterialTheme.typography.bodySmall)
         }
