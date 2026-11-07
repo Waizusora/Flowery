@@ -1,14 +1,52 @@
 # Flowery
 
-Flowery is an Android music player focused on a clear local music library, flexible playback, and direct USB DAC integration. It combines a Jetpack Compose and Material 3 interface with a Rust audio engine for decoding, PCM processing, DSP, and playback policy. Kotlin provides Android platform integration, while a narrowly scoped C++ component provides the libusb transport used by direct USB playback.
+**Flowery** is an Android music player project built around local music, transparent audio routing, and a native playback engine. It combines a clean Jetpack Compose interface with a Rust-based audio pipeline and direct USB Audio Class (UAC) support.
 
-The project aims to provide a consistent PCM output path across supported audio formats, with transparent reporting of the negotiated DAC format and whether the active path meets Flowery's strict Bit Perfect conditions.
+Flowery is being developed for listeners who want more control over their music library and audio output—including users of external USB DACs—without hiding important playback details behind vague “high-resolution” or “bit-perfect” labels.
 
-## Project status
+> **Development status:** Flowery is under active development. Automated builds and software tests do not establish compatibility with every Android device, audio format, or USB DAC. Physical-device and external digital-capture testing is still required for hardware-level verification.
 
-The application currently includes folder-based audio discovery, playback queue controls, shuffle and repeat modes, seek support, a 31-band ISO graphic equalizer, software volume, audio metadata display and editing, and sidecar LRC lyric parsing.
+## At a glance
 
-The repository is under active development. Features described as limitations below are not implied to be available merely because a related library or native API is present.
+- **Local library:** Add and scan folders using Android's Storage Access Framework. Flowery does not build its library from MediaStore.
+- **Native audio engine:** Rust handles progressive decoding, sample-rate conversion, equalization, playback policy, and bounded PCM buffering.
+- **Android integration:** Kotlin and Jetpack Compose provide the app interface, document access, media session, foreground playback service, and device lifecycle integration.
+- **USB DAC support:** Inspect USB Audio Class descriptors and negotiate compatible PCM output profiles for direct USB playback.
+- **Bit Perfect transparency:** The app reports this state only when the active source, decoder representation, DSP settings, and negotiated DAC format satisfy strict matching conditions. A label is not a substitute for external digital capture.
+- **Library tools:** Edit supported audio tags with Lofty, manage playback queues, and display synchronized sidecar LRC lyrics.
+- **DSP:** Use a 31-band ISO graphic equalizer with per-band gain controls.
+
+## Project principles
+
+1. **Local-first music library.** Users choose which folders Flowery can access. Removing a folder from the app does not delete the original files.
+2. **Explicit audio-path reporting.** Source format, negotiated output format, and Bit Perfect eligibility are treated as separate facts.
+3. **Bounded streaming pipeline.** Audio is decoded and processed progressively; playback does not depend on allocating a complete decoded track in memory.
+4. **Clear platform boundaries.** Kotlin owns Android APIs and lifecycle integration, Rust owns core audio processing and playback policy, and the native C++ layer provides the libusb transport.
+5. **Careful compatibility claims.** Recognized file extensions, successful software tests, and descriptor parsing do not by themselves guarantee playback on every device.
+
+## Current capabilities
+
+| Area | Available implementation |
+| --- | --- |
+| Library | Multiple SAF folder roots, recursive scanning, playlists, sidecar LRC association |
+| Playback | Queue, previous/next, seek, shuffle, repeat, foreground media controls |
+| Audio engine | Symphonia decoding, Rubato streaming resampling, Rust DSP, AAudio output |
+| Equalizer | 31-band ISO one-third-octave graphic EQ |
+| USB audio | UAC descriptor inspection and direct USB PCM transport for supported profiles |
+| Metadata | Read and edit supported tags through Lofty |
+| Lyrics | Sidecar LRC parsing and synchronized display |
+| Appearance | Light, Black, and system-following Auto themes |
+
+Some capabilities have format-, device-, or route-specific constraints. See the Current limitations section and the technical documentation before relying on a particular codec or DAC configuration.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md) — application and native component boundaries
+- [Audio engine](AUDIO_ENGINE.md) — decoding, DSP, buffering, output, and seeking
+- [Library, metadata, and lyrics](LIBRARY_AND_METADATA.md) — folder scanning and file metadata
+- [Build instructions](BUILDING.md) — local development and build setup
+- [Architecture refactor status](docs/REFACTOR_STATUS.md) — implementation status and remaining work
+- [Third-party notices](THIRD_PARTY_NOTICES.md) — direct dependency and font notices
 
 ## Technology
 
