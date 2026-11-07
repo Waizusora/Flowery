@@ -42,6 +42,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                 1 -> attempts++
                 0 -> break
                 -1 -> ended = true
+                -3 -> break
                 else -> throw IllegalStateException("Rust encoded packet producer failed")
             }
         }
