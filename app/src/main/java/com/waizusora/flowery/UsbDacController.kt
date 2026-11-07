@@ -509,7 +509,7 @@ class UsbDacController(context: Context) {
                         (requiredSubslotBytes == null || it.subslotBytes == requiredSubslotBytes) && it.channels == channels
                     }
                     val resolutions = if (bitResolution > 0) listOf(bitResolution)
-                        else compatibleProfiles.map { it.bitResolution }.distinct()
+                        else compatibleProfiles.map { it.bitResolution }.distinct().sortedDescending()
                     val rates = if (!allowSampleRateConversion) {
                         listOf(sampleRate)
                     } else {
