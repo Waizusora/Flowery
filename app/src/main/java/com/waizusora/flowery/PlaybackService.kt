@@ -421,7 +421,6 @@ class PlaybackService : Service() {
 
     private fun scheduleOutputRouteCheck() {
         mainHandler.removeCallbacks(outputRouteCheck)
-        mainHandler.removeCallbacks(progressUpdates)
         mainHandler.postDelayed(outputRouteCheck, 350L)
     }
 
