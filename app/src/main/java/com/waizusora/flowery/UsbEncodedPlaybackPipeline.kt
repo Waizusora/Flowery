@@ -134,6 +134,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         fun open(
             connection: UsbDeviceConnection,
             decoderHandle: Long,
+            sessionHandle: Long,
             descriptors: ByteArray,
             interfaceNumber: Int,
             alternateSetting: Int,
@@ -144,7 +145,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             queuePackets: Int = 32,
             queueBytes: Int = 256 * 1024
         ): UsbEncodedPlaybackPipeline {
-            require(decoderHandle != 0L)
+            require(decoderHandle != 0L && sessionHandle != 0L)
             require(queuePackets > 0 && queueBytes >= 6144) {
                 "Encoded queue must hold at least one complete IEC 61937 AC-3 burst"
             }
@@ -176,7 +177,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             var session: UsbEncodedDacSession? = null
             try {
                 producer = NativeAudio.nativeCreateUsbEncodedProducer(
-                    decoderHandle, queue, framingKind, formatCode,
+                    decoderHandle, queue, sessionHandle, framingKind, formatCode,
                     if (framingKind == FRAMING_UAC1_TYPE_II) validation.getInt("maximumBitrate") else 0
                 )
                 check(producer != 0L) { "Source codec is incompatible with the selected encoded USB format" }
