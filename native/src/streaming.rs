@@ -749,7 +749,7 @@ fn stream_pump_workers() -> &'static Mutex<HashMap<i64, StreamPumpWorker>> {
 }
 
 #[cfg(target_os = "android")]
-fn stop_stream_pump_worker(handle: jlong) {
+pub(super) fn stop_stream_pump_worker(handle: jlong) {
     let worker = stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
