@@ -163,7 +163,6 @@ internal class UsbPcmPlaybackPipeline private constructor(
         var starvationEvents = 0L
         var chunks = 0L
         var totalFramesSent = 0L
-        var positionFrames = 0L
         var lastBitPerfect: Boolean? = null
 
         while (playbackActive()) {
@@ -180,7 +179,6 @@ internal class UsbPcmPlaybackPipeline private constructor(
                 starvationEvents++
                 onStarvation(result.queueWaitMs, starvationEvents)
             }
-            if (result.epochChanged) positionFrames = result.startFrames
             if (result.endOfStream) {
                 onEndOfStream(chunks, totalFramesSent)
                 break
@@ -206,7 +204,6 @@ internal class UsbPcmPlaybackPipeline private constructor(
 
             chunks++
             totalFramesSent += result.acceptedFrames
-            positionFrames += result.frames
             val currentBitPerfect = isBitPerfect
             if (firstTransfer || currentBitPerfect != lastBitPerfect) {
                 firstTransfer = false
