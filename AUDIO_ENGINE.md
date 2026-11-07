@@ -48,6 +48,12 @@ Seeking flushes the output ring, performs a format-level Symphonia seek, resets 
 
 Flowery uses three output-volume profiles. Profile 1 routes speaker, wired AUX/headphones, and Bluetooth through Android `STREAM_MUSIC`; Android remains responsible for safe-listening limits and system warning UI. Profile 2 is selected when the USB DAC advertises a master-channel UAC Feature Unit Volume Control. Flowery reads and writes the Feature Unit's signed 1/256 dB volume value, and the UI polls the current hardware value so physical DAC volume buttons and the software slider remain synchronized. Profile 3 is used when no usable Feature Unit volume control is advertised; it applies a per-DAC software gain, initially 20% for a new DAC, and persists later changes. Profile 3 changes PCM samples and therefore cannot be labelled Bit Perfect. Strict Bit Perfect mode bypasses software gain and ducking; profile 2 may still adjust the DAC's own output volume without changing the PCM payload. Vendor-specific volume controls that are not exposed as standard UAC Feature Units are not inferred.
 
+## USB DAC descriptor information panel
+
+The bottom-navigation USB icon opens a dedicated descriptor-information dialog instead of toggling Direct USB mode or showing a generic status message. The panel requests Android USB host permission when needed, then reads the connected device's raw configuration descriptors and presents the parsed USB Audio Class interfaces, alternate settings, endpoint transfer and synchronization properties, PCM channel/subslot/bit-resolution capabilities, advertised sample rates, and readable UAC2 clock RANGE results. It also reports manufacturer/product strings, VID/PID, standard Feature Unit master-volume capability, the local descriptor-profile fingerprint, and the observed-profile database record. A readable hardware master-volume value is appended when the device exposes one through the supported standard control path.
+
+The report does not infer a silicon chipset from the product name or VID/PID, and descriptor inspection is not a playback test. Opening the panel does not enable or disable Direct USB mode and does not certify bit-perfect output.
+
 ## USB diagnostic recording and descriptor profile database
 
 The Audio settings page exposes one USB Diagnostics screen. Its Record Log action starts a bounded capture session; Stop Log ends capture and Save Log exports one text file. There is no separate AAudio Diagnostics page, live-refresh action, or second diagnostic export path.
