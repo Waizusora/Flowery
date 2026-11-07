@@ -67,9 +67,10 @@ class UsbDacController(context: Context) {
     internal fun openFirstCompatibleEncodedPlaybackPipeline(
         devices: List<Device>,
         decoderHandle: Long,
+        sessionHandle: Long,
         sourceRate: Int
     ): Pair<Device, UsbEncodedPlaybackPipeline> {
-        require(decoderHandle != 0L && sourceRate > 0)
+        require(decoderHandle != 0L && sessionHandle != 0L && sourceRate > 0)
         var lastError: Throwable? = null
         for (device in devices) {
             if (!manager.hasPermission(device.usbDevice)) continue
@@ -115,7 +116,7 @@ class UsbDacController(context: Context) {
                     val connection = manager.openDevice(device.usbDevice) ?: continue
                     try {
                         val pipeline = UsbEncodedPlaybackPipeline.open(
-                            connection, decoderHandle, descriptors,
+                            connection, decoderHandle, sessionHandle, descriptors,
                             alternate.id, alternate.alternateSetting,
                             formatType, formatTag, framingKind, formatCode
                         )
