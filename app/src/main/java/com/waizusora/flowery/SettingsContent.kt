@@ -64,7 +64,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = onConnectUsbDac, enabled = usbDacConnected,
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                             Icon(Icons.Default.Usb, contentDescription = null)
                             Text("  Sambungkan DAC")
                         }
@@ -204,7 +204,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
+                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
                     Column(Modifier.weight(1f).padding(start = 14.dp)) {
                         Text(folder.name, color = color, fontWeight = FontWeight.Medium,
                             style = MaterialTheme.typography.titleMedium, maxLines = 1)
