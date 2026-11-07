@@ -305,6 +305,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Playback session does not own the supplied decoder");
         return 0;
     }
+    if session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is already cancelled");
+        return 0;
+    }
     let mut decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let framing = match framing_kind {
         1 if format_code != 0 => {
