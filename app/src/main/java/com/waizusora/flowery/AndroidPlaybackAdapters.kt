@@ -46,7 +46,7 @@ internal class UsbPlaybackDiagnostics(private val context: Context) {
         if (!preferences.getBoolean("usb_diagnostic_recording", false)) return
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
             .format(java.util.Date())
-        val line = "\$timestamp $event".replace('\n', ' ').replace('\r', ' ')
+        val line = "$timestamp $event".replace('\n', ' ').replace('\r', ' ')
         synchronized(LOCK) {
             val lines = preferences.getString("usb_direct_diagnostics", "").orEmpty()
                 .lineSequence().filter { it.isNotBlank() }.toMutableList()
