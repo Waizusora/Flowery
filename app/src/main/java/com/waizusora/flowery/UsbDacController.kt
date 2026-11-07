@@ -270,7 +270,20 @@ class UsbDacController(context: Context) {
             val deviceSummary = "Android USB device ID: ${device.deviceId}\nUSB device class: 0x${device.deviceClass.toString(16)}\n" +
                 "USB device subclass: 0x${device.deviceSubclass.toString(16)}\nUSB device protocol: 0x${device.deviceProtocol.toString(16)}\n" +
                 "USB interface count: ${device.interfaceCount}\n" + interfaceSummary
-            val completeReport = deviceSummary + "\n\n" + descriptorReport + profileReport
+            val featureUnit = UsbFeatureUnitParser.find(descriptors)
+            val dacCapabilitySummary = buildString {
+                appendLine("DAC identity and controls")
+                appendLine("Manufacturer: ${device.manufacturerName?.takeIf { it.isNotBlank() } ?: "Not reported by USB descriptors"}")
+                appendLine("Product: ${device.productName?.takeIf { it.isNotBlank() } ?: "Not reported by USB descriptors"}")
+                appendLine("VID/PID: ${device.vendorId.toString(16).uppercase().padStart(4, '0')}:${device.productId.toString(16).uppercase().padStart(4, '0')}")
+                appendLine(
+                    featureUnit?.let {
+                        "Feature Unit master-channel volume control: advertised (unit ${it.unitId}, control interface ${it.controlInterface}, UAC protocol 0x${it.protocol.toString(16)})"
+                    } ?: "Feature Unit master-channel volume control: not advertised in the standard descriptors"
+                )
+                appendLine("DAC silicon/chipset: not identified; standard USB descriptors do not reliably expose silicon identity.")
+            }
+            val completeReport = dacCapabilitySummary + "\n" + deviceSummary + "\n\n" + descriptorReport + profileReport
             val databaseSummary = runCatching {
                 val profileDatabase = UsbDacProfileDatabase(appContext)
                 try {

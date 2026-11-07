@@ -125,38 +125,24 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
-    private var usbDacMessage by mutableStateOf<String?>(null)
+    private var usbDacReport by mutableStateOf<String?>(null)
+    private var usbDacInspecting by mutableStateOf(false)
     private val usbDacController by lazy { UsbDacController(this) }
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action != UsbDacController.ACTION_USB_PERMISSION) return
             val device = intent.usbDeviceExtra()
             val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            usbDacMessage = when {
-                device == null -> "Android did not return the USB audio device."
-                granted && usbDacController.hasCompatibleUac2PlaybackProfile(device) -> {
-                    run {
-                        val volumeController = OutputVolumeController(this@MainActivity)
-                        val key = usbDacController.deviceIdentity(device)
-                        volume = volumeController.usbVolume(key)
-                        io.execute {
-                            val hardwareVolume = usbDacController.readHardwareVolumeFraction(device)
-                            volumeController.usbProfile(key, hardwareVolume != null)
-                            runOnUiThread { volume = hardwareVolume ?: volumeController.usbVolume(key) }
-                        }
-                    }
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("usb_bit_perfect_enabled", true)
-                        .apply()
-                    "USB permission granted for ${usbDacController.describeDevice(device)}. Flowery identified a compatible stereo UAC1/UAC2 playback profile from its descriptors. All supported audio is decoded by Symphonia into the shared PCM path. Bit Perfect is not currently certified."
+            when {
+                device == null -> {
+                    usbDacInspecting = false
+                    usbDacReport = "Android did not return the USB audio device."
                 }
-                granted -> {
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("usb_bit_perfect_enabled", false)
-                        .apply()
-                    "Flowery recognized ${usbDacController.describeDevice(device)}, but its descriptors do not expose a usable stereo UAC1/UAC2 playback profile. The DAC remains available through Android's normal audio route."
+                granted -> inspectUsbDac(device)
+                else -> {
+                    usbDacInspecting = false
+                    usbDacReport = "USB permission was not granted. Connect the DAC and grant access to inspect its descriptors."
                 }
-                else -> "USB access was not granted. The DAC remains on the regular Android audio route."
             }
         }
     }
@@ -297,11 +283,43 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Waizusora/Flowery/releases")))
                 }
             )
-            usbDacMessage?.let { message ->
-                AlertDialog(onDismissRequest = { usbDacMessage = null },
-                    title = { Text("USB DAC") },
-                    text = { Text(message, Modifier.verticalScroll(rememberScrollState())) },
-                    confirmButton = { TextButton(onClick = { usbDacMessage = null }) { Text("Close") } })
+            usbDacReport?.let { report ->
+                Dialog(
+                    onDismissRequest = { usbDacReport = null },
+                    properties = DialogProperties(usePlatformDefaultWidth = false)
+                ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(max = 720.dp),
+                        shape = RoundedCornerShape(24.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                            Text("USB DAC · Descriptor report", style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold)
+                            Text(
+                                if (usbDacInspecting) "Reading USB descriptors and DAC capabilities…"
+                                else "Detected device information from the connected USB descriptor set.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                            )
+                            if (usbDacInspecting) {
+                                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Spacer(Modifier.height(12.dp))
+                            }
+                            Text(
+                                report,
+                                modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
+                                    .verticalScroll(rememberScrollState()),
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Row(Modifier.fillMaxWidth().padding(top = 12.dp),
+                                horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = { usbDacReport = null }) { Text("Close") }
+                            }
+                        }
+                    }
+                }
             }
             infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
             editingTag?.let { tag ->
@@ -347,36 +365,55 @@ class MainActivity : ComponentActivity() {
 
     private fun requestUsbDacAccess() {
         val devices = usbDacController.audioDevices()
-        refreshOutputVolume()
         if (devices.isEmpty()) {
-            usbDacMessage = "No USB Audio Class playback device was detected. Connect a USB DAC and try again."
+            usbDacInspecting = false
+            usbDacReport = "No USB Audio Class device was detected. Connect a USB DAC and open this panel again."
             return
         }
-
-        // Prefer a device for which Android permission is already granted. If none is
-        // authorized yet, request access to the first enumerated device.
-        val detected = devices.firstOrNull {
-            usbDacController.hasPermission(it.usbDevice) &&
-                usbDacController.hasCompatibleUac2PlaybackProfile(it.usbDevice)
-        } ?: devices.firstOrNull { !usbDacController.hasPermission(it.usbDevice) }
+        val detected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) }
             ?: devices.first()
         val device = detected.usbDevice
         if (usbDacController.hasPermission(device)) {
-            if (!usbDacController.hasCompatibleUac2PlaybackProfile(device)) {
-                usbDacMessage = "Flowery recognized ${detected.displayName}, but direct USB playback requires a compatible stereo UAC1 Type-I PCM or UAC2 profile. Android's regular audio route remains available."
-                return
-            }
-            val preferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-            val enabled = preferences.getBoolean("usb_bit_perfect_enabled", false)
-            preferences.edit().putBoolean("usb_bit_perfect_enabled", !enabled).apply()
-            usbDacMessage = if (enabled) {
-                "Direct USB exclusive mode disabled. Playback will use the normal Flowery DSP and Android AAudio route."
-            } else {
-                "Direct USB exclusive mode enabled for compatible stereo UAC1/UAC2 DACs. All formats use Symphonia and the shared PCM path; Bit Perfect is not currently certified. Flowery tries permitted devices using descriptor-derived capabilities."
-            }
+            inspectUsbDac(device)
         } else {
+            usbDacInspecting = false
+            usbDacReport = "Waiting for Android USB permission for ${detected.displayName}…"
             usbDacController.requestPermission(device)
-            usbDacMessage = "Android will ask whether Flowery may access ${detected.displayName}. Permission grants device access only. Direct playback requires a compatible stereo UAC1 Type-I PCM or UAC2 PCM profile and successful sample-rate negotiation; decoded formats are not bit-perfect."
+        }
+    }
+
+    private fun inspectUsbDac(device: UsbDevice) {
+        usbDacInspecting = true
+        usbDacReport = buildString {
+            appendLine("Device: ${usbDacController.describeDevice(device)}")
+            appendLine("VID: 0x${device.vendorId.toString(16).uppercase().padStart(4, '0')}")
+            appendLine("PID: 0x${device.productId.toString(16).uppercase().padStart(4, '0')}")
+            appendLine()
+            append("Inspecting raw and parsed USB Audio Class descriptors…")
+        }
+        io.execute {
+            val report = runCatching { usbDacController.inspectDescriptors(device) }
+                .getOrElse { error ->
+                    "USB descriptor inspection failed: ${error.message ?: error.javaClass.simpleName}"
+                }
+            val hardwareVolume = runCatching {
+                usbDacController.readHardwareVolumeFraction(device)
+            }.getOrNull()
+            runOnUiThread {
+                usbDacInspecting = false
+                usbDacReport = report + buildString {
+                    appendLine()
+                    appendLine()
+                    appendLine("DAC hardware volume")
+                    appendLine(
+                        if (hardwareVolume == null) {
+                            "No readable master-channel hardware volume value was reported. This does not rule out vendor-specific controls."
+                        } else {
+                            "Feature Unit master volume is readable. Current level: ${(hardwareVolume * 100f).toInt()}%."
+                        }
+                    )
+                }
+            }
         }
     }
 

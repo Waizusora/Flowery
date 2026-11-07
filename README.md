@@ -32,7 +32,7 @@ Application ID: `com.waizusora.flowery`
 
 ### Navigation and settings
 
-- A transparent navigation bar provides Folders, Lyrics, USB DAC access, DSP, and Settings destinations. USB DAC access requests Android USB host permission for a detected USB Audio Class device; it does not enable bit-perfect output.
+- A transparent navigation bar provides Folders, Lyrics, USB DAC access, DSP, and Settings destinations. USB DAC opens a descriptor report for detected USB Audio Class devices. It displays VID/PID, manufacturer/product identity, raw and parsed UAC descriptors, validated PCM playback profiles, endpoint synchronization, advertised sample rates and channels, UAC2 clock ranges, Feature Unit volume capability, and the local descriptor-fingerprint record. Opening the panel does not toggle playback mode or enable bit-perfect output.
 - The Folders destination lists configured SAF roots, supports multi-select removal from Flowery's list, per-folder scan enablement, scanning, and folder-specific track browsing. Removing a folder releases its persisted access grant and removes it from the app's configured list; it does not delete the user's original files.
 - Selecting a track from a folder starts playback with that folder's tracks as the playback queue, keeping the user in the selected folder view.
 - The Lyrics icon toggles synchronized sidecar LRC lyrics in the album-artwork area; toggling it again restores the artwork. Now Playing keeps playback presentation focused on artwork, track metadata, controls, and timeline; diagnostic telemetry is available only through USB Diagnostics.
