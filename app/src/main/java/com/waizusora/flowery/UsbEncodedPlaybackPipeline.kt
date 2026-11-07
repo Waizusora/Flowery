@@ -25,6 +25,12 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     private var expectedSequence = 0L
     @Volatile private var lastPositionMs = 0L
 
+    init {
+        check(NativeAudio.nativeStartUsbEncodedProducerWorker(producerHandle) == 0) {
+            "Unable to start the Rust-owned encoded packet producer"
+        }
+    }
+
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
@@ -36,19 +42,14 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun pump(maxPackets: Int = 32): Int {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(maxPackets > 0)
-        var attempts = 0
-        while (attempts < maxPackets && !ended) {
-            when (NativeAudio.nativePumpUsbEncodedProducer(producerHandle)) {
-                1 -> attempts++
-                0 -> break
-                -1 -> ended = true
-                -3 -> break
-                else -> throw IllegalStateException("Rust encoded packet producer failed")
-            }
+        when (NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle)) {
+            0, 1 -> Unit
+            2 -> throw IllegalStateException("Rust encoded packet producer was cancelled unexpectedly")
+            else -> throw IllegalStateException("Rust encoded packet producer failed")
         }
 
         var submitted = 0
-        while (true) {
+        while (submitted < maxPackets) {
             val envelope = NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) ?: break
             require(envelope.size >= HEADER_BYTES) { "Invalid encoded packet envelope" }
             val header = ByteBuffer.wrap(envelope, 0, HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN)
@@ -70,6 +71,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             }
             submitted++
         }
+        if (NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle) == 1 &&
+            NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) == null) {
+            ended = true
+        }
         return submitted
     }
 
@@ -78,11 +83,15 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun seekTo(positionMs: Long): Long {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(positionMs >= 0)
+        NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
         session.flush()
         val actual = NativeAudio.nativeSeekUsbEncodedProducer(producerHandle, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
         ended = false
         lastPositionMs = actual
+        check(NativeAudio.nativeStartUsbEncodedProducerWorker(producerHandle) == 0) {
+            "Unable to restart the Rust-owned encoded packet producer after seeking"
+        }
         return actual
     }
 
@@ -109,6 +118,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         if (closed) return
         closed = true
         try {
+            NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
             NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
             NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
             NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
