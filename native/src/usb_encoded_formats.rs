@@ -13,10 +13,10 @@ pub(super) const IEC61937_AC3_BURST_BYTES: usize = 6144;
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbEncodedDescriptor(
     mut env: JNIEnv, _class: JClass, descriptors: JByteArray,
-    interface_number: jint, alternate_setting: jint, format_type: jint, format_tag: jint,
+    interface_number: jint, alternate_setting: jint, format_type: jint, format_tag: jint, sample_rate: jint,
 ) -> jstring {
     if !(0..=255).contains(&interface_number) || !(0..=255).contains(&alternate_setting) ||
-        !(0..=255).contains(&format_type) || !(0..=0xffff).contains(&format_tag) {
+        !(0..=255).contains(&format_type) || !(0..=0xffff).contains(&format_tag) || sample_rate <= 0 {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded UAC1 descriptor selector");
         return std::ptr::null_mut();
     }
@@ -32,7 +32,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbE
     let raw: Vec<u8> = signed.into_iter().map(|value| value as u8).collect();
     match validate_uac1_encoded_descriptor(
         &raw, interface_number as u8, alternate_setting as u8,
-        format_type as u8, format_tag as u16) {
+        format_type as u8, format_tag as u16, sample_rate as u32) {
         Ok((endpoint, max_packet, interval, maximum_bitrate)) => {
             let json = serde_json::json!({
                 "valid": true, "endpoint": endpoint,
@@ -119,7 +119,7 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
 /// exact format family/tag and a valid OUT isochronous data endpoint.
 pub(super) fn validate_uac1_encoded_descriptor(
     raw: &[u8], interface_number: u8, alternate_setting: u8,
-    expected_format_type: u8, expected_format_tag: u16,
+    expected_format_type: u8, expected_format_tag: u16, sample_rate: u32,
 ) -> Result<(u8, u16, u8, u16), &'static str> {
     if !matches!(expected_format_type, UAC1_FORMAT_TYPE_II | UAC1_FORMAT_TYPE_III) {
         return Err("Only UAC1 Type-II and Type-III encoded descriptors are accepted");
@@ -130,6 +130,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
     let mut format_type = None;
     let mut endpoint: Option<(u8,u16,u8)> = None;
     let mut maximum_bitrate = 0u16;
+    let mut sample_rate_supported = false;
     while offset + 2 <= raw.len() {
         let length = raw[offset] as usize;
         if length < 2 || offset + length > raw.len() { return Err("Malformed USB descriptor length"); }
@@ -145,16 +146,39 @@ pub(super) fn validate_uac1_encoded_descriptor(
             }
             0x24 if selected && length >= 4 && raw[offset + 2] == 0x02 => {
                 let kind = raw[offset + 3];
-                if kind == UAC1_FORMAT_TYPE_II {
+                let (frequency_count, frequency_offset) = if kind == UAC1_FORMAT_TYPE_II {
                     if length < 9 { return Err("UAC1 Type-II format descriptor is truncated"); }
                     maximum_bitrate = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
                     let samples_per_frame = u16::from_le_bytes([raw[offset + 6], raw[offset + 7]]);
                     if maximum_bitrate == 0 || samples_per_frame != 1536 {
                         return Err("AC-3 Type-II descriptor must advertise a nonzero bitrate and 1536 samples per encoded frame");
                     }
+                    (raw[offset + 8] as usize, 9usize)
                 } else if kind == UAC1_FORMAT_TYPE_III {
                     if length < 8 || raw[offset + 4] != 2 || raw[offset + 5] != 2 || raw[offset + 6] != 16 {
                         return Err("UAC1 Type-III IEC 61937 requires two 16-bit subframes");
+                    }
+                    (raw[offset + 7] as usize, 8usize)
+                } else {
+                    return Err("Unsupported UAC1 encoded format type");
+                };
+                if frequency_count == 0 {
+                    if length < frequency_offset + 6 { return Err("UAC1 continuous sample-rate range is truncated"); }
+                    let minimum = raw[offset + frequency_offset] as u32 |
+                        ((raw[offset + frequency_offset + 1] as u32) << 8) |
+                        ((raw[offset + frequency_offset + 2] as u32) << 16);
+                    let maximum = raw[offset + frequency_offset + 3] as u32 |
+                        ((raw[offset + frequency_offset + 4] as u32) << 8) |
+                        ((raw[offset + frequency_offset + 5] as u32) << 16);
+                    sample_rate_supported = minimum > 0 && maximum >= minimum &&
+                        sample_rate >= minimum && sample_rate <= maximum;
+                } else {
+                    let available = length.saturating_sub(frequency_offset) / 3;
+                    if frequency_count > available { return Err("UAC1 discrete sample-rate list is truncated"); }
+                    for index in 0..frequency_count {
+                        let at = offset + frequency_offset + index * 3;
+                        let rate = raw[at] as u32 | ((raw[at + 1] as u32) << 8) | ((raw[at + 2] as u32) << 16);
+                        if rate == sample_rate { sample_rate_supported = true; }
                     }
                 }
                 format_type = Some(kind);
@@ -180,6 +204,9 @@ pub(super) fn validate_uac1_encoded_descriptor(
     }
     if format_tag != Some(expected_format_tag) {
         return Err("The selected alternate setting format tag does not match the requested codec");
+    }
+    if !sample_rate_supported {
+        return Err("The selected source sample rate is not advertised by this encoded UAC1 alternate setting");
     }
     let (address, packet, interval) = endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")?;
     Ok((address, packet, interval, maximum_bitrate))
