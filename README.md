@@ -213,6 +213,12 @@ The application uses the incremental Rust streaming decoder and native output ri
 
 Review the repository's license file and the license terms of all bundled dependencies before redistributing the application. Lofty and Rubato are available under MIT OR Apache-2.0; Symphonia and transitive dependencies retain their respective upstream licenses.
 
+### Noto Sans typography
+
+Flowery uses the Noto Sans variable font as its bundled primary UI typeface. The Android Gradle build retrieves the unmodified font from the Google Fonts repository at the immutable revision pinned in `app/build.gradle.kts`, generates an Android font resource, and packages it into the APK. A clean build therefore requires network access for this font download. The exact SIL Open Font License 1.1 text and copyright notice are included at [LICENSES/NotoSans-OFL.txt](LICENSES/NotoSans-OFL.txt), with a third-party summary in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The bundled Noto Sans face covers its own Latin, Greek, and Cyrillic glyph set. Additional writing systems are rendered through Android's platform font fallback. Noto is a family collection rather than one universal font file; script-specific Noto families can be added when product localization requires them.
+
 
 ## Playback and USB architecture
 
