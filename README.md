@@ -9,7 +9,7 @@ Flowery is an Android music player focused on local music, transparent audio rou
 - **Local music library** — Add and scan folders through Android's Storage Access Framework (SAF). No MediaStore library is used.
 - **Native playback engine** — Rust handles audio decoding, streaming resampling, equalization, and bounded PCM buffering.
 - **Audio output** — AAudio for Android audio routes and direct USB Audio Class (UAC) transport for supported USB DACs.
-- **Bit Perfect reporting** — Shown only when source data and the negotiated DAC format meet strict matching requirements. External digital capture is still needed for hardware verification.
+- **Automatic Bit-perfect detection** — No manual toggle. Flowery evaluates the connected, permissioned USB DAC and reports Bit-perfect only after the native playback producer confirms source-preserving output. External digital capture is still needed for hardware verification.
 - **31-band equalizer** — ISO one-third-octave graphic EQ.
 - **Metadata and lyrics** — Read and edit supported tags with Lofty and display synchronized sidecar LRC lyrics.
 - **Playback controls** — Queue, seek, shuffle, repeat, and Android media-session controls.
@@ -37,7 +37,7 @@ The standard Android playback path is:
 
 `SAF audio file → Symphonia decoder → Rubato resampler (when needed) → 31-band EQ → bounded PCM ring buffer → AAudio`
 
-For supported USB DACs, Flowery can use a direct USB audio path. Output profiles are selected from the device's advertised capabilities; support depends on the DAC descriptors, format, and synchronization mode.
+For supported USB DACs, Flowery automatically checks connected devices for an active USB permission grant and can select a direct USB audio path. Output profiles are negotiated from the device's advertised capabilities; support depends on the DAC descriptors, source format, and synchronization mode. The user does not enable Bit-perfect manually.
 
 Bit Perfect eligibility is disabled by processing that changes samples, including equalization, software gain, and resampling. A Bit Perfect indicator is not proof of the complete physical USB signal path.
 
