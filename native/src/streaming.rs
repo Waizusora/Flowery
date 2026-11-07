@@ -696,11 +696,7 @@ fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
     let value = (sample * gain.clamp(0.0, 1.0)).clamp(-1.0, 1.0);
     let negative_limit = -(1_i64 << (valid_bits - 1));
     let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
-    let scale = if value < 0.0 {
-        (1_u64 << (valid_bits - 1)) as f64
-    } else {
-        positive_limit as f64
-    };
+    let scale = (1_u64 << (valid_bits - 1)) as f64;
     ((value as f64 * scale).round() as i64).clamp(negative_limit, positive_limit)
 }
 
