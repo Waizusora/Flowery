@@ -177,7 +177,7 @@ fun FloweryNavigation(
             .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
             when (destination) {
-                Destination.WELCOME -> WelcomeContent(
+                Destination.WELCOME -> WelcomeDestination(
                     foreground = foreground,
                     muted = muted,
                     onRequestNotificationPermission = onRequestNotificationPermission,
@@ -210,141 +210,31 @@ fun FloweryNavigation(
                     onInspect = onInspect,
                     onEdit = onEdit
                 )
-                Destination.FOLDERS -> {
-                    if (selectedFolder == null && !virtualCueFolder) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { destination = Destination.PLAYER; lyricsVisible = false }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Now playing", tint = foreground)
-                            }
-                            Heading("Folders", foreground)
-                            Spacer(Modifier.weight(1f))
-                            IconButton(onClick = onScan, enabled = !libraryScanActive) {
-                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A),
-                                    modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
-                            }
-                        }
-                        Text("SCANNED FOLDERS", color = muted, style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold)
-                        val cueVirtualTracks = tracks.filter { it.cuePlaylist != null }
-                        val playlistVirtualTracks = tracks.filter { it.playlistName != null }
-                        if (cueVirtualTracks.isNotEmpty() || playlistVirtualTracks.isNotEmpty()) {
-                            Row(Modifier.fillMaxWidth().clickable { virtualCueFolder = true; selectedFolder = null }
-                                .padding(horizontal = 4.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.FolderSpecial, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
-                                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                                    Text("CUE & PLAYLISTS", color = foreground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                                    Text("Virtual playlists · CUE, M3U, M3U8, PLS", color = muted, style = MaterialTheme.typography.bodySmall)
-                                }
-                                Text((cueVirtualTracks.size + playlistVirtualTracks.size).toString(), color = muted)
-                            }
-                            HorizontalDivider(color = muted.copy(alpha = .16f))
-                        }
-                        folders.forEach { folder ->
-                            val folderTracks = tracks.filter { it.folder == folder.name }
-                            Row(
-                                Modifier.fillMaxWidth().clickable { selectedFolder = folder; virtualCueFolder = false }
-                                    .padding(horizontal = 4.dp, vertical = 13.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A),
-                                    modifier = Modifier.size(27.dp))
-                                Column(Modifier.weight(1f).padding(start = 14.dp)) {
-                                    Text(folder.name, color = foreground, fontWeight = FontWeight.SemiBold,
-                                        style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                                    Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.bodySmall)
-                                }
-                                Icon(Icons.Default.MusicNote, null, tint = muted, modifier = Modifier.size(15.dp))
-                                Text("  ${folderTracks.size}", color = muted, style = MaterialTheme.typography.labelMedium)
-                            }
-                            HorizontalDivider(color = muted.copy(alpha = .16f))
-                        }
-                        if (folders.isEmpty()) Text("No folders added. Add folders in Settings → Library.", color = muted)
-                    } else if (virtualCueFolder) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { virtualCueFolder = false }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to folders", tint = foreground) }
-                            Heading("CUE & PLAYLISTS", foreground)
-                        }
-                        val cueTracks = tracks.filter { it.cuePlaylist != null }
-                        val m3uTracks = tracks.filter { it.playlistName != null }
-                        cueTracks.groupBy { it.cuePlaylist }.forEach { (name, entries) ->
-                            Text(name ?: "CUE playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
-                            entries.sortedBy { it.cueStartMs ?: 0L }.forEach { item ->
-                                Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
-                                    Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
-                                }
-                                HorizontalDivider(color = muted.copy(alpha = .16f))
-                            }
-                        }
-                        m3uTracks.groupBy { it.playlistName }.forEach { (name, entries) ->
-                            Text(name ?: "Playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
-                            entries.sortedBy { it.playlistOrder ?: Int.MAX_VALUE }.forEach { item ->
-                                Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
-                                    Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                                }
-                                HorizontalDivider(color = muted.copy(alpha = .16f))
-                            }
-                        }
-                        if (cueTracks.isEmpty() && m3uTracks.isEmpty()) Text("No CUE or playlist files were indexed.", color = muted)
-                    } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { selectedFolder = null }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to folders", tint = foreground)
-                            }
-                            Column(Modifier.weight(1f)) {
-                                Heading(selectedFolder!!.name, foreground)
-                                Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
-                            }
-                            IconButton(onClick = { onRefreshFolder(selectedFolder!!) }, enabled = !libraryScanActive) {
-                                Icon(Icons.Default.Refresh, "Refresh folder", tint = Color(0xFFD66B9A),
-                                    modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
-                            }
-                        }
-                        val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
-                        Text("${folderTracks.size} songs", color = muted)
-                        folderTracks.forEach { track ->
-                            Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
-                                Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                                    Text(track.title, color = foreground, fontWeight = FontWeight.Medium)
-                                    Text(track.mimeType ?: track.folder, color = muted, style = MaterialTheme.typography.bodySmall)
-                                }
-                                if (selectedTrack?.uri == track.uri) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
-                            }
-                            HorizontalDivider(color = muted.copy(alpha = .2f))
-                        }
-                        if (folderTracks.isEmpty()) Text("No songs indexed yet. Use Refresh to update this folder.", color = muted)
-                    }
-                }
-                Destination.DSP -> {
-                    Heading("DSP", foreground)
-                    Text("Output volume", color = foreground, fontWeight = FontWeight.SemiBold)
-                    Slider(value = volume, onValueChange = onVolume)
-                    Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.align(Alignment.End))
-                    Text(
-                        "USB DAC: software gain is saved separately for each DAC and remains available without a physical volume control. Speaker, AUX and Bluetooth follow Android media volume.",
-                        color = muted,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text("31-band ISO equalizer · ±12 dB", color = foreground, fontWeight = FontWeight.SemiBold)
-                    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
-                        shape = RoundedCornerShape(18.dp)) {
-                        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
-                            ISO_BANDS.forEachIndexed { index, band ->
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(48.dp)) {
-                                    VerticalEqualizerSlider(equalizerGains[index], { onBandGain(index, it) }, Modifier.height(250.dp).width(44.dp))
-                                    Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                                    Text(String.format(Locale.ROOT, "%.1f", equalizerGains[index]), color = Color.White.copy(alpha = .72f),
-                                        style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-                    }
-                }
+                Destination.FOLDERS -> FoldersDestination(
+                    folders = folders,
+                    tracks = tracks,
+                    selectedFolder = selectedFolder,
+                    virtualCueFolder = virtualCueFolder,
+                    selectedTrack = selectedTrack,
+                    foreground = foreground,
+                    muted = muted,
+                    libraryScanActive = libraryScanActive,
+                    refreshRotation = refreshRotation,
+                    onBackToPlayer = { destination = Destination.PLAYER; lyricsVisible = false },
+                    onScan = onScan,
+                    onRefreshFolder = onRefreshFolder,
+                    onSelectedFolder = { selectedFolder = it },
+                    onVirtualCueFolder = { virtualCueFolder = it },
+                    onPlay = onPlay
+                )
+                Destination.DSP -> DspDestination(
+                    volume = volume,
+                    equalizerGains = equalizerGains,
+                    foreground = foreground,
+                    muted = muted,
+                    onVolume = onVolume,
+                    onBandGain = onBandGain
+                )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     usbDiagnosticRecording = usbDiagnosticRecording,
                     usbDiagnosticLogCount = usbDiagnosticLines.size,
@@ -415,100 +305,6 @@ fun FloweryNavigation(
         }
     }
 }
-
-@Composable
-private fun WelcomeContent(
-    foreground: Color,
-    muted: Color,
-    onRequestNotificationPermission: () -> Unit,
-    onContinue: () -> Unit
-) {
-    Column(
-        Modifier.fillMaxSize().padding(horizontal = 8.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(18.dp))
-        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = Color(0xFFD66B9A), modifier = Modifier.size(76.dp))
-        Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-        Text("Your local Hi-Fi music player. Follow these steps to add your music folder.",
-            color = muted, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .07f)),
-            shape = RoundedCornerShape(22.dp)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("HOW TO ADD A MUSIC FOLDER", color = foreground, fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("1. Open Settings → Library", color = foreground, fontWeight = FontWeight.SemiBold)
-                        Text("In Flowery, open Settings, select Library, then tap ADD to choose a folder in Android's folder picker. Confirm with Use this folder / Allow.",
-                            color = muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("2. Tap Scan", color = foreground, fontWeight = FontWeight.SemiBold)
-                        Text("Flowery indexes supported audio files and playlists in the folders you selected.",
-                            color = muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("3. Open Folders and play", color = foreground, fontWeight = FontWeight.SemiBold)
-                        Text("Choose a song to start playback. Your playback controls will appear in Now Playing.",
-                            color = muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .07f)),
-            shape = RoundedCornerShape(22.dp)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                Text("APP PERMISSIONS", color = foreground, fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.titleMedium)
-                PermissionInfoRow(Icons.Default.FolderOpen, "Music folder access",
-                    "Granted only to folders you choose. You can add or remove folders later.", foreground, muted)
-                PermissionInfoRow(Icons.Default.Notifications, "Notifications",
-                    "Optional on Android 13 and newer. Allows playback controls to appear in the notification shade and lockscreen.", foreground, muted)
-                PermissionInfoRow(Icons.Default.Usb, "USB DAC access",
-                    "Android asks separately when you connect and enable a compatible USB DAC.", foreground, muted)
-                PermissionInfoRow(Icons.Default.BatteryFull, "Battery optimization",
-                    "Optional. You can review it in Settings if background playback is interrupted.", foreground, muted)
-                if (android.os.Build.VERSION.SDK_INT >= 33) {
-                    OutlinedButton(onClick = onRequestNotificationPermission, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Default.NotificationsActive, contentDescription = null)
-                        Text("  ALLOW NOTIFICATIONS")
-                    }
-                }
-            }
-        }
-        Button(onClick = onContinue, modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
-            shape = RoundedCornerShape(28.dp)) { Text("NEXT") }
-    }
-}
-
-@Composable
-private fun PermissionInfoRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    description: String,
-    foreground: Color,
-    muted: Color
-) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(24.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = foreground, fontWeight = FontWeight.SemiBold)
-            Text(description, color = muted, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
 
 private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAttempt: LongArray?): String {
     val timestampValid = sample[27] == 0L && sample[29] > 0L
