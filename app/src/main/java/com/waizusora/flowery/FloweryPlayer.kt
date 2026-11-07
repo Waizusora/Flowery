@@ -33,19 +33,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val diagnostics = UsbPlaybackDiagnostics(context)
     private val sourceResolver = AudioSourceResolver(context)
 
-    /**
-     * One decoded, gain-adjusted block of negotiated signed integer PCM that is
-     * handed from the decoder thread to the USB writer thread. [epoch] changes on every
-     * seek so that the writer flushes the transport exactly once per discontinuity.
-     */
-    private class UsbPcmBlock(
-        val pcm: ByteArray,
-        val frames: Int,
-        val epoch: Int,
-        val startFrames: Long,
-        val endOfStream: Boolean = false
-    )
-
     @Volatile private var activeUsbDeviceKey: String? = null
     @Volatile private var activeUsbSession: UsbDacSession? = null
     @Volatile private var activeUsbEncodedPipeline: UsbEncodedPlaybackPipeline? = null
@@ -633,11 +620,21 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
             val endReached = AtomicBoolean(false)
+            val producerAdapter = UsbPcmProducerAdapter(
+                decoderHandle = handle,
+                producerHandle = producerHandle,
+                pendingSeekMs = pendingSeekMs,
+                playbackActive = { !stopped.get() && playbackGeneration.get() == generation },
+                equalizerRevision = { equalizerRevision },
+                equalizerGains = { bandGainsDb },
+                currentGain = { currentUsbGain() },
+                diagnostics = diagnostics
+            )
             producerThread = thread(name = "FloweryUsbProducerControl") {
                 runCatching {
                     android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
                 }
-                runUsbDecodeProducer(producerHandle, generation, endReached, producerStop, producerFailure)
+                producerAdapter.run(endReached, producerStop, producerFailure)
             }
 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation
@@ -663,7 +660,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 producerFailure.get()?.let { throw it }
                 val waitStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
                 val encodedBlock = NativeAudio.nativePollUsbPcmBlock(queueHandle, USB_QUEUE_POLL_MS.toInt()) ?: continue
-                val block = decodeUsbPcmBlock(encodedBlock)
+                val block = UsbPcmProducerAdapter.decodeBlock(encodedBlock)
                 val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs) / 1_000_000.0
                 if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS) {
                     starvationEvents++
@@ -767,80 +764,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             try { thread.join() } catch (_: InterruptedException) { interrupted = true }
         }
         if (interrupted) Thread.currentThread().interrupt()
-    }
-
-    /**
-     * Producer coordinator for the decoded direct USB path. Rust decodes a bounded chunk,
-     * applies the per-DAC gain ramp, packs the negotiated PCM format, and stores it in the native
-     * bounded queue. Seek requests are serviced here because this thread is the sole user
-     * of the decoder [handle] while it runs.
-     *
-     * Failures are reported through [failure]; the writer rethrows them on its own thread.
-     */
-    /**
-     * Android owns this worker thread only to coordinate cancellation and seek requests.
-     * Segment bounds, decoder seeking, PCM packing, block metadata, epochs, and queue
-     * publication are owned by the Rust producer.
-     */
-    private fun runUsbDecodeProducer(
-        producerHandle: Long,
-        generation: Int,
-        endReached: AtomicBoolean,
-        stop: AtomicBoolean,
-        failure: AtomicReference<Throwable?>
-    ) {
-        fun active() = !stop.get() && !stopped.get() && playbackGeneration.get() == generation
-        try {
-            var appliedEqualizerRevision = equalizerRevision
-            while (active()) {
-                pendingSeekMs.getAndSet(null)?.let { requested ->
-                    NativeAudio.nativeRequestUsbPcmProducerSeek(producerHandle, requested.coerceAtLeast(0L))
-                    endReached.set(false)
-                }
-                if (appliedEqualizerRevision != equalizerRevision) {
-                    check(NativeAudio.nativeUpdateStreamGains(decoderHandle, bandGainsDb) == 0) {
-                        "Unable to update the direct USB equalizer"
-                    }
-                    appliedEqualizerRevision = equalizerRevision
-                }
-                when (NativeAudio.nativePumpUsbPcmProducer(producerHandle, currentUsbGain())) {
-                    1 -> Unit
-                    0 -> Thread.sleep(2)
-                    -1 -> {
-                        endReached.set(true)
-                        Thread.sleep(20)
-                    }
-                    else -> throw IllegalStateException("The Rust direct USB producer failed.")
-                }
-            }
-        } catch (error: InterruptedException) {
-            Thread.currentThread().interrupt()
-        } catch (error: Throwable) {
-            if (active()) {
-                diagnostics.record(
-                    "USB_PRODUCER_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}"
-                )
-                failure.compareAndSet(null, error)
-            }
-        }
-    }
-
-    /** Software gain applied on the decoded USB path: per-DAC volume times the ducking gain. */
-    private fun currentUsbGain(): Float =
-        if (usbBitPerfectActive) 1f
-        else (softwareVolume * if (outputDucked) DUCK_GAIN else 1f).coerceIn(0f, 1f)
-
-    private fun decodeUsbPcmBlock(encoded: ByteArray): UsbPcmBlock {
-        require(encoded.size >= 17) { "The native USB PCM queue returned an invalid block header." }
-        val buffer = ByteBuffer.wrap(encoded).order(ByteOrder.LITTLE_ENDIAN)
-        val endOfStream = buffer.get().toInt() != 0
-        val epoch = buffer.int
-        val frames = buffer.int
-        val startFrames = buffer.long
-        val pcm = ByteArray(buffer.remaining())
-        buffer.get(pcm)
-        require(frames >= 0 && (endOfStream || frames > 0)) { "The native USB PCM queue returned invalid frame metadata." }
-        return UsbPcmBlock(pcm, frames, epoch, startFrames, endOfStream)
     }
 
     /** Returns the latest cached volume; USB control transfers run on the playback worker. */
