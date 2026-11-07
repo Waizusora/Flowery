@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, JoinHandle};
+use crate::playback_session::{session_ref, SessionState};
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -858,24 +859,39 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPump(
-    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint, total_frames: jlong,
+    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong, max_frames: jint, total_frames: jlong,
 ) -> jint {
-    if handle <= 0 || max_frames <= 0 || total_frames < -1 {
+    if handle <= 0 || session_handle <= 0 || max_frames <= 0 || total_frames < -1 {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream pump configuration");
         return -1;
     }
     let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
+        return -1;
+    };
+    if !Arc::ptr_eq(&decoder, &session.decoder) || session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
+        return -1;
+    }
     stop_stream_pump_worker(handle);
 
+    let worker_epoch = session.epoch.load(Ordering::Acquire);
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
+    let thread_session = Arc::clone(&session);
     let chunk_frames = max_frames as usize;
     let frame_limit = if total_frames < 0 { None } else { Some(total_frames as u64) };
     let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
         let mut produced_frames = 0_u64;
         while !thread_stop.load(Ordering::Acquire) {
+            if thread_session.cancelled.load(Ordering::Acquire) ||
+                thread_session.epoch.load(Ordering::Acquire) != worker_epoch {
+                thread_status.store(2, Ordering::Release);
+                break;
+            }
             let available = crate::aaudio::available_output_frames();
             if available == 0 {
                 thread::sleep(Duration::from_millis(2));
