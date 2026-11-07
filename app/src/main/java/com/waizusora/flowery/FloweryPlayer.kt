@@ -597,88 +597,65 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
                 !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
 
-            val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
-            while (playbackActive() && writer.workerError.isBlank() &&
-                !writer.isAtEnd && writer.queueSize < UsbPcmPlaybackPipeline.PREBUFFER_BLOCKS) {
-                Thread.sleep(5)
-            }
-            diagnostics.record(
-                "USB_PREBUFFER_READY queuedBlocks=${writer.queueSize} endReached=${writer.isAtEnd} " +
-                    "waitMs=${"%.2f".format(java.util.Locale.US,
-                        (android.os.SystemClock.elapsedRealtimeNanos() - prebufferStartedNs) / 1_000_000.0)}"
-            )
-
-            var firstTransfer = true
-            var lastHardwareVolumePollNs = 0L
-            var starvationEvents = 0L
-            while (playbackActive()) {
-                if (paused) { Thread.sleep(10); continue }
-                val producerError = writer.workerError
-                check(producerError.isBlank()) { "Rust USB PCM producer worker failed: $producerError" }
-                val result = writer.pollAndWrite(UsbPcmPlaybackPipeline.QUEUE_POLL_MS.toInt()) ?: continue
-                val queueWaitMs = result.queueWaitMs
-                if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS.toDouble()) {
-                    starvationEvents++
+            val summary = writer.playUntil(
+                playbackActive = { playbackActive() },
+                isPaused = { paused },
+                onPrebufferReady = { queuedBlocks, endReached, waitMs ->
+                    diagnostics.record(
+                        "USB_PREBUFFER_READY queuedBlocks=${queuedBlocks} endReached=${endReached} " +
+                            "waitMs=${"%.2f".format(java.util.Locale.US, waitMs)}"
+                    )
+                },
+                onFirstTransfer = { frames ->
+                    onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
+                },
+                onStarvation = { queueWaitMs, events ->
                     diagnostics.record(
                         "USB_PRODUCER_STARVED waitMs=${"%.2f".format(java.util.Locale.US, queueWaitMs)} " +
-                            "events=${starvationEvents}"
+                            "events=${events}"
                     )
-                }
-                if (result.epochChanged) usbPositionFrames = result.startFrames
-                if (result.endOfStream) {
-                    diagnostics.record("DECODER_EOF chunks=${chunkCount} totalFramesSent=${totalFramesSent}")
-                    break
-                }
-                val frames = result.frames
-                if (firstTransfer) onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
-                val transportDurationMs = result.transportDurationMs
-                val audioDurationMs = frames * 1_000.0 / usbSession.sampleRate
-                val throughputRatio = if (transportDurationMs > 0.0) {
-                    frames.toDouble() / (usbSession.sampleRate * transportDurationMs / 1_000.0)
-                } else Double.POSITIVE_INFINITY
-                diagnostics.record(
-                    "USB_WRITE chunk=${chunkCount + 1} requestedFrames=${frames} " +
-                        "acceptedFrames=${result.acceptedFrames} pcmBytes=${result.pcmBytes} " +
-                        "audioMs=${"%.2f".format(java.util.Locale.US, audioDurationMs)} " +
-                        "queueWaitMs=${"%.2f".format(java.util.Locale.US, queueWaitMs)} " +
-                        "transportMs=${"%.2f".format(java.util.Locale.US, transportDurationMs)} " +
-                        "throughputRatio=${"%.3f".format(java.util.Locale.US, throughputRatio)} " +
-                        "queuedBlocks=${result.queuedBlocks}"
-                )
-                check(result.acceptedFrames == frames) {
-                    "The USB DAC transport accepted ${result.acceptedFrames} of ${frames} frames."
-                }
-                if (usbSession.hardwareVolumeAvailable) {
-                    val nowNs = android.os.SystemClock.elapsedRealtimeNanos()
-                    if (nowNs - lastHardwareVolumePollNs >= 500_000_000L) {
-                        usbSession.readHardwareVolumeFraction()?.let { softwareVolume = it }
-                        lastHardwareVolumePollNs = nowNs
+                },
+                onWrite = { result, chunk, totalFrames, throughputRatio, audioDurationMs ->
+                    diagnostics.record(
+                        "USB_WRITE chunk=${chunk} requestedFrames=${result.frames} " +
+                            "acceptedFrames=${result.acceptedFrames} pcmBytes=${result.pcmBytes} " +
+                            "audioMs=${"%.2f".format(java.util.Locale.US, audioDurationMs)} " +
+                            "queueWaitMs=${"%.2f".format(java.util.Locale.US, result.queueWaitMs)} " +
+                            "transportMs=${"%.2f".format(java.util.Locale.US, result.transportDurationMs)} " +
+                            "throughputRatio=${"%.3f".format(java.util.Locale.US, throughputRatio)} " +
+                            "queuedBlocks=${result.queuedBlocks}"
+                    )
+                    if (result.epochChanged) usbPositionFrames = result.startFrames
+                    usbPositionFrames += result.frames
+                    if (chunk % 32L == 0L) {
+                        diagnostics.record(
+                            "USB_TRANSFER_PROGRESS chunks=${chunk} totalFramesSent=${totalFrames} " +
+                                "starvationEvents=tracked_by_pipeline"
+                        )
                     }
-                }
-                chunkCount++
-                totalFramesSent += result.acceptedFrames
-                if (chunkCount % 32L == 0L) diagnostics.record("USB_TRANSFER_PROGRESS chunks=${chunkCount} totalFramesSent=${totalFramesSent} starvationEvents=${starvationEvents}")
-                usbPositionFrames += frames
-                val nativeBitPerfectNow = writer.isBitPerfect
-                if (firstTransfer || nativeBitPerfectNow != usbNativeBitPerfectConfirmed) {
-                    firstTransfer = false
-                    usbNativeBitPerfectConfirmed = nativeBitPerfectNow
+                },
+                onBitPerfectChanged = { bitPerfect ->
+                    usbNativeBitPerfectConfirmed = bitPerfect
                     val decoderPath = when {
-                        outputEncoding == "ieee_float32" && usbNativeBitPerfectConfirmed -> "ieee_float32"
-                        usbNativeBitPerfectConfirmed -> "integer"
+                        outputEncoding == "ieee_float32" && bitPerfect -> "ieee_float32"
+                        bitPerfect -> "integer"
                         else -> "float32"
                     }
-                    diagnostics.record("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${decoderPath}")
-                    onState(if (usbNativeBitPerfectConfirmed) {
+                    diagnostics.record("USB_NATIVE_PCM bitPerfect=${bitPerfect} decoderPath=${decoderPath}")
+                    onState(if (bitPerfect) {
                         "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · " +
                             if (outputEncoding == "ieee_float32") "IEEE Float32" else "native integer PCM"
                     } else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
-                }
-            }
-            val producerError = writer.workerError
-            check(producerError.isBlank() || !playbackActive()) { "Rust USB PCM producer worker failed: $producerError" }
-            if (!stopped.get() && playbackGeneration.get() == generation) usbSession.drain()
-            diagnostics.record("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
+                },
+                onHardwareVolume = { softwareVolume = it },
+                onEndOfStream = { chunks, totalFrames ->
+                    diagnostics.record("DECODER_EOF chunks=${chunks} totalFramesSent=${totalFrames}")
+                },
+            )
+            diagnostics.record(
+                "DIRECT_USB_FINISHED chunks=${summary.chunks} totalFramesSent=${summary.totalFramesSent} " +
+                    "starvationEvents=${summary.starvationEvents} stopped=${stopped.get()}"
+            )
             if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
         } catch (error: Throwable) {
             diagnostics.record("DIRECT_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"} causeType=${error.cause?.javaClass?.simpleName ?: "none"} cause=${error.cause?.message ?: "none"}")
