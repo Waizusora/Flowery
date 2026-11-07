@@ -12,7 +12,7 @@ internal data class AndroidOutputRoute(
     val deviceAddress: String?,
     val supportedSampleRates: IntArray,
 ) {
-    val isUsbOutput: Boolean get() = deviceId != 0
+    val isUsbOutput: Boolean get() = deviceType != null
 }
 
 /**
@@ -38,7 +38,9 @@ internal class AndroidOutputRouteResolver(context: Context) {
                     type = it.type,
                     productName = it.productName?.toString(),
                     address = runCatching { it.address }.getOrNull(),
-                    sampleRates = it.sampleRates?.filter { rate -> rate > 0 }?.toIntArray() ?: intArrayOf(),
+                    sampleRates = if (Build.VERSION.SDK_INT >= 28) {
+                        it.sampleRates?.filter { rate -> rate > 0 }?.toIntArray() ?: intArrayOf()
+                    } else intArrayOf(),
                 )
             }
         val selected = AndroidOutputRouteSelection.selectUsbOutput(candidates, Build.VERSION.SDK_INT)
