@@ -134,6 +134,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
         return 0;
     };
+    if !Arc::ptr_eq(&decoder, &session.decoder) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Playback session does not own the supplied decoder");
+        return 0;
+    }
+    if session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is already cancelled");
+        return 0;
+    }
     let end = (segment_end_ms >= 0).then_some(segment_end_ms as u64);
     let start = segment_start_ms as u64;
     let remaining = end.map(|value| frames_at_ms(value.saturating_sub(start), source_rate as u64));
