@@ -26,6 +26,7 @@ object NativeAudio {
     external fun nativeGetPlaybackControllerState(handle: Long): Int
     external fun nativeDestroyPlaybackController(handle: Long)
     external fun nativeSelectPreferredSampleRate(sourceRate: Int, supportedRates: IntArray): Int
+    external fun nativeSelectPlaybackRoute(bitPerfectRequested: Boolean, isAc3: Boolean, losslessSource: Boolean, sourceBits: Int, channels: Int): Int
     external fun nativeRingCapacityFrames(sampleRate: Int): Int
     external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int

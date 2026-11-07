@@ -151,28 +151,36 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val channels = (streamInfo and 0xffff_ffffL).toInt()
                 check(sourceRate > 0 && channels in 1..8) { "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels." }
 
-                if (bitPerfectRequested && NativeAudio.nativeIsAc3Source(handle)) {
-                    diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
-                    usbPlaybackMode = true
-                    playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs)
-                    return@thread
-                }
-
-                if (bitPerfectRequested) {
-                    val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
-                    val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
-                    val losslessSource = (sourceInfo ushr 32) != 0L
-                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 20, 24, 32) && channels in 1..8
-                    diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
-                    usbPlaybackMode = true
-                    if (eligibleSource) {
-                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
-                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
-                    } else {
-                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
-                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs)
+                val sourceInfo = if (bitPerfectRequested) NativeAudio.nativeGetBitPerfectSourceInfo(handle) else 0L
+                val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
+                val losslessSource = (sourceInfo ushr 32) != 0L
+                val isAc3Source = bitPerfectRequested && NativeAudio.nativeIsAc3Source(handle)
+                val playbackRoute = NativeAudio.nativeSelectPlaybackRoute(
+                    bitPerfectRequested, isAc3Source, losslessSource, sourceBits, channels
+                )
+                when (playbackRoute) {
+                    1 -> {
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
+                        usbPlaybackMode = true
+                        playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs)
+                        return@thread
                     }
-                    return@thread
+                    2 -> {
+                        diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=true")
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
+                        usbPlaybackMode = true
+                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
+                        return@thread
+                    }
+                    3 -> {
+                        diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=false")
+                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
+                        usbPlaybackMode = true
+                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs)
+                        return@thread
+                    }
+                    0 -> Unit
+                    else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
                 }
 
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
