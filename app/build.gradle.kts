@@ -1,3 +1,5 @@
+import java.net.URL
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -22,7 +24,7 @@ val downloadNotoSans by tasks.registering {
         val destination = outputFile.get().asFile
         if (!destination.isFile || destination.length() <= 100_000) {
             destination.parentFile.mkdirs()
-            val source = java.net.URL("https://raw.githubusercontent.com/google/fonts/$notoSansRevision/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf")
+            val source = URL("https://raw.githubusercontent.com/google/fonts/$notoSansRevision/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf")
             val temporary = destination.resolveSibling(destination.name + ".download")
             source.openStream().use { input -> temporary.outputStream().use { output -> input.copyTo(output) } }
             require(temporary.length() > 100_000) { "Downloaded Noto Sans font is unexpectedly small." }
