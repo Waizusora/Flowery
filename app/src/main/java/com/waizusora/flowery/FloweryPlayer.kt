@@ -729,9 +729,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 totalFramesSent += acceptedFrames
                 if (chunkCount % 32L == 0L) recordUsbDiagnostic("USB_TRANSFER_PROGRESS chunks=${chunkCount} totalFramesSent=${totalFramesSent} starvationEvents=${starvationEvents}")
                 usbPositionFrames += frames
-                if (firstTransfer) {
+                val nativeBitPerfectNow = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
+                if (firstTransfer || nativeBitPerfectNow != usbNativeBitPerfectConfirmed) {
                     firstTransfer = false
-                    usbNativeBitPerfectConfirmed = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
+                    usbNativeBitPerfectConfirmed = nativeBitPerfectNow
                     recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${if (usbNativeBitPerfectConfirmed) "integer" else "float32"}")
                     onState(if (usbNativeBitPerfectConfirmed) "USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · native integer PCM" else "USB exclusive · PCM · float32 decoded · " + sourceBits + "-bit · " + sourceRate + " Hz")
                 }
