@@ -65,7 +65,11 @@ fn register_producer(producer: UsbPcmProducer) -> jlong {
 fn destroy_producer(handle: jlong) {
     if handle > 0 {
         if let Some(producer) = producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
+            producer.worker_cancelled.store(true, Ordering::Release);
             let _ = stop_producer_worker(&producer);
+            // Synchronize with any in-flight manual pump before releasing producer state.
+            let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.pending_block = None;
         }
     }
 }
