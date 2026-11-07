@@ -140,11 +140,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
     if handle > 0 {
-        if let Some(session) = registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
+        let session = registry()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&handle);
+        if let Some(session) = session {
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+            // Keep the shared decoder alive until every producer and in-flight JNI
+            // operation releases its session reference.
             let _ = session.route;
-            let _ = Arc::strong_count(&session.decoder);
         }
     }
 }
