@@ -25,8 +25,6 @@ struct ProducerState {
     bit_perfect_active: bool,
 }
 
-// The decoder and queue pointers are borrowed from handles owned by FloweryPlayer.
-// The caller must stop and join its producer worker before destroying either handle.
 struct UsbPcmProducer {
     state: Mutex<ProducerState>,
 }
