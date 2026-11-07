@@ -2,6 +2,10 @@ use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+use jni::objects::JClass;
+use jni::sys::{jbyteArray, jint, jlong};
+use jni::JNIEnv;
+
 /// Identifies the framing contract of a compressed USB payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EncodedFraming {
