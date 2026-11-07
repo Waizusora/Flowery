@@ -132,6 +132,10 @@ impl EncodedPacketQueue {
         }
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).packets.is_empty()
+    }
+
     /// Drops queued packets at a compressed-frame boundary, for seek/flush.
     pub(super) fn clear(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
@@ -354,7 +358,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         .get(&producer_handle)
         .map(|worker| worker.status.load(Ordering::Acquire))
         .unwrap_or(-1);
-    let ended = producer_status == 1 && queue.poll(Duration::ZERO).is_none();
+    let ended = producer_status == 1 && queue.is_empty();
     let result = match env.new_long_array(4) {
         Ok(array) => array,
         Err(error) => {
