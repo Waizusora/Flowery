@@ -255,7 +255,7 @@ class UsbDacController(context: Context) {
                 "\nDescriptor-derived UAC1 Type-I/UAC2 OUT PCM playback profiles:" +
                     playbackProfiles.joinToString(separator = "") { profile ->
                         "\n  UAC${if (profile.protocol == 0x20) 2 else 1}, interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
-                            "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
+                            "${profile.channels} channels, ${profile.bitResolution}-bit ${if (profile.encoding == "ieee_float32") "IEEE Float32" else "signed integer PCM"} " +
                             "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
                             "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, ${profile.synchronization} sync, " +
                             "rates=${profile.sampleRates.joinToString().ifEmpty { profile.sampleRateRange?.let { "${it.first}-${it.second}" } ?: "not advertised" }}."
@@ -314,7 +314,7 @@ class UsbDacController(context: Context) {
      *
      * The session validates the requested sample rate against the relevant UAC
      * descriptors and performs the class-specific rate or clock negotiation that
-     * the device advertises. The shared PCM producer supplies signed integer PCM.
+     * the device advertises. The shared PCM producer supplies descriptor-negotiated signed integer or IEEE Float32 PCM bytes.
      */
     internal fun openExclusivePlaybackSession(
         device: UsbDevice,
@@ -366,7 +366,7 @@ class UsbDacController(context: Context) {
             ) + "\n\nDescriptor-derived UAC1 Type-I/UAC2 OUT PCM profiles:" +
                 discoveredProfiles.joinToString(separator = "") { profile ->
                     "\n  Interface ${profile.interfaceNumber}, alternate ${profile.alternateSetting}: " +
-                        "${profile.channels} channels, ${profile.bitResolution}-bit PCM " +
+                        "${profile.channels} channels, ${profile.bitResolution}-bit ${if (profile.encoding == "ieee_float32") "IEEE Float32" else "signed integer PCM"} " +
                         "(${profile.subslotBytes}-byte subslot), endpoint ${profile.endpointHex}, " +
                         "${profile.maxPacketBytes}-byte max packet, interval ${profile.interval}, " +
                         "${profile.synchronization} sync."
