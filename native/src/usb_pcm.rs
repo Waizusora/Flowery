@@ -157,7 +157,11 @@ fn create_queue(capacity: usize) -> jlong {
 fn destroy_queue(handle: jlong) {
     if handle <= 0 { return; }
     if let Some(queue) = queue_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
-        queue.state.lock().unwrap_or_else(|error| error.into_inner()).closed = true;
+        {
+            let mut state = queue.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.closed = true;
+            state.blocks.clear();
+        }
         queue.changed.notify_all();
     }
 }
@@ -210,7 +214,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbPcmQ
     _env: JNIEnv, _class: JClass, handle: jlong
 ) {
     if let Some(queue) = queue_ref(handle) {
-        queue.state.lock().unwrap_or_else(|error| error.into_inner()).closed = true;
+        {
+            let mut state = queue.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.closed = true;
+            state.blocks.clear();
+        }
         queue.changed.notify_all();
     }
 }
@@ -280,9 +288,15 @@ mod tests {
     }
 
     #[test]
-    fn close_wakes_and_rejects_new_blocks() {
+    fn close_discards_queued_blocks_and_rejects_new_blocks() {
         let queue = UsbPcmQueue::new(2);
-        queue.state.lock().unwrap().closed = true;
+        let queued = PcmBlock { pcm: vec![1, 2], frames: 1, epoch: 0, start_frames: 0, end_of_stream: false };
+        assert!(queue.offer(queued, Duration::ZERO));
+        {
+            let mut state = queue.state.lock().unwrap();
+            state.closed = true;
+            state.blocks.clear();
+        }
         let block = PcmBlock { pcm: Vec::new(), frames: 0, epoch: 0, start_frames: 0, end_of_stream: true };
         assert!(!queue.offer(block, Duration::ZERO));
         assert!(queue.poll(Duration::ZERO).is_none());
