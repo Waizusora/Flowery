@@ -193,8 +193,11 @@ pub(super) fn from_symphonia_buffer(
             let values = planes!(buffer, |v: &symphonia::core::sample::i24| signed_from_left_aligned(v.inner(), 24, valid_bits));
             if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
         }
-        symphonia::core::audio::AudioBufferRef::U24(buffer) if valid_bits == 24 => {
-            NativePcmSamples::I24(planes!(buffer, |v: &symphonia::core::sample::u24| Ok(v.inner() as i32 - 8_388_608)))
+        symphonia::core::audio::AudioBufferRef::U24(buffer) if matches!(valid_bits, 20 | 24) => {
+            let shift = 24 - valid_bits;
+            let midpoint = 1_i64 << (valid_bits - 1);
+            let values = planes!(buffer, |v: &symphonia::core::sample::u24| Ok(((v.inner() as i64 >> shift) - midpoint) as i32));
+            if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
         }
         symphonia::core::audio::AudioBufferRef::S32(buffer) if matches!(valid_bits, 20 | 24 | 32) => {
             let values = planes!(buffer, |v: &i32| signed_from_left_aligned(*v, 32, valid_bits));
@@ -205,8 +208,15 @@ pub(super) fn from_symphonia_buffer(
                 _ => unreachable!(),
             }
         }
-        symphonia::core::audio::AudioBufferRef::U32(buffer) if valid_bits == 32 => {
-            NativePcmSamples::I32(planes!(buffer, |v: &u32| Ok((*v ^ 0x8000_0000) as i32)))
+        symphonia::core::audio::AudioBufferRef::U32(buffer) if matches!(valid_bits, 20 | 24 | 32) => {
+            if valid_bits == 32 {
+                NativePcmSamples::I32(planes!(buffer, |v: &u32| Ok((*v ^ 0x8000_0000) as i32)))
+            } else {
+                let shift = 32 - valid_bits;
+                let midpoint = 1_i64 << (valid_bits - 1);
+                let values = planes!(buffer, |v: &u32| Ok(((*v as i64 >> shift) - midpoint) as i32));
+                if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+            }
         }
         _ => return Err("This decoder sample representation is not eligible for native integer PCM".into()),
     };
