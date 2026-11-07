@@ -149,20 +149,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
-                val streamInfo = NativeAudio.nativeGetStreamInfo(handle)
-                val sourceRate = (streamInfo ushr 32).toInt()
-                val channels = (streamInfo and 0xffff_ffffL).toInt()
-                check(sourceRate > 0 && channels in 1..8) { "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels." }
-
-                val sourceInfo = if (bitPerfectRequested) NativeAudio.nativeGetBitPerfectSourceInfo(handle) else 0L
-                val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
-                val losslessSource = (sourceInfo ushr 32) != 0L
-                val isAc3Source = bitPerfectRequested && NativeAudio.nativeIsAc3Source(handle)
-                val playbackRoute = NativeAudio.nativeSelectPlaybackRoute(
-                    bitPerfectRequested, isAc3Source, losslessSource, sourceBits, channels
-                )
-                sessionHandle = NativeAudio.nativeCreatePlaybackSession(handle, playbackRoute)
+                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, bitPerfectRequested)
+                check(preparedSession.size == 7) { "Rust returned an invalid prepared playback session" }
+                sessionHandle = preparedSession[0]
+                val playbackRoute = preparedSession[1].toInt()
+                val sourceRate = preparedSession[2].toInt()
+                val channels = preparedSession[3].toInt()
+                val sourceBits = preparedSession[4].toInt()
+                val losslessSource = preparedSession[5] != 0L
+                val isAc3Source = preparedSession[6] != 0L
                 check(sessionHandle != 0L) { "The native playback session could not be created" }
+                check(sourceRate > 0 && channels in 1..8) {
+                    "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels."
+                }
                 nativeSessionHandle = sessionHandle
                 check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 1).toInt() == 0) {
                     "The native playback session could not enter the prepared state"
