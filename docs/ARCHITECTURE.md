@@ -1,78 +1,114 @@
 # Architecture
 
-## Scope
+## Scope and ownership
 
-Flowery is an Android application with a Kotlin application layer, a Rust audio engine and AAudio output backend, and a native C++ libusb transport for direct USB DAC playback. Kotlin owns Android APIs, user interaction, document permissions, device permissions, and platform lifecycle integration. Rust owns platform-independent playback policy, USB descriptor parsing, decoding, DSP, generic PCM format negotiation/packing, PCM buffering, and AAudio stream operations. C++ is reserved for the libusb transport.
+Flowery uses three native/application layers with deliberately separate responsibilities:
+
+| Layer | Owns | Must not own |
+| --- | --- | --- |
+| Kotlin / Android | Compose UI, Android lifecycle, SAF and URI grants, USB permission/device discovery, Android audio focus and system volume, MediaSession, notifications, platform control transfers, presentation models | Audio decoding, DSP algorithms, PCM format policy, USB descriptor interpretation, sample packing |
+| Rust | Symphonia demuxing/decoding, typed integer and Float32 sample handling, Rubato, 31-band EQ, gain and PCM packing, Bit Perfect eligibility, PCM/encoded producer queues, UAC descriptor parsing, playback policy and queue transitions, AAudio NDK backend | Compose UI, Android permission prompts, SAF tree traversal, libusb transfer submission |
+| C++ | libusb context/device handles, interface claims, alternate-setting transport setup, isochronous URBs, feedback endpoint event processing, transfer completion/cancellation and native teardown | Audio decoding, DSP, sample conversion, PCM policy, descriptor interpretation or playback queue policy |
+
+The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_jni.cpp`. AAudio is implemented in Rust in `native/src/aaudio.rs` using Android NDK FFI; it is not a C++ audio backend.
 
 ## Component map
 
 | Component | Responsibility |
 | --- | --- |
-| `MainActivity` | Compose UI, folder selection and management, library presentation, player controls, EQ controls, metadata display and tag editor |
-| `LibraryScanner` | SAF traversal, playlist-text reads, and URI-to-model mapping; Rust owns catalog policy |
-| `LrcParser` | Convert native LRC results into UI models and request current-line lookup from Rust |
-| `PlaybackService` | Foreground playback lifecycle, media session, notification actions, audio focus, queue and playback modes |
-| `FloweryPlayer` | Open SAF descriptors, select Android output routes, manage Android playback lifecycle and volume, and coordinate the native engine with the retained libusb writer |
-| `NativeAudio` | Kotlin JNI declarations for native decoding, streaming, metadata and AAudio operations |
-| `native/src/streaming.rs` | Symphonia streaming decoder, Rubato resampler, stateful 31-band EQ and format-level seek |
-| `native/src/lib.rs` | JNI exports and Lofty tag read/write operations |
-| `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring buffer and callback |
-| `native/src/usb_producer.rs` | Direct USB decoded-playback segment bounds, seek epochs, negotiated PCM production and bounded-queue publication |
-| `native/src/usb_pcm.rs` | Shared `PcmFormat` contract and bounded PCM block queue for all direct USB sample representations |
-| `native/src/usb_descriptors.rs` | Model-independent UAC descriptor parsing, PCM playback profiles, clock links, GET_RANGE responses and diagnostic traces |
-| `UsbDacProfileDatabase` | Local SQLite catalogue of raw USB descriptor blocks and parsed DAC profile reports, keyed by VID/PID and descriptor fingerprint |
-| `native/src/playback_policy.rs` | Output sample-rate preference, ring capacity, frame conversion and playback watermarks |
- 
-## USB DAC discovery and PCM format contract
+| `MainActivity` | Android Activity, app state, SAF launchers, service commands and permission callbacks |
+| `FloweryNavigation.kt` | Top-level Compose destinations and navigation |
+| `SettingsContent.kt` | Settings pages, USB DAC controls, audio information flow, diagnostics and open-source information |
+| `PlaybackService` | Foreground playback service, MediaSession, notifications, audio focus and Android media events |
+| `PlaybackCoordinator` | Android adapter around the Rust playback lifecycle state handle |
+| `FloweryPlayer` | Current Android playback adapter: opens SAF descriptors, chooses Android output devices, owns playback worker lifetime and coordinates Rust producer handles with the USB transport |
+| `LibraryScanner` | SAF traversal, playlist text reading/charset decoding and URI-to-model mapping |
+| `UsbDacController` | Android USB device discovery/permission, Android control transfers, native transport session setup |
+| `NativeAudio.kt` | Kotlin declarations for the Rust JNI API |
+| `UsbDacNative.kt` | Kotlin declarations and session wrapper for the C++ libusb transport |
+| `native/src/streaming.rs` | Symphonia streaming decoder, integer/float source extraction, Rubato and stateful 31-band EQ |
+| `native/src/native_pcm.rs` | Native typed-sample extraction and source representation helpers |
+| `native/src/usb_pcm.rs` | Generic PCM format contract and bounded PCM block queue |
+| `native/src/usb_producer.rs` | USB PCM producer, seek epochs, source-segment boundaries, format conversion and producer eligibility |
+| `native/src/usb_encoded.rs` | Encoded packet queue and producer |
+| `native/src/usb_encoded_formats.rs` | Encoded format and transport framing validation |
+| `native/src/usb_descriptors.rs` | UAC1/UAC2 descriptors, Feature Unit controls, clock links/ranges, profiles and diagnostic traces |
+| `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring and real-time callback |
+| `native/src/playback_policy.rs` | Rate selection, ring sizing, frame conversion and watermarks |
+| `native/src/queue.rs` | Queue index, shuffle, repeat and next/previous/completion policy |
+| `native/src/playback_controller.rs` | Rust playback lifecycle state machine |
+| `app/src/main/cpp/usb_audio_jni.cpp` | libusb transport and endpoint scheduling only |
 
-DAC discovery does not depend on a hard-coded VID/PID or product name. Kotlin enumerates USB Audio Class devices and manages Android USB Host permission; Rust parses descriptors and derives/prioritizes stereo UAC2 playback profiles, valid-bit resolutions, subslot widths, endpoints, packet capacity, synchronization, and clock-source links. Kotlin performs the required class-specific clock RANGE requests, Rust selects rate candidates from those parsed ranges, and the native C++ libusb transport verifies each selected rate through SET_CUR/GET_CUR before isochronous streaming.
+## Playback data paths
 
-The local SQLite profile database stores VID/PID, manufacturer/product strings, raw descriptor bytes, parsed descriptor reports, clock ranges, SHA-256 descriptor fingerprints, and observation history. USB descriptors do not reliably identify physical silicon, so Flowery stores descriptor-family identity rather than guessing a chipset model.
+### Android-managed output
 
-One Rust `PcmFormat` contract defines sample rate, channels, valid-bit resolution, subslot width, signedness, and byte order. Decoded sources are resampled only when the selected DAC clock cannot accept the source rate, then quantized into the descriptor-derived format. Integer WAV passthrough is a source adapter that preserves bytes only when the source format and DAC subslot layout match exactly. Both adapters feed the same bounded PCM queue and libusb transport. Current direct output supports stereo UAC2 profiles with 8–32 valid bits and 1–4 byte subslots; UAC1 direct streaming and multichannel output are not implemented.
+1. Kotlin opens the selected SAF document and passes its file descriptor and extension to Rust.
+2. Rust probes the container and decodes packets incrementally with Symphonia.
+3. Rust configures persistent Rubato and EQ state; sample-rate conversion is skipped when source and target rates match.
+4. Rust pumps bounded PCM chunks into its ring buffer.
+5. The Rust AAudio callback consumes frames and submits them to the Android output stream.
+6. Kotlin and the foreground service publish position, metadata and Android playback state.
 
-## Playback sequence
+Speaker, AUX/headphone and Bluetooth output use Float32 AAudio and Android's system volume policy. The AAudio callback must not perform file access, decoding, resampling, dynamic allocation or mutex locking.
 
-1. The UI selects a track represented by a SAF content URI.
-2. The playback service receives the request and delegates playback to `FloweryPlayer`.
-3. `FloweryPlayer` opens a read-only `ParcelFileDescriptor` and passes its file descriptor and file extension to the native streaming decoder.
-4. Rust probes the container, selects the default audio track, creates the Symphonia decoder, and reports source format information.
-5. Kotlin reads Android output-device capabilities; Rust selects the preferred supported rate, computes output-buffer sizing and playback watermarks, and probes AAudio.
-6. Rust configures the output conversion and 31-band EQ. If the rates match, no sample-rate conversion is needed.
-7. A worker thread reads decoded PCM chunks and writes available frames into the native ring buffer.
-8. The AAudio callback consumes frames and writes them to the active output stream.
-9. Playback state, position, duration and media metadata are published to the UI and Android media session.
+### Direct USB output
 
-## Threading and ownership
+1. Kotlin obtains Android USB host permission and opens the Android-authorized device connection.
+2. Rust parses raw descriptors, identifies compatible profiles and determines the applicable PCM/encoded format policy.
+3. Kotlin performs Android class-specific control transfers when Android owns the USB device connection; Rust parses their returned bytes.
+4. C++ opens libusb, claims the selected interfaces, configures the endpoint and verifies the requested sample rate/clock through the advertised USB controls.
+5. Rust decodes and produces bounded PCM or encoded packets.
+6. The current Kotlin adapter polls bounded native queue blocks and passes them to the C++ libusb writer. C++ schedules isochronous transfers and handles feedback/completions.
+7. Teardown drains or cancels transfers, releases claimed interfaces and closes native handles.
 
-- The playback worker owns calls that read from and seek the native streaming decoder.
-- The AAudio callback is the ring-buffer consumer.
-- The worker/JNI producer is the ring-buffer producer.
-- The ring uses monotonically increasing read/write frame counters and a power-of-two capacity.
-- The callback must remain bounded and real-time friendly. It does not decode, resample, access files, allocate memory, or acquire a mutex.
-- Playback generation values are used to prevent stale worker threads from stopping or updating a replacement track.
-- Native decoder handles must be closed when their playback session ends.
+The current direct USB bridge still copies PCM/encoded blocks across JNI into Kotlin byte arrays before submitting them to C++. This is an identified optimization boundary, not a reason to move decoding or DSP into C++.
 
-## Playback service
+## USB descriptor and volume ownership
 
-`PlaybackService` is a non-exported foreground service with the `mediaPlayback` service type. It maintains a `MediaSessionCompat`, publishes playback metadata and state, exposes notification/media-button actions, and manages audio focus.
+Rust is the sole parser for UAC descriptor structure and capability interpretation, including Feature Unit master-volume advertisement. Kotlin's `UsbFeatureUnitParser` is only an adapter over the Rust JNI result. Kotlin retains the Android control-transfer operation because it must use the Android-authorized `UsbDeviceConnection`; Rust parses the response and makes capability decisions.
 
-Transient focus loss pauses playback and can resume it when focus returns. Ducking applies a reduced output gain without overwriting the user's stored software-volume setting. The service also handles noisy-route events.
+UAC1/UAC2 profile parsing, clock-source linking, endpoint validation and sample-rate candidate selection belong in `native/src/usb_descriptors.rs`. C++ performs the transport-level SET_CUR/GET_CUR operation needed to configure and verify the selected rate. The DAC profile database stores raw descriptor evidence, parsed reports and descriptor fingerprints; a USB product name is not treated as proof of a chipset identity.
 
-## Storage model
+## Threading, handles and JNI contract
 
-The library uses the Android Storage Access Framework rather than MediaStore. Kotlin traverses enabled roots through `DocumentFile` and reads CUE/playlist text because document access and provider permissions are Android responsibilities. Rust owns audio classification, same-directory sidecar matching, CUE/M3U/M3U8/PLS parsing and association, root-confined relative-path resolution, virtual-track creation, CUE time calculations, and catalog deduplication. Kotlin maps returned document URI values to Android `Uri` models.
+- Rust owns decoder, resampler, equalizer, PCM packing and bounded producer/ring state.
+- The AAudio callback is a bounded real-time consumer and never calls back into Kotlin.
+- The current Kotlin playback adapter owns worker scheduling and the Android-visible lifetime of SAF descriptors.
+- The direct USB producer queue and C++ transport session are separate resources and must be closed in producer-before-transport order after the worker has stopped.
+- JNI handles returned by native create functions are opaque, non-zero values. Their matching destroy/close operation must run exactly once after all users have stopped.
+- Do not access a decoder, producer, queue, AAudio output or libusb session concurrently with its destroy/close operation.
+- JNI byte arrays are transfer envelopes, not long-lived shared buffers. Keep queue capacity bounded and avoid whole-track PCM arrays.
+- Keep Kotlin external declarations, Rust JNI symbol names, and C++ JNI exports synchronized. Any signature change must be covered by the native and Android build jobs.
 
-## Native boundary
+## Current Kotlin boundary and migration target
 
-JNI methods are declared in `NativeAudio.kt`. Rust exports decoder, seek, chunk-read, DSP, library policy, playlist, lyric-timeline, tag, USB PCM producer, and AAudio operations. The Rust AAudio module owns the AAudio stream and ring-buffer operations. The Rust direct USB producer owns decoded-source segment limits, seek epochs, gain-ramped PCM packing, and bounded-queue publication; Kotlin retains the USB session writer because it coordinates the Android-authorized libusb transport. C++ is reserved for that transport. Keep JNI signatures synchronized between Kotlin declarations and native exported names.
+`FloweryPlayer` remains the largest mixed-responsibility adapter. It currently owns playback worker scheduling, Android route discovery, SAF descriptor lifetime, volume policy coordination, and the JNI polling loop for USB producers. The Rust engine already owns the core sample processing and format decisions, but it does not yet own the complete cross-route playback session scheduler.
 
-## Important invariants
+The target is to reduce `FloweryPlayer` to Android-facing commands and resource adapters. Move session orchestration, producer scheduling, seek epochs and route-independent playback state into Rust only where the native layer can own the full lifetime safely. Keep SAF descriptor acquisition, Android output-device discovery, USB permission and Android control transfers in Kotlin. Keep libusb URBs in C++. Do not duplicate an Android API in Rust or introduce a second decoder/DSP implementation in C++.
 
-- The streaming decoder currently accepts mono and stereo layouts for the AAudio streaming path.
-- The streaming equalizer requires exactly 31 gains.
-- Equalizer gains are clamped to the supported range when coefficients are generated.
-- Resampler and per-channel filter histories persist between chunks.
-- A seek resets decoder/DSP state and discards seek preroll before exposing samples to the output queue.
-- Ring-buffer flush must invalidate frames already queued before the seek.
-- The AAudio callback must not perform work with unbounded execution time.
+The direct USB JNI block bridge should be optimized only after a native queue-to-transport ownership contract, cancellation semantics and teardown tests are in place. A native C ABI queue consumer may be considered so C++ can read a Rust-owned bounded queue without creating intermediate Kotlin byte arrays; this must preserve Rust as the producer and C++ as the transport consumer.
+
+## UI structure
+
+The navigation surface is in `FloweryNavigation.kt`; settings presentation is extracted into `SettingsContent.kt`. Keep Compose presentation in Kotlin. Split additional destinations into focused files when they grow, but do not move Android UI into native code.
+
+## Storage and metadata
+
+The library uses Storage Access Framework and `DocumentFile`, not MediaStore. Kotlin traverses the selected SAF trees and decodes playlist text using the configured charset. Rust owns audio classification, sidecar matching, CUE/M3U/M3U8/PLS parsing and association, root-confined relative-path resolution, virtual-track creation, CUE time calculations and catalog deduplication. Kotlin maps Rust URI values into Android document models.
+
+For tag operations, Kotlin passes SAF file descriptors through JNI. Rust stages descriptor contents in the app-private cache for Lofty processing; edited staged files are streamed back through the SAF output stream. Lyrics parsing and current-line lookup are Rust-owned; Kotlin maps results to UI models.
+
+## C++ transport invariants
+
+- The event thread owns libusb event handling while a session is active.
+- Transfer buffers must remain alive until their callbacks have completed or cancellation has been reaped.
+- In-flight URBs are bounded; packet sizes must not exceed the descriptor-derived endpoint capacity.
+- Feedback values must be recent and valid before asynchronous packet scheduling uses them.
+- PCM and encoded sessions are mutually exclusive on a transport handle.
+- Teardown cancels and reaps transfers before releasing interfaces and closing the device handle.
+- The current teardown deliberately avoids freeing a session if its event thread cannot be joined; this favors avoiding use-after-free over guaranteed reclamation. Such a failure must be surfaced and investigated rather than silently treated as a successful close.
+
+## Verification boundaries
+
+Native unit tests validate descriptor parsing, profile selection, PCM packing, decoder behavior, producer queues and playback policy. Android unit tests validate Kotlin adapters and application logic. CI builds the native Android libraries and debug/release APKs. These checks do not replace physical DAC testing, USB protocol capture or external digital loopback/capture for a hardware bit-exact claim.
