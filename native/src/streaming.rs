@@ -1001,6 +1001,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamCh
 
 fn remove_decoder(handle: jlong) {
     if handle <= 0 { return; }
+    #[cfg(target_os = "android")]
+    stop_stream_pump_worker(handle);
     decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
 }
 
