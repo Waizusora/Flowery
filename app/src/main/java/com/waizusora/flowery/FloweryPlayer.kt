@@ -305,7 +305,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 var reachedEnd = false
                 var eofSignalled = false
                 var appliedEqualizerRevision = equalizerRevision
-                check(NativeAudio.nativeStartStreamPump(handle, DECODE_CHUNK_FRAMES, segmentFrameLimit ?: -1L) == 0) {
+                check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentFrameLimit ?: -1L) == 0) {
                     "Unable to start the Rust-owned AAudio decode scheduler"
                 }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
@@ -325,7 +325,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         eofSignalled = false
                         if (!reachedEnd) {
                             val remainingFrames = segmentFrameLimit?.let { (it - targetFrame).coerceAtLeast(0L) } ?: -1L
-                            check(NativeAudio.nativeStartStreamPump(handle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
+                            check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
                                 "Unable to restart the Rust-owned AAudio decode scheduler after seeking"
                             }
                         }
