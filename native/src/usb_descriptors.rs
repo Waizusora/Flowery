@@ -65,7 +65,9 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
     let finish = |alt: &Option<Alternate>, out: &mut Vec<PlaybackProfile>| {
         if let Some(a) = alt {
             let supported_protocol = a.protocol == 0x00 || a.protocol == 0x20;
-            if supported_protocol && (a.protocol != 0x00 || matches!(a.format_tag, 0x0001 | 0x0003))
+            if supported_protocol
+                && (a.protocol != 0x00 || matches!(a.format_tag, 0x0001 | 0x0003))
+                && (a.protocol != 0x20 || matches!(a.encoding, "signed_integer" | "ieee_float32"))
                 && (1..=8).contains(&a.channels) && (1..=4).contains(&a.subslot_bytes)
                 && (8..=32).contains(&a.bit_resolution)
                 && a.bit_resolution <= a.subslot_bytes.saturating_mul(8)
@@ -131,7 +133,13 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                         // advertises both PCM and IEEE_FLOAT. Float is selected only when the
                         // descriptor identifies it as the sole supported Type-I encoding.
                         let float_only = formats & 0x0000_0004 != 0 && formats & 0x0000_0001 == 0;
-                        alt.encoding = if float_only { "ieee_float32" } else { "signed_integer" };
+                        alt.encoding = if formats == 0 || formats & 0x0000_0001 != 0 {
+                            "signed_integer"
+                        } else if float_only {
+                            "ieee_float32"
+                        } else {
+                            "unsupported"
+                        };
                         alt.format_tag = if float_only { 0x0003 } else { 0x0001 };
                         alt.channels = raw[offset + 10];
                     }
@@ -700,6 +708,13 @@ mod tests {
         assert_eq!(profiles.len(), 1);
         assert_eq!(profiles[0].encoding, "signed_integer");
         assert_eq!(profiles[0].format_tag, 1);
+    }
+
+    #[test]
+    fn rejects_uac2_formats_other_than_pcm_and_ieee_float() {
+        let raw = [9,4,2,2,1,1,2,0x20,0, 16,0x24,1,5,0,1,2,0,0,0,2,0,0,0,0,0,
+            6,0x24,2,1,4,32, 7,5,4,9,0x40,0,1];
+        assert!(parse_playback_profiles(&raw, Some(32)).is_empty());
     }
 
     #[test]
