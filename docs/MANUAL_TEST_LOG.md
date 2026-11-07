@@ -129,18 +129,18 @@ User-confirmed observations:
 
 Result: all expected Repeat All behaviors were observed.
 
+### TEST 7 — Shuffle
+
+**Status: PASS**
+
+User-confirmed observation:
+- Shuffle functioned during the manual test: **Yes**.
+
+Result: shuffle operation was confirmed by the user. The exact sequence of tracks and restoration of normal queue order after disabling Shuffle were not separately recorded.
+
 ## Remaining manual test plan
 
 Perform each test separately. Record the observed result and update this log after each test. Do not mark a test as PASS without user-observed confirmation.
-
-### TEST 7 — Shuffle
-
-1. Turn Shuffle on.
-2. Note the currently playing track.
-3. Use Next several times.
-4. Expected: track order is shuffled rather than strictly sequential.
-5. Turn Shuffle off.
-6. Expected: normal queue order is restored according to the app's defined behavior.
 
 ### TEST 8 — Track completion without repeat
 
