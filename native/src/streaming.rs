@@ -643,9 +643,13 @@ impl StreamDecoder {
         let gain = target_gain.clamp(0.0, 1.0);
         let start_gain = if self.usb_last_gain < 0.0 { gain } else { self.usb_last_gain };
         let sample_count = samples.len();
+        let total_frames = sample_count / self.channels;
         let mut packed = Vec::with_capacity(sample_count.saturating_mul(format.subslot_bytes as usize));
         for (index, sample) in samples.into_iter().enumerate() {
-            let fraction = if sample_count <= 1 { 1.0 } else { index as f32 / sample_count as f32 };
+            // Apply one gain value to every channel in the same audio frame.
+            // A sample-index ramp would give left/right channels different gains.
+            let frame_index = index / self.channels;
+            let fraction = if total_frames <= 1 { 1.0 } else { (frame_index + 1) as f32 / total_frames as f32 };
             let ramp_gain = start_gain + (gain - start_gain) * fraction;
             let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
             let subslot_shift = (format.subslot_bytes as u32 * 8) - format.valid_bits as u32;
