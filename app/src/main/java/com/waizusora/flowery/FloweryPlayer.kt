@@ -93,6 +93,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var decoderHandle = 0L
     @Volatile private var usbPlaybackMode = false
     @Volatile private var usbBitPerfectActive = false
+    @Volatile private var usbNativeBitPerfectConfirmed = false
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
@@ -134,7 +135,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private fun publishUsbPlaybackModeStatus() {
         if (!usbPlaybackMode || outputSampleRate <= 0) return
-        val mode = if (usbBitPerfectActive) "BIT PERFECT" else "PCM · software volume ${(softwareVolume * 100).toInt()}%"
+        val mode = if (usbNativeBitPerfectConfirmed) "BIT PERFECT" else "PCM · float32 decoded"
         onState("USB exclusive · $mode · ${usbOutputBitDepth}-bit · ${outputSampleRate} Hz")
     }
 
@@ -202,14 +203,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
                     val sourceBits = (sourceInfo and 0xffff_ffffL).toInt()
                     val losslessSource = (sourceInfo ushr 32) != 0L
-                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 24) && channels in 1..8
+                    val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 20, 24, 32) && channels in 1..8
                     recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
                     if (eligibleSource) {
                         usbPlaybackMode = true
                         playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
                         return@thread
                     }
-                    onState("Bit Perfect unavailable: source must be supported lossless PCM at 8, 16, or 24 bits.")
+                    onState("Bit Perfect unavailable: source must expose exact integer PCM samples at a supported valid-bit depth.")
                 }
 
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -483,6 +484,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             activeUsbDeviceKey = controller.deviceIdentity(device.usbDevice)
             usbPlaybackMode = true
             usbBitPerfectActive = true
+            usbNativeBitPerfectConfirmed = false
             usbSoftwareGainEnabled = false
             outputSampleRate = sourceRate
             usbOutputBitDepth = 0
@@ -534,6 +536,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             } finally {
                 usbPlaybackMode = false
                 usbBitPerfectActive = false
+                usbNativeBitPerfectConfirmed = false
                 activeUsbDeviceKey = null
                 outputSampleRate = 0
                 usbOutputBitDepth = 0
@@ -576,7 +579,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${sourceBits} sampleRate=${sourceRate} channels=${channels} bitPerfect=true")
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
                 discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
-                requiredSubslotBytes = sourceBits / 8, channels = channels
+                requiredSubslotBytes = (sourceBits + 7) / 8, channels = channels
             )
             val device = selectedDevice.usbDevice
             session = usbSession
@@ -587,7 +590,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             check(usbSession.sampleRate == sourceRate &&
                 usbSession.profile.bitResolution == sourceBits &&
-                usbSession.profile.subslotBytes == sourceBits / 8
+                usbSession.profile.subslotBytes == (sourceBits + 7) / 8
             ) {
                 "Bit Perfect requires an exact source/DAC sample-rate, valid-bit, and PCM subslot match."
             }
@@ -613,6 +616,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             usbPositionFrames = 0L
             activeUsbDeviceKey = controller.deviceIdentity(device)
             activeUsbSession = usbSession
+            usbNativeBitPerfectConfirmed = false
             val hardwareVolume = usbSession.readHardwareVolumeFraction()
             volumeController.usbProfile(activeUsbDeviceKey!!, hardwareVolume != null)
             if (hardwareVolume != null) {
@@ -727,7 +731,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPositionFrames += frames
                 if (firstTransfer) {
                     firstTransfer = false
-                    onState(if (usbBitPerfectActive) "USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · Symphonia lossless decode" else "USB exclusive · PCM · software volume " + (softwareVolume * 100).toInt() + "% · " + sourceBits + "-bit · " + sourceRate + " Hz")
+                    usbNativeBitPerfectConfirmed = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
+                    recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${if (usbNativeBitPerfectConfirmed) "integer" else "float32"}")
+                    onState(if (usbNativeBitPerfectConfirmed) "USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · native integer PCM" else "USB exclusive · PCM · float32 decoded · " + sourceBits + "-bit · " + sourceRate + " Hz")
                 }
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }
