@@ -90,7 +90,7 @@ fun FloweryNavigation(
         label = "folder-refresh-rotation"
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
-    var usbDiagnosticRecording by remember { mutableStateOf(false) }
+    var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
     var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
@@ -117,12 +117,28 @@ fun FloweryNavigation(
             while (usbDiagnosticRecording) {
                 val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
                 val openAttempt = runCatching { NativeAudio.nativeGetLastOutputOpenDiagnostics() }.getOrNull()
+                val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                    .format(java.util.Date())
+                fun logField(value: String): String =
+                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+                val playbackSnapshot = buildString {
+                    append("$wallTime playbackSnapshot ")
+                    append("isPlaying=$isPlaying positionMs=$positionMs durationMs=$durationMs ")
+                    append("source=\"${logField(audioSourceLabel)}\" ")
+                    append("track=\"${logField(selectedTrack?.title.orEmpty())}\" ")
+                    append("artist=\"${logField(selectedTrack?.artist.orEmpty())}\" ")
+                    append("routeStatus=\"${logField(status)}\" ")
+                    append("usbDacConnected=$usbDacConnected usbPermissionGranted=$usbDacPermissionGranted ")
+                    append("usbDacName=\"${logField(usbDacDeviceName)}\" ")
+                    append("bitPerfectRequested=$usbBitPerfectEnabled")
+                }
                 if (sample != null && sample.size >= 36) {
-                    usbDiagnosticLines.add(createAaudioLogLine(sample, usbDiagnosticPreviousSample, openAttempt))
+                    usbDiagnosticLines.add(
+                        "$playbackSnapshot ${createAaudioLogLine(sample, usbDiagnosticPreviousSample, openAttempt)}"
+                    )
                     usbDiagnosticPreviousSample = sample
                 } else {
-                    val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())
-                    usbDiagnosticLines.add("$wallTime aaudioDiagnostics=unavailable")
+                    usbDiagnosticLines.add("$playbackSnapshot aaudioDiagnostics=unavailable")
                 }
                 if (usbDiagnosticLines.size > 7200) usbDiagnosticLines.removeAt(0)
                 kotlinx.coroutines.delay(1000)
@@ -257,13 +273,21 @@ fun FloweryNavigation(
                         usbDiagnosticPendingLog = buildString {
                             appendLine("# Flowery USB diagnostic record")
                             appendLine("# Recorded at: ${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
-                            appendLine("# AAudio telemetry samples: ${usbDiagnosticLines.size}")
+                            appendLine("# AAudio and playback-state samples: ${usbDiagnosticLines.size}")
                             appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
+                            appendLine("# Software architecture: Kotlin Android integration; Rust decode/DSP/playback sessions; C++ libusb transport")
+                            appendLine("# Hardware acceptance: pending physical Android/USB DAC verification; CI does not establish bit-perfect output")
+                            appendLine("# Current playback: playing=$isPlaying positionMs=$positionMs durationMs=$durationMs")
+                            appendLine("# Current source: $audioSourceLabel")
+                            appendLine("# Current track: ${selectedTrack?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
+                            appendLine("# Current route status: $status")
+                            appendLine("# USB DAC: connected=$usbDacConnected permissionGranted=$usbDacPermissionGranted name=$usbDacDeviceName")
+                            appendLine("# Bit-perfect requested: $usbBitPerfectEnabled")
                             appendLine()
                             appendLine("===== USB descriptor and DAC profile database snapshot =====")
                             appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
                             appendLine()
-                            appendLine("===== AAudio runtime telemetry =====")
+                            appendLine("===== Playback/session state and AAudio runtime telemetry (1-second sampling) =====")
                             usbDiagnosticLines.forEach { appendLine(it) }
                             appendLine()
                             appendLine("===== Direct USB / libusb playback events =====")
