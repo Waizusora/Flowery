@@ -144,11 +144,14 @@ Perform each test separately. Record the observed result and update this log aft
 
 ### TEST 8 — Track completion without repeat
 
-1. Turn repeat off.
-2. Play a short track or seek close to the end.
-3. Let the track finish.
-4. Expected: playback stops or follows the documented queue behavior; it must not unexpectedly restart.
-5. Verify progress and displayed track state.
+**Status: PASS — user-confirmed (2026-11-08)**
+
+User confirmed that all TEST 8 checks functioned as expected:
+- Track completion without repeat behaved correctly.
+- Playback did not unexpectedly restart.
+- Playback progress and displayed track state behaved correctly.
+
+The exact track, elapsed position, and detailed queue transition were not separately recorded.
 
 ### TEST 9 — Playback across supported file formats
 
