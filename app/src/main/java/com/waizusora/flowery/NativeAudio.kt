@@ -82,6 +82,9 @@ object NativeAudio {
     external fun nativeDestroyUsbEncodedProducer(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
+    external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
+    external fun nativeGetOutputSchedulerStatus(session: Long): Int
+    external fun nativeStopOutputScheduler(session: Long)
     external fun nativeFlushStreamOutput(positionFrames: Long, shouldStart: Boolean): Int
     external fun nativeSetStreamEof()
     external fun nativeGetStreamBufferedFrames(): Int
