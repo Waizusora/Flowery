@@ -117,18 +117,21 @@ Retest observations (user-confirmed):
 
 Result: all expected Repeat One behaviors were observed on retest.
 
+### TEST 6 — Repeat All
+
+**Status: PASS**
+
+User-confirmed observations:
+1. Repeat All mode active: **Yes**.
+2. Playback returned to the first track after the last track: **Yes**.
+3. Playback restarted at `0:00`: **Yes**.
+4. Audio sounded normal: **Yes**.
+
+Result: all expected Repeat All behaviors were observed.
+
 ## Remaining manual test plan
 
 Perform each test separately. Record the observed result and update this log after each test. Do not mark a test as PASS without user-observed confirmation.
-
-### TEST 6 — Repeat All
-
-1. Ensure at least two tracks are available.
-2. Set repeat mode to Repeat All.
-3. Play the last track in the current queue.
-4. Let it finish.
-5. Expected: playback advances or wraps to the first track according to the queue order.
-6. Verify the title and audible output.
 
 ### TEST 7 — Shuffle
 
