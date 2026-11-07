@@ -65,7 +65,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         equalizerRevision++
         val producer = activeUsbPcmProducerHandle
         if (producer != 0L) {
-            NativeAudio.nativeUpdateStreamGains(decoderHandle, bandGainsDb)
+            check(NativeAudio.nativeUpdateStreamGains(decoderHandle, bandGainsDb) == 0) {
+                "Unable to update the active Rust USB PCM producer equalizer."
+            }
         }
     }
 
@@ -87,11 +89,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 softwareVolume = normalized
                 if (usbKey != null) volumeController.setUsbVolume(usbKey, normalized)
-                activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
-                    NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain())
-                }
                 usbBitPerfectActive = false
                 usbNativeBitPerfectConfirmed = false
+                activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
+                    check(NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain()) == 0) {
+                        "Unable to update the active Rust USB PCM producer gain."
+                    }
+                }
                 onState("USB DAC software volume · ${(normalized * 100).toInt()}%")
             }
             publishUsbPlaybackModeStatus()
@@ -764,16 +768,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbOutputBitDepth = 0
             }
         }
-    }
-
-    /** Waits for [thread] to exit before releasing native decoder or queue handles. */
-    private fun joinUninterruptibly(thread: Thread?) {
-        if (thread == null) return
-        var interrupted = false
-        while (thread.isAlive) {
-            try { thread.join() } catch (_: InterruptedException) { interrupted = true }
-        }
-        if (interrupted) Thread.currentThread().interrupt()
     }
 
     /** Software gain for decoded USB output; unity is required for source-preserving output. */
