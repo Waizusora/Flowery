@@ -430,3 +430,18 @@ mod tests {
         assert_eq!(absolute_seek_target(1_000, None, 500), 1_500);
     }
 }
+
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn pcm_producer_registry_rejects_invalid_and_unknown_handles() {
+        assert!(producer_ref(0).is_none());
+        assert!(producer_ref(-1).is_none());
+        assert!(producer_ref(i64::MAX).is_none());
+        destroy_producer(0);
+        destroy_producer(-1);
+    }
+}
