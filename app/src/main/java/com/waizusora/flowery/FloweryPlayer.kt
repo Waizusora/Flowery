@@ -607,7 +607,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${sourceBits}_LE sourceSamplePreservation=enabled")
+            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${sourceBits}_LE nativeIntegerPath=automatic sourceSamplePreservation=conditional")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
             usbOutputBitDepth = usbSession.profile.bitResolution
@@ -632,7 +632,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbSoftwareGainEnabled = true
             }
             recordUsbDiagnostic("USB_VOLUME_PROFILE profile=${if (hardwareVolume != null) "hardware_synchronized" else "software_only"} initialVolume=${softwareVolume} physicalVolumeControl=${hardwareVolume != null}")
-            recordUsbDiagnostic("USB_PCM_GAIN bitPerfect=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} blockFrames=${USB_DECODE_CHUNK_FRAMES}")
+            recordUsbDiagnostic("USB_PCM_GAIN gainBypass=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} nativeBitPerfect=awaiting_producer queueDepthBlocks=${USB_QUEUE_DEPTH_BLOCKS} prebufferBlocks=${USB_PREBUFFER_BLOCKS} blockFrames=${USB_DECODE_CHUNK_FRAMES}")
 
             // The writer (this thread) must never wait on decoding. Rust produces packed PCM blocks
             // into its bounded queue; this Kotlin thread only drains blocks into the libusb
