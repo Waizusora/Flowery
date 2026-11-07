@@ -155,7 +155,7 @@ The exact track, elapsed position, and detailed queue transition were not separa
 
 ### TEST 9 — Playback across supported file formats
 
-**Status: RETEST REQUIRED — partial format verification**
+**Status: PASS for the available test samples; format coverage remains partial**
 
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
@@ -174,19 +174,25 @@ Investigation and code changes (2026-11-08):
 - The ALAC magic-cookie fix was installed and the user subsequently confirmed that the 1 MB ALAC sample plays and its duration advances normally. Seeking and completion still need confirmation.
 
 Unavailable in the user's test library:
-- WAV: no test file available.
-- M4A (AAC): a 256 kbps sample was played successfully; broader AAC profile coverage remains unverified.
+- WAV: **PASS for playback**. User confirmed that the 5-minute WAV sample plays.
+- M4A (AAC): **PASS for sample playback**. User confirmed that a 256 kbps AAC sample plays; broader AAC profile coverage remains unverified.
 
 Remaining:
-- Retest M4A/ALAC with the diagnostic fix installed; do not mark PASS until the user confirms audible playback and advancing progress.
-- Verify seeking where supported after playback works.
+- Verify seeking on ALAC, AAC, and WAV where supported.
 - Record sample rate, bit depth (if known), and any errors.
+- Broader profile and codec-container combinations remain unverified; do not claim support for every possible variant.
 
 Do not treat the overall format test as complete until the available formats have been checked.
 
 Do not claim support for every possible format based only on this sample.
 
 ### TEST 10 — Playback stability
+
+**Status: PASS — 10-minute continuous playback (2026-11-08)**
+
+User confirmed:
+- Audio remained normal throughout the 10-minute continuous playback.
+- No playback interruption was reported.
 
 1. Play a track continuously for at least 10 minutes.
 2. Seek several times.
