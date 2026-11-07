@@ -241,6 +241,49 @@ mod tests {
         assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_AC3, CODEC_TYPE_AC3).is_err());
     }
 
+    fn uac1_type_ii_descriptor() -> Vec<u8> {
+        vec![
+            9, 0x04, 1, 1, 0, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 0x02, 0x10,
+            12, 0x24, 2, 2, 0x80, 0x02, 0x00, 0x06, 1, 0x80, 0xbb, 0x00,
+            7, 0x05, 0x01, 0x01, 0xc0, 0x00, 1,
+            7, 0x25, 1, 1, 0, 0, 0,
+        ]
+    }
+
+    fn uac1_type_iii_ac3_descriptor() -> Vec<u8> {
+        vec![
+            9, 0x04, 2, 1, 0, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 0x01, 0x20,
+            11, 0x24, 2, 3, 2, 2, 16, 1, 0x80, 0xbb, 0x00,
+            7, 0x05, 0x02, 0x01, 0xc0, 0x00, 1,
+            7, 0x25, 1, 1, 0, 0, 0,
+        ]
+    }
+
+    #[test]
+    fn validates_exact_uac1_type_ii_ac3_descriptor_and_rate() {
+        let descriptor = uac1_type_ii_descriptor();
+        assert_eq!(
+            validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, 48_000),
+            Ok((1, 192, 1, 640, true))
+        );
+        assert!(validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, 44_100).is_err());
+        assert!(validate_uac1_encoded_descriptor(&descriptor, 1, 1, UAC1_FORMAT_TYPE_II, 0x1001, 48_000).is_err());
+    }
+
+    #[test]
+    fn validates_uac1_type_iii_ac3_subframes_and_sample_rate() {
+        let descriptor = uac1_type_iii_ac3_descriptor();
+        assert_eq!(
+            validate_uac1_encoded_descriptor(&descriptor, 2, 1, UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_IEC61937_AC3, 48_000),
+            Ok((2, 192, 1, 0, true))
+        );
+        let mut invalid = descriptor;
+        invalid[16] = 3; // Type-III channel count must be exactly two.
+        assert!(validate_uac1_encoded_descriptor(&invalid, 2, 1, UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_IEC61937_AC3, 48_000).is_err());
+    }
+
     #[test]
     fn ac3_iec61937_burst_has_preamble_length_and_fixed_period() {
         let mut frame = vec![0u8; 128];
