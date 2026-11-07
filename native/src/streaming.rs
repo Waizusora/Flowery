@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread::{self, JoinHandle};
-use crate::playback_session::{session_ref, SessionState};
+use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
