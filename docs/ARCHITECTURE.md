@@ -19,6 +19,8 @@ The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_j
 | `MainActivity` | Android Activity, app state, SAF launchers, service commands and permission callbacks |
 | `FloweryNavigation.kt` | Top-level Compose destinations and navigation |
 | `SettingsContent.kt` | Settings pages, USB DAC controls, audio information flow, diagnostics and open-source information |
+| `AudioTag.kt` | Android-independent metadata presentation model shared by tag inspection and editing |
+| `TagEditorDialogs.kt` | Compose tag inspection and editing dialogs, separated from Activity and navigation state |
 | `AndroidPlaybackAdapters.kt` | SAF extension resolution, bounded USB diagnostics recording and Android USB-host inventory |
 | `UsbPcmProducerAdapter.kt` | Android worker adapter for Rust USB producer cancellation, seek/gain updates, error reporting and PCM block envelope decoding |
 | `PlaybackService` | Foreground playback service, MediaSession, notifications, audio focus and Android media events |
@@ -114,4 +116,4 @@ For tag operations, Kotlin passes SAF file descriptors through JNI. Rust stages 
 
 ## Verification boundaries
 
-Native unit tests validate descriptor parsing, profile selection, PCM packing, decoder behavior, producer queues and playback policy. Android unit tests validate Kotlin adapters and application logic. CI builds the native Android libraries and debug/release APKs. These checks do not replace physical DAC testing, USB protocol capture or external digital loopback/capture for a hardware bit-exact claim.
+Native unit tests validate descriptor parsing, profile selection, PCM packing, decoder behavior, producer queues and playback policy. Android unit tests validate Kotlin adapters and application logic. The CI JNI contract check compares every Kotlin external declaration against its Rust or C++ exported symbol, catching missing or stale bridge methods before native packaging. CI builds the native Android libraries and debug/release APKs. These checks do not replace physical DAC testing, USB protocol capture or external digital loopback/capture for a hardware bit-exact claim.

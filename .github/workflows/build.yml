@@ -70,6 +70,9 @@ jobs:
         working-directory: native
         run: cargo test --locked
 
+      - name: Verify Kotlin and native JNI declarations
+        run: python3 scripts/check_jni_contract.py
+
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
