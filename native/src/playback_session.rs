@@ -297,6 +297,19 @@ mod tests {
     }
 
     #[test]
+    fn native_session_command_contract_keeps_seek_out_of_phase_transitions() {
+        assert!(valid_phase_transition(0, 1));
+        assert!(valid_phase_transition(1, 2));
+        assert!(valid_phase_transition(2, 3));
+        assert!(valid_phase_transition(3, 2));
+        assert!(valid_phase_transition(2, 5));
+        assert!(valid_phase_transition(2, 6));
+        assert!(!valid_phase_transition(5, 2));
+        assert!(!valid_phase_transition(6, 2));
+        assert!(!valid_phase_transition(7, 2));
+    }
+
+    #[test]
     fn session_phase_values_are_stable() {
         assert_eq!(SessionPhase::Created as i32, 0);
         assert_eq!(SessionPhase::Running as i32, 2);
