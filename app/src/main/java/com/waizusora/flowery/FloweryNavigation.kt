@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
-private enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, USB_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+internal enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, USB_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
