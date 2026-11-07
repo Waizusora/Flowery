@@ -109,6 +109,7 @@ For tag operations, Kotlin passes SAF file descriptors through JNI. Rust stages 
 - Feedback values must be recent and valid before asynchronous packet scheduling uses them.
 - PCM and encoded sessions are mutually exclusive on a transport handle.
 - Teardown cancels and reaps transfers before releasing interfaces and closing the device handle.
+- Native flush and close return explicit status to Kotlin. The session wrapper retries a bounded number of close attempts and does not close the Android USB connection when libusb has not confirmed transfer reaping.
 - The current teardown deliberately avoids freeing a session if its event thread cannot be joined; this favors avoiding use-after-free over guaranteed reclamation. Such a failure must be surfaced and investigated rather than silently treated as a successful close.
 
 ## Verification boundaries
