@@ -204,6 +204,7 @@ fn remove_producer(handle: jlong) {
         producer.cancelled.store(true, Ordering::Release);
         let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
         state.pending = None;
+        state.queue.clear();
         state.queue.close();
     }
 }
