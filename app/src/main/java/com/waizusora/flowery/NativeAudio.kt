@@ -32,6 +32,7 @@ object NativeAudio {
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
+    external fun nativePreparePlaybackSession(decoder: Long, bitPerfectRequested: Boolean): LongArray
     external fun nativePlaybackSessionBeginSeek(session: Long): Long
     external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
     external fun nativePlaybackSessionCommand(session: Long, command: Int): Long
