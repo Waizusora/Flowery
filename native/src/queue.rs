@@ -144,7 +144,9 @@ mod tests {
 }
 
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use jni::sys::{jlong, jlongArray};
 
 struct QueueSnapshot {
@@ -154,24 +156,51 @@ struct QueueSnapshot {
     shuffle_enabled: bool,
 }
 
-fn queue_state(handle: jlong) -> Option<&'static Mutex<QueueSnapshot>> {
-    if handle == 0 { None } else { Some(unsafe { &*(handle as *const Mutex<QueueSnapshot>) }) }
+static NEXT_QUEUE_HANDLE: AtomicU64 = AtomicU64::new(1);
+static QUEUE_STATES: OnceLock<Mutex<HashMap<i64, Arc<Mutex<QueueSnapshot>>>>> = OnceLock::new();
+
+fn queue_registry() -> &'static Mutex<HashMap<i64, Arc<Mutex<QueueSnapshot>>>> {
+    QUEUE_STATES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn queue_state(handle: jlong) -> Option<Arc<Mutex<QueueSnapshot>>> {
+    if handle <= 0 { return None; }
+    queue_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
+}
+
+fn create_queue_state() -> jlong {
+    loop {
+        let candidate = NEXT_QUEUE_HANDLE.fetch_add(1, Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 { return 0; }
+        let handle = candidate as i64;
+        let mut registry = queue_registry().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::new(Mutex::new(QueueSnapshot {
+                current_index: -1, queue_size: 0, repeat_mode: 0, shuffle_enabled: false,
+            })));
+            return handle as jlong;
+        }
+    }
+}
+
+fn destroy_queue_state(handle: jlong) {
+    if handle > 0 {
+        queue_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+    }
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlaybackQueueState(
     _env: JNIEnv, _class: JClass,
 ) -> jlong {
-    Box::into_raw(Box::new(Mutex::new(QueueSnapshot {
-        current_index: -1, queue_size: 0, repeat_mode: 0, shuffle_enabled: false,
-    }))) as jlong
+    create_queue_state()
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyPlaybackQueueState(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut Mutex<QueueSnapshot>)); } }
+    destroy_queue_state(handle);
 }
 
 #[no_mangle]
@@ -254,4 +283,34 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackQ
     };
     if env.set_long_array_region(&output, 0, &values).is_err() { return std::ptr::null_mut(); }
     output.into_raw()
+}
+
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn queue_handles_reject_invalid_and_stale_values() {
+        assert!(queue_state(0).is_none());
+        assert!(queue_state(-1).is_none());
+        let handle = create_queue_state();
+        assert!(handle > 0);
+        assert!(queue_state(handle).is_some());
+        destroy_queue_state(handle);
+        assert!(queue_state(handle).is_none());
+        destroy_queue_state(handle);
+        assert!(queue_state(handle).is_none());
+    }
+
+    #[test]
+    fn queue_handles_are_unique_and_destroy_isolated() {
+        let first = create_queue_state();
+        let second = create_queue_state();
+        assert_ne!(first, second);
+        destroy_queue_state(first);
+        assert!(queue_state(first).is_none());
+        assert!(queue_state(second).is_some());
+        destroy_queue_state(second);
+    }
 }
