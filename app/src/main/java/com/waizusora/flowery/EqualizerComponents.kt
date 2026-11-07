@@ -7,7 +7,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
@@ -54,7 +53,7 @@ internal fun VerticalEqualizerSlider(
                 strokeWidth = 1.dp.toPx()
             )
             drawLine(
-                color = Color(0xFFBDBDBD),
+                color = palette.onSurfaceVariant,
                 start = Offset(centerX + 16.dp.toPx(), y),
                 end = Offset(centerX + 21.dp.toPx(), y),
                 strokeWidth = 1.dp.toPx()
