@@ -27,7 +27,7 @@ internal fun WelcomeDestination(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(18.dp))
-        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = Color(0xFFD66B9A), modifier = Modifier.size(76.dp))
+        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp))
         Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Text("Your local Hi-Fi music player. Follow these steps to add your music folder.",
@@ -85,7 +85,7 @@ internal fun WelcomeDestination(
             }
         }
         Button(onClick = onContinue, modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             shape = RoundedCornerShape(28.dp)) { Text("NEXT") }
     }
 }
