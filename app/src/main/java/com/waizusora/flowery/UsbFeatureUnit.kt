@@ -1,8 +1,5 @@
 package com.waizusora.flowery
 
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-
 /** Descriptor-backed master-channel volume control exposed by a UAC Feature Unit. */
 internal data class UsbFeatureUnit(
     val controlInterface: Int,
