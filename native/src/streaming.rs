@@ -154,6 +154,9 @@ impl StreamDecoder {
     }
 
     fn configure(&mut self, output_rate: usize, gains: &[f32]) -> Result<(),String> {
+        if self.channels > 2 {
+            return Err("Decoded AAudio output currently supports mono/stereo; multichannel streams are available only to a validated direct encoded route".into());
+        }
         if output_rate == 0 || gains.len() != 31 { return Err("Invalid streaming DSP configuration".into()); }
         self.output_rate = output_rate;
         self.gains.copy_from_slice(gains);
