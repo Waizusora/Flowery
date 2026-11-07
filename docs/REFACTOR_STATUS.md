@@ -19,7 +19,7 @@ This document records the verified implementation state of the seven architectur
 | 4 | JNI contract and lifetime safety | Decoder, USB PCM producer, encoded producer, USB PCM queue, encoded packet queue, playback session, playback controller, and playback queue use registry-issued positive IDs rather than exposing allocation pointers through JNI. Decoder ownership is `Arc<Mutex<StreamDecoder>>`; both USB producer types retain that shared decoder and their queues. Session seek, phase, cancellation, and close transitions are serialized by a session gate; phase changes are checked against an explicit lifecycle state machine, and seek epochs use checked compare-and-swap and cannot wrap. Closing a session always cancels it before releasing the registry entry. Both USB producer constructors now reject a session that is already cancelled; the PCM producer also verifies that the session owns the exact decoder handle supplied by the caller. PCM producer destruction cancels and joins its worker, then synchronizes with any manual pump. Encoded producer destruction removes the handle, cancels in-flight work, clears pending data, and closes its bounded queue. Native tests cover stale/invalid/double-destroy/unique handles, retained in-flight references, PCM queue teardown waking pollers, encoded queue close behavior, and seek-epoch invalidation of pending and queued packets. | Continue auditing AAudio's callback-owned output lifetime and libusb C++ transfer ownership under cancellation. The AAudio and encoded producer workers must be stopped and joined before their decoder, queue, or transport resources are released. |
 | 5 | Compose/UI decomposition | Implemented for the requested destinations. `FloweryNavigation.kt` delegates Now Playing, Folders, DSP, Welcome, and Settings presentation to `NowPlayingDestination.kt`, `FoldersDestination.kt`, `DspDestination.kt`, `WelcomeDestination.kt`, and `SettingsContent.kt`. Navigation state and callbacks remain in the navigation owner. | Keep future screen changes inside destination components and preserve folder selection, playlist playback, lyrics state, and persisted settings. |
 | 6 | C++ transport isolation | Implemented as an ownership boundary. The application-owned C++ translation unit is `app/src/main/cpp/usb_audio_jni.cpp`, which implements libusb transport and transfer scheduling. AAudio is implemented in Rust. | Keep C++ limited to transport mechanics. Preserve bounded URBs, transfer-buffer lifetime until completion/reap, feedback validation, cancellation, interface release, and explicit close failures. Do not move decoding, DSP, PCM packing, route policy, or descriptor interpretation into C++. |
-| 7 | Tests, documentation, and hardware verification | Software coverage and CI checks are present for Rust audio policy, descriptor parsing, PCM packing/queues, playback state, Android adapters, JNI symbol consistency, and producer queue teardown/epoch invalidation. | Latest CI run for commit `aa43004a95f464e5671b2d32a3e35a1824626091` passed native tests, JNI declaration checks, Android unit tests, Android native library builds for the configured ABIs, and debug/release APK builds. Separately validate real devices with AAudio lifecycle tests, USB protocol traces, and external digital capture before making hardware-level bit-exact claims. |
+| 7 | Tests, documentation, and hardware verification | Software coverage and CI checks are present for Rust audio policy, descriptor parsing, PCM packing/queues, playback state, Android adapters, JNI symbol consistency, and producer queue teardown/epoch invalidation. | Latest CI run for commit `8ff3df811c9561c235b632b69d50d1dcc29d5e73` passed native tests, JNI declaration checks, Android unit tests, Android native library builds for the configured ABIs, and debug/release APK builds. Separately validate real devices with the hardware matrix below, USB protocol traces, and external digital capture before making hardware-level bit-exact claims. |
 
 ## Safe migration order
 
@@ -28,9 +28,37 @@ This document records the verified implementation state of the seven architectur
 3. Bind both direct USB producer types to the native session so a seek invalidates stale pending/queued output through one session epoch and cancellation prevents further decode/publish work. Serialize session seek/cancel/close transitions and join or synchronize producer work before releasing handles.
 4. Keep Kotlin responsible for Android USB permissions, SAF descriptor acquisition, output discovery, and libusb session control; C++ remains the transport consumer.
 5. Extract Compose destinations independently from the audio migration.
-6. Direct USB PCM decode scheduling, AAudio decode scheduling, and encoded packet production now use Rust-owned workers with bounded queues or ring-buffer backpressure. AAudio pause/resume and output teardown are dispatched through the native session command API rather than directly controlled by Kotlin. Encoded packets still cross JNI as a byte array, but Kotlin no longer creates a second payload array: it passes the payload offset/length directly to the C++ writer, which copies only the payload into the bounded transport staging buffer. Next add end-to-end lifecycle/route tests for AAudio and USB encoded playback, including seek within bounded segments.
+6. Direct USB PCM decode scheduling, AAudio decode scheduling, and encoded packet production now use Rust-owned workers with bounded queues or ring-buffer backpressure. AAudio pause/resume and output teardown are dispatched through the native session command API rather than directly controlled by Kotlin. Encoded packets still cross JNI as a byte array, but Kotlin no longer creates a second payload array: it passes the payload offset/length directly to the C++ writer, which copies only the payload into the bounded transport staging buffer. Run the device-level lifecycle and route checks in the hardware verification matrix below; automated CI cannot substitute for these tests.
 7. Require CI and device-level evidence at each milestone.
 
 ## Verification notes
 
 A passing JNI declaration check verifies symbol presence and signature consistency only. Registry-backed handles and reference-counted decoder/producer state remove raw decoder/producer/queue pointers from the audited JNI paths. Native unit tests verify software behavior only. CI packaging verifies that Android native libraries and APKs can be built. None of these alone proves a physical DAC accepts every advertised profile or that the DAC output is bit-exact. Hardware claims require external digital capture and, where applicable, USB protocol traces.
+
+
+## Hardware verification matrix
+
+These checks require physical Android devices and a USB DAC. Record the device model, Android version, DAC model, USB descriptor profile, source file properties, selected output rate, and native diagnostics for every run.
+
+### AAudio route
+
+- Play representative PCM and compressed sources at 44.1 kHz, 48 kHz, and at least one supported high sample rate. Confirm the opened stream rate matches the requested supported rate.
+- Exercise start, pause, resume, repeated pause/resume, stop, and immediate teardown while decoding is active.
+- Seek repeatedly before playback starts, during playback, near the end of a segment, and exactly at the segment end. Confirm no pre-seek samples remain audible and the output position resumes from the requested position.
+- Test short segments, a segment ending before file EOF, unknown-duration sources, natural EOF, and a seek to EOF. Confirm the output scheduler drains and completes without hanging.
+- Disconnect or reroute the active output during playback. Confirm the session reports failure and all decode/output workers terminate.
+- Capture underrun/xrun counters and verify that sustained playback does not exhibit unbounded queue growth or unexplained scheduler termination.
+
+### USB encoded route
+
+- Test each advertised encoded format only with a DAC/interface that declares the matching UAC profile and format. Record the selected interface, alternate setting, endpoint, framing mode, and negotiated rate.
+- Capture USB traffic or the DAC's digital output to verify packet framing, byte-for-byte payload preservation, sequence continuity, and absence of PCM conversion on the encoded path.
+- Seek repeatedly while packets are queued and while a transfer is in flight. Verify that pre-seek queued packets are discarded, the transport is flushed at a packet boundary, and post-seek packet sequence restarts consistently.
+- Disconnect the DAC during submission and during an in-flight transfer. Confirm cancellation, transfer reap, interface release, worker join, and decoder/session teardown complete without stale writes.
+- Exercise stop, pause/resume where supported by the transport contract, and rapid start/stop cycles. Check for leaked handles, stuck workers, or writes after cancellation.
+
+### Acceptance evidence
+
+- Keep software test results, device logs, USB traces, and external digital captures as separate evidence.
+- Do not describe playback as bit-perfect solely because the source is lossless, the route is exclusive, or the negotiated sample rate matches. Verify the captured digital stream against the source with a documented comparison procedure.
+- Mark a format or device combination as verified only after the complete relevant route, seek, cancellation, and capture checks pass.
