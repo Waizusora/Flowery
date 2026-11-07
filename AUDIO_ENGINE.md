@@ -159,7 +159,7 @@ The current `FloweryPlayer` is not yet a thin command-only adapter: it still own
 
 The C++ transport is limited to libusb resource management, interface/alternate-setting setup, USB class control requests needed for transport negotiation, isochronous URB scheduling, feedback endpoint handling, completion processing, cancellation and teardown. Transfer buffers remain owned until libusb completion/cancellation is reaped. If the event thread cannot be joined, the current close path deliberately avoids freeing the session to prevent a use-after-free; the resulting resource-retention failure must be surfaced and tested rather than treated as a successful release.
 
-The native descriptor parser regression suite includes UAC1 and UAC2 Feature Unit master-volume capability cases and a negative case where the volume bit is not advertised.
+The native descriptor parser regression suite includes UAC1 and UAC2 Feature Unit master-volume capability cases and a negative case where the volume bit is not advertised. Android unit tests validate direct USB PCM block-envelope decoding, explicit end-of-stream markers, and rejection of truncated or empty non-terminal blocks.
 
 ## Android playback adapter boundaries
 
