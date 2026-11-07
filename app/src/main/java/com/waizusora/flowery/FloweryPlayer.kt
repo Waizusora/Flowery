@@ -690,6 +690,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val waitStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
                 val encodedBlock = NativeAudio.nativePollUsbPcmBlock(queueHandle, USB_QUEUE_POLL_MS.toInt()) ?: continue
                 val block = UsbPcmProducerAdapter.decodeBlock(encodedBlock)
+                val requestedEpoch = NativeAudio.nativePlaybackSessionEpoch(sessionHandle).toInt()
+                if (requestedEpoch >= 0 && block.epoch != requestedEpoch) {
+                    usbSession.flush()
+                    activeEpoch = requestedEpoch
+                    continue
+                }
                 val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - waitStartedNs) / 1_000_000.0
                 if (!firstTransfer && queueWaitMs > USB_STARVATION_REPORT_MS) {
                     starvationEvents++
