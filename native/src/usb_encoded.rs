@@ -253,7 +253,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         match decoder.read_encoded_packet() {
             Ok(Some((source_bytes, timestamp_us, duration_us))) => {
                 let bytes = match state.framing {
-                    EncodedFraming::Uac1TypeIi { .. } => source_bytes,
+                    EncodedFraming::Uac1TypeIi { .. } => {
+                        if let Err(error) = crate::usb_encoded_formats::ac3_frame_size(&source_bytes)
+                            .and_then(|expected| if expected == source_bytes.len() {
+                                Ok(expected)
+                            } else {
+                                Err("Demuxed AC-3 packet does not contain exactly one complete frame")
+                            }) {
+                            let _ = env.throw_new("java/lang/IllegalStateException", error);
+                            return -2;
+                        }
+                        source_bytes
+                    },
                     EncodedFraming::Iec61937 { data_type: crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 } => {
                         match crate::usb_encoded_formats::build_iec61937_ac3_burst(&source_bytes) {
                             Ok(burst) => burst,
