@@ -1,0 +1,223 @@
+use crate::usb_pcm::PcmFormat;
+
+/// Integer PCM samples retained in their decoded source representation.
+///
+/// Signed samples are stored without normalization. The valid-bit width is
+/// explicit so packed and padded USB subslots can be produced without a
+/// floating-point round trip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum NativePcmSamples {
+    I8(Vec<i8>),
+    I16(Vec<i16>),
+    I20(Vec<i32>),
+    I24(Vec<i32>),
+    I32(Vec<i32>),
+}
+
+impl NativePcmSamples {
+    pub(super) fn valid_bits(&self) -> u8 {
+        match self {
+            Self::I8(_) => 8,
+            Self::I16(_) => 16,
+            Self::I20(_) => 20,
+            Self::I24(_) => 24,
+            Self::I32(_) => 32,
+        }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        match self {
+            Self::I8(values) => values.len(),
+            Self::I16(values) => values.len(),
+            Self::I20(values) | Self::I24(values) | Self::I32(values) => values.len(),
+        }
+    }
+
+    fn sample_i32(&self, index: usize) -> i32 {
+        match self {
+            Self::I8(values) => values[index] as i32,
+            Self::I16(values) => values[index] as i32,
+            Self::I20(values) | Self::I24(values) | Self::I32(values) => values[index],
+        }
+    }
+}
+
+/// Conditions that must all hold before a native integer block can be
+/// advertised as bit-perfect for the negotiated direct USB PCM format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct BitPerfectRequirements {
+    pub source_rate: u32,
+    pub output_rate: u32,
+    pub source_channels: u16,
+    pub output_channels: u16,
+    pub source_valid_bits: u8,
+    pub dsp_enabled: bool,
+    pub software_gain_unity: bool,
+    pub channel_mapping_unchanged: bool,
+    pub resampling_disabled: bool,
+}
+
+pub(super) fn is_bit_perfect_eligible(
+    requirements: BitPerfectRequirements,
+    format: PcmFormat,
+) -> bool {
+    requirements.source_rate == requirements.output_rate
+        && requirements.source_channels == requirements.output_channels
+        && requirements.source_valid_bits == format.valid_bits
+        && requirements.source_channels == format.channels
+        && requirements.source_rate == format.sample_rate
+        && !requirements.dsp_enabled
+        && requirements.software_gain_unity
+        && requirements.channel_mapping_unchanged
+        && requirements.resampling_disabled
+        && format.validate().is_ok()
+}
+
+/// Packs signed integer samples into the negotiated little-endian USB subslot.
+///
+/// Values are range-checked instead of clamped. Clamping would silently alter
+/// source samples and make a bit-perfect claim invalid.
+pub(super) fn pack_native_integer_pcm(
+    samples: &NativePcmSamples,
+    format: PcmFormat,
+) -> Result<Vec<u8>, String> {
+    let format = format.validate().map_err(str::to_string)?;
+    let source_bits = samples.valid_bits();
+    if source_bits != format.valid_bits {
+        return Err(format!(
+            "Native PCM depth mismatch: source is {source_bits}-bit but USB requires {}-bit",
+            format.valid_bits
+        ));
+    }
+    if samples.len() % format.channels as usize != 0 {
+        return Err("Native PCM block contains an incomplete interleaved frame".into());
+    }
+
+    let shift = 32 - source_bits as u32;
+    let minimum = -(1_i64 << (source_bits - 1));
+    let maximum = (1_i64 << (source_bits - 1)) - 1;
+    let mut output = Vec::with_capacity(samples.len() * format.subslot_bytes as usize);
+
+    for index in 0..samples.len() {
+        let value = samples.sample_i32(index) as i64;
+        if !(minimum..=maximum).contains(&value) {
+            return Err(format!(
+                "Native PCM sample at index {index} exceeds its declared {source_bits}-bit range"
+            ));
+        }
+
+        // USB PCM subslots carry valid signed bits least-significant-bit
+        // aligned; widening therefore sign-extends the integer value.
+        let encoded = if source_bits == 32 {
+            value as i32 as u32
+        } else {
+            ((value << shift) >> shift) as i32 as u32
+        };
+        let bytes = encoded.to_le_bytes();
+        output.extend_from_slice(&bytes[..format.subslot_bytes as usize]);
+    }
+
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn format(valid_bits: u8, subslot_bytes: u8) -> PcmFormat {
+        PcmFormat {
+            sample_rate: 96_000,
+            channels: 2,
+            valid_bits,
+            subslot_bytes,
+            signed: true,
+            little_endian: true,
+        }
+    }
+
+    #[test]
+    fn packs_native_16_bit_samples_without_float_conversion() {
+        let samples = NativePcmSamples::I16(vec![i16::MIN, -1, 0, i16::MAX]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(16, 2)).unwrap(),
+            vec![0x00, 0x80, 0xff, 0xff, 0x00, 0x00, 0xff, 0x7f]
+        );
+    }
+
+    #[test]
+    fn packs_native_24_bit_samples_into_three_byte_subslots() {
+        let samples = NativePcmSamples::I24(vec![-8_388_608, -1, 0, 8_388_607]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(24, 3)).unwrap(),
+            vec![0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0xff, 0xff, 0x7f]
+        );
+    }
+
+    #[test]
+    fn packs_native_24_bit_samples_into_four_byte_subslots_with_sign_extension() {
+        let samples = NativePcmSamples::I24(vec![-8_388_608, -1, 0, 8_388_607]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(24, 4)).unwrap(),
+            vec![
+                0x00, 0x00, 0x80, 0xff,
+                0xff, 0xff, 0xff, 0xff,
+                0x00, 0x00, 0x00, 0x00,
+                0xff, 0xff, 0x7f, 0x00
+            ]
+        );
+    }
+
+    #[test]
+    fn packs_native_32_bit_samples_exactly() {
+        let samples = NativePcmSamples::I32(vec![i32::MIN, -1, 0, i32::MAX]);
+        assert_eq!(
+            pack_native_integer_pcm(&samples, format(32, 4)).unwrap(),
+            vec![
+                0x00, 0x00, 0x00, 0x80,
+                0xff, 0xff, 0xff, 0xff,
+                0x00, 0x00, 0x00, 0x00,
+                0xff, 0xff, 0xff, 0x7f
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_depth_mismatch_and_out_of_range_samples() {
+        assert!(pack_native_integer_pcm(
+            &NativePcmSamples::I16(vec![0, 1]),
+            format(24, 3)
+        ).is_err());
+        assert!(pack_native_integer_pcm(
+            &NativePcmSamples::I24(vec![8_388_608, 0]),
+            format(24, 3)
+        ).is_err());
+    }
+
+    #[test]
+    fn bit_perfect_gate_rejects_any_processing_or_format_change() {
+        let requirements = BitPerfectRequirements {
+            source_rate: 96_000,
+            output_rate: 96_000,
+            source_channels: 2,
+            output_channels: 2,
+            source_valid_bits: 24,
+            dsp_enabled: false,
+            software_gain_unity: true,
+            channel_mapping_unchanged: true,
+            resampling_disabled: true,
+        };
+        assert!(is_bit_perfect_eligible(requirements, format(24, 3)));
+        assert!(!is_bit_perfect_eligible(
+            BitPerfectRequirements { dsp_enabled: true, ..requirements },
+            format(24, 3)
+        ));
+        assert!(!is_bit_perfect_eligible(
+            BitPerfectRequirements { output_rate: 48_000, ..requirements },
+            format(24, 3)
+        ));
+        assert!(!is_bit_perfect_eligible(
+            BitPerfectRequirements { software_gain_unity: false, ..requirements },
+            format(24, 3)
+        ));
+    }
+}
