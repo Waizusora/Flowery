@@ -190,7 +190,6 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
 }
 
 
-#[no_mangle] pub extern "system" fn 
 struct OutputScheduler {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
@@ -335,7 +334,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     stop_output_scheduler();
 }
 
-Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
     if rate<=0 || !(channels==1||channels==2) || capacity<2048 || ![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let mut out=Box::new(Output{ring:vec![0.0;(cap as usize)*channels as usize],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
