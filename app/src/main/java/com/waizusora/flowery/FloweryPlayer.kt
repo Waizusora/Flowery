@@ -377,8 +377,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (usbEnabled) diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
-                if (handle != 0L) NativeAudio.nativeStopStreamPump(handle)
-                if (sessionHandle != 0L) NativeAudio.nativeStopOutputScheduler(sessionHandle)
+                // Closing the native session stops and joins its AAudio decode/output workers.
                 if (sessionHandle != 0L) {
                     if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
