@@ -24,6 +24,7 @@ pub(super) struct SessionState {
     pub(super) cancelled: AtomicBool,
     phase: AtomicI64,
     route: i32,
+    gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
 }
 
@@ -56,8 +57,14 @@ fn register_session(session: SessionState) -> jlong {
 fn valid_route(route: i32) -> bool { (0..=3).contains(&route) }
 
 fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
-    if cancelled.load(Ordering::Acquire) { return None; }
-    Some(epoch.fetch_add(1, Ordering::AcqRel).saturating_add(1))
+    loop {
+        if cancelled.load(Ordering::Acquire) { return None; }
+        let current = epoch.load(Ordering::Acquire);
+        let next = current.checked_add(1)?;
+        if epoch.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            return Some(next);
+        }
+    }
 }
 
 #[no_mangle]
@@ -77,6 +84,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         cancelled: AtomicBool::new(false),
         phase: AtomicI64::new(SessionPhase::Created as i64),
         route,
+        gate: Mutex::new(()),
         decoder,
     })
 }
@@ -89,7 +97,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
         return -1;
     };
-    if session.cancelled.load(Ordering::Acquire) { return -1; }
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     advance_epoch(&session.epoch, &session.cancelled).map(|epoch| epoch as jlong).unwrap_or(-1)
 }
 
@@ -102,6 +110,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         return -1;
     }
     let Some(session) = session_ref(handle) else { return -1; };
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     if session.cancelled.load(Ordering::Acquire) && phase != SessionPhase::Cancelled as jint {
         return -1;
     }
@@ -130,6 +139,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlayba
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
     if let Some(session) = session_ref(handle) {
+        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         session.cancelled.store(true, Ordering::Release);
         session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
     }
@@ -145,6 +155,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             .unwrap_or_else(|error| error.into_inner())
             .remove(&handle);
         if let Some(session) = session {
+            let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
             // Keep the shared decoder alive until every producer and in-flight JNI
