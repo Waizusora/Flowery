@@ -1,12 +1,13 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_policy::select_playback_route;
-use jni::objects::{JClass, JLongArray};
+use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[allow(dead_code)] // Some phases are only constructed by Android-target worker paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 enum SessionPhase {
@@ -23,11 +24,11 @@ enum SessionPhase {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AAudioSeekRequest {
     pub(crate) position_ms: i64,
-    pub(crate) max_frames: usize,
     pub(crate) segment_start_ms: i64,
     pub(crate) segment_end_ms: i64,
 }
 
+#[allow(dead_code)] // Android-only teardown paths read the retained JNI handle.
 pub(super) struct SessionState {
     pub(super) epoch: AtomicU64,
     pub(super) cancelled: AtomicBool,
@@ -94,6 +95,7 @@ pub(super) fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option
 }
 
 /// Applies a lifecycle transition from a native worker without crossing JNI.
+#[allow(dead_code)] // Called by Android-target AAudio scheduler paths.
 pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> bool {
     if !(0..=7).contains(&next) { return false; }
     let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
@@ -333,7 +335,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
     *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
         Some(AAudioSeekRequest {
             position_ms,
-            max_frames: max_frames as usize,
             segment_start_ms,
             segment_end_ms,
         });
