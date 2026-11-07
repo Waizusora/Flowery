@@ -789,9 +789,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlaybackSession(
     mut env: JNIEnv, _class: JClass, decoder_handle: jlong, session_handle: jlong,
-    position_ms: jlong, output_frame: jlong,
+    requested_position_ms: jlong, max_frames: jint, segment_start_ms: jlong, segment_end_ms: jlong,
 ) -> jlong {
-    if decoder_handle <= 0 || session_handle <= 0 || position_ms < 0 || output_frame < 0 {
+    if decoder_handle <= 0 || session_handle <= 0 || requested_position_ms < 0 ||
+        max_frames <= 0 || segment_start_ms < 0 || segment_end_ms < -1 ||
+        (segment_end_ms >= 0 && segment_end_ms < segment_start_ms) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native playback seek request");
         return -1;
     }
@@ -804,6 +806,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlayback
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
         return -1;
     }
+    let output_rate = decoder.lock().unwrap_or_else(|error| error.into_inner()).output_rate;
+    if output_rate == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "The stream decoder has not been configured");
+        return -1;
+    }
+    let target_ms = requested_position_ms.max(segment_start_ms)
+        .min(if segment_end_ms >= 0 { segment_end_ms } else { i64::MAX });
     {
         let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
@@ -814,7 +823,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlayback
     stop_stream_pump_worker(decoder_handle);
     let actual = {
         let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
-        match guard.seek_to(position_ms as u64) {
+        match guard.seek_to(target_ms as u64) {
             Ok(position) => position as jlong,
             Err(error) => {
                 let _ = env.throw_new("java/lang/IllegalStateException", error);
@@ -822,12 +831,21 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlayback
             }
         }
     };
-    let flush_result = crate::aaudio::flush_output_for_seek(output_frame);
+    let target_frame = milliseconds_to_frames((actual - segment_start_ms).max(0) as u64, output_rate);
+    let flush_result = crate::aaudio::flush_output_for_seek(target_frame);
     if flush_result != 0 {
-        let _ = env.throw_new(
-            "java/lang/IllegalStateException",
-            format!("Unable to flush AAudio output for seek (error {flush_result})"),
-        );
+        let _ = env.throw_new("java/lang/IllegalStateException",
+            format!("Unable to flush AAudio output for seek (error {flush_result})"));
+        return -1;
+    }
+    let remaining_frames = if segment_end_ms >= 0 {
+        let end_frame = milliseconds_to_frames((segment_end_ms - segment_start_ms) as u64, output_rate);
+        Some(end_frame.saturating_sub(target_frame))
+    } else { None };
+    if let Err(error) = start_stream_pump_worker(
+        decoder_handle, decoder, session, max_frames as usize, remaining_frames,
+    ) {
+        let _ = env.throw_new("java/lang/IllegalStateException", error);
         return -1;
     }
     actual
@@ -917,33 +935,23 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
 /// Starts a Rust-owned scheduler that incrementally decodes into the bounded AAudio ring.
 /// total_frames < 0 means decode until the source reaches EOF.
 #[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPump(
-    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong, max_frames: jint, total_frames: jlong,
-) -> jint {
-    if handle <= 0 || session_handle <= 0 || max_frames <= 0 || total_frames < -1 {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream pump configuration");
-        return -1;
-    }
-    let Some(decoder) = decoder_ref(handle) else { return -1; };
-    let Some(session) = session_ref(session_handle) else {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
-        return -1;
-    };
-    if !Arc::ptr_eq(&decoder, &session.decoder) || session.cancelled.load(Ordering::Acquire) {
-        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
-        return -1;
-    }
+fn start_stream_pump_worker(
+    handle: jlong,
+    decoder: Arc<Mutex<StreamDecoder>>,
+    session: Arc<crate::playback_session::SessionState>,
+    chunk_frames: usize,
+    frame_limit: Option<u64>,
+) -> Result<(), String> {
     stop_stream_pump_worker(handle);
-
+    if session.cancelled.load(Ordering::Acquire) {
+        return Err("Playback session is cancelled".into());
+    }
     let worker_epoch = session.epoch.load(Ordering::Acquire);
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
     let thread_session = Arc::clone(&session);
-    let chunk_frames = max_frames as usize;
-    let frame_limit = if total_frames < 0 { None } else { Some(total_frames as u64) };
     let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
         let mut produced_frames = 0_u64;
         while !thread_stop.load(Ordering::Acquire) {
@@ -1004,13 +1012,86 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamP
         if thread_stop.load(Ordering::Acquire) {
             thread_status.store(2, Ordering::Release);
         }
-    }).map_err(|error| error.to_string());
-    match worker {
-        Ok(thread) => {
-            stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
-                .insert(handle, StreamPumpWorker { stop, status, thread });
-            0
+    }).map_err(|error| error.to_string())?;
+    stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
+        .insert(handle, StreamPumpWorker { stop, status, thread: worker });
+    Ok(())
+}
+
+/// Starts the AAudio decode worker for an absolute-time segment. Rust seeks to
+/// the segment start and derives the output-frame limit from the configured rate.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartSegmentedStreamPump(
+    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong,
+    max_frames: jint, segment_start_ms: jlong, segment_end_ms: jlong,
+) -> jint {
+    if handle <= 0 || session_handle <= 0 || max_frames <= 0 ||
+        segment_start_ms < 0 || segment_end_ms < -1 ||
+        (segment_end_ms >= 0 && segment_end_ms < segment_start_ms) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream segment");
+        return -1;
+    }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else { return -1; };
+    if !Arc::ptr_eq(&decoder, &session.decoder) || session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
+        return -1;
+    }
+    let (output_rate, duration_ms) = {
+        let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        (guard.output_rate, guard.duration_ms)
+    };
+    if output_rate == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "The stream decoder has not been configured");
+        return -1;
+    }
+    let actual_start = {
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        match guard.seek_to(segment_start_ms as u64) {
+            Ok(position) => position,
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -1;
+            }
         }
+    };
+    let effective_end = if segment_end_ms >= 0 { segment_end_ms as u64 } else { duration_ms };
+    let start_frame = milliseconds_to_frames(actual_start, output_rate);
+    let end_frame = milliseconds_to_frames(effective_end.max(actual_start), output_rate);
+    let frame_limit = if segment_end_ms >= 0 || duration_ms > 0 {
+        Some(end_frame.saturating_sub(start_frame))
+    } else { None };
+    match start_stream_pump_worker(handle, decoder, session, max_frames as usize, frame_limit) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+/// Legacy unbounded/explicit-frame worker entry point retained for native callers.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPump(
+    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong, max_frames: jint, total_frames: jlong,
+) -> jint {
+    if handle <= 0 || session_handle <= 0 || max_frames <= 0 || total_frames < -1 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream pump configuration");
+        return -1;
+    }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else { return -1; };
+    if !Arc::ptr_eq(&decoder, &session.decoder) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own the decoder");
+        return -1;
+    }
+    match start_stream_pump_worker(
+        handle, decoder, session, max_frames as usize,
+        if total_frames < 0 { None } else { Some(total_frames as u64) },
+    ) {
+        Ok(()) => 0,
         Err(error) => {
             let _ = env.throw_new("java/lang/IllegalStateException", error);
             -1
