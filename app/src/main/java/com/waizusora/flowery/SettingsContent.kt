@@ -33,7 +33,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
-    usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit,
     usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
     usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
     audioSourceLabel: String) {
@@ -79,16 +78,20 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                         color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
+            val bitPerfectActive = status.contains("BIT PERFECT", ignoreCase = true)
+            val usbDirectActive = status.contains("USB exclusive", ignoreCase = true)
+            val bitPerfectStatus = when {
+                bitPerfectActive -> "ACTIVE · The native USB PCM producer confirmed source-preserving output."
+                usbDirectActive -> "NOT ACTIVE · Direct USB playback is selected, but the current source or negotiated output path requires PCM conversion or processing."
+                usbDacConnected && !usbDacPermissionGranted -> "UNAVAILABLE · Connect the DAC and grant Flowery USB access to inspect its capabilities."
+                usbDacConnected -> "NOT ACTIVE · DAC detected. Start playback to evaluate the source format and negotiated DAC profile."
+                else -> "UNAVAILABLE · No USB DAC is available to Flowery. Android-managed output is in use."
+            }
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("USB Exclusive / Bit-Perfect", color = color, fontWeight = FontWeight.SemiBold)
-                            Text("Use a descriptor-compatible UAC1/UAC2 DAC through direct USB transport. Supported lossless integer PCM and IEEE Float32 WAV can use the source-preserving route when the exact format, rate and channel layout match and DSP/software gain are inactive.", color = muted, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Switch(checked = usbBitPerfectEnabled, onCheckedChange = onUsbBitPerfectChanged)
-                    }
-                    Text("Lossless integer PCM and IEEE Float32 WAV may retain their source sample bits when the DAC advertises a matching profile and no EQ, resampling, channel remapping or software gain is active. Other sources are decoded to float32 and processed or quantized to the negotiated DAC format; these paths are not Bit Perfect. Playback stops if strict USB setup fails; there is no AAudio fallback.", color = muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Bit-perfect detection", color = color, fontWeight = FontWeight.SemiBold)
+                    Text(bitPerfectStatus, color = color, style = MaterialTheme.typography.bodyMedium)
+                    Text("Flowery automatically evaluates the connected USB DAC, its advertised PCM formats and sample rates, the source format, and active processing. Bit-perfect is reported as active only after the native USB PCM producer confirms that the source samples are preserved. EQ, resampling, channel conversion, software gain, or an incompatible DAC profile can make bit-perfect unavailable for the current playback.", color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
