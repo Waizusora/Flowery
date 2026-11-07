@@ -730,11 +730,11 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("USB Exclusive / Bit-Perfect", color = color, fontWeight = FontWeight.SemiBold)
-                            Text("Use a compatible UAC2 stereo DAC through direct USB transport. Source-bit-preserving output is limited to supported WAV PCM at unity gain.", color = muted, style = MaterialTheme.typography.bodySmall)
+                            Text("Use a descriptor-compatible UAC1/UAC2 DAC through direct USB transport. Supported lossless integer PCM and IEEE Float32 WAV can use the source-preserving route when the exact format, rate and channel layout match and DSP/software gain are inactive.", color = muted, style = MaterialTheme.typography.bodySmall)
                         }
                         Switch(checked = usbBitPerfectEnabled, onCheckedChange = onUsbBitPerfectChanged)
                     }
-                    Text("WAV integer PCM16/24/32 can be sent without decoding or DSP when the DAC accepts the exact format and sample rate. Any software gain or ducking changes the samples. Other decoded formats are sent as processed 24-bit PCM and are not bit-perfect. Playback stops if strict USB setup fails; there is no AAudio fallback.", color = muted, style = MaterialTheme.typography.bodySmall)
+                    Text("Lossless integer PCM and IEEE Float32 WAV may retain their source sample bits when the DAC advertises a matching profile and no EQ, resampling, channel remapping or software gain is active. Other sources are decoded to float32 and processed or quantized to the negotiated DAC format; these paths are not Bit Perfect. Playback stops if strict USB setup fails; there is no AAudio fallback.", color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
