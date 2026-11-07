@@ -118,6 +118,9 @@ pub(super) struct StreamDecoder {
     consecutive_decode_errors: u32,
     usb_last_gain: f32,
     source_mode: StreamSourceMode,
+    native_pcm_pending: VecDeque<u8>,
+    native_pcm_decided: bool,
+    native_pcm_active: bool,
 }
 
 impl StreamDecoder {
@@ -152,6 +155,7 @@ impl StreamDecoder {
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
             eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: -1.0, source_mode: StreamSourceMode::Unselected,
+            native_pcm_pending: VecDeque::new(), native_pcm_decided: false, native_pcm_active: false,
         })
     }
 
@@ -181,6 +185,9 @@ impl StreamDecoder {
         if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.input_pending.clear();
         self.output_pending.clear();
+        self.native_pcm_pending.clear();
+        self.native_pcm_decided = false;
+        self.native_pcm_active = false;
         self.eof = false;
         self.consecutive_decode_errors = 0;
         let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
@@ -468,6 +475,110 @@ impl StreamDecoder {
         }
         Ok(result)
     }
+    fn decode_native_pcm_packet(
+        &mut self,
+        format: crate::usb_pcm::PcmFormat,
+    ) -> Result<bool, String> {
+        match self.source_mode {
+            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::DecodedPcm,
+            StreamSourceMode::DecodedPcm => {}
+            StreamSourceMode::EncodedPackets => return Err("Encoded stream cannot be decoded as native PCM".into()),
+        }
+        loop {
+            let packet = match self.format.next_packet() {
+                Ok(packet) => packet,
+                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                    self.eof = true;
+                    return Ok(true);
+                }
+                Err(Error::ResetRequired) => {
+                    if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
+                    continue;
+                }
+                Err(Error::IoError(error)) => return Err(format!("Audio stream I/O failed: {error}")),
+                Err(error) => return Err(format!("Audio packet read failed: {error}")),
+            };
+            if packet.track_id() != self.track_id { continue; }
+            let decoder = self.decoder.as_mut().ok_or_else(|| "This codec is available for encoded passthrough only".to_string())?;
+            let decoded = match decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                Err(Error::DecodeError(reason)) => {
+                    self.consecutive_decode_errors = self.consecutive_decode_errors.saturating_add(1);
+                    if self.consecutive_decode_errors >= 8 {
+                        return Err(format!("Audio decoder rejected 8 consecutive packets: {reason}"));
+                    }
+                    continue;
+                }
+                Err(error) => return Err(format!("Audio packet decode failed: {error}")),
+            };
+            self.consecutive_decode_errors = 0;
+            let decoded_frames = decoded.frames();
+            if decoded.spec().channels.count() != self.channels {
+                return Err("The audio stream changed channel layout mid-track".into());
+            }
+            let discard = self.discard_source_frames.min(decoded_frames as u64) as usize;
+            let native = crate::native_pcm::from_symphonia_buffer(
+                decoded,
+                format.valid_bits,
+                self.channels,
+                discard,
+            );
+            self.source_frames_decoded = self.source_frames_decoded.saturating_add(decoded_frames as u64);
+            self.discard_source_frames -= discard as u64;
+
+            match native {
+                Ok(samples) => {
+                    let packed = crate::native_pcm::pack_native_integer_pcm(&samples, format)?;
+                    self.native_pcm_pending.extend(packed);
+                    self.native_pcm_active = true;
+                    self.native_pcm_decided = true;
+                    return Ok(true);
+                }
+                Err(error) if !self.native_pcm_decided => {
+                    // The decoder's typed output is not a supported integer
+                    // representation. Preserve playback by switching this
+                    // stream to the established float32 path before any
+                    // native PCM block has been emitted.
+                    let decoder = self.decoder.as_ref().ok_or("PCM decoder is unavailable")?;
+                    let decoded = decoder.last_decoded();
+                    let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
+                    buffer.copy_interleaved_ref(decoded);
+                    let mut samples = buffer.samples().to_vec();
+                    let discard_samples = discard * self.channels;
+                    if discard_samples > 0 && discard_samples <= samples.len() {
+                        samples.drain(..discard_samples);
+                    }
+                    self.input_pending.extend_from_slice(&samples);
+                    self.native_pcm_active = false;
+                    self.native_pcm_decided = true;
+                    let _ = error;
+                    return Ok(false);
+                }
+                Err(error) => return Err(format!("Decoder changed sample representation during native PCM playback: {error}")),
+            }
+        }
+    }
+
+    fn read_native_pcm_bytes(
+        &mut self,
+        max_frames: usize,
+        format: crate::usb_pcm::PcmFormat,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let required = max_frames.saturating_mul(format.bytes_per_frame());
+        while self.native_pcm_pending.len() < required && !self.eof && !self.native_pcm_decided || 
+            (self.native_pcm_active && self.native_pcm_pending.len() < required && !self.eof) {
+            if !self.decode_native_pcm_packet(format)? { return Ok(None); }
+            if self.native_pcm_active { self.native_pcm_decided = true; }
+        }
+        if !self.native_pcm_active { return Ok(None); }
+        let count = required.min(self.native_pcm_pending.len());
+        Ok(Some(self.native_pcm_pending.drain(..count).collect()))
+    }
+
+    pub(super) fn native_pcm_active(&self) -> bool {
+        self.native_pcm_active
+    }
+
     pub(super) fn read_usb_pcm(
         &mut self,
         max_frames: usize,
@@ -478,6 +589,21 @@ impl StreamDecoder {
         if self.channels != format.channels as usize || max_frames == 0 || !target_gain.is_finite() {
             return Err("Invalid direct USB PCM read configuration".into());
         }
+        let native_eligible = self.lossless_source
+            && matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
+            && format.valid_bits == self.source_bits
+            && self.output_rate == self.source_rate
+            && self.resampler.is_none()
+            && self.gains.iter().all(|gain| *gain == 0.0)
+            && target_gain == 1.0;
+
+        if native_eligible && !self.native_pcm_decided || (native_eligible && self.native_pcm_active) {
+            if let Some(bytes) = self.read_native_pcm_bytes(max_frames, format)? {
+                self.usb_last_gain = 1.0;
+                return Ok(bytes);
+            }
+        }
+
         let samples = self.read_frames(max_frames)?;
         let gain = target_gain.clamp(0.0, 1.0);
         let start_gain = if self.usb_last_gain < 0.0 { gain } else { self.usb_last_gain };
