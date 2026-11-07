@@ -48,7 +48,7 @@ internal object UsbDacNative {
         feedbackEndpoint: Int,
         feedbackMaxPacketBytes: Int
     ): Long
-    external fun nativeWriteEncodedPacket(handle: Long, encoded: ByteArray, durationUs: Long): Int
+    external fun nativeWriteEncodedPacket(handle: Long, encoded: ByteArray, payloadOffset: Int, payloadLength: Int, durationUs: Long): Int
     external fun nativeWriteIsochronous(handle: Long, pcm: ByteArray, frameCount: Int): Int
     external fun nativeDrain(handle: Long): Int
     external fun nativeFlush(handle: Long): Int
