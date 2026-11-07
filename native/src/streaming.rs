@@ -582,12 +582,14 @@ impl StreamDecoder {
         for sample in bytes.chunks_exact(bytes_per_sample) {
             let mut raw = [0_u8; 4];
             raw[..bytes_per_sample].copy_from_slice(sample);
-            let unsigned = u32::from_le_bytes(raw);
+            let subslot_bits = bytes_per_sample as u32 * 8;
+            let padding_bits = subslot_bits - format.valid_bits as u32;
+            let aligned = u32::from_le_bytes(raw) >> padding_bits;
             let signed = if format.valid_bits == 32 {
-                unsigned as i32
+                aligned as i32
             } else {
-                let shift = 32 - format.valid_bits as u32;
-                ((unsigned << shift) as i32) >> shift
+                let sign_shift = 32 - format.valid_bits as u32;
+                ((aligned << sign_shift) as i32) >> sign_shift
             };
             self.input_pending.push(signed as f32 / scale);
         }
