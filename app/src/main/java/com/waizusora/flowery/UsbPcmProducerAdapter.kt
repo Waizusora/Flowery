@@ -48,6 +48,7 @@ internal class UsbPcmProducerAdapter(
                     }
                     appliedGain = gain
                 }
+                if (NativeAudio.nativeIsUsbPcmProducerAtEnd(producerHandle)) endReached.set(true)
                 val workerError = NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle)
                 check(workerError.isBlank()) { "Rust USB PCM producer worker failed: $workerError" }
                 Thread.sleep(5)
