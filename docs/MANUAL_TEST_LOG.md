@@ -217,13 +217,15 @@ Do not claim support for every possible format based only on this sample.
 Deferred until software playback tests are complete and compatible hardware is available.
 
 1. Connect a supported USB DAC.
-2. Verify device detection and permission handling.
-3. Verify selected output route.
-4. Test supported sample rates and channel formats.
-5. Verify bit-perfect/exclusive behavior using suitable measurement or device-reported information; listening alone cannot prove bit-perfect output.
-6. Test hardware DAC volume controls where available.
-7. Test software volume when the DAC has no hardware volume control.
-8. Disconnect and reconnect the DAC; verify safe recovery.
+2. Use **Sambungkan DAC** once to grant Android USB access if prompted; this is a connection permission action, not a Bit-perfect switch.
+3. Start playback and verify Flowery automatically detects the permissioned DAC and selects a compatible output route.
+4. Verify the Bit-perfect status changes to ACTIVE only when the native producer confirms source-preserving output; otherwise verify that the UI reports NOT ACTIVE or UNAVAILABLE with a reason.
+5. Verify selected output route.
+6. Test supported sample rates and channel formats.
+7. Verify bit-perfect/exclusive behavior using suitable measurement or device-reported information; listening alone cannot prove bit-perfect output.
+8. Test hardware DAC volume controls where available.
+9. Test software volume when the DAC has no hardware volume control.
+10. Disconnect and reconnect the DAC; verify safe recovery.
 
 ### TEST 17 — Final regression
 
