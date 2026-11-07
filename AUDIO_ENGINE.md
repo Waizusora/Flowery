@@ -119,3 +119,12 @@ UAC1/UAC2 playback alternate-setting selection (up to eight channels) and UAC2 p
 ### Encoded queue ownership and JNI packet envelope
 
 The encoded queue is reference-counted across JNI handles. A producer retains its own shared queue reference, so releasing the Kotlin queue handle does not invalidate a producer that is still alive. The packet envelope returned to Kotlin is 27 bytes before the opaque payload: framing kind (1 byte), format/data-type code (2-byte little-endian), sequence (8-byte little-endian), presentation timestamp in microseconds (8-byte little-endian; zero means unavailable), and duration in microseconds (8-byte little-endian). The envelope describes metadata only; it does not establish codec compatibility or USB wire framing.
+
+
+## Native integer PCM and Bit Perfect eligibility
+
+A native integer PCM representation and USB packer are defined in `native/src/native_pcm.rs`. The representation stores signed 8-, 16-, 20-, 24-, and 32-bit samples without normalization. Packing is range-checked and writes least-significant-bit-aligned signed samples into the negotiated little-endian USB subslot, including sign extension for padded 24-bit-in-32 layouts. It rejects source/output depth mismatches and incomplete interleaved frames rather than clamping or silently changing samples.
+
+The eligibility predicate requires exact source/output sample-rate, channel-count, and valid-bit matches; unchanged channel mapping; disabled resampling and DSP; unity software gain; and a valid signed little-endian USB PCM format. Unit tests cover integer packing and reject processing or format changes.
+
+This module is currently an implementation foundation, not yet connected to Symphonia's decoded sample buffers or the live USB PCM producer. The active decoded USB path remains the existing normalized-f32 route. Do not report native-integer or 32-bit Bit Perfect playback as active until decoder extraction, producer integration, Kotlin status propagation, and end-to-end tests are complete. Lossy formats remain on the float32 path; lossless formats qualify for native PCM only when their decoder exposes exact integer samples.
