@@ -48,6 +48,17 @@ fn is_lossless_codec(codec: symphonia::core::codecs::CodecType) -> bool {
         CODEC_TYPE_FLAC | CODEC_TYPE_WAVPACK | CODEC_TYPE_MONKEYS_AUDIO | CODEC_TYPE_ALAC | CODEC_TYPE_TTA
     )
 }
+fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
+    let cookie = extra_data?;
+    // Symphonia's ALAC decoder accepts the 24-byte mandatory configuration
+    // or the 48-byte configuration with optional channel-layout information.
+    if cookie.len() != 24 && cookie.len() != 48 {
+        return None;
+    }
+    let channels = *cookie.get(9)? as usize;
+    (1..=8).contains(&channels).then_some(channels)
+}
+
 fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
     ((milliseconds as u128 * sample_rate as u128) / 1000)
         .min(u64::MAX as u128) as u64
@@ -157,12 +168,17 @@ impl StreamDecoder {
         let lossless_source = is_lossless_codec(params.codec);
         let ieee_float_source = params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE;
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
-        // MP4/M4A ALAC tracks may expose their channel count through channel_layout
-        // while leaving the explicit channels bitmask unset. Prefer the bitmask when
-        // present, then derive the count from the declared layout.
+        // Some MP4/M4A ALAC tracks expose neither a channel bitmask nor a
+        // channel layout in Symphonia's track parameters. The mandatory ALAC
+        // magic-cookie configuration still declares the channel count.
         let channels = params.channels.map(|channels| channels.count())
             .or_else(|| params.channel_layout.map(|layout| layout.into_channels().count()))
-            .ok_or("Audio channel layout is unavailable")?;
+            .or_else(|| {
+                (params.codec == symphonia::core::codecs::CODEC_TYPE_ALAC)
+                    .then(|| alac_channel_count(params.extra_data.as_deref()))
+                    .flatten()
+            })
+            .ok_or("Audio channel layout is unavailable in track metadata and codec configuration")?;
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
         let decoder = match symphonia::default::get_codecs().make(&params, &DecoderOptions::default()) {
             Ok(decoder) => Some(decoder),
@@ -1186,6 +1202,30 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::fd::AsRawFd;
+
+    #[test]
+    fn alac_channel_count_reads_mandatory_magic_cookie_configuration() {
+        let mut cookie = vec![0_u8; 24];
+        cookie[9] = 2;
+        assert_eq!(alac_channel_count(Some(&cookie)), Some(2));
+
+        let mut extended_cookie = vec![0_u8; 48];
+        extended_cookie[9] = 6;
+        assert_eq!(alac_channel_count(Some(&extended_cookie)), Some(6));
+    }
+
+    #[test]
+    fn alac_channel_count_rejects_invalid_magic_cookie_data() {
+        assert_eq!(alac_channel_count(None), None);
+        assert_eq!(alac_channel_count(Some(&[0_u8; 23])), None);
+        assert_eq!(alac_channel_count(Some(&[0_u8; 47])), None);
+
+        let mut invalid_channels = vec![0_u8; 24];
+        invalid_channels[9] = 0;
+        assert_eq!(alac_channel_count(Some(&invalid_channels)), None);
+        invalid_channels[9] = 9;
+        assert_eq!(alac_channel_count(Some(&invalid_channels)), None);
+    }
 
     #[test]
     fn generic_pcm_quantization_handles_supported_valid_bit_widths() {
