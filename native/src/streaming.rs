@@ -224,6 +224,20 @@ impl StreamDecoder {
         }
     }
 
+    pub(super) fn validate_ac3_encoded_frame(&self, frame: &[u8]) -> Result<(), String> {
+        let expected_size = crate::usb_encoded_formats::ac3_frame_size(frame)
+            .map_err(str::to_owned)?;
+        if expected_size != frame.len() {
+            return Err("Demuxed AC-3 packet does not contain exactly one complete frame".into());
+        }
+        let frame_rate = crate::usb_encoded_formats::ac3_frame_sample_rate(frame)
+            .map_err(str::to_owned)?;
+        if frame_rate as usize != self.source_rate {
+            return Err("AC-3 frame sample rate does not match the demuxed stream sample rate".into());
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_encoded_uac1_type_ii(&self, format_type: u8, format_tag: u16) -> Result<(), String> {
         crate::usb_encoded_formats::validate_uac1_type_ii(format_type, format_tag, self.codec_type)
             .map_err(str::to_owned)
