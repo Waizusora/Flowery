@@ -145,17 +145,31 @@ internal class UsbDacSession internal constructor(
     @Synchronized
     fun flush() {
         check(!closed) { "USB DAC session is closed" }
-        UsbDacNative.nativeFlush(nativeHandle)
+        check(UsbDacNative.nativeFlush(nativeHandle) == 0) {
+            "USB transport could not cancel and reap all in-flight transfers for seeking"
+        }
     }
 
     @Synchronized
     override fun close() {
         if (closed) return
-        closed = true
-        try {
-            UsbDacNative.nativeClose(nativeHandle)
-        } finally {
-            connection.close()
+        for (attempt in 0 until 3) {
+            if (UsbDacNative.nativeClose(nativeHandle)) {
+                closed = true
+                connection.close()
+                return
+            }
+            if (attempt < 2) {
+                try {
+                    Thread.sleep(50L)
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IllegalStateException("Interrupted while waiting for USB transfers to finish teardown", interrupted)
+                }
+            }
         }
+        throw IllegalStateException(
+            "libusb could not confirm that all in-flight transfers were reaped; the USB connection remains open for a safe retry"
+        )
     }
 }
