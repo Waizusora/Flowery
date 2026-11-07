@@ -1,5 +1,7 @@
-use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use crate::streaming::{decoder_ref, StreamDecoder};
 use std::time::{Duration, Instant};
 
 use jni::objects::JClass;
@@ -135,14 +137,67 @@ impl EncodedPacketQueue {
 
 
 
+static NEXT_ENCODED_QUEUE_HANDLE: AtomicU64 = AtomicU64::new(1);
+static ENCODED_QUEUES: OnceLock<Mutex<HashMap<i64, Arc<EncodedPacketQueue>>>> = OnceLock::new();
+static NEXT_ENCODED_PRODUCER_HANDLE: AtomicU64 = AtomicU64::new(1);
+static ENCODED_PRODUCERS: OnceLock<Mutex<HashMap<i64, Arc<EncodedProducer>>>> = OnceLock::new();
+
+fn queue_registry() -> &'static Mutex<HashMap<i64, Arc<EncodedPacketQueue>>> {
+    ENCODED_QUEUES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 pub(super) fn queue_ref(handle: jlong) -> Option<Arc<EncodedPacketQueue>> {
-    if handle == 0 { return None; }
-    let raw = handle as *const EncodedPacketQueue;
-    unsafe { Arc::increment_strong_count(raw); Some(Arc::from_raw(raw)) }
+    if handle <= 0 { return None; }
+    queue_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
+}
+
+fn register_queue(queue: EncodedPacketQueue) -> jlong {
+    let queue = Arc::new(queue);
+    loop {
+        let candidate = NEXT_ENCODED_QUEUE_HANDLE.fetch_add(1, Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 { return 0; }
+        let handle = candidate as i64;
+        let mut registry = queue_registry().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::clone(&queue));
+            return handle as jlong;
+        }
+    }
+}
+
+fn remove_queue(handle: jlong) {
+    if handle > 0 { queue_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle); }
+}
+
+fn producer_registry() -> &'static Mutex<HashMap<i64, Arc<EncodedProducer>>> {
+    ENCODED_PRODUCERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn producer_ref(handle: jlong) -> Option<Arc<EncodedProducer>> {
+    if handle <= 0 { return None; }
+    producer_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
+}
+
+fn register_producer(producer: EncodedProducer) -> jlong {
+    let producer = Arc::new(producer);
+    loop {
+        let candidate = NEXT_ENCODED_PRODUCER_HANDLE.fetch_add(1, Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 { return 0; }
+        let handle = candidate as i64;
+        let mut registry = producer_registry().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::clone(&producer));
+            return handle as jlong;
+        }
+    }
+}
+
+fn remove_producer(handle: jlong) {
+    if handle > 0 { producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle); }
 }
 
 struct EncodedProducerState {
-    decoder: *mut crate::streaming::StreamDecoder,
+    decoder: Arc<Mutex<StreamDecoder>>,
     queue: Arc<EncodedPacketQueue>,
     framing: EncodedFraming,
     maximum_bitrate_kbps: Option<u16>,
@@ -161,7 +216,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
 ) -> jlong {
     if max_packets <= 0 || max_bytes <= 0 { return 0; }
     match EncodedPacketQueue::new(max_packets as usize, max_bytes as usize) {
-        Ok(queue) => Arc::into_raw(Arc::new(queue)) as jlong,
+        Ok(queue) => register_queue(queue),
         Err(_) => 0,
     }
 }
@@ -207,7 +262,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB packet queue");
         return 0;
     };
-    let decoder = unsafe { &mut *(decoder_handle as *mut crate::streaming::StreamDecoder) };
+    let Some(decoder) = decoder_ref(decoder_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
+        return 0;
+    };
+    let mut decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let framing = match framing_kind {
         1 if format_code != 0 => {
             if let Err(error) = decoder.validate_encoded_uac1_type_ii(
@@ -238,14 +297,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
             return 0;
         }
     };
+    drop(decoder_guard);
     let producer = EncodedProducer {
         state: Mutex::new(EncodedProducerState {
-            decoder: decoder_handle as *mut crate::streaming::StreamDecoder,
+            decoder,
             queue, framing, maximum_bitrate_kbps: maximum_bitrate,
             sequence: 0, pending: None, ended: false,
         }),
     };
-    Box::into_raw(Box::new(producer)) as jlong
+    register_producer(producer)
 }
 
 #[no_mangle]
@@ -256,14 +316,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
         return -2;
     }
-    let producer = unsafe { &*(handle as *const EncodedProducer) };
+    let Some(producer) = producer_ref(handle) else { return -2; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
     if state.ended { return -1; }
     if state.pending.is_none() {
-        let decoder = unsafe { &mut *state.decoder };
+        let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
         match decoder.read_encoded_packet() {
             Ok(Some((source_bytes, timestamp_us, duration_us))) => {
-                if let Err(error) = unsafe { &*state.decoder }.validate_ac3_encoded_frame(&source_bytes) {
+                if let Err(error) = decoder.validate_ac3_encoded_frame(&source_bytes) {
                     let _ = env.throw_new("java/lang/IllegalStateException", error);
                     return -2;
                 }
@@ -332,7 +392,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncode
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return 0;
     }
-    let decoder = unsafe { &*(decoder_handle as *const crate::streaming::StreamDecoder) };
+    let Some(decoder) = decoder_ref(decoder_handle) else { return 0; };
+    let decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     match decoder.encoded_transport_bytes_per_second(framing_kind) {
         Ok(rate) if rate > 0 && rate <= jlong::MAX as u64 => rate as jlong,
         Ok(_) => {
@@ -350,13 +411,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncode
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedProducer(
     mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
 ) -> jlong {
-    if handle == 0 || position_ms < 0 {
+    if handle <= 0 || position_ms < 0 {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded seek request");
         return -1;
     }
-    let producer = unsafe { &*(handle as *const EncodedProducer) };
+    let Some(producer) = producer_ref(handle) else { return -1; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-    let decoder = unsafe { &mut *state.decoder };
+    let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
     if let Err(error) = decoder.begin_encoded_stream() {
         let _ = env.throw_new("java/lang/IllegalStateException", error);
         return -1;
@@ -379,7 +440,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut EncodedProducer)); } }
+    remove_producer(handle);
 }
 
 #[no_mangle]
@@ -400,7 +461,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClearUsbEnco
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedQueue(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    if handle != 0 { unsafe { drop(Arc::from_raw(handle as *const EncodedPacketQueue)); } }
+    remove_queue(handle);
 }
 
 #[cfg(test)]
