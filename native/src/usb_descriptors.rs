@@ -56,8 +56,33 @@ fn le16(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
 }
 
+/// Validates descriptor framing before any parser consumes device-provided offsets.
+fn descriptor_stream_is_well_formed(raw: &[u8]) -> bool {
+    let mut offset = 0usize;
+    while offset < raw.len() {
+        if raw.len() - offset < 2 {
+            return false;
+        }
+        let length = raw[offset] as usize;
+        if length < 2 || length > raw.len() - offset {
+            return false;
+        }
+        if raw[offset + 1] == 0x04 && length < 9 {
+            return false;
+        }
+        if raw[offset + 1] == 0x05 && length < 7 {
+            return false;
+        }
+        offset += length;
+    }
+    true
+}
+
 /// Parses a descriptor byte stream without trusting descriptor lengths or device-provided counts.
 pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>) -> Vec<PlaybackProfile> {
+    if !descriptor_stream_is_well_formed(raw) {
+        return Vec::new();
+    }
     let mut profiles = Vec::new();
     let mut current: Option<Alternate> = None;
     let mut offset = 0usize;
@@ -227,6 +252,9 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
 
 /// Resolves UAC2 clock sources associated with the terminal link of a playback interface.
 pub fn playback_clock_sources(raw: &[u8], streaming_interface: u8) -> Vec<ClockSource> {
+    if !descriptor_stream_is_well_formed(raw) {
+        return Vec::new();
+    }
     let mut current_interface = 0xffu8;
     let mut current_class = 0xffu8;
     let mut current_subclass = 0xffu8;
@@ -472,6 +500,9 @@ fn le24(bytes: &[u8], offset: usize) -> u32 {
 }
 
 fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
+    if !descriptor_stream_is_well_formed(raw) {
+        return (Vec::new(), true);
+    }
     let mut streams = Vec::<StreamDescriptor>::new();
     let mut current: Option<usize> = None;
     let mut offset = 0usize;
@@ -614,6 +645,9 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
 /// Finds the first UAC1/UAC2 Feature Unit advertising master-channel volume control.
 /// Returns (unit ID, AudioControl interface number, UAC protocol).
 pub fn feature_unit_volume_control(raw: &[u8]) -> Option<(u8, u8, u8)> {
+    if !descriptor_stream_is_well_formed(raw) {
+        return None;
+    }
     let mut offset = 0usize;
     let mut interface_number = None;
     let mut protocol = None;
@@ -657,6 +691,9 @@ pub fn feature_unit_volume_control(raw: &[u8]) -> Option<(u8, u8, u8)> {
 
 /// Returns all advertised UAC2 clock-source entities and their owning AudioControl interfaces.
 pub fn clock_sources(raw: &[u8]) -> Vec<ClockSource> {
+    if !descriptor_stream_is_well_formed(raw) {
+        return Vec::new();
+    }
     let mut result = Vec::<ClockSource>::new();
     let mut current_interface = None;
     let mut current_is_audio_control = false;
@@ -997,6 +1034,50 @@ mod tests {
         assert_eq!(parsed[0]["maximum"], 96_000);
         assert_eq!(parsed[0]["resolution"], 1);
         assert_eq!(clock_ranges_json(&response, 13), "[]");
+    }
+
+    #[test]
+    fn rejects_trailing_bytes_and_truncated_descriptors_before_profile_selection() {
+        let valid_prefix = [
+            9,4,2,1,1,1,2,0x00,0,
+            7,0x24,1,5,0,1,0,
+            14,0x24,2,1,2,3,24,1,0x44,0xAC,0
+        ];
+        let mut trailing_byte = valid_prefix.to_vec();
+        trailing_byte.push(0x05);
+        assert!(parse_playback_profiles(&trailing_byte, None).is_empty());
+
+        let mut truncated_endpoint = valid_prefix.to_vec();
+        truncated_endpoint.extend_from_slice(&[7,5,0x01,0x05,0x26]);
+        assert!(parse_playback_profiles(&truncated_endpoint, None).is_empty());
+        assert!(playback_clock_sources(&truncated_endpoint, 2).is_empty());
+        assert_eq!(feature_unit_volume_control(&truncated_endpoint), None);
+        let report: Value = serde_json::from_str(&descriptor_report_json(&truncated_endpoint)).unwrap();
+        assert_eq!(report["malformed"], true);
+        assert_eq!(report["streams"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn rejects_short_interface_and_endpoint_descriptors() {
+        let short_interface = [8,4,2,1,1,1,2,0];
+        let short_endpoint = [9,4,2,1,1,1,2,0,0,6,5,1,1,0,1];
+        assert!(parse_playback_profiles(&short_interface, None).is_empty());
+        assert!(parse_playback_profiles(&short_endpoint, None).is_empty());
+        assert_eq!(clock_sources(&short_interface).len(), 0);
+    }
+
+    #[test]
+    fn rejects_non_isochronous_and_reserved_usage_playback_endpoints() {
+        let prefix = [
+            9,4,2,1,1,1,2,0x00,0,
+            7,0x24,1,5,0,1,0,
+            14,0x24,2,1,2,3,24,1,0x44,0xAC,0
+        ];
+        for endpoint_attributes in [0x02, 0x31, 0x21] {
+            let mut descriptors = prefix.to_vec();
+            descriptors.extend_from_slice(&[7,5,0x01,endpoint_attributes,0x26,1,1]);
+            assert!(parse_playback_profiles(&descriptors, None).is_empty());
+        }
     }
 
     #[test]
