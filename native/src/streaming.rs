@@ -938,4 +938,42 @@ mod tests {
         assert_eq!(milliseconds_to_frames(u64::MAX, 192_000), u64::MAX);
         assert_eq!(milliseconds_to_frames(1_000, 48_000), 48_000);
     }
+    #[test]
+    fn uncompressed_wav_pcm_reaches_usb_bytes_bit_exact_without_float_conversion() {
+        let path = std::env::temp_dir().join(format!("flowery-native-pcm-test-{}.wav", std::process::id()));
+        let samples = [-32_768_i16, -1, 0, 1, 32_767, -12_345];
+        let data_bytes = (samples.len() * 2) as u32;
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"RIFF").unwrap();
+            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+            file.write_all(b"WAVEfmt ").unwrap();
+            file.write_all(&16_u32.to_le_bytes()).unwrap();
+            file.write_all(&1_u16.to_le_bytes()).unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
+            file.write_all(&(48_000_u32 * 4).to_le_bytes()).unwrap();
+            file.write_all(&4_u16.to_le_bytes()).unwrap();
+            file.write_all(&16_u16.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+            file.write_all(&data_bytes.to_le_bytes()).unwrap();
+            for sample in samples { file.write_all(&sample.to_le_bytes()).unwrap(); }
+        }
+
+        let source_file = std::fs::File::open(&path).unwrap();
+        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
+        stream.configure(48_000, &[0.0; 31]).unwrap();
+        let format = crate::usb_pcm::PcmFormat {
+            sample_rate: 48_000, channels: 2, valid_bits: 16,
+            subslot_bytes: 2, signed: true, little_endian: true,
+        };
+        let actual = stream.read_usb_pcm(3, 1.0, format).unwrap();
+        let expected: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        assert_eq!(actual, expected);
+        assert!(stream.native_pcm_active());
+        drop(stream);
+        drop(source_file);
+        std::fs::remove_file(path).unwrap();
+    }
+
 }
