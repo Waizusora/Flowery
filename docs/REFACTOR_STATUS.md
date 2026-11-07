@@ -28,7 +28,7 @@ This document records the verified implementation state of the seven architectur
 3. Bind both direct USB producer types to the native session so a seek invalidates stale pending/queued output through one session epoch and cancellation prevents further decode/publish work. Serialize session seek/cancel/close transitions and join or synchronize producer work before releasing handles.
 4. Keep Kotlin responsible for Android USB permissions, SAF descriptor acquisition, output discovery, and libusb session control; C++ remains the transport consumer.
 5. Extract Compose destinations independently from the audio migration.
-6. Direct USB PCM decode scheduling, AAudio decode scheduling, and encoded packet production now use Rust-owned workers with bounded queues or ring-buffer backpressure. Encoded packets are still copied through JNI into Kotlin byte arrays before C++ transport submission. Next unify worker ownership and command/event orchestration under the native playback session, then reduce JNI payload copies and add end-to-end lifecycle/route tests.
+6. Direct USB PCM decode scheduling, AAudio decode scheduling, and encoded packet production now use Rust-owned workers with bounded queues or ring-buffer backpressure. Encoded packets still cross JNI as a byte array, but Kotlin no longer creates a second payload array: it passes the payload offset/length directly to the C++ writer, which copies only the payload into the bounded transport staging buffer. Next unify worker ownership and command/event orchestration under the native playback session, then reduce JNI payload copies and add end-to-end lifecycle/route tests.
 7. Require CI and device-level evidence at each milestone.
 
 ## Verification notes
