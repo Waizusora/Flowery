@@ -60,6 +60,78 @@ class UsbDacController(context: Context) {
 
     fun hasPermission(device: UsbDevice): Boolean = manager.hasPermission(device)
 
+    /**
+     * Opens the first descriptor-validated UAC1 AC-3 encoded alternate setting.
+     * Type-III IEC 61937 is preferred; Type-II raw AC-3 is the fallback.
+     */
+    fun openFirstCompatibleEncodedPlaybackPipeline(
+        devices: List<Device>,
+        decoderHandle: Long,
+        sourceRate: Int
+    ): Pair<Device, UsbEncodedPlaybackPipeline> {
+        require(decoderHandle != 0L && sourceRate > 0)
+        var lastError: Throwable? = null
+        for (device in devices) {
+            if (!manager.hasPermission(device.usbDevice)) continue
+            val inspection = manager.openDevice(device.usbDevice) ?: continue
+            val descriptors = try {
+                inspection.rawDescriptors
+            } catch (error: Throwable) {
+                lastError = error
+                inspection.close()
+                continue
+            }
+            inspection.close()
+
+            val alternates = (0 until device.usbDevice.interfaceCount)
+                .map { device.usbDevice.getInterface(it) }
+                .filter {
+                    it.interfaceClass == UsbConstants.USB_CLASS_AUDIO &&
+                        it.interfaceSubclass == 2 && it.interfaceProtocol == 0
+                }
+                .distinctBy { it.interfaceNumber to it.alternateSetting }
+
+            // Prefer IEC 61937 Type-III, then the codec-matched Type-II bitstream.
+            val formats = listOf(
+                Triple(3, UsbEncodedPlaybackPipeline.UAC1_FORMAT_TAG_IEC61937, UsbEncodedPlaybackPipeline.FRAMING_IEC61937_TYPE_III),
+                Triple(2, UsbEncodedPlaybackPipeline.UAC1_FORMAT_TAG_AC3, UsbEncodedPlaybackPipeline.FRAMING_UAC1_TYPE_II)
+            )
+            for ((formatType, formatTag, framingKind) in formats) {
+                val formatCode = if (framingKind == UsbEncodedPlaybackPipeline.FRAMING_IEC61937_TYPE_III)
+                    UsbEncodedPlaybackPipeline.IEC61937_DATATYPE_AC3 else UsbEncodedPlaybackPipeline.UAC1_FORMAT_TAG_AC3
+                for (alternate in alternates) {
+                    val validation = runCatching {
+                        org.json.JSONObject(
+                            NativeAudio.nativeValidateUsbEncodedDescriptor(
+                                descriptors, alternate.interfaceNumber, alternate.alternateSetting,
+                                formatType, formatTag, sourceRate
+                            )
+                        )
+                    }.getOrElse {
+                        lastError = it
+                        continue
+                    }
+                    if (!validation.optBoolean("valid")) continue
+                    val connection = manager.openDevice(device.usbDevice) ?: continue
+                    try {
+                        val pipeline = UsbEncodedPlaybackPipeline.open(
+                            connection, decoderHandle, descriptors,
+                            alternate.interfaceNumber, alternate.alternateSetting,
+                            formatType, formatTag, framingKind, formatCode
+                        )
+                        return device to pipeline
+                    } catch (error: Throwable) {
+                        lastError = error
+                    }
+                }
+            }
+        }
+        throw IllegalStateException(
+            "No permitted UAC1 Type-II AC-3 or Type-III IEC 61937 AC-3 profile matches the source sample rate.",
+            lastError
+        )
+    }
+
     /** Reads the current master-channel Feature Unit volume when the DAC exposes it. */
     fun readHardwareVolumeFraction(device: UsbDevice): Float? {
         if (!manager.hasPermission(device)) return null
