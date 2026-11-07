@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use crate::streaming::{decoder_ref, StreamDecoder};
+use crate::playback_session::{session_ref, SessionState};
 use std::time::{Duration, Instant};
 
 use jni::objects::JClass;
@@ -198,6 +199,7 @@ fn remove_producer(handle: jlong) {
 
 struct EncodedProducerState {
     decoder: Arc<Mutex<StreamDecoder>>,
+    session: Arc<SessionState>,
     queue: Arc<EncodedPacketQueue>,
     framing: EncodedFraming,
     maximum_bitrate_kbps: Option<u16>,
@@ -251,7 +253,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbEncod
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEncodedProducer(
-    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, queue_handle: jlong,
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, queue_handle: jlong, session_handle: jlong,
     framing_kind: jint, format_code: jint, maximum_bitrate_kbps: jint,
 ) -> jlong {
     if decoder_handle == 0 || !(0..=0xffff).contains(&format_code) || !(0..=0xffff).contains(&maximum_bitrate_kbps) {
@@ -266,6 +268,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return 0;
     };
+    let Some(session) = session_ref(session_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
+        return 0;
+    };
+    if !Arc::ptr_eq(&decoder, &session.decoder) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Playback session does not own the supplied decoder");
+        return 0;
+    }
     let mut decoder_guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
     let framing = match framing_kind {
         1 if format_code != 0 => {
@@ -301,6 +311,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
     let producer = EncodedProducer {
         state: Mutex::new(EncodedProducerState {
             decoder,
+            session,
             queue, framing, maximum_bitrate_kbps: maximum_bitrate,
             sequence: 0, pending: None, ended: false,
         }),
@@ -318,6 +329,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     }
     let Some(producer) = producer_ref(handle) else { return -2; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.session.cancelled.load(Ordering::Acquire) { return -3; }
     if state.ended { return -1; }
     if state.pending.is_none() {
         let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
@@ -417,6 +429,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
     }
     let Some(producer) = producer_ref(handle) else { return -1; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.session.cancelled.load(Ordering::Acquire) { return -1; }
     let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
     if let Err(error) = decoder.begin_encoded_stream() {
         let _ = env.throw_new("java/lang/IllegalStateException", error);
