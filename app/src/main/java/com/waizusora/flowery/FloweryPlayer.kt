@@ -340,7 +340,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         1 -> break
                         2 -> {
                             if (stopped.get() || NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)) break
-                            throw IllegalStateException("Rust AAudio output scheduler stopped unexpectedly")
+                            throw IllegalStateException(
+                                "Rust AAudio playback session failed (error ${NativeAudio.nativeGetPlaybackSessionError(sessionHandle)})"
+                            )
                         }
                         else -> throw IllegalStateException(
                             "Rust AAudio output scheduler failed (error ${NativeAudio.nativeGetPlaybackSessionError(sessionHandle)})"
