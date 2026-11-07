@@ -50,6 +50,21 @@ pub(super) struct EncodedPacketQueue {
     changed: Condvar,
 }
 
+fn synchronize_epoch(
+    epoch: &mut u64,
+    session_epoch: u64,
+    pending: &mut Option<EncodedPacket>,
+    queue: &EncodedPacketQueue,
+) -> bool {
+    if *epoch == session_epoch {
+        return false;
+    }
+    *pending = None;
+    queue.clear();
+    *epoch = session_epoch;
+    true
+}
+
 impl EncodedPacketQueue {
     pub(super) fn new(max_packets: usize, max_bytes: usize) -> Result<Self, &'static str> {
         if max_packets == 0 || max_bytes == 0 {
@@ -348,10 +363,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
     if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -3; }
     let session_epoch = state.session.epoch.load(Ordering::Acquire);
-    if session_epoch != state.epoch {
-        state.pending = None;
-        state.queue.clear();
-        state.epoch = session_epoch;
+    let queue = Arc::clone(&state.queue);
+    if synchronize_epoch(&mut state.epoch, session_epoch, &mut state.pending, &queue) {
         return 0;
     }
     if state.ended { return -1; }
@@ -557,6 +570,20 @@ mod tests {
         queue.close();
         assert!(queue.offer(packet(0, &[1])).is_err());
         assert_eq!(queue.poll(Duration::ZERO), None);
+    }
+
+    #[test]
+    fn session_epoch_change_discards_pending_and_queued_encoded_packets() {
+        let queue = EncodedPacketQueue::new(4, 64).unwrap();
+        queue.offer(packet(0, &[1, 2, 3])).unwrap();
+        let mut pending = Some(packet(1, &[4, 5]));
+        let mut epoch = 7;
+
+        assert!(synchronize_epoch(&mut epoch, 8, &mut pending, &queue));
+        assert_eq!(epoch, 8);
+        assert!(pending.is_none());
+        assert_eq!(queue.poll(Duration::ZERO), None);
+        assert!(!synchronize_epoch(&mut epoch, 8, &mut pending, &queue));
     }
 
     #[test]
