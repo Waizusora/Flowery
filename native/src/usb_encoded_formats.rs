@@ -6,6 +6,7 @@ use jni::JNIEnv;
 pub(super) const UAC1_FORMAT_TYPE_II: u8 = 0x02;
 pub(super) const UAC1_FORMAT_TYPE_III: u8 = 0x03;
 pub(super) const UAC1_FORMAT_TAG_AC3: u16 = 0x1002;
+pub(super) const UAC1_FORMAT_TAG_IEC61937_AC3: u16 = 0x2001;
 pub(super) const IEC61937_DATATYPE_AC3: u16 = 0x0001;
 pub(super) const IEC61937_AC3_BURST_BYTES: usize = 6144;
 
