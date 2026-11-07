@@ -127,18 +127,20 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 ├── app/
 │   └── src/main/
 │       ├── cpp/                 # libusb USB transport and CMake configuration
-│       ├── java/.../flowery/    # Android UI, playback adapters, service, SAF library, JNI bridge; Now Playing is extracted into its own Compose destination
+│       ├── java/.../flowery/    # Android UI, playback adapters, service, SAF library, JNI bridge; destinations are split by screen
 │       └── AndroidManifest.xml
 ├── native/
 │   ├── Cargo.toml               # Rust dependencies
 │   └── src/
 │       ├── lib.rs               # JNI entry points and Lofty tag operations
-│       ├── streaming.rs         # Streaming decode pump, resampler, EQ, seek
+│       ├── streaming.rs         # Registry-owned streaming decoder, resampler, EQ, seek
+│       ├── playback_session.rs  # Native session lifecycle, cancellation, and seek epochs
 │       ├── library.rs           # Audio extension and filename policy
 │       ├── catalog.rs           # Rust-owned library catalog and playlist association
 │       ├── queue.rs             # Shuffle, repeat, and queue transitions
 │       ├── usb_pcm.rs           # Bounded direct-USB PCM block queue
-│       ├── usb_producer.rs      # Rust-owned decoded USB segment and producer policy
+│       ├── usb_producer.rs      # Registry-owned decoded USB producer and session-bound epoch policy
+│       ├── usb_encoded.rs       # Registry-owned encoded packet queue and producer
 │       ├── usb_descriptors.rs   # UAC descriptor and clock-response parsing
 │       ├── playback_policy.rs   # Output-rate, ring sizing and frame policy
 │       └── aaudio.rs            # Rust AAudio NDK output and PCM ring buffer
