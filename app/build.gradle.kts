@@ -4,15 +4,41 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+import java.net.URL
+
 val signingStorePath = System.getenv("FLOWERY_KEYSTORE_PATH")
 val signingStorePassword = System.getenv("KEYSTORE_PASSWORD")
 val signingKeyAlias = System.getenv("KEY_ALIAS")
 val signingKeyPassword = System.getenv("KEY_PASSWORD")
 
+// Pin the upstream font source to an immutable Google Fonts commit.
+val notoSansRevision = "86aced91de05cd4f96a06838124cca45be337b2b"
+val generatedNotoRes = layout.buildDirectory.dir("generated/noto-res/main")
+val notoSansFile = generatedNotoRes.map { it.file("font/noto_sans.ttf") }
+
+val downloadNotoSans by tasks.registering {
+    val outputFile = notoSansFile
+    outputs.file(outputFile)
+    outputs.upToDateWhen { outputFile.get().asFile.isFile && outputFile.get().asFile.length() > 100_000 }
+    doLast {
+        val destination = outputFile.get().asFile
+        if (!destination.isFile || destination.length() <= 100_000) {
+            destination.parentFile.mkdirs()
+            val source = URL("https://raw.githubusercontent.com/google/fonts/$notoSansRevision/ofl/notosans/NotoSans%5Bwdth%2Cwght%5D.ttf")
+            val temporary = destination.resolveSibling(destination.name + ".download")
+            source.openStream().use { input -> temporary.outputStream().use { output -> input.copyTo(output) } }
+            require(temporary.length() > 100_000) { "Downloaded Noto Sans font is unexpectedly small." }
+            check(temporary.renameTo(destination)) { "Unable to install the Noto Sans font resource." }
+        }
+    }
+}
+
 android {
     namespace = "com.waizusora.flowery"
     compileSdk = 35
     ndkVersion = "27.2.12479018"
+
+    sourceSets.getByName("main").res.srcDir(generatedNotoRes)
 
     defaultConfig {
         applicationId = "com.waizusora.flowery"
@@ -56,6 +82,8 @@ android {
     }
     packaging { jniLibs.useLegacyPackaging = false }
 }
+
+tasks.named("preBuild").configure { dependsOn(downloadNotoSans) }
 
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
