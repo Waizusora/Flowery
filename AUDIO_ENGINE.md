@@ -166,3 +166,8 @@ The native descriptor parser regression suite includes UAC1 and UAC2 Feature Uni
 Android-specific SAF extension lookup and USB diagnostic capture are implemented in `AndroidPlaybackAdapters.kt`, rather than inside `FloweryPlayer`. The decoded USB producer's worker-control loop and bounded PCM block-envelope decoding are isolated in `UsbPcmProducerAdapter.kt`. These Kotlin classes do not decode audio or pack PCM; they forward cancellation, seek, gain and EQ changes to the Rust producer and pass completed blocks to the USB transport writer.
 
 `FloweryPlayer` still coordinates the playback worker and the direct USB writer loop. The extraction is an incremental boundary improvement, not a claim that the complete playback scheduler has moved to Rust. A later migration must preserve Android SAF descriptor ownership, USB permission and interface lifecycle, output-device discovery, and C++ libusb transport ownership.
+
+
+## Rust-owned playback route selection
+
+The route eligibility policy is centralized in `native/src/playback_policy.rs`. Kotlin supplies source facts obtained from the decoder and the user's direct-USB setting; Rust returns one of four route decisions: Android Float32, encoded AC-3 USB, source-native integer PCM USB candidate, or decoded Float32 USB. Kotlin remains responsible for performing the Android and USB operations required by the selected route. The route policy has native unit coverage, and CI verifies that all `NativeAudio` and `UsbDacNative` external declarations have matching Rust or C++ exports.

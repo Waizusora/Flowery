@@ -19,6 +19,9 @@ The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_j
 | `MainActivity` | Android Activity, app state, SAF launchers, service commands and permission callbacks |
 | `FloweryNavigation.kt` | Top-level Compose destinations and navigation |
 | `SettingsContent.kt` | Settings pages, USB DAC controls, audio information flow, diagnostics and open-source information |
+| `AudioTag.kt` | Shared audio metadata presentation model |
+| `TagEditorDialogs.kt` | Compose tag inspection and editing dialogs |
+| `EqualizerComponents.kt` | Reusable 31-band vertical EQ slider component |
 | `AudioTag.kt` | Android-independent metadata presentation model shared by tag inspection and editing |
 | `TagEditorDialogs.kt` | Compose tag inspection and editing dialogs, separated from Activity and navigation state |
 | `AndroidPlaybackAdapters.kt` | SAF extension resolution, bounded USB diagnostics recording and Android USB-host inventory |
@@ -38,10 +41,14 @@ The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_j
 | `native/src/usb_encoded_formats.rs` | Encoded format and transport framing validation |
 | `native/src/usb_descriptors.rs` | UAC1/UAC2 descriptors, Feature Unit controls, clock links/ranges, profiles and diagnostic traces |
 | `native/src/aaudio.rs` | AAudio stream lifecycle, bounded PCM ring and real-time callback |
-| `native/src/playback_policy.rs` | Rate selection, ring sizing, frame conversion and watermarks |
+| `native/src/playback_policy.rs` | Output route eligibility, rate selection, ring sizing, frame conversion and watermarks |
 | `native/src/queue.rs` | Queue index, shuffle, repeat and next/previous/completion policy |
 | `native/src/playback_controller.rs` | Rust playback lifecycle state machine |
 | `app/src/main/cpp/usb_audio_jni.cpp` | libusb transport and endpoint scheduling only |
+
+## Playback route policy
+
+The route eligibility decision is implemented in Rust through `nativeSelectPlaybackRoute` in `native/src/playback_policy.rs`. It selects Android Float32 output when direct USB mode is not requested, the UAC1 encoded AC-3 path for eligible AC-3 input when direct USB is requested, the native integer candidate for supported lossless integer sources, and the decoded Float32 USB path for other direct-USB sources. Kotlin performs the Android-specific work for the selected route, including opening SAF descriptors, discovering Android output devices, requesting USB permission and coordinating the transport. The Rust decision is covered by native unit tests and its JNI declaration is checked by the CI bridge-contract script.
 
 ## Playback data paths
 
@@ -89,7 +96,7 @@ UAC1/UAC2 profile parsing, clock-source linking, endpoint validation and sample-
 
 `FloweryPlayer` remains the largest mixed-responsibility adapter. It currently owns playback worker scheduling, Android route discovery, SAF descriptor lifetime, volume policy coordination, and the JNI polling loop for USB producers. The Rust engine already owns the core sample processing and format decisions, but it does not yet own the complete cross-route playback session scheduler.
 
-The first extraction has moved SAF extension resolution, USB diagnostics, USB-host inventory and the Rust producer worker adapter into focused Kotlin files. `FloweryPlayer` still owns cross-route playback worker scheduling and direct USB writer orchestration, so it is not yet a thin command-only adapter. The target is to reduce `FloweryPlayer` to Android-facing commands and resource adapters. Move session orchestration, producer scheduling, seek epochs and route-independent playback state into Rust only where the native layer can own the full lifetime safely. Keep SAF descriptor acquisition, Android output-device discovery, USB permission and Android control transfers in Kotlin. Keep libusb URBs in C++. Do not duplicate an Android API in Rust or introduce a second decoder/DSP implementation in C++.
+The first extraction has moved SAF extension resolution, USB diagnostics, USB-host inventory, the Rust producer worker adapter, tag metadata/dialogs and the equalizer slider into focused Kotlin files. `FloweryPlayer` still owns cross-route playback worker scheduling and direct USB writer orchestration, so it is not yet a thin command-only adapter. The target is to reduce `FloweryPlayer` to Android-facing commands and resource adapters. Move session orchestration, producer scheduling, seek epochs and route-independent playback state into Rust only where the native layer can own the full lifetime safely. Keep SAF descriptor acquisition, Android output-device discovery, USB permission and Android control transfers in Kotlin. Keep libusb URBs in C++. Do not duplicate an Android API in Rust or introduce a second decoder/DSP implementation in C++.
 
 The direct USB JNI block bridge should be optimized only after a native queue-to-transport ownership contract, cancellation semantics and teardown tests are in place. A native C ABI queue consumer may be considered so C++ can read a Rust-owned bounded queue without creating intermediate Kotlin byte arrays; this must preserve Rust as the producer and C++ as the transport consumer.
 
