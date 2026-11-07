@@ -364,7 +364,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -3; }
     let session_epoch = state.session.epoch.load(Ordering::Acquire);
     let queue = Arc::clone(&state.queue);
-    if synchronize_epoch(&mut state.epoch, session_epoch, &mut state.pending, &queue) {
+    let epoch_changed = {
+        let EncodedProducerState { epoch, pending, .. } = &mut *state;
+        synchronize_epoch(epoch, session_epoch, pending, &queue)
+    };
+    if epoch_changed {
         return 0;
     }
     if state.ended { return -1; }
@@ -521,7 +525,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEn
 
 #[cfg(test)]
 mod tests {
-    use super::{EncodedFraming, EncodedPacket, EncodedPacketQueue};
+    use super::{synchronize_epoch, EncodedFraming, EncodedPacket, EncodedPacketQueue};
     use std::time::Duration;
 
     fn packet(sequence: u64, bytes: &[u8]) -> EncodedPacket {
