@@ -143,7 +143,7 @@ impl StreamDecoder {
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
         let decoder = match symphonia::default::get_codecs().make(&params, &DecoderOptions::default()) {
             Ok(decoder) => Some(decoder),
-            Err(error) if params.codec == symphonia::core::codecs::CODEC_TYPE_EAC3 => None,
+            Err(_error) if params.codec == symphonia::core::codecs::CODEC_TYPE_EAC3 => None,
             Err(error) => return Err(format!("Unsupported audio codec: {error}")),
         };
         Ok(Self {
@@ -546,7 +546,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
     (((decoder.source_rate as u64)<<32) | decoder.channels as u64) as jlong
 }
 
-#[no_mangle]
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfectSourceInfo(
     _env: JNIEnv, _class: JClass, handle: jlong
