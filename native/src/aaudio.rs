@@ -225,7 +225,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32) -> Result<bool, i32> {
         let state = AAudioStream_getState(e.stream);
         if state == STATE_DISCONNECTED { return Err(-899); }
         if phase == 2 && (state == STATE_OPEN || state == STATE_PAUSED) &&
-            (buffered >= low_watermark || (eof && buffered == 0)) {
+            (buffered >= low_watermark || eof) {
             let result = AAudioStream_requestStart(e.stream);
             if result != OK { return Err(result); }
             let result = wait_stream_state(e.stream, STATE_STARTING, STATE_STARTED);
