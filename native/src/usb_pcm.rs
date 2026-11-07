@@ -315,4 +315,23 @@ mod handle_tests {
         assert!(queue_ref(second).is_some());
         destroy_queue(second);
     }
+
+    #[test]
+    fn destroying_pcm_queue_wakes_inflight_poll_and_rejects_writes() {
+        let handle = create_queue(1);
+        let retained = queue_ref(handle).expect("queue handle must resolve");
+        let waiter_queue = Arc::clone(&retained);
+        let waiter = std::thread::spawn(move || waiter_queue.poll(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(10));
+        destroy_queue(handle);
+        assert!(waiter.join().unwrap().is_none());
+        let block = PcmBlock {
+            pcm: vec![0, 0],
+            frames: 1,
+            epoch: 0,
+            start_frames: 0,
+            end_of_stream: false,
+        };
+        assert!(!retained.offer(block, Duration::ZERO));
+    }
 }
