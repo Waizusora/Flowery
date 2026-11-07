@@ -145,8 +145,8 @@ pub fn parse_playback_profiles(raw: &[u8], requested_bit_resolution: Option<u8>)
                         alt.format_tag = le16(raw, offset + 5);
                         alt.encoding = if alt.format_tag == 0x0003 { "ieee_float32" } else { "signed_integer" };
                     }
-                    // UAC1 Type-I format descriptor. Only PCM (format tag 0x0001)
-                    // is accepted by the direct integer-PCM transport.
+                    // UAC1 Type-I descriptor. PCM (0x0001) and IEEE_FLOAT (0x0003)
+                    // use the same Type-I subslot layout but remain distinct encodings.
                     (0x00, 0x02) if length >= 4 => {
                         alt.format_type = raw[offset + 3];
                         if alt.format_type != 0x01 || length < 8 { offset += length; continue; }

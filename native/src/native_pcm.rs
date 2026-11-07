@@ -42,7 +42,7 @@ impl NativePcmSamples {
     }
 }
 
-/// Conditions that must all hold before a native integer block can be
+/// Conditions that must all hold before a native source-format block can be
 /// advertised as bit-perfect for the negotiated direct USB PCM format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct BitPerfectRequirements {
@@ -92,6 +92,9 @@ pub(super) fn pack_native_integer_pcm(
     format: PcmFormat,
 ) -> Result<Vec<u8>, String> {
     let format = format.validate().map_err(str::to_string)?;
+    if format.encoding != crate::usb_pcm::PcmEncoding::SignedInteger {
+        return Err("Integer source samples require a signed-integer USB PCM profile".into());
+    }
     let source_bits = samples.valid_bits();
     if source_bits != format.valid_bits {
         return Err(format!(
