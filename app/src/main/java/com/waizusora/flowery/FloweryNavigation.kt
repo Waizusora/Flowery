@@ -90,6 +90,7 @@ fun FloweryNavigation(
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
+    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
     var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
@@ -125,7 +126,7 @@ fun FloweryNavigation(
                     append("isPlaying=$isPlaying positionMs=$positionMs durationMs=$durationMs ")
                     append("source=\"${logField(audioSourceLabel)}\" ")
                     append("track=\"${logField(selectedTrack?.title.orEmpty())}\" ")
-                    append("artist=\"${logField(selectedTrack?.artist.orEmpty())}\" ")
+                    append("artist=\"${logField(currentTag?.artist.orEmpty())}\" ")
                     append("routeStatus=\"${logField(status)}\" ")
                     append("usbDacConnected=$usbDacConnected usbPermissionGranted=$usbDacPermissionGranted ")
                     append("usbDacName=\"${logField(usbDacDeviceName)}\" ")
@@ -151,7 +152,6 @@ fun FloweryNavigation(
             else -> "System"
         })
     }
-    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
@@ -280,7 +280,7 @@ fun FloweryNavigation(
                             appendLine("# Hardware acceptance: pending physical Android/USB DAC verification; CI does not establish bit-perfect output")
                             appendLine("# Current playback: playing=$isPlaying positionMs=$positionMs durationMs=$durationMs")
                             appendLine("# Current source: $audioSourceLabel")
-                            appendLine("# Current track: ${selectedTrack?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
+                            appendLine("# Current track: ${currentTag?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
                             appendLine("# Current route status: $status")
                             appendLine("# USB DAC: connected=$usbDacConnected permissionGranted=$usbDacPermissionGranted name=$usbDacDeviceName")
                             appendLine("# Bit-perfect requested: $usbBitPerfectEnabled")
