@@ -228,10 +228,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
             return 0;
         }
     };
-    if let Err(error) = decoder.begin_encoded_stream() {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", error);
-        return 0;
-    }
     let producer = EncodedProducer {
         state: Mutex::new(EncodedProducerState {
             decoder: decoder_handle as *mut crate::streaming::StreamDecoder,
@@ -336,6 +332,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
     let producer = unsafe { &*(handle as *const EncodedProducer) };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
     let decoder = unsafe { &mut *state.decoder };
+    if let Err(error) = decoder.begin_encoded_stream() {
+        let _ = env.throw_new("java/lang/IllegalStateException", error);
+        return -1;
+    }
     match decoder.seek_to(position_ms as u64) {
         Ok(actual_position) => {
             state.pending = None;
