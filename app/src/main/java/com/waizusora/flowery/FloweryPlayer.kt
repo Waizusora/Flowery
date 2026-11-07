@@ -1,10 +1,7 @@
 package com.waizusora.flowery
 
 import android.content.Context
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
@@ -168,7 +165,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // Keep decoding below the real-time AAudio callback thread to reduce scheduler contention.
                 android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_DEFAULT)
             }
-            var descriptor: ParcelFileDescriptor? = null
+            var sourceDescriptor: PlaybackSourceDescriptor? = null
             var handle = 0L
             var sessionHandle = 0L
             var sessionFailed = false
@@ -178,9 +175,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "The previous playback session did not release its output device in time."
                 }
                 onState("Opening audio stream…")
-                descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-                    ?: throw IllegalStateException("Unable to open the selected audio document")
-                val extension = sourceResolver.resolveExtension(uri)
+                sourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
+                    sourceResolver.resolveExtension(sourceUri)
+                }
+                val extension = sourceDescriptor.extension
                 val bitPerfectRequested = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
                 diagnostics.record(
@@ -192,7 +190,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     onState("USB exclusive: decoding ${extension} through Symphonia into the shared PCM path…")
                 }
 
-                handle = NativeAudio.nativeCreateStreamDecoder(descriptor.fd, extension)
+                handle = NativeAudio.nativeCreateStreamDecoder(sourceDescriptor.fileDescriptor, extension)
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
@@ -242,34 +240,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
                 }
 
-                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-                val usbDevices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).filter {
-                    it.type == AudioDeviceInfo.TYPE_USB_DEVICE || it.type == AudioDeviceInfo.TYPE_USB_HEADSET
-                }
-                val selectedDevice = if (android.os.Build.VERSION.SDK_INT >= 28) {
-                    usbDevices.firstOrNull { it.sampleRates?.isNotEmpty() == true }
-                        ?: usbDevices.firstOrNull()
-                } else {
-                    null
-                }
-                val supportedRates = selectedDevice?.sampleRates?.filter { it > 0 }.orEmpty()
+                val outputRoute = AndroidOutputRouteResolver(context).resolve()
+                val supportedRates = outputRoute.supportedSampleRates
                 // Android-managed USB, AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
                 // Per-DAC software gain is reserved for the direct libusb route.
                 activeUsbDeviceKey = null
                 softwareVolume = 1f
-                val deviceId = selectedDevice?.id ?: 0
+                val deviceId = outputRoute.deviceId
                 // Android mixer BIT_PERFECT is not used as a fallback. When the user enables
                 // USB Bit-Perfect, playback has already taken the direct USB transport path.
                 // Shared Android output is handled by Rust AAudio. USB exclusive playback
                 // uses the separate libusb path above and never falls back to Android mixer mode.
                 val outputFormat = 2 // AAUDIO_FORMAT_PCM_FLOAT
-                val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates.toIntArray())
+                val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates)
                 val targetRate = NativeAudio.nativeSelectOutputSampleRate(
                     preferredRate, channels, deviceId, outputFormat, false
                 )
                 check(targetRate > 0) {
                     "Unable to negotiate the selected USB DAC sample rate. " +
-                        "device=${selectedDevice?.productName ?: "unknown"}, deviceId=$deviceId, " +
+                        "device=${outputRoute.deviceName ?: "unknown"}, deviceId=$deviceId, " +
                         "sourceRate=$sourceRate, preferredRate=$preferredRate, channels=$channels. " +
                         "The app did not fall back to the phone output."
                 }
@@ -309,11 +298,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "actualChannels=${attempt[8]}, actualFormat=${attempt[9]}, " +
                             "failureStage=$failureStage"
                     } else "native open diagnostics unavailable"
-                    val device = selectedDevice?.let {
-                        "product=${it.productName}, id=${it.id}, type=${it.type}, " +
-                            "address=${runCatching { it.address }.getOrNull() ?: "unknown"}, " +
-                            "rates=${it.sampleRates?.joinToString() ?: "unknown"}"
-                    } ?: "no USB output device selected"
+                    val device = if (outputRoute.isUsbOutput) {
+                        "product=${outputRoute.deviceName ?: "unknown"}, id=${outputRoute.deviceId}, " +
+                            "type=${outputRoute.deviceType}, address=${outputRoute.deviceAddress ?: "unknown"}, " +
+                            "rates=${outputRoute.supportedSampleRates.joinToString().ifEmpty { "unknown" }}"
+                    } else "no USB output device selected"
                     val usbHost = diagnostics.hostDeviceSummary()
                     val reason = if (opened == -10001 && deviceId != 0) {
                         "Android did not provide the required USB DAC EXCLUSIVE mode."
@@ -329,7 +318,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
 
-                val routeName = if (deviceId != 0) "USB DAC" else "system output"
+                val routeName = if (outputRoute.isUsbOutput) "USB DAC" else "system output"
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
                 val sharingName = when (outputInfo.getOrNull(9)?.toInt()) {
                     0 -> "EXCLUSIVE"
@@ -435,7 +424,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (playbackGeneration.get() == generation) {
                     activeUsbDeviceKey = null
                 }
-                descriptor?.close()
+                sourceDescriptor?.close()
             }
         }
     }
