@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
-use std::sync::{Condvar, Mutex};
+use std::collections::HashMap;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use jni::objects::JClass;
@@ -127,8 +129,37 @@ impl UsbPcmQueue {
     }
 }
 
-pub(super) fn queue_ref(handle: jlong) -> Option<&'static UsbPcmQueue> {
-    if handle == 0 { None } else { Some(unsafe { &*(handle as *const UsbPcmQueue) }) }
+static NEXT_QUEUE_HANDLE: AtomicU64 = AtomicU64::new(1);
+static PCM_QUEUES: OnceLock<Mutex<HashMap<i64, Arc<UsbPcmQueue>>>> = OnceLock::new();
+
+fn queue_registry() -> &'static Mutex<HashMap<i64, Arc<UsbPcmQueue>>> {
+    PCM_QUEUES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub(super) fn queue_ref(handle: jlong) -> Option<Arc<UsbPcmQueue>> {
+    if handle <= 0 { return None; }
+    queue_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
+}
+
+fn create_queue(capacity: usize) -> jlong {
+    loop {
+        let candidate = NEXT_QUEUE_HANDLE.fetch_add(1, Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 { return 0; }
+        let handle = candidate as i64;
+        let mut registry = queue_registry().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::new(UsbPcmQueue::new(capacity)));
+            return handle as jlong;
+        }
+    }
+}
+
+fn destroy_queue(handle: jlong) {
+    if handle <= 0 { return; }
+    if let Some(queue) = queue_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
+        queue.state.lock().unwrap_or_else(|error| error.into_inner()).closed = true;
+        queue.changed.notify_all();
+    }
 }
 
 #[no_mangle]
@@ -136,7 +167,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
     _env: JNIEnv, _class: JClass, capacity: jint
 ) -> jlong {
     if !(1..=64).contains(&capacity) { return 0; }
-    Box::into_raw(Box::new(UsbPcmQueue::new(capacity as usize))) as jlong
+    create_queue(capacity as usize)
 }
 
 #[no_mangle]
@@ -187,9 +218,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbPcmQ
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbPcmQueue(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) {
-    if handle != 0 {
-        unsafe { drop(Box::from_raw(handle as *mut UsbPcmQueue)); }
-    }
+    destroy_queue(handle);
 }
 
 #[cfg(test)]
@@ -256,5 +285,33 @@ mod tests {
         let block = PcmBlock { pcm: Vec::new(), frames: 0, epoch: 0, start_frames: 0, end_of_stream: true };
         assert!(!queue.offer(block, Duration::ZERO));
         assert!(queue.poll(Duration::ZERO).is_none());
+    }
+}
+
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn pcm_queue_handles_reject_stale_values_and_keep_inflight_references_alive() {
+        assert!(queue_ref(0).is_none());
+        assert!(queue_ref(-1).is_none());
+        let handle = create_queue(2);
+        let retained = queue_ref(handle).expect("new queue handle must resolve");
+        destroy_queue(handle);
+        assert!(queue_ref(handle).is_none());
+        let block = PcmBlock { pcm: vec![1, 2], frames: 1, epoch: 0, start_frames: 0, end_of_stream: false };
+        assert!(!retained.offer(block, Duration::ZERO));
+    }
+
+    #[test]
+    fn pcm_queue_handles_are_unique() {
+        let first = create_queue(1);
+        let second = create_queue(1);
+        assert_ne!(first, second);
+        destroy_queue(first);
+        assert!(queue_ref(second).is_some());
+        destroy_queue(second);
     }
 }
