@@ -1114,6 +1114,7 @@ mod tests {
             assert_eq!(stream.source_bits, bits as u8);
             stream.configure(48_000, &[0.0; 31]).unwrap();
             let format = crate::usb_pcm::PcmFormat {
+                encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
                 sample_rate: 48_000, channels: 2, valid_bits: bits as u8,
                 subslot_bytes: subslot as u8, signed: true, little_endian: true,
             };
@@ -1128,6 +1129,7 @@ mod tests {
                 float_stream.lossless_source = false;
                 float_stream.configure(48_000, &[0.0; 31]).unwrap();
                 let padded_format = crate::usb_pcm::PcmFormat {
+                    encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
                     sample_rate: 48_000, channels: 2, valid_bits: 24,
                     subslot_bytes: 4, signed: true, little_endian: true,
                 };
