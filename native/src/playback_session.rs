@@ -1,6 +1,7 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
-use jni::objects::JClass;
-use jni::sys::{jint, jlong, jboolean, JNI_FALSE, JNI_TRUE};
+use crate::playback_policy::select_playback_route;
+use jni::objects::{JClass, JLongArray};
+use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -78,6 +79,58 @@ fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
             return Some(next);
         }
     }
+}
+
+/// Creates a native playback session and selects its output route from decoder metadata.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlaybackSession(
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, bit_perfect_requested: jboolean,
+) -> jlongArray {
+    let Some(decoder) = decoder_ref(decoder_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
+        return std::ptr::null_mut();
+    };
+    let (source_rate, channels, source_bits, lossless_source, is_ac3) = {
+        let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        guard.playback_metadata()
+    };
+    let route = select_playback_route(
+        bit_perfect_requested != 0,
+        is_ac3,
+        lossless_source,
+        source_bits as i32,
+        channels as i32,
+    );
+    let output = match env.new_long_array(7) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let session_handle = register_session(SessionState {
+        epoch: AtomicU64::new(0),
+        cancelled: AtomicBool::new(false),
+        phase: AtomicI64::new(SessionPhase::Created as i64),
+        route,
+        gate: Mutex::new(()),
+        decoder,
+    });
+    if session_handle == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
+        return std::ptr::null_mut();
+    }
+    let values: [jlong; 7] = [
+        session_handle,
+        route as jlong,
+        source_rate as jlong,
+        channels as jlong,
+        source_bits as jlong,
+        if lossless_source { 1 } else { 0 },
+        if is_ac3 { 1 } else { 0 },
+    ];
+    if env.set_long_array_region(&output, 0, &values).is_err() {
+        registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&session_handle);
+        return std::ptr::null_mut();
+    }
+    output.into_raw()
 }
 
 #[no_mangle]
