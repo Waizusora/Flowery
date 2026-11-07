@@ -615,7 +615,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "events=${events}"
                     )
                 },
-                onWrite = { result, chunk, totalFrames, throughputRatio, audioDurationMs ->
+                onWrite = { result, chunk, totalFrames, starvationEvents, throughputRatio, audioDurationMs ->
                     diagnostics.record(
                         "USB_WRITE chunk=${chunk} requestedFrames=${result.frames} " +
                             "acceptedFrames=${result.acceptedFrames} pcmBytes=${result.pcmBytes} " +
@@ -630,7 +630,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     if (chunk % 32L == 0L) {
                         diagnostics.record(
                             "USB_TRANSFER_PROGRESS chunks=${chunk} totalFramesSent=${totalFrames} " +
-                                "starvationEvents=tracked_by_pipeline"
+                                "starvationEvents=${starvationEvents}"
                         )
                     }
                 },
