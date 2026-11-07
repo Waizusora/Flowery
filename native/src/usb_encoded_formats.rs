@@ -204,10 +204,17 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 let address = raw[offset + 2];
                 let attributes = raw[offset + 3];
                 let packet_raw = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
-                let packet_bytes = (packet_raw & 0x07ff) * ((((packet_raw >> 11) & 0x03) + 1) as u16);
+                let transactions = (packet_raw >> 11) & 0x03;
+                let packet_bytes = (packet_raw & 0x07ff) * ((transactions + 1) as u16);
                 let interval = raw[offset + 6];
+                let synchronization_type = (attributes >> 2) & 0x03;
+                if transactions == 3 { return Err("Encoded endpoint uses a reserved high-bandwidth transaction count"); }
+                if synchronization_type == 1 {
+                    return Err("Asynchronous encoded endpoints are not enabled without a verified feedback scheduler");
+                }
                 if address & 0x80 == 0 && address & 0x0f != 0 &&
                     attributes & 0x03 == 0x01 && ((attributes >> 4) & 0x03) == 0 &&
+                    (synchronization_type == 2 || synchronization_type == 3) &&
                     packet_bytes > 0 && (1..=16).contains(&interval) {
                     endpoint = Some((address, packet_bytes, interval));
                 }
@@ -246,7 +253,7 @@ mod tests {
             9, 0x04, 1, 1, 0, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 0x02, 0x10,
             12, 0x24, 2, 2, 0x80, 0x02, 0x00, 0x06, 1, 0x80, 0xbb, 0x00,
-            7, 0x05, 0x01, 0x01, 0xc0, 0x00, 1,
+            7, 0x05, 0x01, 0x09, 0xc0, 0x00, 1,
             7, 0x25, 1, 1, 0, 0, 0,
         ]
     }
@@ -256,7 +263,7 @@ mod tests {
             9, 0x04, 2, 1, 0, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 0x01, 0x20,
             11, 0x24, 2, 3, 2, 2, 16, 1, 0x80, 0xbb, 0x00,
-            7, 0x05, 0x02, 0x01, 0xc0, 0x00, 1,
+            7, 0x05, 0x02, 0x09, 0xc0, 0x00, 1,
             7, 0x25, 1, 1, 0, 0, 0,
         ]
     }
