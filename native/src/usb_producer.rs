@@ -373,7 +373,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPcmProduc
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPcmProducerWorker(
-    env: JNIEnv, _class: JClass, handle: jlong,
+    mut env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jint {
     let Some(producer) = producer_ref(handle) else { return 0; };
     match stop_producer_worker(&producer) {
