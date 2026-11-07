@@ -312,9 +312,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
         let _ = env.throw_new("java/lang/IllegalStateException", "Seek requests are only accepted by AAudio sessions");
         return -1;
     }
-    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
-    if session.cancelled.load(Ordering::Acquire) ||
-        !matches!(session.phase.load(Ordering::Acquire) as i32, 2 | 3) {
+    let gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    let phase = session.phase.load(Ordering::Acquire) as i32;
+    if session.cancelled.load(Ordering::Acquire) || !matches!(phase, 2 | 3) {
         let _ = env.throw_new("java/lang/IllegalStateException", "AAudio session is not seekable in its current state");
         return -1;
     }
@@ -329,6 +329,28 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
             segment_start_ms,
             segment_end_ms,
         });
+    drop(gate);
+    #[cfg(target_os = "android")]
+    if phase == SessionPhase::Running as i32 {
+        match crate::aaudio::pause_output_for_session() {
+            Some(0) => {}
+            Some(error) => {
+                session.error_code.store(error, Ordering::Release);
+                transition_session_phase(&session, SessionPhase::Failed as i32);
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!("Unable to pause AAudio output for seek (error {error})"),
+                );
+                return -1;
+            }
+            None => {
+                session.error_code.store(-904, Ordering::Release);
+                transition_session_phase(&session, SessionPhase::Failed as i32);
+                let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output is unavailable during seek");
+                return -1;
+            }
+        }
+    }
     epoch as jlong
 }
 
