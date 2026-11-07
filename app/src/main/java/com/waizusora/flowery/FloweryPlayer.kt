@@ -208,12 +208,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val losslessSource = (sourceInfo ushr 32) != 0L
                     val eligibleSource = losslessSource && sourceBits in setOf(8, 16, 20, 24, 32) && channels in 1..8
                     recordUsbDiagnostic("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=${eligibleSource}")
+                    usbPlaybackMode = true
                     if (eligibleSource) {
-                        usbPlaybackMode = true
+                        recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_PCM_NATIVE_CANDIDATE sourceBits=${sourceBits}")
                         playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
-                        return@thread
+                    } else {
+                        recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
+                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs)
                     }
-                    onState("Bit Perfect unavailable: source must expose exact integer PCM samples at a supported valid-bit depth.")
+                    return@thread
                 }
 
                 val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
