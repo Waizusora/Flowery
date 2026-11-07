@@ -6,7 +6,8 @@ use jni::sys::{jfloat, jint, jlong};
 use jni::JNIEnv;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicBool, Ordering};
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 const USB_DECODE_CHUNK_FRAMES: usize = 32_768;
@@ -29,6 +30,10 @@ struct ProducerState {
 
 struct UsbPcmProducer {
     state: Mutex<ProducerState>,
+    worker: Mutex<Option<JoinHandle<()>>>,
+    worker_cancelled: AtomicBool,
+    target_gain_bits: AtomicU32,
+    worker_error: Mutex<Option<String>>,
 }
 
 static NEXT_PRODUCER_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -59,7 +64,9 @@ fn register_producer(producer: UsbPcmProducer) -> jlong {
 
 fn destroy_producer(handle: jlong) {
     if handle > 0 {
-        producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+        if let Some(producer) = producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
+            let _ = stop_producer_worker(&producer);
+        }
     }
 }
 
@@ -147,6 +154,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
             pending_block: None,
             bit_perfect_active: false,
         }),
+        worker: Mutex::new(None),
+        worker_cancelled: AtomicBool::new(false),
+        target_gain_bits: AtomicU32::new(1.0_f32.to_bits()),
+        worker_error: Mutex::new(None),
     };
     register_producer(producer)
 }
@@ -170,21 +181,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestUsbPc
     state.queue.clear();
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmProducer(
-    mut env: JNIEnv,
-    _class: JClass,
-    handle: jlong,
-    target_gain: jfloat,
-) -> jint {
-    if handle <= 0 || !target_gain.is_finite() {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid direct USB producer handle or gain");
-        return -2;
-    }
-    let Some(producer) = producer_ref(handle) else { return -2; };
+fn pump_once(producer: &UsbPcmProducer, target_gain: f32) -> Result<jint, String> {
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-
-    if state.session.cancelled.load(std::sync::atomic::Ordering::Acquire) { return -3; }
+    if state.session.cancelled.load(Ordering::Acquire) || producer.worker_cancelled.load(Ordering::Acquire) {
+        return Ok(-3);
+    }
     let session_epoch = state_epoch(&state.session);
     if session_epoch != state.epoch {
         state.epoch = session_epoch;
@@ -193,26 +194,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
     }
 
     if let Some(relative_ms) = state.pending_seek_ms.take() {
-        let absolute_ms = absolute_seek_target(
-            state.segment_start_ms, state.segment_end_ms, relative_ms
-        );
+        let absolute_ms = absolute_seek_target(state.segment_start_ms, state.segment_end_ms, relative_ms);
         let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
-        match decoder.seek_to(absolute_ms) {
-            Ok(actual_ms) => {
-                state.queue.clear();
-                state.epoch = state_epoch(&state.session);
-                state.at_end = false;
-                state.pending_block = None;
-                state.bit_perfect_active = false;
-                state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.format.sample_rate as u64);
-                state.segment_remaining_frames = state.segment_end_ms
-                    .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.format.sample_rate as u64));
-            }
-            Err(error) => {
-                let _ = env.throw_new("java/lang/IllegalStateException", error);
-                return -2;
-            }
-        }
+        let actual_ms = decoder.seek_to(absolute_ms)?;
+        drop(decoder);
+        state.queue.clear();
+        state.epoch = state_epoch(&state.session);
+        state.at_end = false;
+        state.pending_block = None;
+        state.bit_perfect_active = false;
+        state.position_frames = frames_at_ms(actual_ms.saturating_sub(state.segment_start_ms), state.format.sample_rate as u64);
+        state.segment_remaining_frames = state.segment_end_ms
+            .map(|end| frames_at_ms(end.saturating_sub(actual_ms), state.format.sample_rate as u64));
     }
 
     if let Some(block) = state.pending_block.take() {
@@ -220,52 +213,43 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         if state.queue.offer(block.clone(), Duration::ZERO) {
             if is_end {
                 state.at_end = true;
-                return -1;
+                return Ok(-1);
             }
-            return 1;
+            return Ok(1);
         }
         state.pending_block = Some(block);
-        return 0;
+        return Ok(0);
     }
 
-    if state.at_end {
-        return 0;
-    }
+    if state.at_end { return Ok(0); }
 
     if state.segment_remaining_frames == Some(0) {
         let block = end_block(state.epoch, state.position_frames);
         if state.queue.offer(block.clone(), Duration::ZERO) {
             state.at_end = true;
-            return -1;
+            return Ok(-1);
         }
         state.pending_block = Some(block);
-        return 0;
+        return Ok(0);
     }
 
     let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
-    let pcm = match decoder.read_usb_pcm(USB_DECODE_CHUNK_FRAMES, target_gain, state.format) {
-        Ok(value) => value,
-        Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error);
-            return -2;
-        }
-    };
+    let pcm = decoder.read_usb_pcm(USB_DECODE_CHUNK_FRAMES, target_gain, state.format)?;
     state.bit_perfect_active = decoder.native_pcm_active();
     drop(decoder);
     if pcm.is_empty() {
         let block = end_block(state.epoch, state.position_frames);
         if state.queue.offer(block.clone(), Duration::ZERO) {
             state.at_end = true;
-            return -1;
+            return Ok(-1);
         }
         state.pending_block = Some(block);
-        return 0;
+        return Ok(0);
     }
 
     let bytes_per_frame = state.format.bytes_per_frame();
     if pcm.len() % bytes_per_frame != 0 {
-        let _ = env.throw_new("java/lang/IllegalStateException", "Rust decoder returned an incomplete packed PCM frame");
-        return -2;
+        return Err("Rust decoder returned an incomplete packed PCM frame".into());
     }
     let decoded_frames = pcm.len() / bytes_per_frame;
     let frames = state.segment_remaining_frames
@@ -275,10 +259,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         let block = end_block(state.epoch, state.position_frames);
         if state.queue.offer(block.clone(), Duration::ZERO) {
             state.at_end = true;
-            return -1;
+            return Ok(-1);
         }
         state.pending_block = Some(block);
-        return 0;
+        return Ok(0);
     }
 
     let block = PcmBlock {
@@ -293,10 +277,106 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
         *remaining = remaining.saturating_sub(frames as u64);
     }
     if state.queue.offer(block.clone(), Duration::ZERO) {
-        1
+        Ok(1)
     } else {
         state.pending_block = Some(block);
-        0
+        Ok(0)
+    }
+}
+
+fn start_producer_worker(producer: Arc<UsbPcmProducer>) -> Result<(), String> {
+    let mut worker = producer.worker.lock().unwrap_or_else(|error| error.into_inner());
+    if worker.is_some() { return Err("USB PCM producer worker is already started".into()); }
+    producer.worker_cancelled.store(false, Ordering::Release);
+    *producer.worker_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    let worker_producer = Arc::clone(&producer);
+    let handle = thread::Builder::new().name("flowery-rust-usb-pcm-producer".into()).spawn(move || {
+        loop {
+            if worker_producer.worker_cancelled.load(Ordering::Acquire) { break; }
+            let gain = f32::from_bits(worker_producer.target_gain_bits.load(Ordering::Acquire));
+            match pump_once(&worker_producer, gain) {
+                Ok(1) => {}
+                Ok(0) | Ok(-1) => thread::sleep(Duration::from_millis(2)),
+                Ok(-3) => break,
+                Ok(_) => {
+                    *worker_producer.worker_error.lock().unwrap_or_else(|error| error.into_inner()) =
+                        Some("USB PCM producer returned an invalid worker status".into());
+                    break;
+                }
+                Err(error) => {
+                    *worker_producer.worker_error.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(error);
+                    break;
+                }
+            }
+        }
+    }).map_err(|error| format!("Unable to start USB PCM producer worker: {error}"))?;
+    *worker = Some(handle);
+    Ok(())
+}
+
+fn stop_producer_worker(producer: &UsbPcmProducer) -> Result<(), String> {
+    producer.worker_cancelled.store(true, Ordering::Release);
+    let handle = producer.worker.lock().unwrap_or_else(|error| error.into_inner()).take();
+    if let Some(handle) = handle {
+        handle.join().map_err(|_| "USB PCM producer worker panicked during shutdown".to_string())?;
+    }
+    Ok(())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbPcmProducerWorker(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    let Some(producer) = producer_ref(handle) else { return -1; };
+    match start_producer_worker(producer) {
+        Ok(()) => 0,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetUsbPcmProducerGain(
+    mut env: JNIEnv, _class: JClass, handle: jlong, gain: jfloat,
+) -> jint {
+    if !gain.is_finite() { let _ = env.throw_new("java/lang/IllegalArgumentException", "USB PCM producer gain must be finite"); return -1; }
+    let Some(producer) = producer_ref(handle) else { return -1; };
+    producer.target_gain_bits.store(gain.clamp(0.0, 1.0).to_bits(), Ordering::Release);
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUsbPcmProducerWorkerError(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jni::sys::jstring {
+    let Some(producer) = producer_ref(handle) else { return std::ptr::null_mut(); };
+    let error = producer.worker_error.lock().unwrap_or_else(|poison| poison.into_inner())
+        .clone().unwrap_or_default();
+    match env.new_string(error) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPcmProducerWorker(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    let Some(producer) = producer_ref(handle) else { return 0; };
+    match stop_producer_worker(&producer) {
+        Ok(()) => 0,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmProducer(
+    mut env: JNIEnv, _class: JClass, handle: jlong, target_gain: jfloat,
+) -> jint {
+    if !target_gain.is_finite() {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid direct USB producer gain");
+        return -2;
+    }
+    let Some(producer) = producer_ref(handle) else { return -2; };
+    match pump_once(&producer, target_gain) {
+        Ok(status) => status,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -2 }
     }
 }
 
