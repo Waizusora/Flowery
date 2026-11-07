@@ -517,6 +517,7 @@ impl StreamDecoder {
                 return Err("The audio stream changed channel layout mid-track".into());
             }
             let discard = self.discard_source_frames.min(decoded_frames as u64) as usize;
+            let fallback_decoded = decoded.clone();
             let native = crate::native_pcm::from_symphonia_buffer(
                 decoded,
                 format.valid_bits,
@@ -539,10 +540,8 @@ impl StreamDecoder {
                     // representation. Preserve playback by switching this
                     // stream to the established float32 path before any
                     // native PCM block has been emitted.
-                    let decoder = self.decoder.as_ref().ok_or("PCM decoder is unavailable")?;
-                    let decoded = decoder.last_decoded();
-                    let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, *decoded.spec());
-                    buffer.copy_interleaved_ref(decoded);
+                    let mut buffer = SampleBuffer::<f32>::new(fallback_decoded.capacity() as u64, *fallback_decoded.spec());
+                    buffer.copy_interleaved_ref(fallback_decoded);
                     let mut samples = buffer.samples().to_vec();
                     let discard_samples = discard * self.channels;
                     if discard_samples > 0 && discard_samples <= samples.len() {
@@ -579,7 +578,6 @@ impl StreamDecoder {
     fn move_native_remainder_to_float(&mut self, format: crate::usb_pcm::PcmFormat) {
         if !self.native_pcm_active || self.native_pcm_pending.is_empty() { return; }
         let bytes_per_sample = format.subslot_bytes as usize;
-        let sample_count = self.native_pcm_pending.len() / bytes_per_sample;
         let scale = (1_u64 << (format.valid_bits - 1)) as f32;
         let bytes: Vec<u8> = self.native_pcm_pending.drain(..).collect();
         for sample in bytes.chunks_exact(bytes_per_sample) {
@@ -595,7 +593,6 @@ impl StreamDecoder {
             self.input_pending.push(signed as f32 / scale);
         }
         debug_assert_eq!(self.input_pending.len() % self.channels, 0);
-        let _ = sample_count;
         self.native_pcm_active = false;
         self.native_pcm_decided = true;
     }
