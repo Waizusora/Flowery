@@ -47,6 +47,8 @@ object NativeAudio {
     external fun nativeRequestUsbPcmProducerSeek(producer: Long, positionMs: Long)
     external fun nativePumpUsbPcmProducer(producer: Long, targetGain: Float): Int
     external fun nativeDestroyUsbPcmProducer(producer: Long)
+    external fun nativeValidateUsbEncodedDescriptor(descriptors: ByteArray, interfaceNumber: Int, alternateSetting: Int, formatType: Int, formatTag: Int): String
+    external fun nativeSeekUsbEncodedProducer(producer: Long, positionMs: Long): Long
     external fun nativeCreateUsbEncodedQueue(maxPackets: Int, maxBytes: Int): Long
     external fun nativePollUsbEncodedPacket(queue: Long, timeoutMs: Int): ByteArray?
     external fun nativeCloseUsbEncodedQueue(queue: Long)
