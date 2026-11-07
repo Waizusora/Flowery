@@ -740,6 +740,7 @@ pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
 struct StreamPumpWorker {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
+    error: Arc<Mutex<String>>,
     epoch: u64,
     thread: JoinHandle<()>,
 }
@@ -945,8 +946,10 @@ fn start_stream_pump_worker(
     let worker_epoch = session.epoch.load(Ordering::Acquire);
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
+    let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
+    let thread_error = Arc::clone(&error);
     let thread_session = Arc::clone(&session);
     let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
         let mut produced_frames = 0_u64;
@@ -963,6 +966,8 @@ fn start_stream_pump_worker(
             }
             let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
             if decoder.channels > 2 {
+                *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                    format!("AAudio streaming does not support {} output channels", decoder.channels);
                 thread_status.store(-2, Ordering::Release);
                 break;
             }
@@ -978,7 +983,8 @@ fn start_stream_pump_worker(
             }
             let samples = match decoder.read_frames(frames) {
                 Ok(samples) => samples,
-                Err(_) => {
+                Err(decode_error) => {
+                    *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = decode_error;
                     thread_status.store(-2, Ordering::Release);
                     break;
                 }
@@ -994,7 +1000,17 @@ fn start_stream_pump_worker(
                 Ok(written) if written == samples.len() / channels => {
                     produced_frames = produced_frames.saturating_add(written as u64);
                 }
-                _ => {
+                Ok(written) => {
+                    *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = format!(
+                        "AAudio ring buffer accepted an incomplete PCM chunk ({written} of {} frames)",
+                        samples.len() / channels
+                    );
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+                Err(write_error) => {
+                    *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                        format!("AAudio ring buffer write failed: {write_error}");
                     thread_status.store(-2, Ordering::Release);
                     break;
                 }
@@ -1018,7 +1034,7 @@ fn start_stream_pump_worker(
         return Err("Playback session changed while the AAudio decode worker was starting".into());
     }
     stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
-        .insert(handle, StreamPumpWorker { stop, status, epoch: worker_epoch, thread: worker });
+        .insert(handle, StreamPumpWorker { stop, status, error, epoch: worker_epoch, thread: worker });
     drop(session_gate);
     Ok(())
 }
@@ -1111,6 +1127,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamPum
 ) -> jint {
     stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
         .get(&handle).map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamPumpError(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jstring {
+    let error = stream_pump_workers().lock().unwrap_or_else(|poison| poison.into_inner())
+        .get(&handle)
+        .map(|worker| worker.error.lock().unwrap_or_else(|poison| poison.into_inner()).clone())
+        .unwrap_or_else(|| "The Rust stream-pump worker is unavailable".to_string());
+    write_text_to_java(&mut env, &error)
 }
 
 #[cfg(target_os = "android")]
