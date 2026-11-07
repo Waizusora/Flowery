@@ -116,7 +116,7 @@ pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> boo
 /// Creates a native playback session and selects its output route from decoder metadata.
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlaybackSession(
-    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, bit_perfect_requested: jboolean,
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, usb_direct_available: jboolean,
 ) -> jlongArray {
     let Some(decoder) = decoder_ref(decoder_handle) else {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
@@ -126,7 +126,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.playback_metadata()
     };
-    let is_ac3 = bit_perfect_requested != 0 && source_is_ac3;
+    let is_ac3 = usb_direct_available != 0 && source_is_ac3;
     let route = select_playback_route(
         bit_perfect_requested != 0,
         is_ac3,
