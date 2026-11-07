@@ -354,10 +354,45 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(_:JNIEnv,_:JClass,position:jlong,start:jboolean)->jint{
- let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null()||position<0{return INVALID_STATE;}
- unsafe{let mut s=AAudioStream_getState(e.stream);if s==STATE_DISCONNECTED{return -899;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s==STATE_PAUSING{let r=wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);if r!=OK{return r;}s=STATE_PAUSED;}if s!=STATE_PAUSED&&s!=STATE_OPEN&&s!=STATE_STOPPED{return INVALID_STATE;}}
- let o=e.output.as_ref().unwrap();o.read.store(0,Ordering::Relaxed);o.write.store(0,Ordering::Relaxed);o.played.store(position as u64,Ordering::Release);o.eof.store(false,Ordering::Release);o.active.store(true,Ordering::Release);
- if start==JNI_TRUE{unsafe{AAudioStream_requestStart(e.stream)}}else{OK}
+ let result=flush_output_for_seek(position);
+ if result!=OK{return result;}
+ if start==JNI_TRUE{
+  let e=engine().lock().unwrap_or_else(|p|p.into_inner());
+  unsafe{AAudioStream_requestStart(e.stream)}
+ }else{OK}
+}
+
+/// Pauses the native stream and atomically discards buffered samples for a seek.
+pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
+    if position < 0 { return INVALID_STATE; }
+    let e = engine().lock().unwrap_or_else(|p| p.into_inner());
+    if e.output.is_none() || e.stream.is_null() { return INVALID_STATE; }
+    unsafe {
+        let mut state = AAudioStream_getState(e.stream);
+        if state == STATE_DISCONNECTED { return -899; }
+        if state == STATE_STARTED {
+            let result = AAudioStream_requestPause(e.stream);
+            if result != OK { return result; }
+            let result = wait_stream_state(e.stream, STATE_PAUSING, STATE_PAUSED);
+            if result != OK { return result; }
+            state = STATE_PAUSED;
+        }
+        if state == STATE_PAUSING {
+            let result = wait_stream_state(e.stream, STATE_PAUSING, STATE_PAUSED);
+            if result != OK { return result; }
+            state = STATE_PAUSED;
+        }
+        if state != STATE_PAUSED && state != STATE_OPEN && state != STATE_STOPPED {
+            return INVALID_STATE;
+        }
+    }
+    let output = e.output.as_ref().unwrap();
+    output.read.store(0, Ordering::Relaxed);
+    output.write.store(0, Ordering::Relaxed);
+    output.played.store(position as u64, Ordering::Release);
+    output.eof.store(false, Ordering::Release);
+    output.active.store(true, Ordering::Release);
+    OK
 }
 
 /// Signals end-of-stream to the AAudio callback without crossing JNI.
