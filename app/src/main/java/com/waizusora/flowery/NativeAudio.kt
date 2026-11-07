@@ -71,7 +71,7 @@ object NativeAudio {
     external fun nativeCloseUsbEncodedQueue(queue: Long)
     external fun nativeClearUsbEncodedQueue(queue: Long)
     external fun nativeDestroyUsbEncodedQueue(queue: Long)
-    external fun nativeCreateUsbEncodedProducer(decoder: Long, queue: Long, framingKind: Int, formatCode: Int, maximumBitrateKbps: Int): Long
+    external fun nativeCreateUsbEncodedProducer(decoder: Long, queue: Long, session: Long, framingKind: Int, formatCode: Int, maximumBitrateKbps: Int): Long
     external fun nativePumpUsbEncodedProducer(producer: Long): Int
     external fun nativeDestroyUsbEncodedProducer(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
