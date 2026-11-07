@@ -236,10 +236,12 @@ fn pump_once(producer: &UsbPcmProducer, target_gain: f32) -> Result<jint, String
         return Ok(0);
     }
 
-    let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
+    let decoder_owner = Arc::clone(&state.decoder);
+    let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
     let pcm = decoder.read_usb_pcm(USB_DECODE_CHUNK_FRAMES, target_gain, state.format)?;
-    state.bit_perfect_active = decoder.native_pcm_active();
+    let bit_perfect_active = decoder.native_pcm_active();
     drop(decoder);
+    state.bit_perfect_active = bit_perfect_active;
     if pcm.is_empty() {
         let block = end_block(state.epoch, state.position_frames);
         if state.queue.offer(block.clone(), Duration::ZERO) {
