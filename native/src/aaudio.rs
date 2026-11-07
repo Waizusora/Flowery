@@ -278,6 +278,22 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 thread_status.store(2, Ordering::Release);
                 break;
             }
+            let pending_seek = worker_session.seek_request
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            if let Some(request) = pending_seek {
+                match crate::streaming::process_aaudio_seek(Arc::clone(&worker_session), request) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        worker_session.error_code.store(-903, Ordering::Release);
+                        crate::playback_session::transition_session_phase(&worker_session, 7);
+                        thread_status.store(-903, Ordering::Release);
+                        break;
+                    }
+                }
+                continue;
+            }
             let phase = worker_session.phase.load(Ordering::Acquire) as i32;
             if phase == 5 {
                 thread_status.store(1, Ordering::Release);
