@@ -611,6 +611,50 @@ fn parse_stream_descriptors(raw: &[u8]) -> (Vec<StreamDescriptor>, bool) {
     (streams, malformed)
 }
 
+/// Finds the first UAC1/UAC2 Feature Unit advertising master-channel volume control.
+/// Returns (unit ID, AudioControl interface number, UAC protocol).
+pub fn feature_unit_volume_control(raw: &[u8]) -> Option<(u8, u8, u8)> {
+    let mut offset = 0usize;
+    let mut interface_number = None;
+    let mut protocol = None;
+    let mut is_audio_control = false;
+
+    while offset + 2 <= raw.len() {
+        let length = raw[offset] as usize;
+        if length < 2 || offset + length > raw.len() { return None; }
+        match raw[offset + 1] {
+            0x04 if length >= 9 => {
+                interface_number = Some(raw[offset + 2]);
+                is_audio_control = raw[offset + 5] == 0x01 && raw[offset + 6] == 0x01;
+                protocol = Some(raw[offset + 7]);
+            }
+            0x24 if is_audio_control && length >= 4 && raw[offset + 2] == 0x06 => {
+                let unit_id = raw[offset + 3];
+                let protocol_value = protocol.unwrap_or(0xff);
+                let volume_advertised = match protocol_value {
+                    // UAC1: bControlSize followed by the master-channel bmaControls bitmap.
+                    0x00 if length >= 7 => {
+                        let control_size = raw[offset + 5] as usize;
+                        control_size > 0 && 6 + control_size <= length
+                            && (raw[offset + 6] & 0x02) != 0
+                    }
+                    // UAC2: four-byte master-channel Feature Unit Control bitmap.
+                    0x20 if length >= 9 => {
+                        raw[offset + 5] & 0x02 != 0
+                    }
+                    _ => false,
+                };
+                if unit_id != 0 && volume_advertised {
+                    return Some((unit_id, interface_number?, protocol_value));
+                }
+            }
+            _ => {}
+        }
+        offset += length;
+    }
+    None
+}
+
 /// Returns all advertised UAC2 clock-source entities and their owning AudioControl interfaces.
 pub fn clock_sources(raw: &[u8]) -> Vec<ClockSource> {
     let mut result = Vec::<ClockSource>::new();
