@@ -438,19 +438,6 @@ fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncodedProducer(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
-) -> jint {
-    match pump_encoded_producer(handle) {
-        Ok(status) => status,
-        Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error);
-            -2
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbEncodedProducerWorker(
     mut env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jint {
