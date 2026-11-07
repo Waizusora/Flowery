@@ -56,6 +56,10 @@ object NativeAudio {
     external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, session: Long, sourceRate: Int, channels: Int, bitResolution: Int, subslotBytes: Int, segmentStartMs: Long, segmentEndMs: Long, encoding: Int): Long
     external fun nativeRequestUsbPcmProducerSeek(producer: Long, positionMs: Long)
     external fun nativePumpUsbPcmProducer(producer: Long, targetGain: Float): Int
+    external fun nativeStartUsbPcmProducerWorker(producer: Long): Int
+    external fun nativeSetUsbPcmProducerGain(producer: Long, gain: Float): Int
+    external fun nativeUsbPcmProducerWorkerError(producer: Long): String
+    external fun nativeStopUsbPcmProducerWorker(producer: Long): Int
     external fun nativeIsUsbPcmProducerBitPerfect(producer: Long): Boolean
     external fun nativeDestroyUsbPcmProducer(producer: Long)
     external fun nativeValidateUsbEncodedDescriptor(descriptors: ByteArray, interfaceNumber: Int, alternateSetting: Int, formatType: Int, formatTag: Int, sampleRate: Int): String
