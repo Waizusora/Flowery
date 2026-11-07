@@ -209,6 +209,14 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
  let o=e.output.as_ref().unwrap();o.read.store(0,Ordering::Relaxed);o.write.store(0,Ordering::Relaxed);o.played.store(position as u64,Ordering::Release);o.eof.store(false,Ordering::Release);o.active.store(true,Ordering::Release);
  if start==JNI_TRUE{unsafe{AAudioStream_requestStart(e.stream)}}else{OK}
 }
+
+/// Signals end-of-stream to the AAudio callback without crossing JNI.
+pub(crate) fn signal_stream_eof() {
+    if let Some(output) = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).output.as_ref() {
+        output.eof.store(true, Ordering::Release);
+    }
+}
+
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetStreamEof(_:JNIEnv,_:JClass){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.eof.store(true,Ordering::Release);}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.write.load(Ordering::Acquire).saturating_sub(o.read.load(Ordering::Acquire)).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
