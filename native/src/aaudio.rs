@@ -3,8 +3,10 @@ use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_TRUE};
 use jni::JNIEnv;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicI32, AtomicU32, Ordering};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
 #[repr(C)] struct AAudioStream(c_void);
 #[repr(C)] struct AAudioStreamBuilder(c_void);
@@ -188,10 +190,156 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
 }
 
 
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
+#[no_mangle] pub extern "system" fn 
+struct OutputScheduler {
+    stop: Arc<AtomicBool>,
+    status: Arc<AtomicI32>,
+    thread: JoinHandle<()>,
+}
+static OUTPUT_SCHEDULER: OnceLock<Mutex<Option<OutputScheduler>>> = OnceLock::new();
+fn output_scheduler() -> &'static Mutex<Option<OutputScheduler>> {
+    OUTPUT_SCHEDULER.get_or_init(|| Mutex::new(None))
+}
+
+fn stop_output_scheduler() {
+    let worker = output_scheduler().lock().unwrap_or_else(|p| p.into_inner()).take();
+    if let Some(worker) = worker {
+        worker.stop.store(true, Ordering::Release);
+        if worker.thread.thread().id() != thread::current().id() {
+            let _ = worker.thread.join();
+        }
+    }
+}
+
+fn output_scheduler_tick(low_watermark: u64, phase: i32) -> Result<bool, i32> {
+    let e = engine().lock().unwrap_or_else(|p| p.into_inner());
+    if e.stream.is_null() { return Err(INVALID_STATE); }
+    let output = e.output.as_ref().ok_or(INVALID_STATE)?;
+    let error = output.error.load(Ordering::Acquire);
+    if error != 0 { return Err(error); }
+    let read = output.read.load(Ordering::Acquire);
+    let write = output.write.load(Ordering::Acquire);
+    let buffered = write.saturating_sub(read);
+    let eof = output.eof.load(Ordering::Acquire);
+    let active = output.active.load(Ordering::Acquire);
+    unsafe {
+        let state = AAudioStream_getState(e.stream);
+        if state == STATE_DISCONNECTED { return Err(-899); }
+        if phase == 2 && (state == STATE_OPEN || state == STATE_PAUSED) &&
+            (buffered >= low_watermark || (eof && buffered == 0)) {
+            let result = AAudioStream_requestStart(e.stream);
+            if result != OK { return Err(result); }
+            let result = wait_stream_state(e.stream, STATE_STARTING, STATE_STARTED);
+            if result != OK { return Err(result); }
+        }
+        let current_state = AAudioStream_getState(e.stream);
+        if current_state == STATE_STOPPED && !eof { return Err(INVALID_STATE); }
+        let xruns = AAudioStream_getXRunCount(e.stream);
+        if xruns > 0 {
+            let capacity = AAudioStream_getBufferCapacityInFrames(e.stream);
+            let current = AAudioStream_getBufferSizeInFrames(e.stream);
+            let burst = AAudioStream_getFramesPerBurst(e.stream).max(1);
+            if current > 0 && capacity > current {
+                let _ = AAudioStream_setBufferSizeInFrames(e.stream, (current + burst).min(capacity));
+            }
+        }
+    }
+    Ok(eof && buffered == 0 && !active)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputScheduler(
+    mut env: JNIEnv, _class: JClass, session_handle: jlong, low_watermark: jint,
+) -> jint {
+    if session_handle <= 0 || low_watermark <= 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid AAudio output scheduler configuration");
+        return -1;
+    }
+    let Some(session) = crate::playback_session::session_ref(session_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session handle");
+        return -1;
+    };
+    if session.route != 0 || session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is not an active AAudio route");
+        return -1;
+    }
+    stop_output_scheduler();
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let worker_session = Arc::clone(&session);
+    let watermark = low_watermark as u64;
+    let worker = thread::Builder::new().name("flowery-aaudio-output".into()).spawn(move || {
+        loop {
+            if thread_stop.load(Ordering::Acquire) || worker_session.cancelled.load(Ordering::Acquire) {
+                thread_status.store(2, Ordering::Release);
+                break;
+            }
+            let phase = worker_session.phase.load(Ordering::Acquire) as i32;
+            if phase == 5 {
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+            if phase == 6 || phase == 7 {
+                thread_status.store(2, Ordering::Release);
+                break;
+            }
+            if phase == 2 {
+                match output_scheduler_tick(watermark, phase) {
+                    Ok(true) => {
+                        if crate::playback_session::transition_session_phase(&worker_session, 4) &&
+                            crate::playback_session::transition_session_phase(&worker_session, 5) {
+                            let mut output_engine = engine().lock().unwrap_or_else(|p| p.into_inner());
+                            unsafe { output_engine.stop(); }
+                            thread_status.store(1, Ordering::Release);
+                            break;
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        crate::playback_session::transition_session_phase(&worker_session, 7);
+                        thread_status.store(if error < 0 { error } else { -error }, Ordering::Release);
+                        break;
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(4));
+        }
+    });
+    match worker {
+        Ok(thread) => {
+            *output_scheduler().lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(OutputScheduler { stop, status, thread });
+            0
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputSchedulerStatus(
+    _env: JNIEnv, _class: JClass, _session_handle: jlong,
+) -> jint {
+    output_scheduler().lock().unwrap_or_else(|p| p.into_inner())
+        .as_ref().map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputScheduler(
+    _env: JNIEnv, _class: JClass, _session_handle: jlong,
+) {
+    stop_output_scheduler();
+}
+
+Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
     if rate<=0 || !(channels==1||channels==2) || capacity<2048 || ![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let mut out=Box::new(Output{ring:vec![0.0;(cap as usize)*channels as usize],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
+    stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
     let sharing=if exclusive==JNI_TRUE{SHARING_EXCLUSIVE}else{SHARING_SHARED};
     e.last_open=[device as i64,sharing as i64,rate as i64,channels as i64,INVALID_STATE as i64,0,-1,0,0,-1,1];
@@ -248,6 +396,7 @@ pub(crate) fn resume_output_for_session() -> Option<i32> {
     })
 }
 pub(crate) fn stop_output_for_session() {
+    stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());
     if let Some(o)=e.output.as_ref(){o.active.store(false,Ordering::Release);}
     unsafe { e.stop(); }
