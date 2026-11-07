@@ -155,11 +155,17 @@ The exact track, elapsed position, and detailed queue transition were not separa
 
 ### TEST 9 — Playback across supported file formats
 
-1. Select one file of each available format in the test library.
-2. Play each file for at least 15–30 seconds.
-3. Seek within each file where supported.
-4. Expected: supported files decode, play without crashes, and report sensible duration and progress.
-5. Record each tested extension, sample rate, bit depth (if known), and any error.
+**Status: IN PROGRESS — partial format verification**
+
+User-confirmed result:
+- FLAC: **PASS for playback**. Audio played normally.
+
+Remaining:
+- Test each other available format for at least 15–30 seconds.
+- Verify seeking where supported.
+- Record sample rate, bit depth (if known), and any errors.
+
+Do not treat the overall format test as complete until the available formats have been checked.
 
 Do not claim support for every possible format based only on this sample.
 
