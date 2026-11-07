@@ -354,8 +354,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
     });
     match worker {
         Ok(thread) => {
+            let session_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+            if session.cancelled.load(Ordering::Acquire) ||
+                matches!(session.phase.load(Ordering::Acquire) as i32, 5 | 6 | 7) {
+                drop(session_gate);
+                stop.store(true, Ordering::Release);
+                let _ = thread.join();
+                let _ = env.throw_new("java/lang/IllegalStateException", "Playback session ended while the AAudio scheduler was starting");
+                return -1;
+            }
             *output_scheduler().lock().unwrap_or_else(|p| p.into_inner()) =
                 Some(OutputScheduler { stop, status, thread });
+            drop(session_gate);
             0
         }
         Err(error) => {
