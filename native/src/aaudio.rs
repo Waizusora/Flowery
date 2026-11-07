@@ -228,8 +228,6 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32) -> Result<bool, i32> {
             (buffered >= low_watermark || eof) {
             let result = AAudioStream_requestStart(e.stream);
             if result != OK { return Err(result); }
-            let result = wait_stream_state(e.stream, STATE_STARTING, STATE_STARTED);
-            if result != OK { return Err(result); }
         }
         let current_state = AAudioStream_getState(e.stream);
         if current_state == STATE_STOPPED && !eof { return Err(INVALID_STATE); }
