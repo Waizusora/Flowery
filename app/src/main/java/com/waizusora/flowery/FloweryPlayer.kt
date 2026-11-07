@@ -77,6 +77,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     @Volatile private var activeUsbDeviceKey: String? = null
     @Volatile private var activeUsbSession: UsbDacSession? = null
+    @Volatile private var activeUsbEncodedPipeline: UsbEncodedPlaybackPipeline? = null
     // True while a direct USB route permits per-DAC software volume. Non-unity gain
     // changes PCM samples and is therefore not source-bit-perfect.
     @Volatile private var usbSoftwareGainEnabled = false
@@ -189,6 +190,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val sourceRate = (streamInfo ushr 32).toInt()
                 val channels = (streamInfo and 0xffff_ffffL).toInt()
                 check(sourceRate > 0 && channels in 1..8) { "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels." }
+
+                if (bitPerfectRequested && NativeAudio.nativeIsAc3Source(handle)) {
+                    recordUsbDiagnostic("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
+                    usbPlaybackMode = true
+                    playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs)
+                    return@thread
+                }
 
                 if (bitPerfectRequested) {
                     val sourceInfo = NativeAudio.nativeGetBitPerfectSourceInfo(handle)
@@ -448,6 +456,88 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             "audio/ogg", "application/ogg" -> "ogg"
             "audio/mpeg" -> "mp3"
             else -> ""
+        }
+    }
+
+    /**
+     * Sends original AC-3 frames through a descriptor-matched UAC1 encoded profile.
+     * This path bypasses PCM decoding, EQ, gain, resampling, and the PCM USB writer.
+     */
+    private fun playUsbEncodedDirect(
+        handle: Long,
+        sourceRate: Int,
+        generation: Int,
+        segmentStartMs: Long,
+        segmentEndMs: Long?
+    ) {
+        var pipeline: UsbEncodedPlaybackPipeline? = null
+        try {
+            val controller = UsbDacController(context)
+            val devices = controller.audioDevices()
+            onState("USB exclusive: finding a matching UAC1 AC-3 encoded profile…")
+            val (device, openedPipeline) =
+                controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sourceRate)
+            pipeline = openedPipeline
+            activeUsbEncodedPipeline = openedPipeline
+            activeUsbSession = null
+            activeUsbDeviceKey = controller.deviceIdentity(device.usbDevice)
+            usbPlaybackMode = true
+            usbBitPerfectActive = true
+            usbSoftwareGainEnabled = false
+            outputSampleRate = sourceRate
+            usbOutputBitDepth = 0
+            val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+            outputDurationMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
+                ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
+            if (segmentStartMs > 0L) openedPipeline.seekTo(segmentStartMs)
+            onState("USB exclusive · AC-3 encoded passthrough · UAC1 Type-II/IEC 61937 Type-III · ${sourceRate} Hz")
+
+            fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation
+            var transportDrainedForPause = false
+            while (playbackActive()) {
+                if (paused) {
+                    if (!transportDrainedForPause) {
+                        openedPipeline.drainTransport()
+                        transportDrainedForPause = true
+                    }
+                    Thread.sleep(10)
+                    continue
+                }
+                transportDrainedForPause = false
+
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
+                        ?: requested.coerceAtLeast(0L)
+                    val actual = openedPipeline.seekTo(bounded)
+                    recordUsbDiagnostic("ENCODED_SEEK requestedMs=${bounded} actualMs=${actual} packetBoundary=true")
+                }
+
+                val submitted = openedPipeline.pump(maxPackets = 1)
+                if (segmentEndMs != null && openedPipeline.positionMs() >= segmentEndMs) break
+                if (openedPipeline.isEnded) break
+                if (submitted == 0) Thread.sleep(2)
+            }
+
+            if (!stopped.get() && playbackGeneration.get() == generation) {
+                openedPipeline.drainTransport()
+                onState("Playback finished · AC-3 encoded USB")
+            }
+        } catch (error: Throwable) {
+            recordUsbDiagnostic("ENCODED_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
+            throw error
+        } finally {
+            activeUsbEncodedPipeline = null
+            activeUsbSession = null
+            usbSoftwareGainEnabled = false
+            try {
+                pipeline?.close()
+            } finally {
+                usbPlaybackMode = false
+                usbBitPerfectActive = false
+                activeUsbDeviceKey = null
+                outputSampleRate = 0
+                usbOutputBitDepth = 0
+            }
         }
     }
 
@@ -748,7 +838,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbPlaybackMode) softwareVolume.coerceIn(0f, 1f) else volumeController.systemVolumeFraction()
 
     fun positionMs(): Long =
-        if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
+        if (usbPlaybackMode && activeUsbEncodedPipeline != null) activeUsbEncodedPipeline?.positionMs() ?: 0L
+        else if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
         else if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate
         else 0L
 
