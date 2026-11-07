@@ -36,18 +36,32 @@ internal class UsbEncodedDacSession private constructor(
     @Synchronized
     fun flush() {
         check(!closed) { "Encoded USB session is closed" }
-        UsbDacNative.nativeFlush(nativeHandle)
+        check(UsbDacNative.nativeFlush(nativeHandle) == 0) {
+            "Encoded USB transport could not cancel and reap all in-flight transfers for seeking"
+        }
     }
 
     @Synchronized
     override fun close() {
         if (closed) return
-        closed = true
-        try {
-            UsbDacNative.nativeClose(nativeHandle)
-        } finally {
-            connection.close()
+        for (attempt in 0 until 3) {
+            if (UsbDacNative.nativeClose(nativeHandle)) {
+                closed = true
+                connection.close()
+                return
+            }
+            if (attempt < 2) {
+                try {
+                    Thread.sleep(50L)
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IllegalStateException("Interrupted while waiting for encoded USB transfers to finish teardown", interrupted)
+                }
+            }
         }
+        throw IllegalStateException(
+            "libusb could not confirm that all encoded transfers were reaped; the USB connection remains open for a safe retry"
+        )
     }
 
     companion object {
