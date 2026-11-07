@@ -32,11 +32,12 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun pump(maxPackets: Int = 32): Int {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(maxPackets > 0)
-        repeat(maxPackets) {
+        var attempts = 0
+        while (attempts < maxPackets && !ended) {
             when (NativeAudio.nativePumpUsbEncodedProducer(producerHandle)) {
-                1 -> Unit
-                0 -> return@repeat
-                -1 -> { ended = true; return@repeat }
+                1 -> attempts++
+                0 -> break
+                -1 -> ended = true
                 else -> throw IllegalStateException("Rust encoded packet producer failed")
             }
         }
@@ -87,9 +88,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             val submitted = pump()
             if (submitted == 0 && !ended) Thread.yield()
         }
-        while (NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) != null) {
-            throw IllegalStateException("Encoded queue changed while draining; call pump() before drain()")
-        }
         session.drain()
     }
 
@@ -113,6 +111,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         const val UAC1_FORMAT_TYPE_II = 2
         const val UAC1_FORMAT_TYPE_III = 3
         const val UAC1_FORMAT_TAG_AC3 = 0x1002
+        const val UAC1_FORMAT_TAG_IEC61937 = 0x0001
         const val IEC61937_DATATYPE_AC3 = 0x0001
 
         /**
@@ -130,7 +129,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             formatTag: Int,
             framingKind: Int,
             formatCode: Int,
-            encodedBytesPerSecond: Long,
             queuePackets: Int = 32,
             queueBytes: Int = 256 * 1024
         ): UsbEncodedPlaybackPipeline {
@@ -162,6 +160,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     decoderHandle, queue, framingKind, formatCode
                 )
                 check(producer != 0L) { "Source codec is incompatible with the selected encoded USB format" }
+                val encodedBytesPerSecond = NativeAudio.nativeGetUsbEncodedTransportRate(
+                    decoderHandle, framingKind
+                )
+                check(encodedBytesPerSecond > 0L) { "Unable to derive a safe encoded transport rate" }
                 session = UsbEncodedDacSession.open(
                     connection,
                     interfaceNumber,
