@@ -237,6 +237,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION),
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
             .putBoolean("usb_diagnostic_recording", false).apply()
         restoreFolders()
@@ -256,6 +260,7 @@ class MainActivity : ComponentActivity() {
                 usbDacPermissionGranted = usbDacPermissionGranted,
                 onConnectUsbDac = ::requestUsbDacAccess,
                 onReleaseUsbDac = ::releaseUsbDac,
+                audioSourceLabel = currentTag?.fileName ?: selectedTrack?.title ?: "No file selected",
                 isPlaying = isPlaying,
                 shuffleEnabled = shuffleEnabled,
                 repeatMode = repeatMode,
@@ -360,7 +365,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
-        androidx.core.content.ContextCompat.registerReceiver(this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         refreshUsbDacUiState()
         if (!autoUsbPermissionRequestedForLaunch &&
             getSharedPreferences("flowery_preferences", MODE_PRIVATE).getBoolean("usb_auto_reconnect", false)) {
@@ -374,8 +378,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         unregisterReceiver(playbackReceiver)
-        unregisterReceiver(usbPermissionReceiver)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        unregisterReceiver(usbPermissionReceiver)
+        super.onDestroy()
     }
 
     private fun refreshOutputVolume() {

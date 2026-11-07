@@ -63,6 +63,7 @@ fun FloweryNavigation(
     onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit,
     usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
     usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
+    audioSourceLabel: String,
     onRequestNotificationPermission: () -> Unit
 ) {
     var destination by remember(context) {
@@ -497,6 +498,7 @@ fun FloweryNavigation(
                     usbDacPermissionGranted = usbDacPermissionGranted,
                     onConnectUsbDac = onConnectUsbDac,
                     onReleaseUsbDac = onReleaseUsbDac,
+                    audioSourceLabel = audioSourceLabel,
                     usbBitPerfectEnabled = usbBitPerfectEnabled,
                     onUsbBitPerfectChanged = { enabled ->
                         usbBitPerfectEnabled = enabled
@@ -682,7 +684,8 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
     usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit,
     usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
-    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit) {
+    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
+    audioSourceLabel: String) {
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
@@ -746,12 +749,13 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 status.contains("Bit Perfect", ignoreCase = true)
             Text("Flowery automatically selects the active route from the source format, DSP state, negotiated DAC profile and output device.",
                 color = muted, style = MaterialTheme.typography.bodySmall)
+            Detail("Source file", audioSourceLabel, color, muted)
             AudioFlowCard(
                 title = "BIT PERFECT · source-preserving route",
                 active = usbRoute && bitPerfectRoute,
                 subtitle = if (usbRoute && bitPerfectRoute) "Active now" else "Available when source, DAC and processing conditions match",
                 stages = listOf(
-                    "Source file · lossless integer PCM or IEEE Float32 WAV",
+                    "$audioSourceLabel · lossless integer PCM or IEEE Float32 WAV",
                     "Symphonia · format-aware decoding without sample conversion",
                     "Native sample representation · integer bits or Float32 bit patterns",
                     "Rust USB PCM producer · bounded queue",
@@ -765,7 +769,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
                 active = !bitPerfectRoute,
                 subtitle = if (!bitPerfectRoute) "Active or selected fallback" else "Standby · selected when processing or conversion is required",
                 stages = listOf(
-                    "Source file · supported audio format",
+                    "$audioSourceLabel · supported audio format",
                     "Symphonia · decode to float32 PCM",
                     "Rubato · sample-rate conversion when required",
                     "31-band ISO equalizer · gain, volume and other DSP",
