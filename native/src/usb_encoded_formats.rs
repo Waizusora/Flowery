@@ -267,10 +267,10 @@ mod tests {
 
     #[test]
     fn type_ii_requires_exact_ac3_codec_and_format_tag() {
-        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, CODEC_TYPE_AC3).is_ok());
-        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_II, 0x1001, CODEC_TYPE_AC3).is_err());
+        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, CODEC_TYPE_EAC3).is_ok());
+        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_II, 0x1001, CODEC_TYPE_EAC3).is_err());
         assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_II, UAC1_FORMAT_TAG_AC3, symphonia::core::codecs::CODEC_TYPE_MP3).is_err());
-        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_AC3, CODEC_TYPE_AC3).is_err());
+        assert!(validate_uac1_type_ii(UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_AC3, CODEC_TYPE_EAC3).is_err());
     }
 
     fn uac1_type_ii_descriptor() -> Vec<u8> {
