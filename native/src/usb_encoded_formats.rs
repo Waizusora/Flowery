@@ -280,7 +280,7 @@ mod tests {
             Ok((2, 192, 1, 0, true))
         );
         let mut invalid = descriptor;
-        invalid[16] = 3; // Type-III channel count must be exactly two.
+        invalid[20] = 3; // Type-III channel count must be exactly two.
         assert!(validate_uac1_encoded_descriptor(&invalid, 2, 1, UAC1_FORMAT_TYPE_III, UAC1_FORMAT_TAG_IEC61937_AC3, 48_000).is_err());
     }
 
