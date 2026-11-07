@@ -138,13 +138,13 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 color = muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onToggleUsbDiagnosticLog, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else Color(0xFF7452A6))) {
+                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else MaterialTheme.colorScheme.primary)) {
                     Icon(if (usbDiagnosticRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
                     Text(if (usbDiagnosticRecording) "  Stop Log" else "  Record Log")
                 }
                 Button(onClick = onSaveUsbDiagnosticLog, enabled = !usbDiagnosticRecording &&
                     (usbDiagnosticLogCount > 0 || usbDiagnosticDescriptorReport.isNotBlank()),
-                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Text("  Save Log")
                 }
@@ -167,7 +167,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 Button(
                     onClick = addFolder,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(28.dp)
                 ) {
                     Icon(Icons.Default.Add, null)
@@ -189,7 +189,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     onClick = scan,
                     enabled = !scanInProgress,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(28.dp)
                 ) {
                     Icon(Icons.Default.Refresh, null,
@@ -211,7 +211,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                         Text("Included in library", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     IconButton(onClick = { removeFolder(folder) }) {
-                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = Color(0xFFD66B9A),
+                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(25.dp))
                     }
                 }
