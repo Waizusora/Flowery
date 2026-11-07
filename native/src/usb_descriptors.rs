@@ -633,13 +633,13 @@ pub fn feature_unit_volume_control(raw: &[u8]) -> Option<(u8, u8, u8)> {
                 let protocol_value = protocol.unwrap_or(0xff);
                 let volume_advertised = match protocol_value {
                     // UAC1: bControlSize followed by the master-channel bmaControls bitmap.
-                    0x00 if length >= 7 => {
+                    0x00 if length >= 8 => {
                         let control_size = raw[offset + 5] as usize;
-                        control_size > 0 && 6 + control_size <= length
+                        control_size > 0 && 7 + control_size <= length
                             && (raw[offset + 6] & 0x02) != 0
                     }
                     // UAC2: four-byte master-channel Feature Unit Control bitmap.
-                    0x20 if length >= 9 => {
+                    0x20 if length >= 11 => {
                         raw[offset + 5] & 0x02 != 0
                     }
                     _ => false,
@@ -744,6 +744,12 @@ mod tests {
             10,0x24,0x06,9,1,0x01,0,0,0,0,
         ];
         assert_eq!(feature_unit_volume_control(&without_volume), None);
+
+        let truncated_uac1 = [9,4,0,0,0,1,1,0x00,0, 7,0x24,0x06,7,1,1,0x02];
+        assert_eq!(feature_unit_volume_control(&truncated_uac1), None);
+
+        let truncated_uac2 = [9,4,0,0,0,1,1,0x20,0, 9,0x24,0x06,9,1,0x02,0,0,0];
+        assert_eq!(feature_unit_volume_control(&truncated_uac2), None);
     }
 
     #[test]
