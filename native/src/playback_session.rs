@@ -297,6 +297,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionError(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    session_ref(handle).map(|session| session.error_code.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlaybackSession(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
