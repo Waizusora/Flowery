@@ -312,8 +312,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     Some((0 | 1, _)) => {}
                     Some((2, worker_epoch))
                         if worker_epoch != worker_session.epoch.load(Ordering::Acquire) => {
-                            // A seek invalidates the previous decode worker before the
-                            // queued replacement request is consumed on the next tick.
+                            // Do not feed the old output ring while the new seek request
+                            // is being published and consumed by the scheduler.
+                            thread::sleep(Duration::from_millis(1));
+                            continue;
                         }
                     Some((error, _)) => {
                         worker_session.error_code.store(if error < 0 { error } else { -901 }, Ordering::Release);
