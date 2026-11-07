@@ -33,6 +33,27 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersio
 
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFindUsbFeatureUnitVolumeControl(
+    mut env: JNIEnv, _class: JClass, input: JByteArray,
+) -> jstring {
+    let bytes = match descriptor_bytes(&mut env, &input) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let value = usb_descriptors::feature_unit_volume_control(&bytes)
+        .map(|(unit_id, control_interface, protocol)| serde_json::json!({
+            "unitId": unit_id,
+            "controlInterface": control_interface,
+            "protocol": protocol
+        }))
+        .unwrap_or(serde_json::Value::Null);
+    write_text_to_java(&mut env, &value.to_string())
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbDacClockSources(
     mut env: JNIEnv, _class: JClass, input: JByteArray,
 ) -> jstring {
