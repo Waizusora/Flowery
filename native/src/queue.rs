@@ -271,7 +271,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackQueueSnapshot(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
+    env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jlongArray {
     let Some(state) = queue_state(handle) else { return std::ptr::null_mut(); };
     let state = state.lock().unwrap_or_else(|error| error.into_inner());
