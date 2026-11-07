@@ -802,9 +802,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         }
     }
     session->sample_rate = source_sample_rate;
-    const uint64_t bytes_per_interval =
-        (static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
-        1000000ULL;
+    const uint64_t bytes_per_interval = framing_kind == 2
+        ? (((static_cast<uint64_t>(encoded_frame_rate) * session->interval_us + 999999ULL) /
+             1000000ULL) * static_cast<uint64_t>(encoded_frame_bytes))
+        : ((static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
+           1000000ULL);
     if (bytes_per_interval == 0 || bytes_per_interval > session->max_packet_bytes) {
         close_session(session);
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
