@@ -160,7 +160,7 @@ The exact track, elapsed position, and detailed queue transition were not separa
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
-- M4A (ALAC): **FAIL**. The original Tipe-X file and a separate free 1 MB ALAC sample both produce no audible output, and playback duration/progress does not advance. The second sample confirms this is not limited to one particular ALAC file.
+- M4A (ALAC): **PARTIAL PASS after fix**. The original Tipe-X file and a separate free 1 MB ALAC sample initially produced no audible output, and playback duration/progress did not advance. After the ALAC magic-cookie channel-count fix was installed, the user confirmed that the separate 1 MB ALAC sample now plays. Progress advancement, seeking, and playback completion have not yet been separately reconfirmed.
 
 Investigation and code changes (2026-11-08):
 - Android identifies the source as `audio/mp4` with codec MIME `audio/alac`, and `libflowery_audio.so` loads successfully.
@@ -170,7 +170,7 @@ Investigation and code changes (2026-11-08):
 - Symphonia 0.5.4's ALAC decoder reads the channel count from its mandatory 24-byte or extended 48-byte ALAC magic-cookie configuration, but its decoder parameters remain a clone of the original track parameters. Flowery now reads the declared channel count from byte offset 9 of that validated ALAC configuration when the track channel fields are absent. It accepts only declared counts from 1 through 8 and does not assume stereo.
 - The new helper has unit coverage for 24-byte and 48-byte configurations and rejects missing, malformed, and out-of-range channel data.
 - Earlier diagnostic fixes: `80352ac`, `06194ca`, `1cbe4d5`. Channel metadata fallback: `8f49bc5`. ALAC magic-cookie channel-count fix: `b9aa04c`.
-- The new fix is not yet confirmed on the user's device. Retest remains required after CI produces a new APK.
+- The ALAC magic-cookie fix was installed and the user subsequently confirmed that the 1 MB ALAC sample plays. This confirms recovery of ALAC playback for that sample; progress advancement, seeking, and completion still need confirmation.
 
 Unavailable in the user's test library:
 - WAV: no test file available.
