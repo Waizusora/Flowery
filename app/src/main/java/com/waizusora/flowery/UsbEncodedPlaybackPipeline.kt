@@ -74,6 +74,45 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         session.drain()
     }
 
+    /**
+     * Owns the encoded USB submission loop, including pause drain, packet-boundary
+     * seek, bounded queue pumping, segment completion, and final transport drain.
+     */
+    fun playUntil(
+        playbackActive: () -> Boolean,
+        isPaused: () -> Boolean,
+        takePendingSeekMs: () -> Long?,
+        segmentStartMs: Long,
+        segmentEndMs: Long?,
+        onSeek: (boundedPositionMs: Long, actualPositionMs: Long) -> Unit,
+    ) {
+        var transportDrainedForPause = false
+        while (playbackActive()) {
+            if (isPaused()) {
+                if (!transportDrainedForPause) {
+                    drainTransport()
+                    transportDrainedForPause = true
+                }
+                Thread.sleep(10)
+                continue
+            }
+            transportDrainedForPause = false
+
+            takePendingSeekMs()?.let { requested ->
+                val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
+                    ?: requested.coerceAtLeast(0L)
+                val actual = seekTo(bounded)
+                onSeek(bounded, actual)
+            }
+
+            val submitted = pump(maxPackets = 1)
+            if (segmentEndMs != null && positionMs() >= segmentEndMs) break
+            if (isEnded) break
+            if (submitted == 0) Thread.sleep(2)
+        }
+        if (playbackActive()) drainTransport()
+    }
+
     /** Pumps remaining source packets, then waits for the encoded endpoint to drain. */
     @Synchronized
     fun drain() {
