@@ -77,6 +77,8 @@ struct UsbAudioSession {
     std::vector<unsigned char> pending_encoded;
     size_t encoded_offset = 0;
     uint64_t encoded_bytes_per_second = 0;
+    uint32_t encoded_frame_rate = 0;
+    uint8_t encoded_frame_bytes = 0;
     uint64_t encoded_rate_phase = 0;
     int encoded_mode = 0; // 0=PCM, 1=UAC1 Type-II, 2=IEC 61937 Type-III
     std::chrono::steady_clock::time_point next_encoded_frame_due{};
@@ -773,8 +775,11 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     JNIEnv* env, jobject object, jint file_descriptor, jint interface_number,
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
-    jint framing_kind, jlong encoded_bytes_per_second) {
-    if ((framing_kind != 1 && framing_kind != 2) || encoded_bytes_per_second <= 0) {
+    jint framing_kind, jlong encoded_bytes_per_second,
+    jint encoded_frame_rate, jint encoded_frame_bytes) {
+    if ((framing_kind != 1 && framing_kind != 2) || encoded_bytes_per_second <= 0 ||
+        (framing_kind == 2 && (encoded_frame_rate <= 0 || encoded_frame_bytes != 4)) ||
+        (framing_kind == 1 && (encoded_frame_rate != 0 || encoded_frame_bytes != 0))) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Encoded transport rate must be positive");
         return 0;
@@ -798,6 +803,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         return 0;
     }
     session->encoded_mode = framing_kind;
+    session->encoded_frame_rate = static_cast<uint32_t>(encoded_frame_rate);
+    session->encoded_frame_bytes = static_cast<uint8_t>(encoded_frame_bytes);
     session->encoded_bytes_per_second = static_cast<uint64_t>(encoded_bytes_per_second);
     return handle;
 }
@@ -1013,8 +1020,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         packet_bytes.clear();
         const size_t available = session->pending_encoded.size() - session->encoded_offset;
         while (packet_bytes.size() < kPacketsPerUrb) {
-            const uint64_t scaled = session->encoded_bytes_per_second * session->interval_us + phase;
-            const unsigned int expected = static_cast<unsigned int>(scaled / 1000000ULL);
+            const uint64_t scaled = static_cast<uint64_t>(session->encoded_frame_rate) *
+                                   session->interval_us + phase;
+            const uint64_t frames = scaled / 1000000ULL;
+            const unsigned int expected = static_cast<unsigned int>(
+                frames * session->encoded_frame_bytes);
             const uint64_t next_phase = scaled % 1000000ULL;
             if (expected == 0 || expected > session->max_packet_bytes ||
                 total + expected > available) break;
@@ -1068,6 +1078,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
                 continue;
             }
             const size_t tail = std::min<size_t>(remaining_encoded, session->max_packet_bytes);
+            if (session->encoded_frame_bytes == 0 || tail % session->encoded_frame_bytes != 0) {
+                record_failure(&failure, "encoded_tail_not_frame_aligned", LIBUSB_ERROR_INVALID_PARAM);
+                break;
+            }
             const std::vector<unsigned int> final_packet{static_cast<unsigned int>(tail)};
             if (!submit_encoded_urb(session, final_packet, tail, &failure)) break;
         }
