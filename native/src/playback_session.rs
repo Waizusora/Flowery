@@ -53,11 +53,18 @@ fn register_session(session: SessionState) -> jlong {
     }
 }
 
+fn valid_route(route: i32) -> bool { (0..=3).contains(&route) }
+
+fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
+    if cancelled.load(Ordering::Acquire) { return None; }
+    Some(epoch.fetch_add(1, Ordering::AcqRel).saturating_add(1))
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlaybackSession(
     mut env: JNIEnv, _class: JClass, decoder_handle: jlong, route: jint,
 ) -> jlong {
-    if !(0..=3).contains(&route) {
+    if !valid_route(route) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback route");
         return 0;
     }
@@ -83,7 +90,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         return -1;
     };
     if session.cancelled.load(Ordering::Acquire) { return -1; }
-    session.epoch.fetch_add(1, Ordering::AcqRel).saturating_add(1) as jlong
+    advance_epoch(&session.epoch, &session.cancelled).map(|epoch| epoch as jlong).unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -151,6 +158,24 @@ mod tests {
         assert!(session_ref(0).is_none());
         assert!(session_ref(-1).is_none());
         assert!(session_ref(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn seek_epoch_is_monotonic_and_cancellation_rejects_new_seeks() {
+        let epoch = AtomicU64::new(0);
+        let cancelled = AtomicBool::new(false);
+        assert_eq!(advance_epoch(&epoch, &cancelled), Some(1));
+        assert_eq!(advance_epoch(&epoch, &cancelled), Some(2));
+        cancelled.store(true, Ordering::Release);
+        assert_eq!(advance_epoch(&epoch, &cancelled), None);
+        assert_eq!(epoch.load(Ordering::Acquire), 2);
+    }
+
+    #[test]
+    fn all_supported_output_routes_share_the_same_session_contract() {
+        for route in 0..=3 { assert!(valid_route(route)); }
+        assert!(!valid_route(-1));
+        assert!(!valid_route(4));
     }
 
     #[test]
