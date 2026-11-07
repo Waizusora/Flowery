@@ -605,6 +605,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 onFirstTransfer = { frames ->
                     onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
                 },
+                onEpochChanged = { startFrames -> usbPositionFrames = startFrames },
                 onStarvation = { queueWaitMs, events ->
                     diagnostics.record(
                         "USB_PRODUCER_STARVED waitMs=${"%.2f".format(java.util.Locale.US, queueWaitMs)} " +
@@ -621,7 +622,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "throughputRatio=${"%.3f".format(java.util.Locale.US, throughputRatio)} " +
                             "queuedBlocks=${result.queuedBlocks}"
                     )
-                    if (result.epochChanged) usbPositionFrames = result.startFrames
                     usbPositionFrames += result.frames
                     if (chunk % 32L == 0L) {
                         diagnostics.record(
