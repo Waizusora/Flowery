@@ -160,10 +160,9 @@ impl StreamDecoder {
     }
 
     fn configure(&mut self, output_rate: usize, gains: &[f32]) -> Result<(),String> {
-        if self.channels > 2 {
-            return Err("Decoded AAudio output currently supports mono/stereo; multichannel streams are available only to a validated direct encoded route".into());
+        if output_rate == 0 || gains.len() != 31 {
+            return Err("Invalid streaming DSP configuration".into());
         }
-        if output_rate == 0 || gains.len() != 31 { return Err("Invalid streaming DSP configuration".into()); }
         self.output_rate = output_rate;
         self.gains.copy_from_slice(gains);
         self.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], self.gains[i], output_rate));
@@ -763,6 +762,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamCh
         return 0;
     }
     let decoder = unsafe { &mut *(handle as *mut StreamDecoder) };
+    if decoder.channels > 2 {
+        let _ = env.throw_new(
+            "java/lang/IllegalStateException",
+            "AAudio output currently supports mono/stereo; multichannel PCM must use a validated direct USB route.",
+        );
+        return -2;
+    }
     let frames = (max_frames as usize).min(available);
     let samples = match decoder.read_frames(frames) {
         Ok(samples) => samples,
