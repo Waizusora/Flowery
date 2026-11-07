@@ -22,10 +22,9 @@ The only application-owned C++ translation unit is `app/src/main/cpp/usb_audio_j
 | `AudioTag.kt` | Shared audio metadata presentation model |
 | `TagEditorDialogs.kt` | Compose tag inspection and editing dialogs |
 | `EqualizerComponents.kt` | Reusable 31-band vertical EQ slider component |
-| `AudioTag.kt` | Android-independent metadata presentation model shared by tag inspection and editing |
-| `TagEditorDialogs.kt` | Compose tag inspection and editing dialogs, separated from Activity and navigation state |
 | `AndroidPlaybackAdapters.kt` | SAF extension resolution, bounded USB diagnostics recording and Android USB-host inventory |
-| `UsbPcmProducerAdapter.kt` | Android worker adapter for Rust USB producer cancellation, seek/gain updates, error reporting and PCM block envelope decoding |
+| `UsbPcmPlaybackPipeline.kt` | Android transport adapter that polls Rust-produced PCM blocks, validates seek epochs, writes to libusb, handles prebuffer/drain and coordinates teardown |
+| `UsbEncodedPlaybackPipeline.kt` | Android transport adapter for bounded encoded packet pumping, packet-boundary seek, pause and drain |
 | `PlaybackService` | Foreground playback service, MediaSession, notifications, audio focus and Android media events |
 | `PlaybackCoordinator` | Android adapter around the Rust playback lifecycle state handle |
 | `FloweryPlayer` | Current Android playback adapter: opens SAF descriptors, chooses Android output devices, owns playback worker lifetime and coordinates Rust producer handles with the USB transport |
@@ -85,20 +84,20 @@ UAC1/UAC2 profile parsing, clock-source linking, endpoint validation and sample-
 
 - Rust owns decoder, resampler, equalizer, PCM packing and bounded producer/ring state.
 - The AAudio callback is a bounded real-time consumer and never calls back into Kotlin.
-- The current Kotlin playback adapter owns worker scheduling and the Android-visible lifetime of SAF descriptors.
-- The direct USB producer queue and C++ transport session are separate resources and must be closed in producer-before-transport order after the worker has stopped.
+- Worker ownership is route-specific: Rust owns the AAudio decode/output schedulers and the direct USB PCM/encoded producer workers. Kotlin owns the Android-facing playback worker/lifecycle and the direct USB transport writer/polling loops; C++ owns libusb event and transfer scheduling.
+- The direct USB producer queue and C++ transport session are separate resources and must be closed in producer-before-transport order after the Rust producer worker has stopped.
 - JNI handles returned by native create functions are opaque, non-zero values. Their matching destroy/close operation must run exactly once after all users have stopped.
 - Do not access a decoder, producer, queue, AAudio output or libusb session concurrently with its destroy/close operation.
 - JNI byte arrays are transfer envelopes, not long-lived shared buffers. Keep queue capacity bounded and avoid whole-track PCM arrays.
 - Keep Kotlin external declarations, Rust JNI symbol names, and C++ JNI exports synchronized. Any signature change must be covered by the native and Android build jobs.
 
-## Current Kotlin boundary and migration target
+## Current Kotlin boundary and completed orchestration
 
-`FloweryPlayer` remains the largest mixed-responsibility adapter. It currently owns playback worker scheduling, Android route discovery, SAF descriptor lifetime, volume policy coordination, and the JNI polling loop for USB producers. The Rust engine already owns the core sample processing and format decisions, but it does not yet own the complete cross-route playback session scheduler.
+`FloweryPlayer` is now an Android-facing playback coordinator. It retains SAF descriptor acquisition, route selection, playback-generation lifecycle, Android service state, user commands, and coordination of native session handles. The AAudio decode/output lifecycle, seek scheduling, worker health and teardown are owned by the Rust playback session and schedulers.
 
-The first extraction has moved SAF extension resolution, USB diagnostics, USB-host inventory, the Rust producer worker adapter, tag metadata/dialogs and the equalizer slider into focused Kotlin files. `FloweryPlayer` still owns cross-route playback worker scheduling and direct USB writer orchestration, so it is not yet a thin command-only adapter. The target is to reduce `FloweryPlayer` to Android-facing commands and resource adapters. Move session orchestration, producer scheduling, seek epochs and route-independent playback state into Rust only where the native layer can own the full lifetime safely. Keep SAF descriptor acquisition, Android output-device discovery, USB permission and Android control transfers in Kotlin. Keep libusb URBs in C++. Do not duplicate an Android API in Rust or introduce a second decoder/DSP implementation in C++.
+For direct USB PCM and encoded playback, Rust owns decoding/encoding eligibility, producer scheduling, seek epochs and bounded producer queues. `UsbPcmPlaybackPipeline.kt` and `UsbEncodedPlaybackPipeline.kt` own the Android-side transport loops: they poll or pump bounded queue data, submit it to the C++ libusb session, coordinate pause/drain, report transport state and close resources in the required order. Kotlin still owns USB permission, Android device connection and control-transfer access; C++ owns libusb URBs and transport event handling.
 
-The direct USB JNI block bridge should be optimized only after a native queue-to-transport ownership contract, cancellation semantics and teardown tests are in place. A native C ABI queue consumer may be considered so C++ can read a Rust-owned bounded queue without creating intermediate Kotlin byte arrays; this must preserve Rust as the producer and C++ as the transport consumer.
+This is a completed software migration boundary, not a claim that `FloweryPlayer` has no orchestration responsibilities. The remaining JNI byte-array bridge for queued USB blocks is an optimization boundary; it must not be described as a Kotlin-owned decoder or producer worker. Any future native queue-to-transport bridge must preserve bounded backpressure, cancellation, buffer lifetime and teardown guarantees.
 
 ## UI structure
 
