@@ -139,7 +139,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 │       ├── catalog.rs           # Rust-owned library catalog and playlist association
 │       ├── queue.rs             # Shuffle, repeat, and queue transitions
 │       ├── usb_pcm.rs           # Bounded direct-USB PCM block queue
-│       ├── usb_producer.rs      # Registry-owned decoded USB producer and session-bound epoch policy
+│       ├── usb_producer.rs      # Registry-owned USB PCM producer worker, bounded queue and session epochs
 │       ├── usb_encoded.rs       # Registry-owned encoded packet queue and producer
 │       ├── usb_descriptors.rs   # UAC descriptor and clock-response parsing
 │       ├── playback_policy.rs   # Output-rate, ring sizing and frame policy
