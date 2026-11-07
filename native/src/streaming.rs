@@ -565,14 +565,39 @@ impl StreamDecoder {
         format: crate::usb_pcm::PcmFormat,
     ) -> Result<Option<Vec<u8>>, String> {
         let required = max_frames.saturating_mul(format.bytes_per_frame());
-        while self.native_pcm_pending.len() < required && !self.eof && !self.native_pcm_decided || 
-            (self.native_pcm_active && self.native_pcm_pending.len() < required && !self.eof) {
+        while self.native_pcm_pending.len() < required && !self.eof
+            && (!self.native_pcm_decided || self.native_pcm_active)
+        {
             if !self.decode_native_pcm_packet(format)? { return Ok(None); }
             if self.native_pcm_active { self.native_pcm_decided = true; }
         }
         if !self.native_pcm_active { return Ok(None); }
         let count = required.min(self.native_pcm_pending.len());
         Ok(Some(self.native_pcm_pending.drain(..count).collect()))
+    }
+
+    fn move_native_remainder_to_float(&mut self, format: crate::usb_pcm::PcmFormat) {
+        if !self.native_pcm_active || self.native_pcm_pending.is_empty() { return; }
+        let bytes_per_sample = format.subslot_bytes as usize;
+        let sample_count = self.native_pcm_pending.len() / bytes_per_sample;
+        let scale = (1_u64 << (format.valid_bits - 1)) as f32;
+        let bytes: Vec<u8> = self.native_pcm_pending.drain(..).collect();
+        for sample in bytes.chunks_exact(bytes_per_sample) {
+            let mut raw = [0_u8; 4];
+            raw[..bytes_per_sample].copy_from_slice(sample);
+            let unsigned = u32::from_le_bytes(raw);
+            let signed = if format.valid_bits == 32 {
+                unsigned as i32
+            } else {
+                let shift = 32 - format.valid_bits as u32;
+                ((unsigned << shift) as i32) >> shift
+            };
+            self.input_pending.push(signed as f32 / scale);
+        }
+        debug_assert_eq!(self.input_pending.len() % self.channels, 0);
+        let _ = sample_count;
+        self.native_pcm_active = false;
+        self.native_pcm_decided = true;
     }
 
     pub(super) fn native_pcm_active(&self) -> bool {
@@ -589,19 +614,28 @@ impl StreamDecoder {
         if self.channels != format.channels as usize || max_frames == 0 || !target_gain.is_finite() {
             return Err("Invalid direct USB PCM read configuration".into());
         }
+        let requirements = crate::native_pcm::BitPerfectRequirements {
+            source_rate: self.source_rate as u32,
+            output_rate: self.output_rate as u32,
+            source_channels: self.channels as u16,
+            output_channels: format.channels,
+            source_valid_bits: self.source_bits,
+            dsp_enabled: self.gains.iter().any(|gain| *gain != 0.0),
+            software_gain_unity: target_gain == 1.0,
+            channel_mapping_unchanged: true,
+            resampling_disabled: self.resampler.is_none(),
+        };
         let native_eligible = self.lossless_source
             && matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
-            && format.valid_bits == self.source_bits
-            && self.output_rate == self.source_rate
-            && self.resampler.is_none()
-            && self.gains.iter().all(|gain| *gain == 0.0)
-            && target_gain == 1.0;
+            && crate::native_pcm::is_bit_perfect_eligible(requirements, format);
 
-        if native_eligible && !self.native_pcm_decided || (native_eligible && self.native_pcm_active) {
+        if native_eligible && (!self.native_pcm_decided || self.native_pcm_active) {
             if let Some(bytes) = self.read_native_pcm_bytes(max_frames, format)? {
                 self.usb_last_gain = 1.0;
                 return Ok(bytes);
             }
+        } else if !native_eligible {
+            self.move_native_remainder_to_float(format);
         }
 
         let samples = self.read_frames(max_frames)?;
