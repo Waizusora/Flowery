@@ -4,6 +4,12 @@ use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_os = "android")]
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+#[cfg(target_os = "android")]
+use std::thread::{self, JoinHandle};
+#[cfg(target_os = "android")]
+use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
