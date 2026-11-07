@@ -4,14 +4,10 @@ import android.hardware.usb.UsbDeviceConnection
 import org.json.JSONObject
 
 /**
- * Connects the Rust packet producer to the dedicated encoded libusb writer.
- *
- * The 27-byte JNI envelope is transport metadata only. Only the payload after
- * the envelope is written to the encoded endpoint. The PCM JNI writer is never
- * called by this pipeline.
+ * Owns the Android USB session while Rust schedules encoded packets from its
+ * bounded queue. The PCM transport writer is never used by this pipeline.
  */
 internal class UsbEncodedPlaybackPipeline private constructor(
-    private val decoderHandle: Long,
     private val queueHandle: Long,
     private val producerHandle: Long,
     private val session: UsbEncodedDacSession,
@@ -109,7 +105,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     }
 
     companion object {
-        private const val HEADER_BYTES = 27
         const val FRAMING_UAC1_TYPE_II = 1
         const val FRAMING_IEC61937_TYPE_III = 2
         const val UAC1_FORMAT_TYPE_II = 2
@@ -209,7 +204,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     validation.optInt("feedbackMaxPacketBytes")
                 )
                 return UsbEncodedPlaybackPipeline(
-                    decoderHandle, queue, producer, session, framingKind, formatCode
+                    queue, producer, session, framingKind, formatCode
                 )
             } catch (error: Throwable) {
                 if (producer != 0L) NativeAudio.nativeDestroyUsbEncodedProducer(producer)
