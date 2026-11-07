@@ -642,4 +642,46 @@ mod handle_tests {
         assert!(producer_ref(i64::MAX).is_none());
         remove_producer(0);
     }
+
+    #[test]
+    fn closing_encoded_queue_rejects_new_packets_and_wakes_waiters() {
+        let queue = Arc::new(EncodedPacketQueue::new(2, 64).unwrap());
+        let waiter_queue = Arc::clone(&queue);
+        let waiter = std::thread::spawn(move || waiter_queue.poll(Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(10));
+        queue.close();
+        assert!(waiter.join().unwrap().is_none());
+        assert!(queue.offer(EncodedPacket {
+            sequence: 0,
+            presentation_time_us: None,
+            duration_us: 1,
+            framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
+            bytes: vec![1],
+        }).is_err());
+    }
+
+    #[test]
+    fn session_epoch_change_discards_pending_and_queued_encoded_packets() {
+        let queue = EncodedPacketQueue::new(4, 128).unwrap();
+        queue.offer(EncodedPacket {
+            sequence: 7,
+            presentation_time_us: Some(7),
+            duration_us: 1,
+            framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
+            bytes: vec![7, 8],
+        }).unwrap();
+        let mut epoch = 3;
+        let mut pending = Some(EncodedPacket {
+            sequence: 6,
+            presentation_time_us: Some(6),
+            duration_us: 1,
+            framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
+            bytes: vec![6],
+        });
+        assert!(synchronize_epoch(&mut epoch, 4, &mut pending, &queue));
+        assert_eq!(epoch, 4);
+        assert!(pending.is_none());
+        assert_eq!(queue.usage(), (0, 0));
+        assert!(!synchronize_epoch(&mut epoch, 4, &mut pending, &queue));
+    }
 }
