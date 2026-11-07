@@ -47,6 +47,7 @@ internal class UsbPcmProducerAdapter(
                         endReached.set(true)
                         Thread.sleep(20)
                     }
+                    -3 -> break
                     else -> throw IllegalStateException("The Rust direct USB producer failed.")
                 }
             }
