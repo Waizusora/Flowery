@@ -937,6 +937,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame exceeds the bounded isochronous URB packet count");
             return -1;
         }
+        const uint64_t frame_service_time_us =
+            static_cast<uint64_t>(packet_count) * session->interval_us;
+        if (frame_service_time_us > static_cast<uint64_t>(duration_us)) {
+            jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+            if (exception != nullptr) env->ThrowNew(
+                exception, "UAC1 Type-II frame cannot be transmitted within its encoded frame duration");
+            return -1;
+        }
         if (duration_us <= 0 || duration_us > 1000000) {
             jclass exception = env->FindClass("java/lang/IllegalArgumentException");
             if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame duration is invalid");
