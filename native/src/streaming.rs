@@ -221,6 +221,10 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
+    pub(super) fn is_ac3_source(&self) -> bool {
+        self.codec_type == symphonia::core::codecs::CODEC_TYPE_AC3
+    }
+
     pub(super) fn encoded_transport_bytes_per_second(&self, framing_kind: i32) -> Result<u64, String> {
         match framing_kind {
             1 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_AC3 => {
