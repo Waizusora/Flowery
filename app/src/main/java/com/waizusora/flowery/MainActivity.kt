@@ -127,6 +127,12 @@ class MainActivity : ComponentActivity() {
     private var volume by mutableStateOf(1f)
     private var usbDacReport by mutableStateOf<String?>(null)
     private var usbDacInspecting by mutableStateOf(false)
+    private var usbDacUiStatus by mutableStateOf("Checking USB audio devices…")
+    private var usbDacDeviceName by mutableStateOf("No USB DAC detected")
+    private var usbDacConnected by mutableStateOf(false)
+    private var usbDacPermissionGranted by mutableStateOf(false)
+    private var usbDacConnectionReleased = false
+    private var autoUsbPermissionRequestedForLaunch = false
     private val usbDacController by lazy { UsbDacController(this) }
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -138,9 +144,15 @@ class MainActivity : ComponentActivity() {
                     usbDacInspecting = false
                     usbDacReport = "Android did not return the USB audio device."
                 }
-                granted -> inspectUsbDac(device)
+                granted -> {
+                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                        .putBoolean("usb_auto_reconnect", true).apply()
+                    refreshUsbDacUiState()
+                    inspectUsbDac(device)
+                }
                 else -> {
                     usbDacInspecting = false
+                    usbDacUiStatus = "USB permission was denied. Tap Sambungkan DAC to try again."
                     usbDacReport = "USB permission was not granted. Connect the DAC and grant access to inspect its descriptors."
                 }
             }
@@ -159,6 +171,13 @@ class MainActivity : ComponentActivity() {
             }
             val reportedStatus = intent.getStringExtra(PlaybackService.EXTRA_STATUS)
             if (reportedStatus == "Stopped" || reportedStatus == "Playback finished") hasPlaybackSession = false
+            if (reportedStatus?.startsWith("USB DAC released") == true) {
+                usbDacConnectionReleased = true
+                refreshUsbDacUiState()
+            } else if (reportedStatus?.startsWith("USB exclusive") == true) {
+                usbDacConnectionReleased = false
+                refreshUsbDacUiState()
+            }
             if (intent.hasExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED)) {
                 shuffleEnabled = intent.getBooleanExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED, false)
             }
@@ -231,6 +250,12 @@ class MainActivity : ComponentActivity() {
                 tracks = tracks,
                 status = status,
                 onUsbDacClick = ::requestUsbDacAccess,
+                usbDacUiStatus = usbDacUiStatus,
+                usbDacDeviceName = usbDacDeviceName,
+                usbDacConnected = usbDacConnected,
+                usbDacPermissionGranted = usbDacPermissionGranted,
+                onConnectUsbDac = ::requestUsbDacAccess,
+                onReleaseUsbDac = ::releaseUsbDac,
                 isPlaying = isPlaying,
                 shuffleEnabled = shuffleEnabled,
                 repeatMode = repeatMode,
@@ -336,6 +361,15 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         androidx.core.content.ContextCompat.registerReceiver(this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        refreshUsbDacUiState()
+        if (!autoUsbPermissionRequestedForLaunch &&
+            getSharedPreferences("flowery_preferences", MODE_PRIVATE).getBoolean("usb_auto_reconnect", false)) {
+            autoUsbPermissionRequestedForLaunch = true
+            val connected = usbDacController.audioDevices().firstOrNull()
+            if (connected != null && !usbDacController.hasPermission(connected.usbDevice)) {
+                requestUsbDacAccess()
+            }
+        }
     }
 
     override fun onStop() {
@@ -363,21 +397,48 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun refreshUsbDacUiState() {
+        val devices = runCatching { usbDacController.audioDevices() }.getOrDefault(emptyList())
+        val selected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) } ?: devices.firstOrNull()
+        usbDacConnected = selected != null
+        usbDacPermissionGranted = selected?.let { usbDacController.hasPermission(it.usbDevice) } == true
+        usbDacDeviceName = selected?.displayName ?: "No USB Audio Class DAC detected"
+        usbDacUiStatus = when {
+            selected == null -> "Connect a USB DAC to make it available here."
+            usbDacPermissionGranted && usbDacConnectionReleased -> "Flowery has closed its USB connection · another app can request the DAC. Android permission remains until disconnect."
+            usbDacPermissionGranted -> "Android USB permission granted to Flowery · ${selected.identity} · ready for playback"
+            else -> "DAC detected · Android permission is required before Flowery can connect."
+        }
+    }
+
+    private fun releaseUsbDac() {
+        usbDacConnectionReleased = true
+        usbDacUiStatus = "Stopping playback and releasing the USB interface…"
+        sendPlaybackCommand(PlaybackService.ACTION_RELEASE_USB)
+    }
+
     private fun requestUsbDacAccess() {
+        usbDacConnectionReleased = false
         val devices = usbDacController.audioDevices()
         if (devices.isEmpty()) {
+            usbDacConnected = false
+            usbDacPermissionGranted = false
+            usbDacDeviceName = "No USB Audio Class DAC detected"
+            usbDacUiStatus = "Connect a USB DAC first."
             usbDacInspecting = false
-            usbDacReport = "No USB Audio Class device was detected. Connect a USB DAC and open this panel again."
+            usbDacReport = "No USB Audio Class device was detected. Connect a USB DAC and try again."
             return
         }
         val detected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) }
             ?: devices.first()
         val device = detected.usbDevice
         if (usbDacController.hasPermission(device)) {
+            refreshUsbDacUiState()
             inspectUsbDac(device)
         } else {
+            usbDacUiStatus = "Waiting for Android permission for ${detected.displayName}…"
             usbDacInspecting = false
-            usbDacReport = "Waiting for Android USB permission for ${detected.displayName}…"
+            usbDacReport = "Android is asking whether Flowery may access ${detected.displayName}."
             usbDacController.requestPermission(device)
         }
     }

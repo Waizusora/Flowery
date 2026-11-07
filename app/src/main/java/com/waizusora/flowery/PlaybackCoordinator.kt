@@ -88,6 +88,20 @@ internal class PlaybackCoordinator(
         transition(EVENT_FINISH)
     }
 
+    /**
+     * Stops playback and waits for the USB worker to close its session and release
+     * claimed interfaces before notifying the caller.
+     */
+    @Synchronized
+    fun releaseUsb(onReleased: () -> Unit) {
+        transition(EVENT_STOP)
+        thread(name = "FloweryUsbRelease") {
+            engine.stopAndJoin(Long.MAX_VALUE)
+            transition(EVENT_FINISH)
+            onReleased()
+        }
+    }
+
     fun close(onClosed: () -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
         transition(EVENT_STOP)

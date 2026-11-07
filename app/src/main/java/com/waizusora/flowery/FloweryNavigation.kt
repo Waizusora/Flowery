@@ -61,6 +61,8 @@ fun FloweryNavigation(
     onVolume: (Float) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
     onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit,
+    usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
+    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
     onRequestNotificationPermission: () -> Unit
 ) {
     var destination by remember(context) {
@@ -489,6 +491,12 @@ fun FloweryNavigation(
                         }
                         usbDiagnosticSaveLauncher.launch("flowery-usb-diagnostic-${System.currentTimeMillis()}.txt")
                     },
+                    usbDacUiStatus = usbDacUiStatus,
+                    usbDacDeviceName = usbDacDeviceName,
+                    usbDacConnected = usbDacConnected,
+                    usbDacPermissionGranted = usbDacPermissionGranted,
+                    onConnectUsbDac = onConnectUsbDac,
+                    onReleaseUsbDac = onReleaseUsbDac,
                     usbBitPerfectEnabled = usbBitPerfectEnabled,
                     onUsbBitPerfectChanged = { enabled ->
                         usbBitPerfectEnabled = enabled
@@ -672,7 +680,9 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
-    usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit) {
+    usbBitPerfectEnabled: Boolean, onUsbBitPerfectChanged: (Boolean) -> Unit,
+    usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
+    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit) {
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
@@ -692,6 +702,30 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
         }
         SettingsPage.AUDIO -> {
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("USB DAC", color = color, fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleMedium)
+                    Text(usbDacDeviceName, color = color, style = MaterialTheme.typography.bodyMedium)
+                    Text(usbDacUiStatus, color = muted, style = MaterialTheme.typography.bodySmall)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = onConnectUsbDac, enabled = usbDacConnected,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                            Icon(Icons.Default.Usb, contentDescription = null)
+                            Text("  Sambungkan DAC")
+                        }
+                        OutlinedButton(onClick = onReleaseUsbDac,
+                            enabled = usbDacPermissionGranted || status.contains("USB exclusive", ignoreCase = true),
+                            modifier = Modifier.weight(1f)) {
+                            Icon(Icons.Default.LinkOff, contentDescription = null)
+                            Text("  Lepas DAC")
+                        }
+                    }
+                    Text("Lepas DAC menghentikan playback USB dan menutup koneksi/interface Flowery agar aplikasi lain dapat mencoba menggunakan DAC. Android tidak menyediakan API publik bagi aplikasi biasa untuk mencabut grant USB Flowery secara paksa; grant sementara berakhir saat DAC dilepas dari perangkat.",
+                        color = muted, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -707,13 +741,42 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("USB Diagnostics", "Record USB descriptors, DAC profiles, clock negotiation and playback telemetry", color, muted) { navigate(SettingsPage.USB_DIAGNOSTICS) }
         }
         SettingsPage.AUDIO_INFO -> {
-            Detail("Decoder", "Symphonia · progressive packet decoding", color, muted)
-            Detail("Resampler", "Rubato · persistent streaming state", color, muted)
-            Detail("Equalizer", "31-band ISO biquad EQ · ±12 dB", color, muted)
-            Detail("Output", "AAudio · bounded PCM ring buffer", color, muted)
-            Detail("Pipeline", "SAF file → Symphonia decoder → Rubato resampler (when required) → 31-band EQ → bounded PCM ring → AAudio", color, muted)
+            val usbRoute = status.contains("USB exclusive", ignoreCase = true)
+            val bitPerfectRoute = status.contains("BIT PERFECT", ignoreCase = true) ||
+                status.contains("Bit Perfect", ignoreCase = true)
+            Text("Flowery automatically selects the active route from the source format, DSP state, negotiated DAC profile and output device.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            AudioFlowCard(
+                title = "BIT PERFECT · source-preserving route",
+                active = usbRoute && bitPerfectRoute,
+                subtitle = if (usbRoute && bitPerfectRoute) "Active now" else "Available when source, DAC and processing conditions match",
+                stages = listOf(
+                    "Source file · lossless integer PCM or IEEE Float32 WAV",
+                    "Symphonia · format-aware decoding without sample conversion",
+                    "Native sample representation · integer bits or Float32 bit patterns",
+                    "Rust USB PCM producer · bounded queue",
+                    "C++ libusb · isochronous USB transfer",
+                    "USB DAC · negotiated sample rate, channels and encoding"
+                ),
+                color = color, muted = muted
+            )
+            AudioFlowCard(
+                title = "DSP / decoded route",
+                active = !bitPerfectRoute,
+                subtitle = if (!bitPerfectRoute) "Active or selected fallback" else "Standby · selected when processing or conversion is required",
+                stages = listOf(
+                    "Source file · supported audio format",
+                    "Symphonia · decode to float32 PCM",
+                    "Rubato · sample-rate conversion when required",
+                    "31-band ISO equalizer · gain, volume and other DSP",
+                    if (usbRoute) "Rust PCM producer · quantize to negotiated DAC integer format" else "AAudio · float32 output ring buffer",
+                    if (usbRoute) "C++ libusb · USB transfer → DAC" else "Android audio route · speaker, AUX or Bluetooth"
+                ),
+                color = color, muted = muted
+            )
             Detail("Playback status", status, color, muted)
-            Detail("Runtime telemetry", "AAudio stream and callback telemetry is captured through Settings → Audio → USB Diagnostics → Record Log. Per-stage decoder timing, throughput, and live DSP meters are not currently exposed.", color, muted)
+            Detail("Route detection", "The highlighted route follows Flowery's current playback status. Bit Perfect is shown only when the native producer confirms an eligible source-to-DAC path; otherwise the decoded/DSP route is used.", color, muted)
+            Detail("Runtime telemetry", "AAudio callback and output telemetry plus USB descriptor, clock and transport events are available in Settings → Audio → USB Diagnostics → Record Log.", color, muted)
         }
         SettingsPage.USB_DIAGNOSTICS -> {
             Text("Record Log captures connected DAC descriptors, descriptor-derived playback profiles, UAC2 clock ranges, AAudio runtime telemetry, and direct USB/libusb events in one file.",
@@ -850,10 +913,16 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             SettingCard("Update", "Open GitHub releases in browser", color, muted, Icons.Default.SystemUpdate, update)
         }
         SettingsPage.OPEN_SOURCE -> {
-            Text("Third-party components", color = muted)
-            Detail("Symphonia", "MPL-2.0", color, muted)
-            Detail("Rubato", "MIT OR Apache-2.0", color, muted)
-            Detail("Lofty", "MIT OR Apache-2.0", color, muted)
+            Text("Direct dependencies · versions and declared licenses", color = muted)
+            Detail("Symphonia", "0.5.4 · audio demuxing and decoding · MPL-2.0", color, muted)
+            Detail("Rubato", "5.0.1 · streaming sample-rate conversion · MIT OR Apache-2.0", color, muted)
+            Detail("Lofty", "0.25.5 · audio metadata and tag editing · MIT OR Apache-2.0", color, muted)
+            Detail("libusb", "1.0.30-0 · USB host transport · LGPL-2.1-or-later", color, muted)
+            Detail("jni", "0.21 · Rust/JVM native interface · MIT OR Apache-2.0", color, muted)
+            Detail("audioadapter-buffers", "5.1 · audio buffer adapters · license details are in its package metadata", color, muted)
+            Detail("serde / serde_json", "1.x · serialization and JSON · MIT OR Apache-2.0", color, muted)
+            Detail("base64", "0.22 · Base64 encoding · MIT OR Apache-2.0", color, muted)
+            Detail("libc", "0.2 · native platform bindings · MIT OR Apache-2.0", color, muted)
             Detail("Jetpack Compose", "Compose BOM 2024.12.01 · UI and Material 3 · Apache-2.0", color, muted)
             Detail("Activity Compose", "androidx.activity:activity-compose 1.9.3 · Apache-2.0", color, muted)
             Detail("Lifecycle", "lifecycle-runtime-ktx and lifecycle-viewmodel-compose 2.8.7 · Apache-2.0", color, muted)
@@ -864,11 +933,7 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
             Detail("Document provider", "androidx.documentfile:documentfile 1.0.1 · Apache-2.0", color, muted)
             Detail("AAudio", "Android NDK platform API", color, muted)
             Detail("JNI", "jni 0.21 · Rust/Java native interface", color, muted)
-            Detail("Audio adapter buffers", "audioadapter-buffers 5.1", color, muted)
-            Detail("JSON", "serde_json 1", color, muted)
-            Detail("Serialization", "serde 1 · MIT OR Apache-2.0", color, muted)
-            Detail("Base64", "base64 0.22", color, muted)
-            Detail("Native platform bindings", "libc 0.2", color, muted)
+            Detail("Android NDK", "AAudio platform API · Android platform component", color, muted)
             Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
                 style = MaterialTheme.typography.bodySmall)
         }
@@ -876,6 +941,40 @@ private fun SettingsContent(page: SettingsPage, color: Color, muted: Color, them
         SettingsPage.CONTRIBUTORS -> Text("Contributor credits will be listed when contributions are recorded and confirmed.", color = muted)
     }
 }
+@Composable
+private fun AudioFlowCard(
+    title: String, active: Boolean, subtitle: String, stages: List<String>,
+    color: Color, muted: Color
+) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (active) Color(0xFF2EAD68).copy(alpha = .10f)
+                else color.copy(alpha = .06f)
+        )
+    ) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, modifier = Modifier.weight(1f), color = color,
+                    fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                if (active) Text("ACTIVE", color = Color(0xFF2EAD68),
+                    fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelSmall)
+            }
+            Text(subtitle, color = muted, style = MaterialTheme.typography.bodySmall)
+            stages.forEachIndexed { index, stage ->
+                Text(stage, modifier = Modifier.fillMaxWidth()
+                    .background(color.copy(alpha = .07f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    color = color, style = MaterialTheme.typography.bodySmall)
+                if (index != stages.lastIndex) {
+                    Icon(Icons.Default.ArrowDownward, contentDescription = "Next audio stage",
+                        tint = muted, modifier = Modifier.align(Alignment.CenterHorizontally).size(18.dp))
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun SettingCard(title: String, subtitle: String, color: Color, muted: Color,
     icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.ChevronRight, action: () -> Unit) {
