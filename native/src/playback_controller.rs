@@ -1,7 +1,9 @@
 use jni::objects::JClass;
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 const IDLE: i32 = 0;
 const PREPARING: i32 = 1;
@@ -18,6 +20,36 @@ const EVENT_STOP: i32 = 4;
 const EVENT_FINISH: i32 = 5;
 const EVENT_FAIL: i32 = 6;
 
+static NEXT_HANDLE: AtomicU64 = AtomicU64::new(1);
+static CONTROLLERS: OnceLock<Mutex<HashMap<i64, Arc<AtomicI32>>>> = OnceLock::new();
+
+fn controllers() -> &'static Mutex<HashMap<i64, Arc<AtomicI32>>> {
+    CONTROLLERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn controller(handle: jlong) -> Option<Arc<AtomicI32>> {
+    if handle <= 0 {
+        return None;
+    }
+    controllers().lock().unwrap_or_else(|error| error.into_inner())
+        .get(&handle).cloned()
+}
+
+fn create_controller() -> jlong {
+    loop {
+        let candidate = NEXT_HANDLE.fetch_add(1, Ordering::Relaxed);
+        if candidate == 0 || candidate > i64::MAX as u64 {
+            return 0;
+        }
+        let handle = candidate as i64;
+        let mut registry = controllers().lock().unwrap_or_else(|error| error.into_inner());
+        if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
+            entry.insert(Arc::new(AtomicI32::new(IDLE)));
+            return handle as jlong;
+        }
+    }
+}
+
 fn transition(current: i32, event: i32) -> i32 {
     match event {
         EVENT_PREPARE => PREPARING,
@@ -33,19 +65,8 @@ fn transition(current: i32, event: i32) -> i32 {
     }
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlaybackController(
-    _env: JNIEnv, _class: JClass,
-) -> jlong {
-    Box::into_raw(Box::new(AtomicI32::new(IDLE))) as jlong
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTransitionPlaybackController(
-    _env: JNIEnv, _class: JClass, handle: jlong, event: jint,
-) -> jint {
-    if handle == 0 { return -1; }
-    let state = unsafe { &*(handle as *const AtomicI32) };
+fn transition_handle(handle: jlong, event: jint) -> jint {
+    let Some(state) = controller(handle) else { return -1; };
     let mut current = state.load(Ordering::Acquire);
     loop {
         let next = transition(current, event);
@@ -57,19 +78,41 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTransitionPl
     }
 }
 
+fn state_for_handle(handle: jlong) -> jint {
+    controller(handle).map(|state| state.load(Ordering::Acquire)).unwrap_or(FAILED)
+}
+
+fn destroy_controller(handle: jlong) {
+    if handle <= 0 { return; }
+    controllers().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlaybackController(
+    _env: JNIEnv, _class: JClass,
+) -> jlong {
+    create_controller()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTransitionPlaybackController(
+    _env: JNIEnv, _class: JClass, handle: jlong, event: jint,
+) -> jint {
+    transition_handle(handle, event)
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackControllerState(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jint {
-    if handle == 0 { return FAILED; }
-    unsafe { &*(handle as *const AtomicI32) }.load(Ordering::Acquire)
+    state_for_handle(handle)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyPlaybackController(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut AtomicI32)); } }
+    destroy_controller(handle)
 }
 
 #[cfg(test)]
