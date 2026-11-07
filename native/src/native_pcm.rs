@@ -199,23 +199,31 @@ pub(super) fn from_symphonia_buffer(
             let values = planes!(buffer, |v: &symphonia::core::sample::u24| Ok(((v.inner() as i64 >> shift) - midpoint) as i32));
             if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
         }
-        symphonia::core::audio::AudioBufferRef::S32(buffer) if matches!(valid_bits, 20 | 24 | 32) => {
+        symphonia::core::audio::AudioBufferRef::S32(buffer) if matches!(valid_bits, 8 | 16 | 20 | 24 | 32) => {
             let values = planes!(buffer, |v: &i32| signed_from_left_aligned(*v, 32, valid_bits));
             match valid_bits {
+                8 => NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()),
+                16 => NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()),
                 20 => NativePcmSamples::I20(values),
                 24 => NativePcmSamples::I24(values),
                 32 => NativePcmSamples::I32(values),
                 _ => unreachable!(),
             }
         }
-        symphonia::core::audio::AudioBufferRef::U32(buffer) if matches!(valid_bits, 20 | 24 | 32) => {
+        symphonia::core::audio::AudioBufferRef::U32(buffer) if matches!(valid_bits, 8 | 16 | 20 | 24 | 32) => {
             if valid_bits == 32 {
                 NativePcmSamples::I32(planes!(buffer, |v: &u32| Ok((*v ^ 0x8000_0000) as i32)))
             } else {
                 let shift = 32 - valid_bits;
                 let midpoint = 1_i64 << (valid_bits - 1);
                 let values = planes!(buffer, |v: &u32| Ok(((*v as i64 >> shift) - midpoint) as i32));
-                if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+                match valid_bits {
+                    8 => NativePcmSamples::I8(values.into_iter().map(|v| v as i8).collect()),
+                    16 => NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()),
+                    20 => NativePcmSamples::I20(values),
+                    24 => NativePcmSamples::I24(values),
+                    _ => unreachable!(),
+                }
             }
         }
         _ => return Err("This decoder sample representation is not eligible for native integer PCM".into()),
