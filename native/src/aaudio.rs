@@ -284,7 +284,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 .take();
             if let Some(request) = pending_seek {
                 match crate::streaming::process_aaudio_seek(Arc::clone(&worker_session), request) {
-                    Ok(_) => {}
+                    Ok(_) => {
+                        start_requested = false;
+                    }
                     Err(_) => {
                         worker_session.error_code.store(-903, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
