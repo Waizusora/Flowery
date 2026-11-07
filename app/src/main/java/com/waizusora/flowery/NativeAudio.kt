@@ -46,6 +46,9 @@ object NativeAudio {
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
     external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
     external fun nativePumpStreamChunk(handle: Long, maxFrames: Int): Int
+    external fun nativeStartStreamPump(handle: Long, maxFrames: Int, totalFrames: Long): Int
+    external fun nativeGetStreamPumpStatus(handle: Long): Int
+    external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
     external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
