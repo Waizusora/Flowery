@@ -81,7 +81,7 @@ internal fun NowPlayingDestination(
                                         val active = index == activeLyricIndex
                                         Text(
                                             line.text.ifBlank { "♪" },
-                                            color = if (active) Color(0xFFD66B9A) else muted,
+                                            color = if (active) MaterialTheme.colorScheme.primary else muted,
                                             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                                             fontSize = if (active) 21.sp else 16.sp,
                                             textAlign = TextAlign.Center,
@@ -139,7 +139,7 @@ internal fun NowPlayingDestination(
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleEnabled) Color(0xFF1E90FF) else foreground) }
+                IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else foreground) }
                 IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = foreground, modifier = Modifier.size(30.dp)) }
                 IconButton(onClick = onTogglePlayback, Modifier.size(76.dp).background(foreground.copy(alpha = .13f), RoundedCornerShape(40.dp))) {
                     Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause", tint = foreground, modifier = Modifier.size(46.dp))
@@ -165,7 +165,7 @@ internal fun NowPlayingDestination(
                         onClick = { selectedTrack?.let(onInspect) },
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6),
+                        Icon(Icons.Default.Info, "File information", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(30.dp))
                     }
                     Text(
