@@ -24,7 +24,7 @@ pub(super) struct SessionState {
     pub(super) cancelled: AtomicBool,
     phase: AtomicI64,
     route: i32,
-    decoder: Arc<Mutex<StreamDecoder>>,
+    pub(super) decoder: Arc<Mutex<StreamDecoder>>,
 }
 
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
