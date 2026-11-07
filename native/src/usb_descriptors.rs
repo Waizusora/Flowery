@@ -1041,7 +1041,7 @@ mod tests {
         let valid_prefix = [
             9,4,2,1,1,1,2,0x00,0,
             7,0x24,1,5,0,1,0,
-            14,0x24,2,1,2,3,24,1,0x44,0xAC,0
+            11,0x24,2,1,2,3,24,1,0x44,0xAC,0
         ];
         let mut trailing_byte = valid_prefix.to_vec();
         trailing_byte.push(0x05);
