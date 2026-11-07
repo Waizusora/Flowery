@@ -1,10 +1,51 @@
 use symphonia::core::codecs::{CodecType, CODEC_TYPE_AC3};
+use jni::objects::{JByteArray, JClass};
+use jni::sys::{jint, jstring};
+use jni::JNIEnv;
 
 pub(super) const UAC1_FORMAT_TYPE_II: u8 = 0x02;
 pub(super) const UAC1_FORMAT_TYPE_III: u8 = 0x03;
 pub(super) const UAC1_FORMAT_TAG_AC3: u16 = 0x1002;
 pub(super) const IEC61937_DATATYPE_AC3: u16 = 0x0001;
 pub(super) const IEC61937_AC3_BURST_BYTES: usize = 6144;
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbEncodedDescriptor(
+    mut env: JNIEnv, _class: JClass, descriptors: JByteArray,
+    interface_number: jint, alternate_setting: jint, format_type: jint, format_tag: jint,
+) -> jstring {
+    if !(0..=255).contains(&interface_number) || !(0..=255).contains(&alternate_setting) ||
+        !(0..=255).contains(&format_type) || !(0..=0xffff).contains(&format_tag) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded UAC1 descriptor selector");
+        return std::ptr::null_mut();
+    }
+    let length = match env.get_array_length(&descriptors) {
+        Ok(value) => value as usize,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string()); return std::ptr::null_mut(); }
+    };
+    let mut signed = vec![0_i8; length];
+    if let Err(error) = env.get_byte_array_region(&descriptors, 0, &mut signed) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string());
+        return std::ptr::null_mut();
+    }
+    let raw: Vec<u8> = signed.into_iter().map(|value| value as u8).collect();
+    match validate_uac1_encoded_descriptor(
+        &raw, interface_number as u8, alternate_setting as u8,
+        format_type as u8, format_tag as u16) {
+        Ok((endpoint, max_packet, interval)) => {
+            let json = serde_json::json!({
+                "valid": true, "endpoint": endpoint,
+                "maxPacketBytes": max_packet, "interval": interval,
+                "formatType": format_type, "formatTag": format_tag
+            });
+            match env.new_string(json.to_string()) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
+        }
+        Err(error) => {
+            let json = serde_json::json!({"valid": false, "reason": error});
+            match env.new_string(json.to_string()) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
+        }
+    }
+}
 
 /// Keep the passthrough allow-list deliberately narrow. A format-tag match
 /// alone is insufficient: the demuxed source codec must match the UAC profile.
