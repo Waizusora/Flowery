@@ -530,6 +530,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsAc3Source(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jni::sys::jboolean {
+    if handle == 0 { return jni::sys::JNI_FALSE; }
+    let decoder = unsafe { &*(handle as *const StreamDecoder) };
+    if decoder.is_ac3_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInfo(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
