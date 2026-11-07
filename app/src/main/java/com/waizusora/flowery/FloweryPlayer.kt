@@ -581,10 +581,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("USB exclusive: discovering compatible UAC2 DACs…")
             val discovered = controller.audioDevices()
             recordUsbDiagnostic("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
-            onState("USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz stereo PCM match…")
-            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${sourceBits} sampleRate=${sourceRate} channels=${channels} bitPerfect=true")
+            val nativeCandidate = sourceBits in 8..32
+            onState(if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz PCM match…" else "USB exclusive: selecting a DAC PCM profile for float32 decoding…")
+            recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${if (nativeCandidate) sourceBits else "automatic"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate}")
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
-                discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
+                discovered, if (nativeCandidate) sourceBits else 0, sourceRate,
+                allowSampleRateConversion = !nativeCandidate,
                 requiredSubslotBytes = null, channels = channels
             )
             val device = selectedDevice.usbDevice
@@ -594,15 +596,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(usbSession.profile.channels == channels && usbSession.sampleRate > 0) {
                 "The negotiated DAC profile does not match the decoded PCM stream."
             }
-            check(usbSession.sampleRate == sourceRate &&
-                usbSession.profile.bitResolution == sourceBits &&
-                usbSession.profile.subslotBytes >= (sourceBits + 7) / 8
-            ) {
-                "Bit Perfect requires an exact source/DAC sample-rate, valid-bit, and PCM subslot match."
+            if (nativeCandidate) {
+                check(usbSession.sampleRate == sourceRate &&
+                    usbSession.profile.bitResolution == sourceBits &&
+                    usbSession.profile.subslotBytes >= (sourceBits + 7) / 8
+                ) {
+                    "Bit Perfect requires an exact source/DAC sample-rate, valid-bit, and PCM subslot match."
+                }
             }
-            onState("USB exclusive: preparing unprocessed PCM…")
-            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, sourceRate, FloatArray(31) { 0f })
-            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${sourceRate} eqActive=false gain=1.0 ducking=false resampling=false")
+            val outputRate = usbSession.sampleRate
+            val outputBits = usbSession.profile.bitResolution
+            onState(if (nativeCandidate) "USB exclusive: preparing native integer PCM…" else "USB exclusive: preparing float32 PCM decoding…")
+            val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, FloatArray(31) { 0f })
+            recordUsbDiagnostic("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=false gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
             check(decoderConfigResult == 0) {
                 "Unable to configure the streaming decoder and DSP for direct USB output."
             }
@@ -610,7 +616,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
                 check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
             }
-            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${sourceBits}_LE nativeIntegerPath=automatic sourceSamplePreservation=conditional")
+            recordUsbDiagnostic("DECODER_CONFIGURED outputFormat=PCM_INTEGER_S${outputBits}_LE decoderPath=automatic nativeCandidate=${nativeCandidate} sourceSamplePreservation=conditional")
             onState("USB exclusive: DAC session ready; decoding first PCM chunk…")
             outputSampleRate = usbSession.sampleRate
             usbOutputBitDepth = usbSession.profile.bitResolution
@@ -646,7 +652,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
-                handle, queueHandle, usbSession.sampleRate, channels, usbSession.profile.bitResolution,
+                handle, queueHandle, outputRate, channels, outputBits,
                 usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
@@ -740,7 +746,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     firstTransfer = false
                     usbNativeBitPerfectConfirmed = nativeBitPerfectNow
                     recordUsbDiagnostic("USB_NATIVE_PCM bitPerfect=${usbNativeBitPerfectConfirmed} decoderPath=${if (usbNativeBitPerfectConfirmed) "integer" else "float32"}")
-                    onState(if (usbNativeBitPerfectConfirmed) "USB exclusive · BIT PERFECT · " + sourceBits + "-bit · " + sourceRate + " Hz · native integer PCM" else "USB exclusive · PCM · float32 decoded · " + sourceBits + "-bit · " + sourceRate + " Hz")
+                    onState(if (usbNativeBitPerfectConfirmed) "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · native integer PCM" else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
                 }
             }
             producerFailure.get()?.let { if (playbackActive()) throw it }
