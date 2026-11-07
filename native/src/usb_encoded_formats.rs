@@ -77,6 +77,10 @@ pub(super) fn ac3_frame_size(frame: &[u8]) -> Result<usize, &'static str> {
     }
     let fscod = frame[4] >> 6;
     let frame_size_code = frame[4] & 0x3f;
+    let bitstream_id = frame[5] >> 3;
+    if bitstream_id > 10 {
+        return Err("Enhanced AC-3 or a reserved bitstream identifier is not accepted as AC-3");
+    }
     if fscod == 3 || frame_size_code > 37 {
         return Err("AC-3 frame header contains a reserved sample-rate or frame-size code");
     }
