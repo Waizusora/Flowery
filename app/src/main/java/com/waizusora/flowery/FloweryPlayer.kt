@@ -346,7 +346,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             throw IllegalStateException("Rust AAudio output scheduler stopped unexpectedly")
                         }
                         else -> throw IllegalStateException(
-                            "Rust AAudio output scheduler failed (error ${NativeAudio.nativeGetOutputError()})"
+                            "Rust AAudio output scheduler failed (error ${NativeAudio.nativeGetPlaybackSessionError(sessionHandle)})"
                         )
                     }
                 }
