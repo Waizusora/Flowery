@@ -502,7 +502,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             diagnostics.record("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
             val negotiation = UsbPcmRouteNegotiator(controller).open(
                 devices = discovered,
-                decoderHandle = handle,
                 sourceBits = sourceBits,
                 sourceRate = sourceRate,
                 channels = channels,
