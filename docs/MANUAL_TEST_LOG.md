@@ -161,8 +161,12 @@ User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
 
+Unavailable in the user's test library:
+- WAV: no test file available.
+- M4A (AAC): no test file available.
+
 Remaining:
-- Test each other available format for at least 15–30 seconds.
+- Test other formats that are actually available in the user's library (including M4A/ALAC if present).
 - Verify seeking where supported.
 - Record sample rate, bit depth (if known), and any errors.
 
