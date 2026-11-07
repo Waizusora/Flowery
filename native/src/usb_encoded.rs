@@ -524,3 +524,45 @@ mod tests {
         assert_eq!(burst.framing, EncodedFraming::Iec61937 { data_type: 0x01 });
     }
 }
+
+
+#[cfg(test)]
+mod handle_tests {
+    use super::*;
+
+    #[test]
+    fn encoded_queue_registry_rejects_stale_handles_and_retains_inflight_references() {
+        assert!(queue_ref(0).is_none());
+        assert!(queue_ref(-1).is_none());
+        let handle = register_queue(EncodedPacketQueue::new(2, 64).unwrap());
+        let retained = queue_ref(handle).expect("registered queue must resolve");
+        remove_queue(handle);
+        assert!(queue_ref(handle).is_none());
+        assert!(retained.offer(EncodedPacket {
+            sequence: 0,
+            presentation_time_us: None,
+            duration_us: 1,
+            framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
+            bytes: vec![1, 2],
+        }).is_ok());
+    }
+
+    #[test]
+    fn encoded_queue_registry_allocates_unique_handles() {
+        let first = register_queue(EncodedPacketQueue::new(1, 8).unwrap());
+        let second = register_queue(EncodedPacketQueue::new(1, 8).unwrap());
+        assert_ne!(first, second);
+        remove_queue(first);
+        assert!(queue_ref(first).is_none());
+        assert!(queue_ref(second).is_some());
+        remove_queue(second);
+    }
+
+    #[test]
+    fn encoded_producer_registry_rejects_invalid_and_stale_handles() {
+        assert!(producer_ref(0).is_none());
+        assert!(producer_ref(-1).is_none());
+        assert!(producer_ref(i64::MAX).is_none());
+        remove_producer(0);
+    }
+}
