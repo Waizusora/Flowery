@@ -160,3 +160,9 @@ The current `FloweryPlayer` is not yet a thin command-only adapter: it still own
 The C++ transport is limited to libusb resource management, interface/alternate-setting setup, USB class control requests needed for transport negotiation, isochronous URB scheduling, feedback endpoint handling, completion processing, cancellation and teardown. Transfer buffers remain owned until libusb completion/cancellation is reaped. If the event thread cannot be joined, the current close path deliberately avoids freeing the session to prevent a use-after-free; the resulting resource-retention failure must be surfaced and tested rather than treated as a successful release.
 
 The native descriptor parser regression suite includes UAC1 and UAC2 Feature Unit master-volume capability cases and a negative case where the volume bit is not advertised.
+
+## Android playback adapter boundaries
+
+Android-specific SAF extension lookup and USB diagnostic capture are implemented in `AndroidPlaybackAdapters.kt`, rather than inside `FloweryPlayer`. The decoded USB producer's worker-control loop and bounded PCM block-envelope decoding are isolated in `UsbPcmProducerAdapter.kt`. These Kotlin classes do not decode audio or pack PCM; they forward cancellation, seek, gain and EQ changes to the Rust producer and pass completed blocks to the USB transport writer.
+
+`FloweryPlayer` still coordinates the playback worker and the direct USB writer loop. The extraction is an incremental boundary improvement, not a claim that the complete playback scheduler has moved to Rust. A later migration must preserve Android SAF descriptor ownership, USB permission and interface lifecycle, output-device discovery, and C++ libusb transport ownership.
