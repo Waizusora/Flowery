@@ -188,11 +188,12 @@ Do not claim support for every possible format based only on this sample.
 
 ### TEST 10 — Playback stability
 
-**Status: PASS — 10-minute continuous playback (2026-11-08)**
+**Status: PARTIAL — continuous playback passed; seek failed (2026-11-08)**
 
-User confirmed:
-- Audio remained normal throughout the 10-minute continuous playback.
-- No playback interruption was reported.
+Confirmed:
+- 10-minute continuous playback: PASS. User reported normal audio with no interruption.
+- Seek: FAIL. When the user moved the duration slider through AUX output, playback position returned to 0:00, audio became silent, and the UI continued to show PLAY. The failure indicates that the AAudio seek session did not resume correctly; the precise native error remains undiagnosed.
+- Pause/resume and track navigation: NOT TESTED.
 
 1. Play a track continuously for at least 10 minutes.
 2. Seek several times.
