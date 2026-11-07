@@ -180,14 +180,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=true")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_SOURCE_PRESERVING_CANDIDATE sourceBits=${sourceBits}")
                         usbPlaybackMode = true
-                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs)
+                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
                     3 -> {
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=false")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
                         usbPlaybackMode = true
-                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs)
+                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
                     0 -> Unit
@@ -424,7 +424,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         sourceRate: Int,
         generation: Int,
         segmentStartMs: Long,
-        segmentEndMs: Long?
+        segmentEndMs: Long?,
+        sessionHandle: Long
     ) {
         var pipeline: UsbEncodedPlaybackPipeline? = null
         try {
@@ -635,7 +636,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             queueHandle = NativeAudio.nativeCreateUsbPcmQueue(USB_QUEUE_DEPTH_BLOCKS)
             check(queueHandle != 0L) { "Unable to create the native USB PCM queue." }
             producerHandle = NativeAudio.nativeCreateUsbPcmProducer(
-                handle, queueHandle, outputRate, channels, outputBits,
+                handle, queueHandle, sessionHandle, outputRate, channels, outputBits,
                 usbSession.profile.subslotBytes, segmentStartMs, segmentEndMs ?: -1L,
                 if (outputEncoding == "ieee_float32") 1 else 0
             )
