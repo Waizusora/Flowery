@@ -123,8 +123,8 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 .
 ├── app/
 │   └── src/main/
-│       ├── cpp/                 # libusb UAC2 transport and CMake configuration
-│       ├── java/.../flowery/    # Android UI, service, SAF library, JNI bridge
+│       ├── cpp/                 # libusb USB transport and CMake configuration
+│       ├── java/.../flowery/    # Android UI, SettingsContent, service, SAF library, JNI bridge
 │       └── AndroidManifest.xml
 ├── native/
 │   ├── Cargo.toml               # Rust dependencies
@@ -181,6 +181,7 @@ The Rust test suite includes checks for:
 - Finite equalizer coefficients at common sample rates and gain settings.
 - Accurate WAV seek positioning, including converted seek preroll.
 - Saturating millisecond-to-frame conversion.
+- UAC1/UAC2 Feature Unit master-volume descriptor detection, including negative capability cases.
 
 Android local JVM unit tests use a JVM-compatible `org.json` implementation rather than the Android framework stub, so JSON parsing behavior can be exercised outside an Android runtime.
 
@@ -188,7 +189,7 @@ CI success confirms that the configured build and automated tests completed. It 
 
 ## Native audio API boundary
 
-The application uses the incremental Rust streaming decoder and native output ring for playback. The former whole-file JNI decoder, WAV-specific source reader, legacy float-array streaming read export, and stateless array-based resampler/equalizer entry points have been removed so playback cannot accidentally regress to a full-track PCM allocation or duplicate DSP path. Kotlin retains Android document, lifecycle, routing, and UI responsibilities; PCM decoding, resampling, equalization, and bounded output buffering remain in Rust.
+The application uses the incremental Rust streaming decoder and native output ring for playback. The former whole-file JNI decoder, WAV-specific source reader, legacy float-array streaming read export, and stateless array-based resampler/equalizer entry points have been removed so playback cannot accidentally regress to a full-track PCM allocation or duplicate DSP path. Kotlin retains Android document, lifecycle, routing, and UI responsibilities; PCM decoding, resampling, equalization, and bounded output buffering remain in Rust. UAC descriptor interpretation, including Feature Unit volume capability detection, is also Rust-owned. The direct USB path still hands bounded producer blocks through Kotlin JNI byte arrays to the C++ libusb writer; eliminating that copy is a future optimization requiring explicit native queue ownership and teardown tests.
 
 ## Current limitations
 
