@@ -60,7 +60,7 @@ fn transition(current: i32, event: i32) -> i32 {
         EVENT_FINISH if current != IDLE => IDLE,
         EVENT_FAIL if current != IDLE => FAILED,
         EVENT_FAIL => FAILED,
-        EVENT_PREPARE | EVENT_START | EVENT_PAUSE | EVENT_RESUME | EVENT_STOP | EVENT_FINISH => current,
+        EVENT_START | EVENT_PAUSE | EVENT_RESUME | EVENT_STOP | EVENT_FINISH => current,
         _ => -1,
     }
 }

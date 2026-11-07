@@ -43,7 +43,7 @@ internal fun FoldersDestination(
                             Heading("Folders", foreground)
                             Spacer(Modifier.weight(1f))
                             IconButton(onClick = onScan, enabled = !libraryScanActive) {
-                                Icon(Icons.Default.Refresh, "Refresh library", tint = Color(0xFFD66B9A),
+                                Icon(Icons.Default.Refresh, "Refresh library", tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
@@ -54,7 +54,7 @@ internal fun FoldersDestination(
                         if (cueVirtualTracks.isNotEmpty() || playlistVirtualTracks.isNotEmpty()) {
                             Row(Modifier.fillMaxWidth().clickable { onVirtualCueFolder(true); onSelectedFolder(null) }
                                 .padding(horizontal = 4.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.FolderSpecial, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
+                                Icon(Icons.Default.FolderSpecial, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
                                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                                     Text("CUE & PLAYLISTS", color = foreground, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
                                     Text("Virtual playlists · CUE, M3U, M3U8, PLS", color = muted, style = MaterialTheme.typography.bodySmall)
@@ -70,7 +70,7 @@ internal fun FoldersDestination(
                                     .padding(horizontal = 4.dp, vertical = 13.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A),
+                                Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(27.dp))
                                 Column(Modifier.weight(1f).padding(start = 14.dp)) {
                                     Text(folder.name, color = foreground, fontWeight = FontWeight.SemiBold,
@@ -91,21 +91,21 @@ internal fun FoldersDestination(
                         val cueTracks = tracks.filter { it.cuePlaylist != null }
                         val m3uTracks = tracks.filter { it.playlistName != null }
                         cueTracks.groupBy { it.cuePlaylist }.forEach { (name, entries) ->
-                            Text(name ?: "CUE playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
+                            Text(name ?: "CUE playlist", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                             entries.sortedBy { it.cueStartMs ?: 0L }.forEach { item ->
                                 Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
+                                    Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(25.dp))
                                     Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
-                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
+                                    if (selectedTrack?.uri == item.uri && selectedTrack?.cueStartMs == item.cueStartMs) Icon(Icons.Default.GraphicEq, "Playing", tint = MaterialTheme.colorScheme.primary)
                                 }
                                 HorizontalDivider(color = muted.copy(alpha = .16f))
                             }
                         }
                         m3uTracks.groupBy { it.playlistName }.forEach { (name, entries) ->
-                            Text(name ?: "Playlist", color = Color(0xFFD66B9A), fontWeight = FontWeight.SemiBold)
+                            Text(name ?: "Playlist", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
                             entries.sortedBy { it.playlistOrder ?: Int.MAX_VALUE }.forEach { item ->
                                 Row(Modifier.fillMaxWidth().clickable { onPlay(item, entries) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(25.dp))
+                                    Icon(Icons.AutoMirrored.Filled.QueueMusic, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(25.dp))
                                     Text(item.title, color = foreground, modifier = Modifier.weight(1f).padding(start = 12.dp))
                                 }
                                 HorizontalDivider(color = muted.copy(alpha = .16f))
@@ -122,7 +122,7 @@ internal fun FoldersDestination(
                                 Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
                             }
                             IconButton(onClick = { onRefreshFolder(selectedFolder!!) }, enabled = !libraryScanActive) {
-                                Icon(Icons.Default.Refresh, "Refresh folder", tint = Color(0xFFD66B9A),
+                                Icon(Icons.Default.Refresh, "Refresh folder", tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
@@ -131,12 +131,12 @@ internal fun FoldersDestination(
                         folderTracks.forEach { track ->
                             Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.MusicNote, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(28.dp))
+                                Icon(Icons.Default.MusicNote, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
                                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
                                     Text(track.title, color = foreground, fontWeight = FontWeight.Medium)
                                     Text(track.mimeType ?: track.folder, color = muted, style = MaterialTheme.typography.bodySmall)
                                 }
-                                if (selectedTrack?.uri == track.uri) Icon(Icons.Default.GraphicEq, "Playing", tint = Color(0xFF1E90FF))
+                                if (selectedTrack?.uri == track.uri) Icon(Icons.Default.GraphicEq, "Playing", tint = MaterialTheme.colorScheme.primary)
                             }
                             HorizontalDivider(color = muted.copy(alpha = .2f))
                         }

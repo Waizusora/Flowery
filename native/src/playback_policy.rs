@@ -9,7 +9,7 @@ const ROUTE_USB_ENCODED_AC3: i32 = 1;
 const ROUTE_USB_SOURCE_PRESERVING: i32 = 2;
 const ROUTE_USB_FLOAT32: i32 = 3;
 
-fn select_playback_route(
+pub(super) fn select_playback_route(
     bit_perfect_requested: bool,
     is_ac3: bool,
     lossless_source: bool,

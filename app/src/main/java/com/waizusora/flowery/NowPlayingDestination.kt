@@ -81,14 +81,14 @@ internal fun NowPlayingDestination(
                                         val active = index == activeLyricIndex
                                         Text(
                                             line.text.ifBlank { "♪" },
-                                            color = if (active) Color(0xFFD66B9A) else muted,
+                                            color = if (active) MaterialTheme.colorScheme.primary else muted,
                                             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                                             fontSize = if (active) 21.sp else 16.sp,
                                             textAlign = TextAlign.Center,
                                             modifier = Modifier.fillMaxWidth()
                                                 .padding(horizontal = 8.dp, vertical = 9.dp)
                                                 .then(if (active) Modifier.background(
-                                                    Color(0xFFD66B9A).copy(alpha = .13f), RoundedCornerShape(12.dp)
+                                                    MaterialTheme.colorScheme.primary.copy(alpha = .13f), RoundedCornerShape(12.dp)
                                                 ) else Modifier)
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                         )
@@ -139,14 +139,14 @@ internal fun NowPlayingDestination(
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleEnabled) Color(0xFF1E90FF) else foreground) }
+                IconButton(onClick = onShuffle) { Icon(Icons.Default.Shuffle, "Shuffle", tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else foreground) }
                 IconButton(onClick = onPrevious) { Icon(Icons.Default.SkipPrevious, "Previous", tint = foreground, modifier = Modifier.size(30.dp)) }
                 IconButton(onClick = onTogglePlayback, Modifier.size(76.dp).background(foreground.copy(alpha = .13f), RoundedCornerShape(40.dp))) {
                     Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, "Play or pause", tint = foreground, modifier = Modifier.size(46.dp))
                 }
                 IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = foreground, modifier = Modifier.size(30.dp)) }
                 IconButton(onClick = onRepeat) { Icon(if (repeatMode == 2) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                    "Repeat", tint = if (repeatMode == 0) foreground else Color(0xFF1E90FF)) }
+                    "Repeat", tint = if (repeatMode == 0) foreground else MaterialTheme.colorScheme.primary) }
             }
             if (selectedTrack != null) {
                 val seekDurationMs = durationMs.coerceAtLeast(1L)
@@ -165,7 +165,7 @@ internal fun NowPlayingDestination(
                         onClick = { selectedTrack?.let(onInspect) },
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.Info, "File information", tint = Color(0xFF7452A6),
+                        Icon(Icons.Default.Info, "File information", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(30.dp))
                     }
                     Text(
@@ -178,7 +178,7 @@ internal fun NowPlayingDestination(
                         onClick = onEdit,
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A),
+                        Icon(Icons.Default.Edit, "Edit audio tags", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(30.dp))
                     }
                 }

@@ -4,6 +4,12 @@ use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_os = "android")]
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+#[cfg(target_os = "android")]
+use std::thread::{self, JoinHandle};
+#[cfg(target_os = "android")]
+use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -239,6 +245,15 @@ impl StreamDecoder {
 
     pub(super) fn is_ac3_source(&self) -> bool {
         self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3
+    }
+    pub(super) fn playback_metadata(&self) -> (usize, usize, u8, bool, bool) {
+        (
+            self.source_rate,
+            self.channels,
+            self.source_bits,
+            self.lossless_source,
+            self.is_ac3_source(),
+        )
     }
     pub(super) fn is_ieee_float32_source(&self) -> bool { self.ieee_float_source }
 
@@ -720,6 +735,41 @@ pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
     decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
 }
 
+
+#[cfg(target_os = "android")]
+struct StreamPumpWorker {
+    stop: Arc<AtomicBool>,
+    status: Arc<AtomicI32>,
+    epoch: u64,
+    thread: JoinHandle<()>,
+}
+
+#[cfg(target_os = "android")]
+static STREAM_PUMP_WORKERS: OnceLock<Mutex<HashMap<i64, StreamPumpWorker>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn stream_pump_workers() -> &'static Mutex<HashMap<i64, StreamPumpWorker>> {
+    STREAM_PUMP_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn stream_pump_status(handle: jlong) -> Option<(i32, u64)> {
+    stream_pump_workers()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .get(&handle)
+        .map(|worker| (worker.status.load(Ordering::Acquire), worker.epoch))
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn stop_stream_pump_worker(handle: jlong) {
+    let worker = stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+    if let Some(worker) = worker {
+        worker.stop.store(true, Ordering::Release);
+        let _ = worker.thread.join();
+    }
+}
+
 fn register_decoder(decoder: StreamDecoder) -> jlong {
     let decoder = Arc::new(Mutex::new(decoder));
     loop {
@@ -743,6 +793,56 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
         Ok(decoder)=>register_decoder(decoder),
         Err(error)=>{let _=env.throw_new("java/lang/IllegalArgumentException",error);0}
     }
+}
+
+fn clamp_aaudio_seek_target(request: &crate::playback_session::AAudioSeekRequest) -> i64 {
+    request.position_ms.max(request.segment_start_ms)
+        .min(if request.segment_end_ms >= 0 { request.segment_end_ms } else { i64::MAX })
+}
+
+/// Applies a queued AAudio seek on the native output scheduler thread.
+#[cfg(target_os = "android")]
+pub(super) fn process_aaudio_seek(
+    session: Arc<crate::playback_session::SessionState>,
+    request: crate::playback_session::AAudioSeekRequest,
+) -> Result<i64, String> {
+    if session.route != 0 || session.cancelled.load(Ordering::Acquire) {
+        return Err("AAudio playback session is no longer active".into());
+    }
+    let decoder_handle = session.decoder_handle;
+    let decoder = Arc::clone(&session.decoder);
+    let output_rate = decoder.lock().unwrap_or_else(|error| error.into_inner()).output_rate;
+    if output_rate == 0 {
+        return Err("The stream decoder has not been configured".into());
+    }
+    let target_ms = clamp_aaudio_seek_target(&request);
+    stop_stream_pump_worker(decoder_handle);
+    if session.cancelled.load(Ordering::Acquire) {
+        return Err("AAudio playback session was cancelled during seek".into());
+    }
+    let actual = {
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        guard.seek_to(target_ms as u64).map_err(|error| error.to_string())? as i64
+    };
+    let target_frame = milliseconds_to_frames(
+        (actual - request.segment_start_ms).max(0) as u64, output_rate,
+    );
+    let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
+    let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
+    if flush_result != 0 {
+        return Err(format!("Unable to flush AAudio output for seek (error {flush_result})"));
+    }
+    let remaining_frames = if request.segment_end_ms >= 0 {
+        let end_frame = milliseconds_to_frames(
+            (request.segment_end_ms - request.segment_start_ms) as u64, output_rate,
+        );
+        Some(end_frame.saturating_sub(target_frame))
+    } else { None };
+    start_stream_pump_worker(
+        decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
+    )?;
+    session.last_seek_position_ms.store(actual, Ordering::Release);
+    Ok(actual)
 }
 
 #[no_mangle]
@@ -793,6 +893,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfec
     ((lossless << 32) | decoder.source_bits as u64) as jlong
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDurationMs(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
@@ -825,48 +927,204 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStream
     0
 }
 
-/// Decodes one bounded chunk and copies it directly into the Rust-owned AAudio ring.
-/// Returns produced frames, 0 when the ring is full, and -1 at end of stream.
+
+/// Starts a Rust-owned scheduler that incrementally decodes into the bounded AAudio ring.
+/// total_frames < 0 means decode until the source reaches EOF.
+#[cfg(target_os = "android")]
+fn start_stream_pump_worker(
+    handle: jlong,
+    decoder: Arc<Mutex<StreamDecoder>>,
+    session: Arc<crate::playback_session::SessionState>,
+    chunk_frames: usize,
+    frame_limit: Option<u64>,
+) -> Result<(), String> {
+    stop_stream_pump_worker(handle);
+    if session.cancelled.load(Ordering::Acquire) {
+        return Err("Playback session is cancelled".into());
+    }
+    let worker_epoch = session.epoch.load(Ordering::Acquire);
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let thread_session = Arc::clone(&session);
+    let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
+        let mut produced_frames = 0_u64;
+        while !thread_stop.load(Ordering::Acquire) {
+            if thread_session.cancelled.load(Ordering::Acquire) ||
+                thread_session.epoch.load(Ordering::Acquire) != worker_epoch {
+                thread_status.store(2, Ordering::Release);
+                break;
+            }
+            let available = crate::aaudio::available_output_frames();
+            if available == 0 {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
+            if decoder.channels > 2 {
+                thread_status.store(-2, Ordering::Release);
+                break;
+            }
+            let mut frames = chunk_frames.min(available);
+            if let Some(limit) = frame_limit {
+                let remaining = limit.saturating_sub(produced_frames);
+                if remaining == 0 {
+                    crate::aaudio::signal_stream_eof();
+                    thread_status.store(1, Ordering::Release);
+                    break;
+                }
+                frames = frames.min(remaining as usize);
+            }
+            let samples = match decoder.read_frames(frames) {
+                Ok(samples) => samples,
+                Err(_) => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            };
+            if samples.is_empty() {
+                crate::aaudio::signal_stream_eof();
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+            let channels = decoder.channels;
+            drop(decoder);
+            match crate::aaudio::write_output_samples(&samples) {
+                Ok(written) if written == samples.len() / channels => {
+                    produced_frames = produced_frames.saturating_add(written as u64);
+                }
+                _ => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            }
+            if frame_limit.is_some_and(|limit| produced_frames >= limit) {
+                crate::aaudio::signal_stream_eof();
+                thread_status.store(1, Ordering::Release);
+                break;
+            }
+        }
+        if thread_stop.load(Ordering::Acquire) {
+            thread_status.store(2, Ordering::Release);
+        }
+    }).map_err(|error| error.to_string())?;
+    let session_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if session.cancelled.load(Ordering::Acquire) ||
+        session.epoch.load(Ordering::Acquire) != worker_epoch {
+        stop.store(true, Ordering::Release);
+        drop(session_gate);
+        let _ = worker.join();
+        return Err("Playback session changed while the AAudio decode worker was starting".into());
+    }
+    stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
+        .insert(handle, StreamPumpWorker { stop, status, epoch: worker_epoch, thread: worker });
+    drop(session_gate);
+    Ok(())
+}
+
+/// Starts the AAudio decode worker for an absolute-time segment. Rust seeks to
+/// the segment start and derives the output-frame limit from the configured rate.
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpStreamChunk(
-    mut env: JNIEnv, _class: JClass, handle: jlong, max_frames: jint
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartSegmentedStreamPump(
+    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong,
+    max_frames: jint, segment_start_ms: jlong, segment_end_ms: jlong,
 ) -> jint {
-    if max_frames <= 0 {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid streaming pump arguments");
-        return -2;
+    if handle <= 0 || session_handle <= 0 || max_frames <= 0 ||
+        segment_start_ms < 0 || segment_end_ms < -1 ||
+        (segment_end_ms >= 0 && segment_end_ms < segment_start_ms) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream segment");
+        return -1;
     }
-    let available = crate::aaudio::available_output_frames();
-    if available == 0 { return 0; }
-    let Some(decoder) = decoder_ref(handle) else { return -2; };
-    let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
-    if decoder.channels > 2 {
-        let _ = env.throw_new("java/lang/IllegalStateException",
-            "AAudio output currently supports mono/stereo; multichannel PCM must use a validated direct USB route.");
-        return -2;
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else { return -1; };
+    if !Arc::ptr_eq(&decoder, &session.decoder) || session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
+        return -1;
     }
-    let frames = (max_frames as usize).min(available);
-    let samples = match decoder.read_frames(frames) {
-        Ok(samples) => samples,
-        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); return -2; }
+    let (output_rate, duration_ms) = {
+        let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        (guard.output_rate, guard.duration_ms)
     };
-    if samples.is_empty() { return -1; }
-    let channels = decoder.channels;
-    match crate::aaudio::write_output_samples(&samples) {
-        Ok(written) if written == samples.len() / channels => written as jint,
-        Ok(_) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio ring accepted an incomplete decoded chunk");
-            -2
+    if output_rate == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "The stream decoder has not been configured");
+        return -1;
+    }
+    let actual_start = {
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        match guard.seek_to(segment_start_ms as u64) {
+            Ok(position) => position,
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -1;
+            }
         }
-        Err(code) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", format!("AAudio ring write failed: {code}"));
-            -2
+    };
+    let effective_end = if segment_end_ms >= 0 { segment_end_ms as u64 } else { duration_ms };
+    let start_frame = milliseconds_to_frames(actual_start, output_rate);
+    let end_frame = milliseconds_to_frames(effective_end.max(actual_start), output_rate);
+    let frame_limit = if segment_end_ms >= 0 || duration_ms > 0 {
+        Some(end_frame.saturating_sub(start_frame))
+    } else { None };
+    match start_stream_pump_worker(handle, decoder, session, max_frames as usize, frame_limit) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
         }
     }
 }
 
+/// Legacy unbounded/explicit-frame worker entry point retained for native callers.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPump(
+    mut env: JNIEnv, _class: JClass, handle: jlong, session_handle: jlong, max_frames: jint, total_frames: jlong,
+) -> jint {
+    if handle <= 0 || session_handle <= 0 || max_frames <= 0 || total_frames < -1 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native stream pump configuration");
+        return -1;
+    }
+    let Some(decoder) = decoder_ref(handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else { return -1; };
+    if !Arc::ptr_eq(&decoder, &session.decoder) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own the decoder");
+        return -1;
+    }
+    match start_stream_pump_worker(
+        handle, decoder, session, max_frames as usize,
+        if total_frames < 0 { None } else { Some(total_frames as u64) },
+    ) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamPumpStatus(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner())
+        .get(&handle).map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopStreamPump(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    stop_stream_pump_worker(handle);
+}
+
 fn remove_decoder(handle: jlong) {
     if handle <= 0 { return; }
+    #[cfg(target_os = "android")]
+    stop_stream_pump_worker(handle);
     decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
 }
 
@@ -1016,6 +1274,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn aaudio_seek_target_is_clamped_to_the_active_segment() {
+        let bounded = crate::playback_session::AAudioSeekRequest {
+            max_frames: 8192,
+            position_ms: 900,
+            segment_start_ms: 1_000,
+            segment_end_ms: 4_000,
+        };
+        assert_eq!(clamp_aaudio_seek_target(&bounded), 1_000);
+
+        let beyond_end = crate::playback_session::AAudioSeekRequest {
+            position_ms: 9_000,
+            ..bounded
+        };
+        assert_eq!(clamp_aaudio_seek_target(&beyond_end), 4_000);
+
+        let unbounded = crate::playback_session::AAudioSeekRequest {
+            segment_end_ms: -1,
+            ..bounded
+        };
+        assert_eq!(clamp_aaudio_seek_target(&unbounded), 1_000);
     }
 
     #[test]

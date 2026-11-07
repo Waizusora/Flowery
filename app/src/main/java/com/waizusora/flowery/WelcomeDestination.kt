@@ -27,7 +27,7 @@ internal fun WelcomeDestination(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(18.dp))
-        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = Color(0xFFD66B9A), modifier = Modifier.size(76.dp))
+        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp))
         Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Text("Your local Hi-Fi music player. Follow these steps to add your music folder.",
@@ -38,7 +38,7 @@ internal fun WelcomeDestination(
                 Text("HOW TO ADD A MUSIC FOLDER", color = foreground, fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleMedium)
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Icon(Icons.Default.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
                         Text("1. Open Settings → Library", color = foreground, fontWeight = FontWeight.SemiBold)
                         Text("In Flowery, open Settings, select Library, then tap ADD to choose a folder in Android's folder picker. Confirm with Use this folder / Allow.",
@@ -46,7 +46,7 @@ internal fun WelcomeDestination(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Icon(Icons.Default.LibraryMusic, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
                         Text("2. Tap Scan", color = foreground, fontWeight = FontWeight.SemiBold)
                         Text("Flowery indexes supported audio files and playlists in the folders you selected.",
@@ -54,7 +54,7 @@ internal fun WelcomeDestination(
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(34.dp))
+                    Icon(Icons.Default.PlayCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp))
                     Column(Modifier.weight(1f)) {
                         Text("3. Open Folders and play", color = foreground, fontWeight = FontWeight.SemiBold)
                         Text("Choose a song to start playback. Your playback controls will appear in Now Playing.",
@@ -85,7 +85,7 @@ internal fun WelcomeDestination(
             }
         }
         Button(onClick = onContinue, modifier = Modifier.fillMaxWidth(),
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
             shape = RoundedCornerShape(28.dp)) { Text("NEXT") }
     }
 }
@@ -99,7 +99,7 @@ internal fun PermissionInfoRow(
     muted: Color
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Icon(icon, contentDescription = null, tint = Color(0xFFD66B9A), modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = foreground, fontWeight = FontWeight.SemiBold)
             Text(description, color = muted, style = MaterialTheme.typography.bodySmall)

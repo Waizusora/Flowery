@@ -27,7 +27,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -90,7 +89,8 @@ fun FloweryNavigation(
         label = "folder-refresh-rotation"
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
-    var usbDiagnosticRecording by remember { mutableStateOf(false) }
+    var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
+    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
     var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
@@ -117,35 +117,52 @@ fun FloweryNavigation(
             while (usbDiagnosticRecording) {
                 val sample = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
                 val openAttempt = runCatching { NativeAudio.nativeGetLastOutputOpenDiagnostics() }.getOrNull()
+                val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
+                    .format(java.util.Date())
+                fun logField(value: String): String =
+                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+                val playbackSnapshot = buildString {
+                    append("$wallTime playbackSnapshot ")
+                    append("isPlaying=$isPlaying positionMs=$positionMs durationMs=$durationMs ")
+                    append("source=\"${logField(audioSourceLabel)}\" ")
+                    append("track=\"${logField(selectedTrack?.title.orEmpty())}\" ")
+                    append("artist=\"${logField(currentTag?.artist.orEmpty())}\" ")
+                    append("routeStatus=\"${logField(status)}\" ")
+                    append("usbDacConnected=$usbDacConnected usbPermissionGranted=$usbDacPermissionGranted ")
+                    append("usbDacName=\"${logField(usbDacDeviceName)}\" ")
+                    append("bitPerfectRequested=$usbBitPerfectEnabled")
+                }
                 if (sample != null && sample.size >= 36) {
-                    usbDiagnosticLines.add(createAaudioLogLine(sample, usbDiagnosticPreviousSample, openAttempt))
+                    usbDiagnosticLines.add(
+                        "$playbackSnapshot ${createAaudioLogLine(sample, usbDiagnosticPreviousSample, openAttempt)}"
+                    )
                     usbDiagnosticPreviousSample = sample
                 } else {
-                    val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())
-                    usbDiagnosticLines.add("$wallTime aaudioDiagnostics=unavailable")
+                    usbDiagnosticLines.add("$playbackSnapshot aaudioDiagnostics=unavailable")
                 }
                 if (usbDiagnosticLines.size > 7200) usbDiagnosticLines.removeAt(0)
                 kotlinx.coroutines.delay(1000)
             }
         }
     }
-    var theme by remember { mutableStateOf(prefs.getString("theme", "Auto") ?: "Auto") }
-    var usbBitPerfectEnabled by remember { mutableStateOf(prefs.getBoolean("usb_bit_perfect_enabled", false)) }
+    var theme by remember {
+        mutableStateOf(when (prefs.getString("theme", "System")) {
+            "Light" -> "Light"
+            "Black", "Dark" -> "Dark"
+            else -> "System"
+        })
+    }
     val availableEncodings = remember { LibraryTextEncoding.available().map { it.name() } }
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
-    val lightTheme = theme == "Light" || (theme == "Auto" && !systemDark)
-    val foreground = if (lightTheme) Color(0xFF20212A) else Color.White
-    val muted = foreground.copy(alpha = .72f)
-    val background = Brush.verticalGradient(when (theme) {
-        "Light" -> listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
-        "Black" -> listOf(Color(0xFF101014), Color(0xFF191922), Color(0xFF24242D))
-        else -> if (systemDark) listOf(Color(0xFF24262C), Color(0xFF3B3E45), Color(0xFF53565D))
-            else listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
-    })
+    val lightTheme = theme == "Light" || (theme == "System" && !systemDark)
+    val foreground = if (lightTheme) Color(0xFF292629) else Color(0xFFF4F0F0)
+    val muted = if (lightTheme) Color(0xFF746A6E) else Color(0xFFC8B9BF)
+    val background = if (lightTheme) Color(0xFFF7F6F4) else Color(0xFF171719)
 
-    Scaffold(containerColor = Color.Transparent, bottomBar = {
-        if (destination != Destination.WELCOME) Row(Modifier.fillMaxWidth().background(Color.Transparent).padding(vertical = 6.dp),
+    FloweryTheme(darkTheme = !lightTheme) {
+    Scaffold(containerColor = background, bottomBar = {
+        if (destination != Destination.WELCOME) Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             NavIcon(Icons.Default.Folder, "Folders", destination == Destination.FOLDERS, foreground) {
                 destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false
@@ -164,7 +181,7 @@ fun FloweryNavigation(
                         usbTransportActive -> "USB DAC direct transport active; decoded PCM is not bit-perfect"
                         else -> "USB DAC"
                     },
-                    tint = if (usbTransportActive) Color(0xFF1E90FF) else foreground
+                    tint = if (usbTransportActive) MaterialTheme.colorScheme.primary else foreground
                 )
             }
             NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
@@ -257,13 +274,21 @@ fun FloweryNavigation(
                         usbDiagnosticPendingLog = buildString {
                             appendLine("# Flowery USB diagnostic record")
                             appendLine("# Recorded at: ${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
-                            appendLine("# AAudio telemetry samples: ${usbDiagnosticLines.size}")
+                            appendLine("# AAudio and playback-state samples: ${usbDiagnosticLines.size}")
                             appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
+                            appendLine("# Software architecture: Kotlin Android integration; Rust decode/DSP/playback sessions; C++ libusb transport")
+                            appendLine("# Hardware acceptance: pending physical Android/USB DAC verification; CI does not establish bit-perfect output")
+                            appendLine("# Current playback: playing=$isPlaying positionMs=$positionMs durationMs=$durationMs")
+                            appendLine("# Current source: $audioSourceLabel")
+                            appendLine("# Current track: ${currentTag?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
+                            appendLine("# Current route status: $status")
+                            appendLine("# USB DAC: connected=$usbDacConnected permissionGranted=$usbDacPermissionGranted name=$usbDacDeviceName")
+                            appendLine("# Bit-perfect requested: $usbBitPerfectEnabled")
                             appendLine()
                             appendLine("===== USB descriptor and DAC profile database snapshot =====")
                             appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
                             appendLine()
-                            appendLine("===== AAudio runtime telemetry =====")
+                            appendLine("===== Playback/session state and AAudio runtime telemetry (1-second sampling) =====")
                             usbDiagnosticLines.forEach { appendLine(it) }
                             appendLine()
                             appendLine("===== Direct USB / libusb playback events =====")
@@ -291,7 +316,10 @@ fun FloweryNavigation(
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
                     navigate = { settingsPage = it },
-                    changeTheme = { theme = it; prefs.edit().putString("theme", it).apply() },
+                    changeTheme = { selected ->
+                        theme = selected
+                        prefs.edit().putString("theme", when (selected) { "Dark" -> "Black"; "Light" -> "Light"; else -> "Auto" }).apply()
+                    },
                     libraryEncoding = libraryEncoding,
                     availableEncodings = availableEncodings,
                     changeEncoding = { libraryEncoding = it; prefs.edit().putString("library_text_encoding", it).apply() },
@@ -303,6 +331,7 @@ fun FloweryNavigation(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
     }
 }
 
@@ -366,7 +395,7 @@ private fun NavIcon(
     foreground: Color,
     onClick: () -> Unit
 ) {
-    val accent = Color(0xFFD66B9A)
+    val accent = MaterialTheme.colorScheme.primary
     Column(
         modifier = Modifier
             .clickable(onClick = onClick)

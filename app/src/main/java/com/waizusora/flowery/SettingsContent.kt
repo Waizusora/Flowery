@@ -48,10 +48,10 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     } else Heading("Settings", color)
     when(page) {
         SettingsPage.ROOT -> {
-            SettingCard("Audio", "Playback engine and processing", color, muted) { navigate(SettingsPage.AUDIO) }
-            SettingCard("Appearance", "Theme and language", color, muted) { navigate(SettingsPage.APPEARANCE) }
-            SettingCard("Library", "Folder management and scanning", color, muted) { navigate(SettingsPage.LIBRARY) }
-            SettingCard("Other", "Battery optimization", color, muted) { navigate(SettingsPage.OTHER) }
+            SettingCard("Audio", "Playback engine and processing", color, muted, Icons.Default.GraphicEq) { navigate(SettingsPage.AUDIO) }
+            SettingCard("Appearance", "Theme and language", color, muted, Icons.Default.Palette) { navigate(SettingsPage.APPEARANCE) }
+            SettingCard("Library", "Folder management and scanning", color, muted, Icons.Default.Folder) { navigate(SettingsPage.LIBRARY) }
+            SettingCard("Other", "Battery optimization", color, muted, Icons.Default.Tune) { navigate(SettingsPage.OTHER) }
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> {
@@ -64,7 +64,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = onConnectUsbDac, enabled = usbDacConnected,
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                             Icon(Icons.Default.Usb, contentDescription = null)
                             Text("  Sambungkan DAC")
                         }
@@ -138,13 +138,13 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 color = muted, style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = onToggleUsbDiagnosticLog, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else Color(0xFF7452A6))) {
+                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else MaterialTheme.colorScheme.primary)) {
                     Icon(if (usbDiagnosticRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
                     Text(if (usbDiagnosticRecording) "  Stop Log" else "  Record Log")
                 }
                 Button(onClick = onSaveUsbDiagnosticLog, enabled = !usbDiagnosticRecording &&
                     (usbDiagnosticLogCount > 0 || usbDiagnosticDescriptorReport.isNotBlank()),
-                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6))) {
+                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
                     Icon(Icons.Default.Save, contentDescription = null)
                     Text("  Save Log")
                 }
@@ -167,7 +167,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 Button(
                     onClick = addFolder,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(28.dp)
                 ) {
                     Icon(Icons.Default.Add, null)
@@ -189,7 +189,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     onClick = scan,
                     enabled = !scanInProgress,
                     modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF7452A6)),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
                     shape = RoundedCornerShape(28.dp)
                 ) {
                     Icon(Icons.Default.Refresh, null,
@@ -204,14 +204,14 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Folder, null, tint = Color(0xFFD66B9A), modifier = Modifier.size(27.dp))
+                    Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(27.dp))
                     Column(Modifier.weight(1f).padding(start = 14.dp)) {
                         Text(folder.name, color = color, fontWeight = FontWeight.Medium,
                             style = MaterialTheme.typography.titleMedium, maxLines = 1)
                         Text("Included in library", color = muted, style = MaterialTheme.typography.bodySmall)
                     }
                     IconButton(onClick = { removeFolder(folder) }) {
-                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = Color(0xFFD66B9A),
+                        Icon(Icons.Default.Close, "Remove folder from Flowery", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(25.dp))
                     }
                 }
@@ -223,7 +223,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         }
         SettingsPage.APPEARANCE -> {
             Text("Theme", color = color, fontWeight = FontWeight.SemiBold)
-            listOf("Light", "Black", "Auto").forEach { option ->
+            listOf("Light", "Dark", "System").forEach { option ->
                 Row(Modifier.fillMaxWidth().clickable { changeTheme(option) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(theme == option, { changeTheme(option) }); Text(option, color = color)
                 }
@@ -331,19 +331,26 @@ private fun AudioFlowCard(
 @Composable
 private fun SettingCard(title: String, subtitle: String, color: Color, muted: Color,
     icon: androidx.compose.ui.graphics.vector.ImageVector = Icons.Default.ChevronRight, action: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = action), shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .09f))) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 18.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(27.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-                Text(subtitle, color = muted, style = MaterialTheme.typography.bodyMedium)
+    Column(Modifier.fillMaxWidth()) {
+        Row(
+            Modifier.fillMaxWidth().clickable(onClick = action)
+                .padding(horizontal = 4.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, color = color, style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium)
+                Text(subtitle, color = muted, style = MaterialTheme.typography.bodySmall)
             }
             Icon(Icons.Default.ChevronRight, contentDescription = null, tint = muted)
         }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     }
 }
+
 @Composable
 private fun Detail(title: String, value: String, color: Color, muted: Color) {
     Column(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {

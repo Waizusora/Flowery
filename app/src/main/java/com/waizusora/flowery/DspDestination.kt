@@ -32,15 +32,15 @@ internal fun DspDestination(
         style = MaterialTheme.typography.bodySmall
     )
     Text("31-band ISO equalizer · ±12 dB", color = foreground, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape = RoundedCornerShape(18.dp)) {
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Bottom) {
             ISO_BANDS.forEachIndexed { index, band ->
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(48.dp)) {
                     VerticalEqualizerSlider(equalizerGains[index], { onBandGain(index, it) }, Modifier.height(250.dp).width(44.dp))
-                    Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall)
-                    Text(String.format(Locale.ROOT, "%.1f", equalizerGains[index]), color = Color.White.copy(alpha = .72f),
+                    Text(band, color = foreground, style = MaterialTheme.typography.labelSmall)
+                    Text(String.format(Locale.ROOT, "%.1f", equalizerGains[index]), color = muted,
                         style = MaterialTheme.typography.labelSmall)
                 }
             }

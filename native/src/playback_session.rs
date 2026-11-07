@@ -1,11 +1,13 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
+use crate::playback_policy::select_playback_route;
 use jni::objects::JClass;
-use jni::sys::{jint, jlong, jboolean, JNI_FALSE, JNI_TRUE};
+use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[allow(dead_code)] // Some phases are only constructed by Android-target worker paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 enum SessionPhase {
@@ -19,13 +21,27 @@ enum SessionPhase {
     Failed = 7,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct AAudioSeekRequest {
+    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    pub(crate) max_frames: usize,
+    pub(crate) position_ms: i64,
+    pub(crate) segment_start_ms: i64,
+    pub(crate) segment_end_ms: i64,
+}
+
+#[allow(dead_code)] // Android-only teardown paths read the retained JNI handle.
 pub(super) struct SessionState {
     pub(super) epoch: AtomicU64,
     pub(super) cancelled: AtomicBool,
-    phase: AtomicI64,
-    route: i32,
-    gate: Mutex<()>,
+    pub(super) phase: AtomicI64,
+    pub(super) route: i32,
+    pub(super) decoder_handle: jlong,
+    pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
+    pub(super) error_code: AtomicI32,
+    pub(super) seek_request: Mutex<Option<AAudioSeekRequest>>,
+    pub(super) last_seek_position_ms: AtomicI64,
 }
 
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -56,7 +72,20 @@ fn register_session(session: SessionState) -> jlong {
 
 fn valid_route(route: i32) -> bool { (0..=3).contains(&route) }
 
-fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
+fn valid_phase_transition(current: i32, next: i32) -> bool {
+    if current == next { return true; }
+    match current {
+        0 => matches!(next, 1 | 6 | 7),
+        1 => matches!(next, 2 | 6 | 7),
+        2 => matches!(next, 3 | 4 | 5 | 6 | 7),
+        3 => matches!(next, 2 | 6 | 7),
+        4 => matches!(next, 5 | 6 | 7),
+        5 | 6 | 7 => false,
+        _ => false,
+    }
+}
+
+pub(super) fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
     loop {
         if cancelled.load(Ordering::Acquire) { return None; }
         let current = epoch.load(Ordering::Acquire);
@@ -65,6 +94,80 @@ fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
             return Some(next);
         }
     }
+}
+
+/// Applies a lifecycle transition from a native worker without crossing JNI.
+#[allow(dead_code)] // Called by Android-target AAudio scheduler paths.
+pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> bool {
+    if !(0..=7).contains(&next) { return false; }
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if session.cancelled.load(Ordering::Acquire) && next != SessionPhase::Cancelled as i32 {
+        return false;
+    }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, next) { return false; }
+    session.phase.store(next as i64, Ordering::Release);
+    if next == SessionPhase::Cancelled as i32 {
+        session.cancelled.store(true, Ordering::Release);
+    }
+    true
+}
+
+/// Creates a native playback session and selects its output route from decoder metadata.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlaybackSession(
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, bit_perfect_requested: jboolean,
+) -> jlongArray {
+    let Some(decoder) = decoder_ref(decoder_handle) else {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
+        return std::ptr::null_mut();
+    };
+    let (source_rate, channels, source_bits, lossless_source, source_is_ac3) = {
+        let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        guard.playback_metadata()
+    };
+    let is_ac3 = bit_perfect_requested != 0 && source_is_ac3;
+    let route = select_playback_route(
+        bit_perfect_requested != 0,
+        is_ac3,
+        lossless_source,
+        source_bits as i32,
+        channels as i32,
+    );
+    let output = match env.new_long_array(7) {
+        Ok(value) => value,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let session_handle = register_session(SessionState {
+        epoch: AtomicU64::new(0),
+        cancelled: AtomicBool::new(false),
+        phase: AtomicI64::new(SessionPhase::Created as i64),
+        route,
+        decoder_handle,
+        gate: Mutex::new(()),
+        decoder,
+        error_code: AtomicI32::new(0),
+        seek_request: Mutex::new(None),
+        last_seek_position_ms: AtomicI64::new(-1),
+    });
+    if session_handle == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
+        return std::ptr::null_mut();
+    }
+    let values: [jlong; 7] = [
+        session_handle,
+        route as jlong,
+        source_rate as jlong,
+        channels as jlong,
+        source_bits as jlong,
+        if lossless_source { 1 } else { 0 },
+        if is_ac3 { 1 } else { 0 },
+    ];
+    if env.set_long_array_region(&output, 0, &values).is_err() {
+        registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&session_handle);
+        return std::ptr::null_mut();
+    }
+    output.into_raw()
 }
 
 #[no_mangle]
@@ -84,8 +187,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         cancelled: AtomicBool::new(false),
         phase: AtomicI64::new(SessionPhase::Created as i64),
         route,
+        decoder_handle,
         gate: Mutex::new(()),
         decoder,
+        error_code: AtomicI32::new(0),
+        seek_request: Mutex::new(None),
+        last_seek_position_ms: AtomicI64::new(-1),
     })
 }
 
@@ -97,6 +204,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
         return -1;
     };
+    if session.route == 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio seeks must be submitted as native seek requests");
+        return -1;
+    }
     let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     advance_epoch(&session.epoch, &session.cancelled).map(|epoch| epoch as jlong).unwrap_or(-1)
 }
@@ -114,8 +225,154 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
     if session.cancelled.load(Ordering::Acquire) && phase != SessionPhase::Cancelled as jint {
         return -1;
     }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, phase) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session phase transition");
+        return -1;
+    }
     session.phase.store(phase as i64, Ordering::Release);
     0
+}
+
+/// Applies a playback lifecycle command under the session gate. Commands 0..=7
+/// are lifecycle phases; command 8 advances the seek epoch without changing phase.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSessionCommand(
+    mut env: JNIEnv, _class: JClass, handle: jlong, command: jint,
+) -> jlong {
+    let Some(session) = session_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
+        return -1;
+    };
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if command == 8 {
+        if session.route == 0 {
+            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio seeks must be submitted as native seek requests");
+            return -1;
+        }
+        return advance_epoch(&session.epoch, &session.cancelled)
+            .map(|epoch| epoch as jlong).unwrap_or(-1);
+    }
+    if !(0..=7).contains(&command) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid playback session command");
+        return -1;
+    }
+    if session.cancelled.load(Ordering::Acquire) && command != SessionPhase::Cancelled as jint {
+        return -1;
+    }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, command) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
+        return -1;
+    }
+    session.phase.store(command as i64, Ordering::Release);
+    if command == SessionPhase::Cancelled as jint {
+        session.cancelled.store(true, Ordering::Release);
+    }
+    #[cfg(target_os = "android")]
+    let apply_pause = session.route == 0 && command == SessionPhase::Paused as jint;
+    #[cfg(target_os = "android")]
+    let apply_resume = session.route == 0 && command == SessionPhase::Running as jint;
+    #[cfg(target_os = "android")]
+    let stop_output = session.route == 0 &&
+        (command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint);
+    drop(_gate);
+    #[cfg(target_os = "android")]
+    let output_result = if apply_pause {
+        crate::aaudio::pause_output_for_session()
+    } else if apply_resume {
+        crate::aaudio::resume_output_for_session()
+    } else { None };
+    #[cfg(target_os = "android")]
+    if let Some(result) = output_result {
+        if result != 0 {
+            let rollback_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+            if session.phase.load(Ordering::Acquire) as i32 == command &&
+                !session.cancelled.load(Ordering::Acquire) {
+                session.phase.store(current as i64, Ordering::Release);
+            }
+            drop(rollback_gate);
+            let _ = env.throw_new(
+                "java/lang/IllegalStateException",
+                format!("Unable to apply AAudio session command (error {result})"),
+            );
+            return result as jlong;
+        }
+    }
+    #[cfg(target_os = "android")]
+    if stop_output {
+        crate::aaudio::stop_output_for_session();
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlaybackSessionSeek(
+    mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
+    max_frames: jint, segment_start_ms: jlong, segment_end_ms: jlong,
+) -> jlong {
+    if position_ms < 0 || max_frames <= 0 || segment_start_ms < 0 ||
+        segment_end_ms < -1 || (segment_end_ms >= 0 && segment_end_ms < segment_start_ms) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid AAudio seek request");
+        return -1;
+    }
+    let Some(session) = session_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
+        return -1;
+    };
+    if session.route != 0 {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Seek requests are only accepted by AAudio sessions");
+        return -1;
+    }
+    let gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    let phase = session.phase.load(Ordering::Acquire) as i32;
+    if session.cancelled.load(Ordering::Acquire) || !matches!(phase, 2 | 3) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio session is not seekable in its current state");
+        return -1;
+    }
+    let Some(epoch) = advance_epoch(&session.epoch, &session.cancelled) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback seek epoch is exhausted or cancelled");
+        return -1;
+    };
+    *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
+        Some(AAudioSeekRequest {
+            max_frames: max_frames as usize,
+            position_ms,
+            segment_start_ms,
+            segment_end_ms,
+        });
+    drop(gate);
+    #[cfg(target_os = "android")]
+    if phase == SessionPhase::Running as i32 {
+        match crate::aaudio::pause_output_for_session() {
+            Some(0) => {}
+            Some(error) => {
+                session.error_code.store(error, Ordering::Release);
+                transition_session_phase(&session, SessionPhase::Failed as i32);
+                let _ = env.throw_new(
+                    "java/lang/IllegalStateException",
+                    format!("Unable to pause AAudio output for seek (error {error})"),
+                );
+                return -1;
+            }
+            None => {
+                session.error_code.store(-904, Ordering::Release);
+                transition_session_phase(&session, SessionPhase::Failed as i32);
+                let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output is unavailable during seek");
+                return -1;
+            }
+        }
+    }
+    epoch as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekPosition(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jlong {
+    session_ref(handle)
+        .map(|session| session.last_seek_position_ms.load(Ordering::Acquire) as jlong)
+        .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -135,6 +392,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionError(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    session_ref(handle).map(|session| session.error_code.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlaybackSession(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
@@ -142,6 +406,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlayba
         let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         session.cancelled.store(true, Ordering::Release);
         session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+        drop(_gate);
+        #[cfg(target_os = "android")]
+        if session.route == 0 {
+            crate::aaudio::stop_output_for_session();
+        }
     }
 }
 
@@ -158,6 +427,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
             session.cancelled.store(true, Ordering::Release);
             session.phase.store(SessionPhase::Cancelled as i64, Ordering::Release);
+            drop(_gate);
+            // The native session owns the AAudio decode worker lifetime. Stop and join
+            // it before releasing the session's retained decoder reference.
+            #[cfg(target_os = "android")]
+            if session.route == 0 {
+                crate::streaming::stop_stream_pump_worker(session.decoder_handle);
+                crate::aaudio::stop_output_for_session();
+            }
             // Keep the shared decoder alive until every producer and in-flight JNI
             // operation releases its session reference.
             let _ = session.route;
@@ -224,6 +501,37 @@ mod tests {
         for route in 0..=3 { assert!(valid_route(route)); }
         assert!(!valid_route(-1));
         assert!(!valid_route(4));
+    }
+
+
+    #[test]
+    fn playback_session_phase_machine_accepts_normal_and_failure_lifecycles() {
+        assert!(valid_phase_transition(0, 1));
+        assert!(valid_phase_transition(1, 2));
+        assert!(valid_phase_transition(2, 3));
+        assert!(valid_phase_transition(3, 2));
+        assert!(valid_phase_transition(2, 5));
+        assert!(valid_phase_transition(0, 7));
+        assert!(valid_phase_transition(3, 7));
+        assert!(valid_phase_transition(2, 6));
+        assert!(!valid_phase_transition(0, 2));
+        assert!(!valid_phase_transition(1, 3));
+        assert!(!valid_phase_transition(5, 2));
+        assert!(!valid_phase_transition(6, 2));
+        assert!(!valid_phase_transition(7, 2));
+    }
+
+    #[test]
+    fn native_session_command_contract_keeps_seek_out_of_phase_transitions() {
+        assert!(valid_phase_transition(0, 1));
+        assert!(valid_phase_transition(1, 2));
+        assert!(valid_phase_transition(2, 3));
+        assert!(valid_phase_transition(3, 2));
+        assert!(valid_phase_transition(2, 5));
+        assert!(valid_phase_transition(2, 6));
+        assert!(!valid_phase_transition(5, 2));
+        assert!(!valid_phase_transition(6, 2));
+        assert!(!valid_phase_transition(7, 2));
     }
 
     #[test]
