@@ -164,10 +164,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 sessionHandle = NativeAudio.nativeCreatePlaybackSession(handle, playbackRoute)
                 check(sessionHandle != 0L) { "The native playback session could not be created" }
                 nativeSessionHandle = sessionHandle
-                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 1) == 0) {
+                check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 1).toInt() == 0) {
                     "The native playback session could not enter the prepared state"
                 }
-                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 2) == 0) {
+                check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 2).toInt() == 0) {
                     "The native playback session could not enter the running state"
                 }
                 when (playbackRoute) {
@@ -403,7 +403,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             } finally {
                 if (handle != 0L) NativeAudio.nativeStopStreamPump(handle)
                 if (sessionHandle != 0L) {
-                    if (!stopped.get()) NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, if (sessionFailed) 7 else 5)
+                    if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
                     NativeAudio.nativeClosePlaybackSession(sessionHandle)
                 }
@@ -826,18 +826,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L && !usbPlaybackMode) return
         val session = nativeSessionHandle
-        if (session != 0L) NativeAudio.nativePlaybackSessionBeginSeek(session)
+        if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 
     fun pause() {
         if (usbPlaybackMode) {
             paused = true
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 3)
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
             onState("Paused · USB exclusive")
         } else if (NativeAudio.nativePauseOutput() == 0) {
             paused = true
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 3)
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
             onState("Paused")
         }
     }
@@ -845,11 +845,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun resume() {
         if (usbPlaybackMode) {
             paused = false
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 2)
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
             onState("Playing · USB exclusive")
         } else if (NativeAudio.nativeResumeOutput() == 0) {
             paused = false
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 2)
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
             onState("Playing · AAudio streaming")
         }
     }
@@ -870,7 +870,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
-        if (nativeSessionHandle != 0L) NativeAudio.nativeCancelPlaybackSession(nativeSessionHandle)
+        if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
         // Keep the worker reference until a later start or shutdown can join it.
