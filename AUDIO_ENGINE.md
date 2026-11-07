@@ -148,3 +148,15 @@ Lepas DAC sends a release command to the playback service. The playback coordina
 ## Runtime audio information view
 
 Settings → Audio → Information Audio displays two vertical signal-flow diagrams. The source-preserving path shows source file → Symphonia → native integer/IEEE Float32 representation → Rust bounded USB PCM producer → C++ libusb → USB DAC. The decoded/DSP path shows source file → Symphonia float32 decode → Rubato when rate conversion is required → 31-band EQ and gain processing → either AAudio float32 output for speaker/AUX/Bluetooth or USB integer PCM quantization and libusb output. The highlighted path follows the current playback status; it is not a substitute for external digital capture of the DAC output.
+
+## Native ownership and JNI bridge audit
+
+Rust is the sole owner of UAC descriptor interpretation. This includes Feature Unit master-channel volume capability detection; `native/src/usb_descriptors.rs` returns the unit ID, owning AudioControl interface and protocol through JNI. Kotlin's `UsbFeatureUnitParser` only maps that result into an Android-facing value. Kotlin still issues the class-specific control transfer through the Android-authorized `UsbDeviceConnection`, then passes the returned bytes to Rust parsing functions where applicable.
+
+The Android UI is split between `FloweryNavigation.kt` (destination navigation) and `SettingsContent.kt` (settings pages and their presentation helpers). Android screens remain Kotlin/Compose code.
+
+The current `FloweryPlayer` is not yet a thin command-only adapter: it still owns worker scheduling, Android route discovery, SAF descriptor lifetime and the JNI producer polling loop. Rust owns decoding, DSP, PCM/encoded producer policy and bounded queues; Kotlin currently transfers polled blocks to the C++ transport as JNI byte arrays. This is an explicit migration boundary. Removing the intermediate Kotlin byte arrays requires a separately tested native queue-consumer contract and cancellation/teardown ordering; decoding or DSP must not be moved into C++ to achieve it.
+
+The C++ transport is limited to libusb resource management, interface/alternate-setting setup, USB class control requests needed for transport negotiation, isochronous URB scheduling, feedback endpoint handling, completion processing, cancellation and teardown. Transfer buffers remain owned until libusb completion/cancellation is reaped. If the event thread cannot be joined, the current close path deliberately avoids freeing the session to prevent a use-after-free; the resulting resource-retention failure must be surfaced and tested rather than treated as a successful release.
+
+The native descriptor parser regression suite includes UAC1 and UAC2 Feature Unit master-volume capability cases and a negative case where the volume bit is not advertised.
