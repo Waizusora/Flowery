@@ -165,6 +165,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestUsbPc
     let Some(producer) = producer_ref(handle) else { return; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
     state.pending_seek_ms = Some(position_ms as u64);
+    state.epoch = state_epoch(&state.session);
+    state.pending_block = None;
+    state.queue.clear();
 }
 
 #[no_mangle]
@@ -182,6 +185,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
 
     if state.session.cancelled.load(std::sync::atomic::Ordering::Acquire) { return -3; }
+    let session_epoch = state_epoch(&state.session);
+    if session_epoch != state.epoch {
+        state.epoch = session_epoch;
+        state.pending_block = None;
+        state.queue.clear();
+    }
 
     if let Some(relative_ms) = state.pending_seek_ms.take() {
         let absolute_ms = absolute_seek_target(
