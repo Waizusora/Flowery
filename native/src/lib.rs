@@ -6,6 +6,7 @@ mod queue;
 mod playback_controller;
 mod playlists;
 mod usb_pcm;
+mod usb_encoded;
 mod usb_producer;
 mod playback_policy;
 mod usb_descriptors;
