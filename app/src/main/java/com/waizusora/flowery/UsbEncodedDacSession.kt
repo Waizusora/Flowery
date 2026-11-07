@@ -9,7 +9,7 @@ import android.hardware.usb.UsbDeviceConnection
  * session never calls the PCM writer. The caller supplies the average encoded
  * transport rate in bytes per second, derived from the negotiated UAC profile.
  */
-internal class UsbEncodedDacSession private constructor(
+class UsbEncodedDacSession private constructor(
     private val connection: UsbDeviceConnection,
     private val nativeHandle: Long
 ) : AutoCloseable {
@@ -17,10 +17,13 @@ internal class UsbEncodedDacSession private constructor(
     private var closed = false
 
     @Synchronized
-    fun writePacket(packet: ByteArray, durationUs: Long): Int {
+    fun writePacket(packet: ByteArray, payloadOffset: Int, payloadLength: Int, durationUs: Long): Int {
         check(!closed) { "Encoded USB session is closed" }
-        require(packet.isNotEmpty()) { "Encoded packet must not be empty" }
-        return UsbDacNative.nativeWriteEncodedPacket(nativeHandle, packet, durationUs)
+        require(payloadOffset >= 0 && payloadLength > 0 && payloadOffset <= packet.size &&
+            payloadLength <= packet.size - payloadOffset) { "Encoded payload range is invalid" }
+        return UsbDacNative.nativeWriteEncodedPacket(
+            nativeHandle, packet, payloadOffset, payloadLength, durationUs
+        )
     }
 
     /** Waits until every staged encoded service interval has completed. */

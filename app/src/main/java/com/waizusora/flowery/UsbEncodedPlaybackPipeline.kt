@@ -2,18 +2,12 @@ package com.waizusora.flowery
 
 import android.hardware.usb.UsbDeviceConnection
 import org.json.JSONObject
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
- * Connects the Rust packet producer to the dedicated encoded libusb writer.
- *
- * The 27-byte JNI envelope is transport metadata only. Only the payload after
- * the envelope is written to the encoded endpoint. The PCM JNI writer is never
- * called by this pipeline.
+ * Owns the Android USB session while Rust schedules encoded packets from its
+ * bounded queue. The PCM transport writer is never used by this pipeline.
  */
 internal class UsbEncodedPlaybackPipeline private constructor(
-    private val decoderHandle: Long,
     private val queueHandle: Long,
     private val producerHandle: Long,
     private val session: UsbEncodedDacSession,
@@ -24,6 +18,12 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     private var closed = false
     private var expectedSequence = 0L
     @Volatile private var lastPositionMs = 0L
+
+    init {
+        check(NativeAudio.nativeStartUsbEncodedProducerWorker(producerHandle) == 0) {
+            "Unable to start the Rust-owned encoded packet producer"
+        }
+    }
 
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
@@ -36,40 +36,22 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun pump(maxPackets: Int = 32): Int {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(maxPackets > 0)
-        var attempts = 0
-        while (attempts < maxPackets && !ended) {
-            when (NativeAudio.nativePumpUsbEncodedProducer(producerHandle)) {
-                1 -> attempts++
-                0 -> break
-                -1 -> ended = true
-                -3 -> break
-                else -> throw IllegalStateException("Rust encoded packet producer failed")
-            }
-        }
-
-        var submitted = 0
-        while (true) {
-            val envelope = NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) ?: break
-            require(envelope.size >= HEADER_BYTES) { "Invalid encoded packet envelope" }
-            val header = ByteBuffer.wrap(envelope, 0, HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-            val kind = header.get().toInt() and 0xff
-            val code = header.short.toInt() and 0xffff
-            val sequence = header.long
-            val presentationTimeUs = header.long // presentation timestamp in microseconds
-            if (presentationTimeUs > 0L) lastPositionMs = presentationTimeUs / 1000L
-            val durationUs = header.long // packet/burst duration in microseconds
-            check(kind == framingKind && code == formatCode) {
-                "Encoded packet framing does not match the opened USB profile"
-            }
-            check(sequence == expectedSequence) { "Encoded packet sequence discontinuity" }
-            expectedSequence++
-            val payload = envelope.copyOfRange(HEADER_BYTES, envelope.size)
-            check(payload.isNotEmpty()) { "Encoded packet payload is empty" }
-            check(session.writePacket(payload, durationUs) == payload.size) {
-                "Encoded USB transport did not accept the complete packet"
-            }
-            submitted++
-        }
+        val result = NativeAudio.nativePumpUsbEncodedTransport(
+            queueHandle,
+            producerHandle,
+            session,
+            maxPackets,
+            expectedSequence,
+            framingKind,
+            formatCode,
+            lastPositionMs
+        )
+        check(result.size == 4) { "Native encoded transport scheduler returned an invalid status" }
+        val submitted = result[0].toInt()
+        expectedSequence = result[1]
+        lastPositionMs = result[2]
+        ended = result[3] != 0L
+        check(submitted >= 0) { "Native encoded transport scheduler failed" }
         return submitted
     }
 
@@ -78,8 +60,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun seekTo(positionMs: Long): Long {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(positionMs >= 0)
-        session.flush()
-        val actual = NativeAudio.nativeSeekUsbEncodedProducer(producerHandle, positionMs)
+        val actual = NativeAudio.nativeSeekUsbEncodedSession(producerHandle, session, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
         ended = false
         lastPositionMs = actual
@@ -91,6 +72,45 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun drainTransport() {
         check(!closed) { "Encoded playback pipeline is closed" }
         session.drain()
+    }
+
+    /**
+     * Owns the encoded USB submission loop, including pause drain, packet-boundary
+     * seek, bounded queue pumping, segment completion, and final transport drain.
+     */
+    fun playUntil(
+        playbackActive: () -> Boolean,
+        isPaused: () -> Boolean,
+        takePendingSeekMs: () -> Long?,
+        segmentStartMs: Long,
+        segmentEndMs: Long?,
+        onSeek: (boundedPositionMs: Long, actualPositionMs: Long) -> Unit,
+    ) {
+        var transportDrainedForPause = false
+        while (playbackActive()) {
+            if (isPaused()) {
+                if (!transportDrainedForPause) {
+                    drainTransport()
+                    transportDrainedForPause = true
+                }
+                Thread.sleep(10)
+                continue
+            }
+            transportDrainedForPause = false
+
+            takePendingSeekMs()?.let { requested ->
+                val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
+                    ?: requested.coerceAtLeast(0L)
+                val actual = seekTo(bounded)
+                onSeek(bounded, actual)
+            }
+
+            val submitted = pump(maxPackets = 1)
+            if (segmentEndMs != null && positionMs() >= segmentEndMs) break
+            if (isEnded) break
+            if (submitted == 0) Thread.sleep(2)
+        }
+        if (playbackActive()) drainTransport()
     }
 
     /** Pumps remaining source packets, then waits for the encoded endpoint to drain. */
@@ -109,6 +129,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         if (closed) return
         closed = true
         try {
+            NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
             NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
             NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
             NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
@@ -118,7 +139,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     }
 
     companion object {
-        private const val HEADER_BYTES = 27
         const val FRAMING_UAC1_TYPE_II = 1
         const val FRAMING_IEC61937_TYPE_III = 2
         const val UAC1_FORMAT_TYPE_II = 2
@@ -218,7 +238,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     validation.optInt("feedbackMaxPacketBytes")
                 )
                 return UsbEncodedPlaybackPipeline(
-                    decoderHandle, queue, producer, session, framingKind, formatCode
+                    queue, producer, session, framingKind, formatCode
                 )
             } catch (error: Throwable) {
                 if (producer != 0L) NativeAudio.nativeDestroyUsbEncodedProducer(producer)

@@ -1,13 +1,14 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicI32, Ordering};
+use std::thread::{self, JoinHandle};
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_session::{session_ref, SessionState};
 use std::time::{Duration, Instant};
 
-use jni::objects::JClass;
-use jni::sys::{jbyteArray, jint, jlong};
+use jni::objects::{JClass, JObject, JValue};
+use jni::sys::{jbyteArray, jint, jlong, jlongArray};
 use jni::JNIEnv;
 
 /// Identifies the framing contract of a compressed USB payload.
@@ -131,6 +132,10 @@ impl EncodedPacketQueue {
         }
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).packets.is_empty()
+    }
+
     /// Drops queued packets at a compressed-frame boundary, for seek/flush.
     pub(super) fn clear(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
@@ -241,6 +246,27 @@ struct EncodedProducer {
     cancelled: AtomicBool,
 }
 
+struct EncodedProducerWorker {
+    stop: Arc<AtomicBool>,
+    status: Arc<AtomicI32>,
+    thread: JoinHandle<()>,
+}
+
+static ENCODED_PRODUCER_WORKERS: OnceLock<Mutex<HashMap<i64, EncodedProducerWorker>>> = OnceLock::new();
+
+fn encoded_worker_registry() -> &'static Mutex<HashMap<i64, EncodedProducerWorker>> {
+    ENCODED_PRODUCER_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn stop_encoded_producer_worker(handle: jlong) {
+    let worker = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+    if let Some(worker) = worker {
+        worker.stop.store(true, Ordering::Release);
+        let _ = worker.thread.join();
+    }
+}
+
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEncodedQueue(
     _env: JNIEnv, _class: JClass, max_packets: jint, max_bytes: jint,
@@ -250,6 +276,109 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         Ok(queue) => register_queue(queue),
         Err(_) => 0,
     }
+}
+
+/// Drains a bounded batch of encoded packets from Rust and submits each packet
+/// through the already-open Android USB session. Kotlin supplies the transport
+/// object only as an Android/libusb bridge; packet scheduling stays native.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncodedTransport(
+    mut env: JNIEnv, _class: JClass, queue_handle: jlong, producer_handle: jlong,
+    transport: JObject, max_packets: jint, expected_sequence: jlong,
+    framing_kind: jint, format_code: jint, last_position_ms: jlong,
+) -> jlongArray {
+    if max_packets <= 0 || expected_sequence < 0 || last_position_ms < 0 ||
+        (framing_kind != 1 && framing_kind != 2) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded transport scheduler configuration");
+        return std::ptr::null_mut();
+    }
+    let Some(queue) = queue_ref(queue_handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet queue is no longer valid");
+        return std::ptr::null_mut();
+    };
+    let producer_status = encoded_worker_registry()
+        .lock().unwrap_or_else(|error| error.into_inner())
+        .get(&producer_handle)
+        .map(|worker| worker.status.load(Ordering::Acquire))
+        .unwrap_or(-1);
+    if producer_status != 0 && producer_status != 1 {
+        let _ = env.throw_new(
+            "java/lang/IllegalStateException",
+            if producer_status == 2 { "Encoded packet producer was cancelled" } else { "Encoded packet producer is unavailable" },
+        );
+        return std::ptr::null_mut();
+    }
+    let mut submitted = 0_i64;
+    let mut sequence = expected_sequence as u64;
+    let mut position_ms = last_position_ms;
+    while submitted < max_packets as i64 {
+        let Some(packet) = queue.poll(Duration::ZERO) else { break; };
+        let framing_matches = match packet.framing {
+            EncodedFraming::Uac1TypeIi { format_tag } => framing_kind == 1 && format_code == format_tag as jint,
+            EncodedFraming::Iec61937 { data_type } => framing_kind == 2 && format_code == data_type as jint,
+        };
+        if !framing_matches || packet.sequence != sequence || packet.bytes.is_empty() {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet framing or sequence is invalid");
+            return std::ptr::null_mut();
+        }
+        let payload = match env.byte_array_from_slice(&packet.bytes) {
+            Ok(array) => array,
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+                return std::ptr::null_mut();
+            }
+        };
+        let payload_object = JObject::from(payload);
+        let result = env.call_method(
+            &transport,
+            "writePacket",
+            "([BIIJ)I",
+            &[
+                JValue::Object(&payload_object),
+                JValue::Int(0),
+                JValue::Int(packet.bytes.len() as jint),
+                JValue::Long(packet.duration_us as jlong),
+            ],
+        );
+        let written = match result.and_then(|value| value.i()) {
+            Ok(value) => value,
+            Err(error) => {
+                if !env.exception_check().unwrap_or(false) {
+                    let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+                }
+                return std::ptr::null_mut();
+            }
+        };
+        if written != packet.bytes.len() as jint {
+            let _ = env.throw_new("java/lang/IllegalStateException", "USB transport did not accept a complete encoded packet");
+            return std::ptr::null_mut();
+        }
+        sequence = match sequence.checked_add(1) {
+            Some(next) => next,
+            None => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet sequence exhausted");
+                return std::ptr::null_mut();
+            }
+        };
+        if let Some(presentation_time) = packet.presentation_time_us {
+            position_ms = (presentation_time / 1000).min(i64::MAX as u64) as jlong;
+        }
+        submitted += 1;
+    }
+    let ended = producer_status == 1 && queue.is_empty();
+    let result = match env.new_long_array(4) {
+        Ok(array) => array,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            return std::ptr::null_mut();
+        }
+    };
+    let values = [submitted, sequence as jlong, position_ms, if ended { 1 } else { 0 }];
+    if let Err(error) = env.set_long_array_region(&result, 0, &values) {
+        let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+        return std::ptr::null_mut();
+    }
+    result.into_raw()
 }
 
 #[no_mangle]
@@ -355,65 +484,39 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
     register_producer(producer)
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncodedProducer(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
-) -> jint {
-    if handle == 0 {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
-        return -2;
-    }
-    let Some(producer) = producer_ref(handle) else { return -2; };
+
+fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
+    let producer = producer_ref(handle).ok_or_else(|| "Invalid compressed USB producer handle".to_string())?;
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-    if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -3; }
+    if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) {
+        return Ok(-3);
+    }
     let session_epoch = state.session.epoch.load(Ordering::Acquire);
     let queue = Arc::clone(&state.queue);
     let epoch_changed = {
         let EncodedProducerState { epoch, pending, .. } = &mut *state;
         synchronize_epoch(epoch, session_epoch, pending, &queue)
     };
-    if epoch_changed {
-        return 0;
-    }
-    if state.ended { return -1; }
+    if epoch_changed { return Ok(0); }
+    if state.ended { return Ok(-1); }
     if state.pending.is_none() {
         let decoder_owner = Arc::clone(&state.decoder);
         let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
-        match decoder.read_encoded_packet() {
-            Ok(Some((source_bytes, timestamp_us, duration_us))) => {
-                if let Err(error) = decoder.validate_ac3_encoded_frame(&source_bytes) {
-                    let _ = env.throw_new("java/lang/IllegalStateException", error);
-                    return -2;
-                }
+        match decoder.read_encoded_packet()? {
+            Some((source_bytes, timestamp_us, duration_us)) => {
+                decoder.validate_ac3_encoded_frame(&source_bytes)?;
                 if let Some(maximum) = state.maximum_bitrate_kbps {
-                    match crate::usb_encoded_formats::ac3_frame_bitrate_kbps(&source_bytes) {
-                        Ok(actual) if actual <= maximum => {}
-                        Ok(actual) => {
-                            let _ = env.throw_new("java/lang/IllegalStateException",
-                                format!("AC-3 frame bitrate {actual} kbps exceeds UAC1 descriptor maximum {maximum} kbps"));
-                            return -2;
-                        }
-                        Err(error) => {
-                            let _ = env.throw_new("java/lang/IllegalStateException", error);
-                            return -2;
-                        }
+                    let actual = crate::usb_encoded_formats::ac3_frame_bitrate_kbps(&source_bytes)?;
+                    if actual > maximum {
+                        return Err(format!("AC-3 frame bitrate {actual} kbps exceeds UAC1 descriptor maximum {maximum} kbps"));
                     }
                 }
                 let bytes = match state.framing {
                     EncodedFraming::Uac1TypeIi { .. } => source_bytes,
                     EncodedFraming::Iec61937 { data_type: crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 } => {
-                        match crate::usb_encoded_formats::build_iec61937_ac3_burst(&source_bytes) {
-                            Ok(burst) => burst,
-                            Err(error) => {
-                                let _ = env.throw_new("java/lang/IllegalStateException", error);
-                                return -2;
-                            }
-                        }
+                        crate::usb_encoded_formats::build_iec61937_ac3_burst(&source_bytes)?
                     }
-                    EncodedFraming::Iec61937 { .. } => {
-                        let _ = env.throw_new("java/lang/IllegalStateException", "Unsupported IEC 61937 data type");
-                        return -2;
-                    }
+                    EncodedFraming::Iec61937 { .. } => return Err("Unsupported IEC 61937 data type".into()),
                 };
                 let packet = EncodedPacket {
                     sequence: state.sequence,
@@ -425,21 +528,84 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
                 state.sequence = state.sequence.wrapping_add(1);
                 state.pending = Some(packet);
             }
-            Ok(None) => {
+            None => {
                 state.ended = true;
-                return -1;
-            }
-            Err(error) => {
-                let _ = env.throw_new("java/lang/IllegalStateException", error);
-                return -2;
+                return Ok(-1);
             }
         }
     }
-    let packet = state.pending.take().unwrap();
+    let packet = state.pending.take().expect("pending encoded packet was just populated");
     match state.queue.offer(packet) {
-        Ok(()) => 1,
-        Err(packet) => { state.pending = Some(packet); 0 }
+        Ok(()) => Ok(1),
+        Err(packet) => {
+            state.pending = Some(packet);
+            Ok(0)
+        }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbEncodedProducerWorker(
+    mut env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    if producer_ref(handle).is_none() {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
+        return -1;
+    }
+    stop_encoded_producer_worker(handle);
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
+        while !thread_stop.load(Ordering::Acquire) {
+            match pump_encoded_producer(handle) {
+                Ok(1) => {}
+                Ok(0) => thread::sleep(Duration::from_millis(2)),
+                Ok(-1) => {
+                    thread_status.store(1, Ordering::Release);
+                    break;
+                }
+                Ok(-3) => {
+                    thread_status.store(2, Ordering::Release);
+                    break;
+                }
+                Ok(_) | Err(_) => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            }
+        }
+        if thread_stop.load(Ordering::Acquire) {
+            thread_status.store(2, Ordering::Release);
+        }
+    });
+    match spawned {
+        Ok(thread) => {
+            encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
+                .insert(handle, EncodedProducerWorker { stop, status, thread });
+            0
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            -1
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncodedProducerWorkerStatus(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jint {
+    encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
+        .get(&handle).map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbEncodedProducerWorker(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) {
+    stop_encoded_producer_worker(handle);
 }
 
 #[no_mangle]
@@ -461,6 +627,108 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncode
         Err(error) => {
             let _ = env.throw_new("java/lang/IllegalStateException", error);
             0
+        }
+    }
+}
+
+/// Performs an encoded USB seek as one native operation. The Android
+/// transport bridge is asked to flush in-flight libusb transfers, while Rust
+/// advances the shared epoch, seeks the decoder, resets the bounded queue, and
+/// restarts the packet producer.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedSession(
+    mut env: JNIEnv, _class: JClass, handle: jlong, transport: JObject, position_ms: jlong,
+) -> jlong {
+    if handle <= 0 || position_ms < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded session seek request");
+        return -1;
+    }
+    let Some(producer) = producer_ref(handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer is no longer valid");
+        return -1;
+    };
+    stop_encoded_producer_worker(handle);
+    let session = {
+        let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback session is cancelled");
+            return -1;
+        }
+        Arc::clone(&state.session)
+    };
+    {
+        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+        if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback seek epoch is exhausted or cancelled");
+            return -1;
+        }
+    }
+    if let Err(error) = env.call_method(&transport, "flush", "()V", &[]) {
+        if !env.exception_check().unwrap_or(false) {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+        }
+        return -1;
+    }
+    let actual = {
+        let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        let decoder_owner = Arc::clone(&state.decoder);
+        let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
+        if let Err(error) = decoder.begin_encoded_stream() {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            return -1;
+        }
+        let seek_result = decoder.seek_to(position_ms as u64);
+        drop(decoder);
+        match seek_result {
+            Ok(actual_position) => {
+                state.pending = None;
+                state.ended = false;
+                state.queue.clear();
+                state.epoch = session.epoch.load(Ordering::Acquire);
+                actual_position as jlong
+            }
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -1;
+            }
+        }
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
+        while !thread_stop.load(Ordering::Acquire) {
+            match pump_encoded_producer(handle) {
+                Ok(1) => {}
+                Ok(0) => thread::sleep(Duration::from_millis(2)),
+                Ok(-1) => {
+                    thread_status.store(1, Ordering::Release);
+                    break;
+                }
+                Ok(-3) => {
+                    thread_status.store(2, Ordering::Release);
+                    break;
+                }
+                Ok(_) | Err(_) => {
+                    thread_status.store(-2, Ordering::Release);
+                    break;
+                }
+            }
+        }
+        if thread_stop.load(Ordering::Acquire) {
+            thread_status.store(2, Ordering::Release);
+        }
+    });
+    match spawned {
+        Ok(thread) => {
+            encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
+                .insert(handle, EncodedProducerWorker { stop, status, thread });
+            actual
+        }
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            -1
         }
     }
 }
@@ -503,6 +771,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
+    stop_encoded_producer_worker(handle);
     remove_producer(handle);
 }
 

@@ -32,10 +32,13 @@ object NativeAudio {
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
+    external fun nativePreparePlaybackSession(decoder: Long, bitPerfectRequested: Boolean): LongArray
     external fun nativePlaybackSessionBeginSeek(session: Long): Long
     external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
+    external fun nativePlaybackSessionCommand(session: Long, command: Int): Long
     external fun nativePlaybackSessionEpoch(session: Long): Long
     external fun nativePlaybackSessionIsCancelled(session: Long): Boolean
+    external fun nativeGetPlaybackSessionError(session: Long): Int
     external fun nativeCancelPlaybackSession(session: Long)
     external fun nativeClosePlaybackSession(session: Long)
     external fun nativeGetStreamInfo(handle: Long): Long
@@ -45,8 +48,12 @@ object NativeAudio {
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
     external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
-    external fun nativePumpStreamChunk(handle: Long, maxFrames: Int): Int
+    external fun nativeStartStreamPump(handle: Long, session: Long, maxFrames: Int, totalFrames: Long): Int
+    external fun nativeStartSegmentedStreamPump(handle: Long, session: Long, maxFrames: Int, segmentStartMs: Long, segmentEndMs: Long): Int
+    external fun nativeGetStreamPumpStatus(handle: Long): Int
+    external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
+    external fun nativeSeekPlaybackSession(decoder: Long, session: Long, positionMs: Long, maxFrames: Int, segmentStartMs: Long, segmentEndMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
     external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
     external fun nativePollUsbPcmBlock(queue: Long, timeoutMs: Int): ByteArray?
@@ -65,17 +72,24 @@ object NativeAudio {
     external fun nativeDestroyUsbPcmProducer(producer: Long)
     external fun nativeValidateUsbEncodedDescriptor(descriptors: ByteArray, interfaceNumber: Int, alternateSetting: Int, formatType: Int, formatTag: Int, sampleRate: Int): String
     external fun nativeSeekUsbEncodedProducer(producer: Long, positionMs: Long): Long
+    external fun nativeSeekUsbEncodedSession(producer: Long, transport: UsbEncodedDacSession, positionMs: Long): Long
     external fun nativeGetUsbEncodedTransportRate(decoder: Long, framingKind: Int): Long
     external fun nativeCreateUsbEncodedQueue(maxPackets: Int, maxBytes: Int): Long
     external fun nativePollUsbEncodedPacket(queue: Long, timeoutMs: Int): ByteArray?
+    external fun nativePumpUsbEncodedTransport(queue: Long, producer: Long, transport: UsbEncodedDacSession, maxPackets: Int, expectedSequence: Long, framingKind: Int, formatCode: Int, lastPositionMs: Long): LongArray
     external fun nativeCloseUsbEncodedQueue(queue: Long)
     external fun nativeClearUsbEncodedQueue(queue: Long)
     external fun nativeDestroyUsbEncodedQueue(queue: Long)
     external fun nativeCreateUsbEncodedProducer(decoder: Long, queue: Long, session: Long, framingKind: Int, formatCode: Int, maximumBitrateKbps: Int): Long
-    external fun nativePumpUsbEncodedProducer(producer: Long): Int
+    external fun nativeStartUsbEncodedProducerWorker(producer: Long): Int
+    external fun nativeGetUsbEncodedProducerWorkerStatus(producer: Long): Int
+    external fun nativeStopUsbEncodedProducerWorker(producer: Long)
     external fun nativeDestroyUsbEncodedProducer(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
+    external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
+    external fun nativeGetOutputSchedulerStatus(session: Long): Int
+    external fun nativeStopOutputScheduler(session: Long)
     external fun nativeFlushStreamOutput(positionFrames: Long, shouldStart: Boolean): Int
     external fun nativeSetStreamEof()
     external fun nativeGetStreamBufferedFrames(): Int
