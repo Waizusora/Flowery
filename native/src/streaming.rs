@@ -791,6 +791,52 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+/// Applies a queued AAudio seek on the native output scheduler thread.
+#[cfg(target_os = "android")]
+pub(super) fn process_aaudio_seek(
+    session: Arc<crate::playback_session::SessionState>,
+    request: crate::playback_session::AAudioSeekRequest,
+) -> Result<i64, String> {
+    if session.route != 0 || session.cancelled.load(Ordering::Acquire) {
+        return Err("AAudio playback session is no longer active".into());
+    }
+    let decoder_handle = session.decoder_handle;
+    let decoder = Arc::clone(&session.decoder);
+    let output_rate = decoder.lock().unwrap_or_else(|error| error.into_inner()).output_rate;
+    if output_rate == 0 {
+        return Err("The stream decoder has not been configured".into());
+    }
+    let target_ms = request.position_ms.max(request.segment_start_ms)
+        .min(if request.segment_end_ms >= 0 { request.segment_end_ms } else { i64::MAX });
+    stop_stream_pump_worker(decoder_handle);
+    if session.cancelled.load(Ordering::Acquire) {
+        return Err("AAudio playback session was cancelled during seek".into());
+    }
+    let actual = {
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        guard.seek_to(target_ms as u64).map_err(|error| error.to_string())? as i64
+    };
+    let target_frame = milliseconds_to_frames(
+        (actual - request.segment_start_ms).max(0) as u64, output_rate,
+    );
+    let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
+    let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
+    if flush_result != 0 {
+        return Err(format!("Unable to flush AAudio output for seek (error {flush_result})"));
+    }
+    let remaining_frames = if request.segment_end_ms >= 0 {
+        let end_frame = milliseconds_to_frames(
+            (request.segment_end_ms - request.segment_start_ms) as u64, output_rate,
+        );
+        Some(end_frame.saturating_sub(target_frame))
+    } else { None };
+    start_stream_pump_worker(
+        decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
+    )?;
+    session.last_seek_position_ms.store(actual, Ordering::Release);
+    Ok(actual)
+}
+
 /// Coordinates an AAudio seek under the native playback session: invalidate the
 /// previous decode epoch, join its worker, seek the session-owned decoder, and
 /// flush the output ring before returning the actual decoder position.
