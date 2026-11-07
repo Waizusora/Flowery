@@ -1042,6 +1042,26 @@ mod tests {
             let expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()[..subslot].to_vec()).collect();
             assert_eq!(actual, expected, "{bits}-bit WAV samples changed in the USB path");
             assert!(stream.native_pcm_active());
+
+            if bits == 24 {
+                let float_source = std::fs::File::open(&path).unwrap();
+                let mut float_stream = StreamDecoder::new(float_source.as_raw_fd(), "wav").unwrap();
+                float_stream.lossless_source = false;
+                float_stream.configure(48_000, &[0.0; 31]).unwrap();
+                let padded_format = crate::usb_pcm::PcmFormat {
+                    sample_rate: 48_000, channels: 2, valid_bits: 24,
+                    subslot_bytes: 4, signed: true, little_endian: true,
+                };
+                let float_actual = float_stream.read_usb_pcm(2, 1.0, padded_format).unwrap();
+                let float_expected: Vec<u8> = values.iter()
+                    .flat_map(|value| value.wrapping_shl(8).to_le_bytes())
+                    .collect();
+                assert_eq!(float_actual, float_expected, "float32 fallback did not left-justify padded 24-bit PCM");
+                assert!(!float_stream.native_pcm_active());
+                drop(float_stream);
+                drop(float_source);
+            }
+
             drop(stream);
             drop(source_file);
             std::fs::remove_file(path).unwrap();
