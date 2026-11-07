@@ -375,13 +375,21 @@ pub(crate) fn pause_output_for_session() -> Option<i32> {
     let e=engine().lock().unwrap_or_else(|p|p.into_inner());
     if e.stream.is_null() { return None; }
     Some(unsafe {
-        let s=AAudioStream_getState(e.stream);
+        let mut s=AAudioStream_getState(e.stream);
         if s==STATE_OPEN || s==STATE_PAUSED { OK }
-        else if s==STATE_STARTED {
-            let r=AAudioStream_requestPause(e.stream);
-            if r!=OK { r } else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
-        } else if s==STATE_PAUSING { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
-        else { INVALID_STATE }
+        else {
+            if s==STATE_STARTING {
+                let result=wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);
+                if result!=OK { return result; }
+                s=STATE_STARTED;
+            }
+            if s==STATE_STARTED {
+                let result=AAudioStream_requestPause(e.stream);
+                if result!=OK { result } else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
+            } else if s==STATE_PAUSING {
+                wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED)
+            } else { INVALID_STATE }
+        }
     })
 }
 pub(crate) fn resume_output_for_session() -> Option<i32> {
