@@ -179,12 +179,20 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     decoderHandle, queue, framingKind, formatCode
                 )
                 check(producer != 0L) { "Source codec is incompatible with the selected encoded USB format" }
-                val encodedBytesPerSecond = NativeAudio.nativeGetUsbEncodedTransportRate(
-                    decoderHandle, framingKind
-                )
+                val maximumBitrateKbps = validation.optInt("maximumBitrate")
+                val encodedBytesPerSecond = runCatching {
+                    NativeAudio.nativeGetUsbEncodedTransportRate(decoderHandle, framingKind)
+                }.getOrElse { error ->
+                    if (framingKind == FRAMING_UAC1_TYPE_II && maximumBitrateKbps > 0) {
+                        // If container metadata omits AC-3 bitrate, pace capacity checks
+                        // against the descriptor's advertised maximum, not a guess.
+                        maximumBitrateKbps.toLong() * 125L
+                    } else {
+                        throw error
+                    }
+                }
                 check(encodedBytesPerSecond > 0L) { "Unable to derive a safe encoded transport rate" }
                 if (framingKind == FRAMING_UAC1_TYPE_II) {
-                    val maximumBitrateKbps = validation.optInt("maximumBitrate")
                     val sourceBitrateKbps = (encodedBytesPerSecond * 8L + 999L) / 1000L
                     check(maximumBitrateKbps > 0 && sourceBitrateKbps <= maximumBitrateKbps) {
                         "AC-3 source bitrate exceeds the selected UAC1 Type-II descriptor limit"
