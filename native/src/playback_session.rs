@@ -4,7 +4,7 @@ use jni::objects::{JClass, JLongArray};
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub(super) struct SessionState {
     pub(super) decoder_handle: jlong,
     pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
+    pub(super) error_code: AtomicI32,
 }
 
 static NEXT_SESSION_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -131,6 +132,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         decoder_handle,
         gate: Mutex::new(()),
         decoder,
+        error_code: AtomicI32::new(0),
     });
     if session_handle == 0 {
         let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
@@ -172,6 +174,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         decoder_handle,
         gate: Mutex::new(()),
         decoder,
+        error_code: AtomicI32::new(0),
     })
 }
 
