@@ -210,7 +210,7 @@ fn stop_output_scheduler() {
     }
 }
 
-fn output_scheduler_tick(low_watermark: u64, phase: i32) -> Result<bool, i32> {
+fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut bool) -> Result<bool, i32> {
     let e = engine().lock().unwrap_or_else(|p| p.into_inner());
     if e.stream.is_null() { return Err(INVALID_STATE); }
     let output = e.output.as_ref().ok_or(INVALID_STATE)?;
@@ -224,10 +224,14 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32) -> Result<bool, i32> {
     unsafe {
         let state = AAudioStream_getState(e.stream);
         if state == STATE_DISCONNECTED { return Err(-899); }
+        if state == STATE_STARTED {
+            *start_requested = false;
+        }
         if phase == 2 && (state == STATE_OPEN || state == STATE_PAUSED) &&
-            (buffered >= low_watermark || eof) {
+            (buffered >= low_watermark || eof) && !*start_requested {
             let result = AAudioStream_requestStart(e.stream);
             if result != OK { return Err(result); }
+            *start_requested = true;
         }
         let current_state = AAudioStream_getState(e.stream);
         if current_state == STATE_STOPPED && !eof { return Err(INVALID_STATE); }
@@ -268,6 +272,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
     let worker_session = Arc::clone(&session);
     let watermark = low_watermark as u64;
     let worker = thread::Builder::new().name("flowery-aaudio-output".into()).spawn(move || {
+        let mut start_requested = false;
         loop {
             if thread_stop.load(Ordering::Acquire) || worker_session.cancelled.load(Ordering::Acquire) {
                 thread_status.store(2, Ordering::Release);
@@ -283,7 +288,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 break;
             }
             if phase == 2 {
-                match output_scheduler_tick(watermark, phase) {
+                match output_scheduler_tick(watermark, phase, &mut start_requested) {
                     Ok(true) => {
                         if crate::playback_session::transition_session_phase(&worker_session, 4) &&
                             crate::playback_session::transition_session_phase(&worker_session, 5) {
