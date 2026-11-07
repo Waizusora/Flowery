@@ -160,15 +160,17 @@ The exact track, elapsed position, and detailed queue transition were not separa
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
-- M4A (ALAC): **FAIL**. The Play button changes state, but no audio is audible and the playback duration/progress does not advance. This is a decoder/playback-path failure symptom and requires investigation; the exact underlying cause has not yet been established.
+- M4A (ALAC): **FAIL**. The original Tipe-X file and a separate free 1 MB ALAC sample both produce no audible output, and playback duration/progress does not advance. The second sample confirms this is not limited to one particular ALAC file.
 
-Investigation and code change (2026-11-08):
-- The uploaded `flowery-alac.txt` confirms that Android identifies the selected item as `audio/mp4` with codec MIME `audio/alac`, and that `libflowery_audio.so` loads successfully.
-- The log does not contain a Symphonia packet/decode error, because the AAudio decode worker did not publish its failure detail to Android.
-- Code inspection found that the Kotlin AAudio loop polled only the output scheduler and did not inspect the Rust stream-pump status. A decoder worker failure could therefore leave output waiting without surfacing the decoder failure.
-- The stream-pump now retains its error detail, exposes it through JNI, and the Kotlin playback loop fails promptly when the decode worker reports an error.
-- Fix commits: `80352ac`, `06194ca`, `1cbe4d5`.
-- This is a playback error-reporting and stalled-session fix; it does not yet prove the ALAC decoder itself is compatible with this sample. User retest remains required.
+Investigation and code changes (2026-11-08):
+- Android identifies the source as `audio/mp4` with codec MIME `audio/alac`, and `libflowery_audio.so` loads successfully.
+- The diagnostic reports `PLAYBACK_ERROR`, `IllegalArgumentException`, with the message `Audio channel layout is unavailable`. Playback fails before the AAudio output session begins.
+- The Kotlin AAudio loop previously polled only the output scheduler and did not inspect Rust stream-pump status. The stream-pump now retains its error detail, exposes it through JNI, and the Kotlin playback loop fails promptly when the decode worker reports an error.
+- The first metadata fallback checked Symphonia's explicit channel bitmask and channel-layout fields. Both remain unset for the tested ALAC tracks, so that fallback did not resolve the failure.
+- Symphonia 0.5.4's ALAC decoder reads the channel count from its mandatory 24-byte or extended 48-byte ALAC magic-cookie configuration, but its decoder parameters remain a clone of the original track parameters. Flowery now reads the declared channel count from byte offset 9 of that validated ALAC configuration when the track channel fields are absent. It accepts only declared counts from 1 through 8 and does not assume stereo.
+- The new helper has unit coverage for 24-byte and 48-byte configurations and rejects missing, malformed, and out-of-range channel data.
+- Earlier diagnostic fixes: `80352ac`, `06194ca`, `1cbe4d5`. Channel metadata fallback: `8f49bc5`. ALAC magic-cookie channel-count fix: `b9aa04c`.
+- The new fix is not yet confirmed on the user's device. Retest remains required after CI produces a new APK.
 
 Unavailable in the user's test library:
 - WAV: no test file available.
