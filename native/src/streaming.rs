@@ -782,6 +782,57 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+/// Coordinates an AAudio seek under the native playback session: invalidate the
+/// previous decode epoch, join its worker, seek the session-owned decoder, and
+/// flush the output ring before returning the actual decoder position.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekPlaybackSession(
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, session_handle: jlong,
+    position_ms: jlong, output_frame: jlong,
+) -> jlong {
+    if decoder_handle <= 0 || session_handle <= 0 || position_ms < 0 || output_frame < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native playback seek request");
+        return -1;
+    }
+    let Some(decoder) = decoder_ref(decoder_handle) else { return -1; };
+    let Some(session) = session_ref(session_handle) else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
+        return -1;
+    };
+    if !Arc::ptr_eq(&decoder, &session.decoder) || session.cancelled.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
+        return -1;
+    }
+    {
+        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+        if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Playback seek epoch is exhausted or cancelled");
+            return -1;
+        }
+    }
+    stop_stream_pump_worker(decoder_handle);
+    let actual = {
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        match guard.seek_to(position_ms as u64) {
+            Ok(position) => position as jlong,
+            Err(error) => {
+                let _ = env.throw_new("java/lang/IllegalStateException", error);
+                return -1;
+            }
+        }
+    };
+    let flush_result = crate::aaudio::flush_output_for_seek(output_frame);
+    if flush_result != crate::aaudio::OK {
+        let _ = env.throw_new(
+            "java/lang/IllegalStateException",
+            format!("Unable to flush AAudio output for seek (error {flush_result})"),
+        );
+        return -1;
+    }
+    actual
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDecoder(
     mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong
