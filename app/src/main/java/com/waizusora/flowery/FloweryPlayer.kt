@@ -48,6 +48,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
+    @Volatile private var activeUsbPcmProducerHandle = 0L
     @Volatile private var usbPlaybackMode = false
     @Volatile private var usbBitPerfectActive = false
     @Volatile private var usbNativeBitPerfectConfirmed = false
@@ -62,6 +63,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         bandGainsDb = gains.copyOf()
         if (usbPlaybackMode) usbNativeBitPerfectConfirmed = false
         equalizerRevision++
+        val producer = activeUsbPcmProducerHandle
+        if (producer != 0L) {
+            NativeAudio.nativeUpdateStreamGains(decoderHandle, bandGainsDb)
+        }
     }
 
     fun setVolume(value: Float) {
@@ -82,6 +87,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 softwareVolume = normalized
                 if (usbKey != null) volumeController.setUsbVolume(usbKey, normalized)
+                activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
+                    NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain())
+                }
                 usbBitPerfectActive = false
                 usbNativeBitPerfectConfirmed = false
                 onState("USB DAC software volume · ${(normalized * 100).toInt()}%")
@@ -103,6 +111,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setDucked(ducked: Boolean) {
         outputDucked = ducked
         if (ducked && usbPlaybackMode) usbNativeBitPerfectConfirmed = false
+        activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
+            NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain())
+        }
         applyOutputVolume()
         publishUsbPlaybackModeStatus()
     }
@@ -498,11 +509,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         var session: UsbDacSession? = null
         var totalFramesSent = 0L
         var chunkCount = 0L
-        var producerThread: Thread? = null
         var queueHandle = 0L
         var producerHandle = 0L
-        val producerStop = AtomicBoolean(false)
-        val producerFailure = AtomicReference<Throwable?>(null)
         try {
             diagnostics.record("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
@@ -622,38 +630,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (outputEncoding == "ieee_float32") 1 else 0
             )
             check(producerHandle != 0L) { "Unable to create the Rust direct USB producer." }
+            activeUsbPcmProducerHandle = producerHandle
+            check(NativeAudio.nativeSetUsbPcmProducerGain(producerHandle, currentUsbGain()) == 0) {
+                "Unable to configure the initial Rust USB PCM producer gain."
+            }
             check(NativeAudio.nativeStartUsbPcmProducerWorker(producerHandle) == 0) {
                 "Unable to start the Rust direct USB producer worker."
             }
-            val endReached = AtomicBoolean(false)
-            val producerAdapter = UsbPcmProducerAdapter(
-                decoderHandle = handle,
-                producerHandle = producerHandle,
-                pendingSeekMs = pendingSeekMs,
-                playbackActive = { !stopped.get() && playbackGeneration.get() == generation },
-                equalizerRevision = { equalizerRevision },
-                equalizerGains = { bandGainsDb },
-                currentGain = { currentUsbGain() },
-                diagnostics = diagnostics
-            )
-            producerThread = thread(name = "FloweryUsbProducerControl") {
-                runCatching {
-                    android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_FOREGROUND)
-                }
-                producerAdapter.run(endReached, producerStop, producerFailure)
-            }
-
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
                 !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
 
             // Prebuffer: do not prime the USB window until enough decoded audio is ready.
             val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
-            while (playbackActive() && producerFailure.get() == null && !endReached.get() &&
+            while (playbackActive() && NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle).isBlank() &&
+                !NativeAudio.nativeIsUsbPcmProducerAtEnd(producerHandle) &&
                 NativeAudio.nativeUsbPcmQueueSize(queueHandle) < USB_PREBUFFER_BLOCKS) {
                 Thread.sleep(5)
             }
             diagnostics.record(
-                "USB_PREBUFFER_READY queuedBlocks=${NativeAudio.nativeUsbPcmQueueSize(queueHandle)} endReached=${endReached.get()} " +
+                "USB_PREBUFFER_READY queuedBlocks=${NativeAudio.nativeUsbPcmQueueSize(queueHandle)} endReached=${NativeAudio.nativeIsUsbPcmProducerAtEnd(producerHandle)} " +
                     "waitMs=${"%.2f".format(java.util.Locale.US,
                         (android.os.SystemClock.elapsedRealtimeNanos() - prebufferStartedNs) / 1_000_000.0)}"
             )
@@ -664,7 +659,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var starvationEvents = 0L
             while (playbackActive()) {
                 if (paused) { Thread.sleep(10); continue }
-                producerFailure.get()?.let { throw it }
+                val producerError = NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle)
+                check(producerError.isBlank()) { "Rust USB PCM producer worker failed: $producerError" }
                 val waitStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
                 val encodedBlock = NativeAudio.nativePollUsbPcmBlock(queueHandle, USB_QUEUE_POLL_MS.toInt()) ?: continue
                 val block = UsbPcmProducerAdapter.decodeBlock(encodedBlock)
@@ -743,7 +739,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     } else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
                 }
             }
-            producerFailure.get()?.let { if (playbackActive()) throw it }
+            val producerError = NativeAudio.nativeUsbPcmProducerWorkerError(producerHandle)
+            check(producerError.isBlank() || !playbackActive()) { "Rust USB PCM producer worker failed: $producerError" }
             if (!stopped.get() && playbackGeneration.get() == generation) usbSession.drain()
             diagnostics.record("DIRECT_USB_FINISHED chunks=${chunkCount} totalFramesSent=${totalFramesSent} stopped=${stopped.get()}")
             if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
@@ -753,9 +750,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         } finally {
             // The producer owns the native decoder handle until it has exited; the caller
             // closes that handle immediately after this method returns.
-            producerStop.set(true)
             if (producerHandle != 0L) NativeAudio.nativeStopUsbPcmProducerWorker(producerHandle)
-            joinUninterruptibly(producerThread)
+            if (activeUsbPcmProducerHandle == producerHandle) activeUsbPcmProducerHandle = 0L
             if (queueHandle != 0L) NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
             if (producerHandle != 0L) NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
             if (queueHandle != 0L) NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
@@ -811,7 +807,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
         } else {
             if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
-            pendingSeekMs.set(positionMs.coerceAtLeast(0L))
+            val producer = activeUsbPcmProducerHandle
+            if (producer != 0L) {
+                NativeAudio.nativeRequestUsbPcmProducerSeek(producer, positionMs.coerceAtLeast(0L))
+            } else {
+                pendingSeekMs.set(positionMs.coerceAtLeast(0L))
+            }
         }
     }
 
