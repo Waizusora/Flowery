@@ -56,6 +56,19 @@ fn register_session(session: SessionState) -> jlong {
 
 fn valid_route(route: i32) -> bool { (0..=3).contains(&route) }
 
+fn valid_phase_transition(current: i32, next: i32) -> bool {
+    if current == next { return true; }
+    match current {
+        0 => matches!(next, 1 | 6 | 7),
+        1 => matches!(next, 2 | 6 | 7),
+        2 => matches!(next, 3 | 4 | 5 | 6 | 7),
+        3 => matches!(next, 2 | 6 | 7),
+        4 => matches!(next, 5 | 6 | 7),
+        5 | 6 | 7 => false,
+        _ => false,
+    }
+}
+
 fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
     loop {
         if cancelled.load(Ordering::Acquire) { return None; }
@@ -112,6 +125,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
     let Some(session) = session_ref(handle) else { return -1; };
     let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     if session.cancelled.load(Ordering::Acquire) && phase != SessionPhase::Cancelled as jint {
+        return -1;
+    }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, phase) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session phase transition");
         return -1;
     }
     session.phase.store(phase as i64, Ordering::Release);
@@ -224,6 +242,24 @@ mod tests {
         for route in 0..=3 { assert!(valid_route(route)); }
         assert!(!valid_route(-1));
         assert!(!valid_route(4));
+    }
+
+
+    #[test]
+    fn playback_session_phase_machine_accepts_normal_and_failure_lifecycles() {
+        assert!(valid_phase_transition(0, 1));
+        assert!(valid_phase_transition(1, 2));
+        assert!(valid_phase_transition(2, 3));
+        assert!(valid_phase_transition(3, 2));
+        assert!(valid_phase_transition(2, 5));
+        assert!(valid_phase_transition(0, 7));
+        assert!(valid_phase_transition(3, 7));
+        assert!(valid_phase_transition(2, 6));
+        assert!(!valid_phase_transition(0, 2));
+        assert!(!valid_phase_transition(1, 3));
+        assert!(!valid_phase_transition(5, 2));
+        assert!(!valid_phase_transition(6, 2));
+        assert!(!valid_phase_transition(7, 2));
     }
 
     #[test]
