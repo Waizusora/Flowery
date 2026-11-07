@@ -655,10 +655,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 val frames = result.frames
                 if (firstTransfer) onState("USB exclusive: sending first " + frames + "-frame PCM chunk…")
-                val transportDurationMs = 0.0 // The pipeline owns the transport write; timing is reported by its queue wait metric.
+                val transportDurationMs = result.transportDurationMs
                 val audioDurationMs = frames * 1_000.0 / usbSession.sampleRate
-                val throughputRatio = if (queueWaitMs > 0.0) {
-                    frames.toDouble() / (usbSession.sampleRate * queueWaitMs / 1_000.0)
+                val throughputRatio = if (transportDurationMs > 0.0) {
+                    frames.toDouble() / (usbSession.sampleRate * transportDurationMs / 1_000.0)
                 } else Double.POSITIVE_INFINITY
                 diagnostics.record(
                     "USB_WRITE chunk=${chunkCount + 1} requestedFrames=${frames} " +
