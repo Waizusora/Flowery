@@ -11,8 +11,6 @@ import kotlin.math.abs
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
         private const val DECODE_CHUNK_FRAMES = 8_192
-        // A writer wait longer than this after prebuffering is reported as producer starvation.
-        private const val USB_STARVATION_REPORT_MS = 5L
         private const val DUCK_GAIN = 0.25f
     }
 
@@ -486,8 +484,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     ) {
         var session: UsbDacSession? = null
         var pipeline: UsbPcmPlaybackPipeline? = null
-        var totalFramesSent = 0L
-        var chunkCount = 0L
         try {
             diagnostics.record("DIRECT_USB_ENTER sampleRate=${sourceRate} channels=${channels} segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}")
             onState("USB exclusive: validating decoded source format…")
