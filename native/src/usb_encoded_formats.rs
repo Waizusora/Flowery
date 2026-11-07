@@ -33,10 +33,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbE
     match validate_uac1_encoded_descriptor(
         &raw, interface_number as u8, alternate_setting as u8,
         format_type as u8, format_tag as u16) {
-        Ok((endpoint, max_packet, interval)) => {
+        Ok((endpoint, max_packet, interval, maximum_bitrate)) => {
             let json = serde_json::json!({
                 "valid": true, "endpoint": endpoint,
                 "maxPacketBytes": max_packet, "interval": interval,
+                "maximumBitrate": maximum_bitrate,
                 "formatType": format_type, "formatTag": format_tag
             });
             match env.new_string(json.to_string()) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
@@ -97,7 +98,7 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
 pub(super) fn validate_uac1_encoded_descriptor(
     raw: &[u8], interface_number: u8, alternate_setting: u8,
     expected_format_type: u8, expected_format_tag: u16,
-) -> Result<(u8, u16, u8), &'static str> {
+) -> Result<(u8, u16, u8, u16), &'static str> {
     if !matches!(expected_format_type, UAC1_FORMAT_TYPE_II | UAC1_FORMAT_TYPE_III) {
         return Err("Only UAC1 Type-II and Type-III encoded descriptors are accepted");
     }
@@ -106,6 +107,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
     let mut format_tag = None;
     let mut format_type = None;
     let mut endpoint: Option<(u8,u16,u8)> = None;
+    let mut maximum_bitrate = 0u16;
     while offset + 2 <= raw.len() {
         let length = raw[offset] as usize;
         if length < 2 || offset + length > raw.len() { return Err("Malformed USB descriptor length"); }
@@ -123,7 +125,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 let kind = raw[offset + 3];
                 if kind == UAC1_FORMAT_TYPE_II {
                     if length < 9 { return Err("UAC1 Type-II format descriptor is truncated"); }
-                    let maximum_bitrate = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
+                    maximum_bitrate = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
                     let samples_per_frame = u16::from_le_bytes([raw[offset + 6], raw[offset + 7]]);
                     if maximum_bitrate == 0 || samples_per_frame == 0 {
                         return Err("UAC1 Type-II descriptor has invalid bitrate or frame size");
@@ -157,7 +159,8 @@ pub(super) fn validate_uac1_encoded_descriptor(
     if format_tag != Some(expected_format_tag) {
         return Err("The selected alternate setting format tag does not match the requested codec");
     }
-    endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")
+    let (address, packet, interval) = endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")?;
+    Ok((address, packet, interval, maximum_bitrate))
 }
 
 #[cfg(test)]
