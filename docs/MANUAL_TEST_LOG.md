@@ -160,14 +160,15 @@ The exact track, elapsed position, and detailed queue transition were not separa
 User-confirmed results:
 - FLAC: **PASS for playback**. Audio played normally.
 - MP3: **PASS for playback**. User confirmed normal playback.
+- M4A (ALAC): **FAIL**. The Play button changes state, but no audio is audible and the playback duration/progress does not advance. This is a decoder/playback-path failure symptom and requires investigation; the exact underlying cause has not yet been established.
 
 Unavailable in the user's test library:
 - WAV: no test file available.
 - M4A (AAC): no test file available.
 
 Remaining:
-- Test other formats that are actually available in the user's library (including M4A/ALAC if present).
-- Verify seeking where supported.
+- Investigate and fix M4A/ALAC playback, then request a user retest.
+- Verify seeking where supported after playback works.
 - Record sample rate, bit depth (if known), and any errors.
 
 Do not treat the overall format test as complete until the available formats have been checked.
