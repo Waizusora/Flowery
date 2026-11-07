@@ -579,7 +579,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             recordUsbDiagnostic("SESSION_OPEN_BEGIN bitDepth=${sourceBits} sampleRate=${sourceRate} channels=${channels} bitPerfect=true")
             val (selectedDevice, usbSession) = controller.openFirstCompatiblePlaybackSession(
                 discovered, sourceBits, sourceRate, allowSampleRateConversion = false,
-                requiredSubslotBytes = (sourceBits + 7) / 8, channels = channels
+                requiredSubslotBytes = null, channels = channels
             )
             val device = selectedDevice.usbDevice
             session = usbSession
@@ -590,7 +590,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             check(usbSession.sampleRate == sourceRate &&
                 usbSession.profile.bitResolution == sourceBits &&
-                usbSession.profile.subslotBytes == (sourceBits + 7) / 8
+                usbSession.profile.subslotBytes >= (sourceBits + 7) / 8
             ) {
                 "Bit Perfect requires an exact source/DAC sample-rate, valid-bit, and PCM subslot match."
             }
