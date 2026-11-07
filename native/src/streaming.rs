@@ -99,7 +99,6 @@ pub(super) struct StreamDecoder {
     source_bits: u8,
     lossless_source: bool,
     codec_type: symphonia::core::codecs::CodecType,
-    source_bit_rate: Option<u32>,
     channels: usize,
     output_rate: usize,
     resampler: Option<Fft<f32>>,
@@ -145,7 +144,7 @@ impl StreamDecoder {
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported audio codec: {e}"))?;
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, source_bit_rate: params.bit_rate, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
@@ -222,19 +221,15 @@ impl StreamDecoder {
     }
 
     pub(super) fn is_ac3_source(&self) -> bool {
-        self.codec_type == symphonia::core::codecs::CODEC_TYPE_AC3
+        self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3
     }
 
     pub(super) fn encoded_transport_bytes_per_second(&self, framing_kind: i32) -> Result<u64, String> {
         match framing_kind {
-            1 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_AC3 => {
-                let bitrate = self.source_bit_rate.ok_or(
-                    "AC-3 stream bitrate is unavailable; encoded transport cannot be scheduled safely"
-                )? as u64;
-                if bitrate == 0 { return Err("AC-3 stream bitrate is zero".into()); }
-                Ok((bitrate + 7) / 8)
+            1 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3 => {
+                Err("AC-3 Type-II transport uses the validated descriptor maximum bitrate".into())
             }
-            2 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_AC3 => {
+            2 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3 => {
                 (self.source_rate as u64).checked_mul(4)
                     .ok_or_else(|| "IEC 61937 carrier rate overflow".into())
             }
@@ -274,7 +269,7 @@ impl StreamDecoder {
 
     pub(super) fn validate_iec61937_ac3(&self, data_type: u16) -> Result<(), String> {
         if data_type != crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 ||
-            self.codec_type != symphonia::core::codecs::CODEC_TYPE_AC3 {
+            self.codec_type != symphonia::core::codecs::CODEC_TYPE_EAC3 {
             return Err("IEC 61937 passthrough is currently restricted to AC-3 source frames and data type 0x0001".into());
         }
         Ok(())
