@@ -238,19 +238,19 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         session.cancelled.store(true, Ordering::Release);
     }
     #[cfg(target_os = "android")]
-    let output_result = if session.route == 0 {
-        match command {
-            value if value == SessionPhase::Paused as jint =>
-                crate::aaudio::pause_output_for_session(),
-            value if value == SessionPhase::Running as jint =>
-                crate::aaudio::resume_output_for_session(),
-            _ => None,
-        }
-    } else { None };
+    let apply_pause = session.route == 0 && command == SessionPhase::Paused as jint;
+    #[cfg(target_os = "android")]
+    let apply_resume = session.route == 0 && command == SessionPhase::Running as jint;
     #[cfg(target_os = "android")]
     let stop_output = session.route == 0 &&
         (command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint);
     drop(_gate);
+    #[cfg(target_os = "android")]
+    let output_result = if apply_pause {
+        crate::aaudio::pause_output_for_session()
+    } else if apply_resume {
+        crate::aaudio::resume_output_for_session()
+    } else { None };
     #[cfg(target_os = "android")]
     if let Some(result) = output_result {
         if result != 0 {
