@@ -176,7 +176,8 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             var session: UsbEncodedDacSession? = null
             try {
                 producer = NativeAudio.nativeCreateUsbEncodedProducer(
-                    decoderHandle, queue, framingKind, formatCode
+                    decoderHandle, queue, framingKind, formatCode,
+                    if (framingKind == FRAMING_UAC1_TYPE_II) validation.getInt("maximumBitrate") else 0
                 )
                 check(producer != 0L) { "Source codec is incompatible with the selected encoded USB format" }
                 val maximumBitrateKbps = validation.optInt("maximumBitrate")
