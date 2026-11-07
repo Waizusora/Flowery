@@ -73,6 +73,7 @@ object NativeAudio {
     external fun nativeGetUsbEncodedTransportRate(decoder: Long, framingKind: Int): Long
     external fun nativeCreateUsbEncodedQueue(maxPackets: Int, maxBytes: Int): Long
     external fun nativePollUsbEncodedPacket(queue: Long, timeoutMs: Int): ByteArray?
+    external fun nativePumpUsbEncodedTransport(queue: Long, producer: Long, transport: UsbEncodedDacSession, maxPackets: Int, expectedSequence: Long, framingKind: Int, formatCode: Int, lastPositionMs: Long): LongArray
     external fun nativeCloseUsbEncodedQueue(queue: Long)
     external fun nativeClearUsbEncodedQueue(queue: Long)
     external fun nativeDestroyUsbEncodedQueue(queue: Long)
