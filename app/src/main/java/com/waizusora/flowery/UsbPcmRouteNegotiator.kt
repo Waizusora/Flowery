@@ -29,7 +29,6 @@ internal class UsbPcmRouteNegotiator(
 ) {
     fun open(
         devices: List<UsbDacController.Device>,
-        decoderHandle: Long,
         sourceBits: Int,
         sourceRate: Int,
         channels: Int,
