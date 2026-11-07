@@ -41,7 +41,9 @@ internal object UsbDacNative {
         framingKind: Int,
         encodedBytesPerSecond: Long,
         encodedFrameRate: Int,
-        encodedFrameBytes: Int
+        encodedFrameBytes: Int,
+        sourceSampleRate: Int,
+        samplingFrequencyControl: Boolean
     ): Long
     external fun nativeWriteEncodedPacket(handle: Long, encoded: ByteArray, durationUs: Long): Int
     external fun nativeWriteIsochronous(handle: Long, pcm: ByteArray, frameCount: Int): Int
