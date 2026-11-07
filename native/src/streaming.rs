@@ -628,6 +628,9 @@ impl StreamDecoder {
 
         if native_eligible && (!self.native_pcm_decided || self.native_pcm_active) {
             if let Some(bytes) = self.read_native_pcm_bytes(max_frames, format)? {
+                self.produced_frames = self.produced_frames.saturating_add(
+                    (bytes.len() / format.bytes_per_frame()) as u64
+                );
                 self.usb_last_gain = 1.0;
                 return Ok(bytes);
             }
