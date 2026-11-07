@@ -51,6 +51,7 @@ object NativeAudio {
     external fun nativeGetStreamPumpStatus(handle: Long): Int
     external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
+    external fun nativeSeekPlaybackSession(decoder: Long, session: Long, positionMs: Long, outputFrame: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
     external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
     external fun nativePollUsbPcmBlock(queue: Long, timeoutMs: Int): ByteArray?
