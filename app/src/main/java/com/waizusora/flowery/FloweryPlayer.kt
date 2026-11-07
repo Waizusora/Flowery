@@ -338,21 +338,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                         appliedEqualizerRevision = equalizerRevision
                     }
-                    when (NativeAudio.nativeGetStreamPumpStatus(handle)) {
-                        0, 1 -> Unit
-                        2 -> {
-                            // The session epoch changes immediately before the UI thread publishes
-                            // the pending seek request. Allow that command to arrive before treating
-                            // the worker's epoch exit as an unexpected stop.
-                            if (pendingSeekMs.get() == null && !stopped.get()) {
-                                Thread.sleep(2)
-                                if (pendingSeekMs.get() == null && !stopped.get()) {
-                                    throw IllegalStateException("Rust AAudio decode scheduler stopped unexpectedly")
-                                }
-                            }
-                        }
-                        else -> throw IllegalStateException("Rust AAudio decode scheduler failed")
-                    }
                     when (NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)) {
                         0 -> Thread.sleep(8)
                         1 -> break
