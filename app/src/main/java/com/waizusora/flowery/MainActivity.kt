@@ -248,6 +248,14 @@ class MainActivity : ComponentActivity() {
         restoreLastPlayedTrack()
         refreshOutputVolume()
         setContent {
+            val savedTheme = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+                .getString("theme", "Auto")
+            val darkTheme = when (savedTheme) {
+                "Light" -> false
+                "Black", "Dark" -> true
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            FloweryTheme(darkTheme = darkTheme) {
             FloweryNavigation(
                 context = this,
                 folders = folders,
@@ -351,13 +359,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            infoTag?.let { tag -> MaterialTheme { TagInfoDialog(tag, onDismiss = { infoTag = null }) } }
+            infoTag?.let { tag -> TagInfoDialog(tag, onDismiss = { infoTag = null }) }
             editingTag?.let { tag ->
-                MaterialTheme { TagEditorDialog(
+                TagEditorDialog(
                     tag = tag,
                     onDismiss = { editingTag = null },
                     onSave = { edited -> editingTag = null; saveTags(edited) }
-                ) }
+                )
+            }
             }
         }
     }
