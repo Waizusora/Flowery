@@ -23,7 +23,7 @@ enum SessionPhase {
 pub(super) struct SessionState {
     pub(super) epoch: AtomicU64,
     pub(super) cancelled: AtomicBool,
-    phase: AtomicI64,
+    pub(super) phase: AtomicI64,
     route: i32,
     gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
@@ -79,6 +79,22 @@ fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
             return Some(next);
         }
     }
+}
+
+/// Applies a lifecycle transition from a native worker without crossing JNI.
+pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> bool {
+    if !(0..=7).contains(&next) { return false; }
+    let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+    if session.cancelled.load(Ordering::Acquire) && next != SessionPhase::Cancelled as i32 {
+        return false;
+    }
+    let current = session.phase.load(Ordering::Acquire) as i32;
+    if !valid_phase_transition(current, next) { return false; }
+    session.phase.store(next as i64, Ordering::Release);
+    if next == SessionPhase::Cancelled as i32 {
+        session.cancelled.store(true, Ordering::Release);
+    }
+    true
 }
 
 /// Creates a native playback session and selects its output route from decoder metadata.
