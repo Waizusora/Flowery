@@ -33,11 +33,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeValidateUsbE
     match validate_uac1_encoded_descriptor(
         &raw, interface_number as u8, alternate_setting as u8,
         format_type as u8, format_tag as u16, sample_rate as u32) {
-        Ok((endpoint, max_packet, interval, maximum_bitrate)) => {
+        Ok((endpoint, max_packet, interval, maximum_bitrate, sampling_frequency_control)) => {
             let json = serde_json::json!({
                 "valid": true, "endpoint": endpoint,
                 "maxPacketBytes": max_packet, "interval": interval,
                 "maximumBitrate": maximum_bitrate,
+                "samplingFrequencyControl": sampling_frequency_control,
                 "formatType": format_type, "formatTag": format_tag
             });
             match env.new_string(json.to_string()) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
@@ -120,7 +121,7 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
 pub(super) fn validate_uac1_encoded_descriptor(
     raw: &[u8], interface_number: u8, alternate_setting: u8,
     expected_format_type: u8, expected_format_tag: u16, sample_rate: u32,
-) -> Result<(u8, u16, u8, u16), &'static str> {
+) -> Result<(u8, u16, u8, u16, bool), &'static str> {
     if !matches!(expected_format_type, UAC1_FORMAT_TYPE_II | UAC1_FORMAT_TYPE_III) {
         return Err("Only UAC1 Type-II and Type-III encoded descriptors are accepted");
     }
@@ -131,6 +132,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
     let mut endpoint: Option<(u8,u16,u8)> = None;
     let mut maximum_bitrate = 0u16;
     let mut sample_rate_supported = false;
+    let mut sampling_frequency_control = false;
     while offset + 2 <= raw.len() {
         let length = raw[offset] as usize;
         if length < 2 || offset + length > raw.len() { return Err("Malformed USB descriptor length"); }
@@ -183,6 +185,9 @@ pub(super) fn validate_uac1_encoded_descriptor(
                 }
                 format_type = Some(kind);
             }
+            0x25 if selected && length >= 4 && raw[offset + 2] == 0x01 => {
+                sampling_frequency_control = raw[offset + 3] & 0x01 != 0;
+            }
             0x05 if selected && length >= 7 => {
                 let address = raw[offset + 2];
                 let attributes = raw[offset + 3];
@@ -209,7 +214,7 @@ pub(super) fn validate_uac1_encoded_descriptor(
         return Err("The selected source sample rate is not advertised by this encoded UAC1 alternate setting");
     }
     let (address, packet, interval) = endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")?;
-    Ok((address, packet, interval, maximum_bitrate))
+    Ok((address, packet, interval, maximum_bitrate, sampling_frequency_control))
 }
 
 #[cfg(test)]
