@@ -381,6 +381,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbPcmPr
 }
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsUsbPcmProducerAtEnd(
+    _env: JNIEnv, _class: JClass, handle: jlong,
+) -> jni::sys::jboolean {
+    let Some(producer) = producer_ref(handle) else { return jni::sys::JNI_FALSE; };
+    let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+    if state.at_end { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsUsbPcmProducerBitPerfect(
     _env: JNIEnv,
     _class: JClass,
