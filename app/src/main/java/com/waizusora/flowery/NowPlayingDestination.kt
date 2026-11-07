@@ -88,7 +88,7 @@ internal fun NowPlayingDestination(
                                             modifier = Modifier.fillMaxWidth()
                                                 .padding(horizontal = 8.dp, vertical = 9.dp)
                                                 .then(if (active) Modifier.background(
-                                                    Color(0xFFD66B9A).copy(alpha = .13f), RoundedCornerShape(12.dp)
+                                                    MaterialTheme.colorScheme.primary.copy(alpha = .13f), RoundedCornerShape(12.dp)
                                                 ) else Modifier)
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                         )
@@ -146,7 +146,7 @@ internal fun NowPlayingDestination(
                 }
                 IconButton(onClick = onNext) { Icon(Icons.Default.SkipNext, "Next", tint = foreground, modifier = Modifier.size(30.dp)) }
                 IconButton(onClick = onRepeat) { Icon(if (repeatMode == 2) Icons.Default.RepeatOne else Icons.Default.Repeat,
-                    "Repeat", tint = if (repeatMode == 0) foreground else Color(0xFF1E90FF)) }
+                    "Repeat", tint = if (repeatMode == 0) foreground else MaterialTheme.colorScheme.primary) }
             }
             if (selectedTrack != null) {
                 val seekDurationMs = durationMs.coerceAtLeast(1L)
@@ -178,7 +178,7 @@ internal fun NowPlayingDestination(
                         onClick = onEdit,
                         modifier = Modifier.size(40.dp)
                     ) {
-                        Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A),
+                        Icon(Icons.Default.Edit, "Edit audio tags", tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(30.dp))
                     }
                 }
