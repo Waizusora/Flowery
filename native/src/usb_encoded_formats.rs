@@ -49,6 +49,62 @@ pub(super) fn build_iec61937_ac3_burst(frame: &[u8]) -> Result<Vec<u8>, &'static
     Ok(burst)
 }
 
+
+/// Verifies that a selected UAC1 streaming alternate setting advertises the
+/// exact format family/tag and a valid OUT isochronous data endpoint.
+pub(super) fn validate_uac1_encoded_descriptor(
+    raw: &[u8], interface_number: u8, alternate_setting: u8,
+    expected_format_type: u8, expected_format_tag: u16,
+) -> Result<(u8, u16, u8), &'static str> {
+    if !matches!(expected_format_type, UAC1_FORMAT_TYPE_II | UAC1_FORMAT_TYPE_III) {
+        return Err("Only UAC1 Type-II and Type-III encoded descriptors are accepted");
+    }
+    let mut offset = 0usize;
+    let mut selected = false;
+    let mut format_tag = None;
+    let mut format_type = None;
+    let mut endpoint: Option<(u8,u16,u8)> = None;
+    while offset + 2 <= raw.len() {
+        let length = raw[offset] as usize;
+        if length < 2 || offset + length > raw.len() { return Err("Malformed USB descriptor length"); }
+        match raw[offset + 1] {
+            0x04 if length >= 9 => {
+                selected = raw[offset + 2] == interface_number &&
+                    raw[offset + 3] == alternate_setting &&
+                    raw[offset + 5] == 0x01 && raw[offset + 6] == 0x02 &&
+                    raw[offset + 7] == 0x00;
+            }
+            0x24 if selected && length >= 7 && raw[offset + 2] == 0x01 => {
+                format_tag = Some(u16::from_le_bytes([raw[offset + 5], raw[offset + 6]]));
+            }
+            0x24 if selected && length >= 4 && raw[offset + 2] == 0x02 => {
+                format_type = Some(raw[offset + 3]);
+            }
+            0x05 if selected && length >= 7 => {
+                let address = raw[offset + 2];
+                let attributes = raw[offset + 3];
+                let packet_raw = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
+                let packet_bytes = (packet_raw & 0x07ff) * ((((packet_raw >> 11) & 0x03) + 1) as u16);
+                let interval = raw[offset + 6];
+                if address & 0x80 == 0 && address & 0x0f != 0 &&
+                    attributes & 0x03 == 0x01 && ((attributes >> 4) & 0x03) == 0 &&
+                    packet_bytes > 0 && (1..=16).contains(&interval) {
+                    endpoint = Some((address, packet_bytes, interval));
+                }
+            }
+            _ => {}
+        }
+        offset += length;
+    }
+    if format_type != Some(expected_format_type) {
+        return Err("The selected alternate setting does not advertise the requested UAC1 format type");
+    }
+    if format_tag != Some(expected_format_tag) {
+        return Err("The selected alternate setting format tag does not match the requested codec");
+    }
+    endpoint.ok_or("The selected alternate setting has no valid OUT isochronous data endpoint")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
