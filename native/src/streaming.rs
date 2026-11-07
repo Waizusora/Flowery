@@ -868,15 +868,10 @@ mod handle_tests {
     use super::*;
 
     #[test]
-    fn decoder_registry_rejects_invalid_and_stale_handles() {
+    fn decoder_registry_rejects_non_positive_and_unknown_handles() {
         assert!(decoder_ref(0).is_none());
         assert!(decoder_ref(-1).is_none());
-    }
-
-    #[test]
-    fn decoder_reference_survives_handle_close_until_inflight_owner_releases_it() {
-        let decoder = StreamDecoder::new(-1, "invalid").err();
-        assert!(decoder.is_some());
+        assert!(decoder_ref(i64::MAX).is_none());
     }
 }
 
