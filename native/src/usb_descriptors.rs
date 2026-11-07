@@ -721,8 +721,30 @@ pub fn descriptor_report_json(raw: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock_ranges_json, clock_sources, descriptor_report_json, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace, select_usb_sample_rates_json};
+    use super::{clock_ranges_json, clock_sources, descriptor_report_json, feature_unit_volume_control, parse_playback_profiles, playback_clock_sources, playback_descriptor_trace, select_usb_sample_rates_json};
     use serde_json::Value;
+
+
+    #[test]
+    fn finds_uac1_and_uac2_feature_unit_master_volume_controls() {
+        let uac1 = [
+            9,4,0,0,0,1,1,0x00,0,
+            10,0x24,0x06,7,1,1,0x02,0,0,0,
+        ];
+        assert_eq!(feature_unit_volume_control(&uac1), Some((7, 0, 0x00)));
+
+        let uac2 = [
+            9,4,0,0,0,1,1,0x20,0,
+            10,0x24,0x06,9,1,0x02,0,0,0,0,
+        ];
+        assert_eq!(feature_unit_volume_control(&uac2), Some((9, 0, 0x20)));
+
+        let without_volume = [
+            9,4,0,0,0,1,1,0x20,0,
+            10,0x24,0x06,9,1,0x01,0,0,0,0,
+        ];
+        assert_eq!(feature_unit_volume_control(&without_volume), None);
+    }
 
     #[test]
     fn parses_uac1_ieee_float32_profile() {
