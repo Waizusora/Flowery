@@ -120,6 +120,113 @@ pub(super) fn pack_native_integer_pcm(
     Ok(output)
 }
 
+
+/// Extracts exact signed integer samples from Symphonia's typed decoded planes.
+///
+/// Symphonia's FLAC decoder uses S32 storage with valid bits left-aligned.
+/// The low padding bits are verified before shifting back to the source width.
+/// Float buffers are intentionally rejected so the caller cannot accidentally
+/// advertise a floating-point round trip as native integer PCM.
+pub(super) fn from_symphonia_buffer(
+    decoded: symphonia::core::audio::AudioBufferRef<'_>,
+    valid_bits: u8,
+    channels: usize,
+    discard_frames: usize,
+) -> Result<NativePcmSamples, String> {
+    use symphonia::core::audio::Signal;
+
+    fn interleave<T: Copy>(planes: Vec<Vec<T>>, frames: usize) -> Vec<T> {
+        let mut output = Vec::with_capacity(frames * planes.len());
+        for frame in 0..frames {
+            for plane in &planes {
+                output.push(plane[frame]);
+            }
+        }
+        output
+    }
+
+    let frames = decoded.frames();
+    if channels == 0 || decoded.spec().channels.count() != channels || discard_frames > frames {
+        return Err("Decoded native PCM channel or frame layout is invalid".into());
+    }
+    let take = frames - discard_frames;
+
+    macro_rules! planes {
+        ($buffer:expr, $convert:expr) => {{
+            let mut values = Vec::with_capacity(channels);
+            for channel in 0..channels {
+                values.push($buffer.chan(channel)[discard_frames..]
+                    .iter().take(take).map($convert).collect::<Vec<_>>());
+            }
+            interleave(values, take)
+        }};
+    }
+
+    fn signed_from_left_aligned(value: i32, storage_bits: u8, valid_bits: u8) -> Result<i32, String> {
+        if valid_bits == 0 || valid_bits > storage_bits {
+            return Err("Decoded PCM valid-bit width is incompatible with its sample storage".into());
+        }
+        let shift = storage_bits - valid_bits;
+        if shift > 0 {
+            let mask = (1_i32 << shift) - 1;
+            if value & mask != 0 {
+                return Err("Decoder returned non-zero padding bits; exact native PCM extraction is unsafe".into());
+            }
+        }
+        Ok(value >> shift)
+    }
+
+    let samples = match decoded {
+        symphonia::core::audio::AudioBufferRef::S8(buffer) if valid_bits == 8 => {
+            NativePcmSamples::I8(planes!(buffer, |v: &i8| *v))
+        }
+        symphonia::core::audio::AudioBufferRef::U8(buffer) if valid_bits == 8 => {
+            NativePcmSamples::I8(planes!(buffer, |v: &u8| (*v as i16 - 128) as i8))
+        }
+        symphonia::core::audio::AudioBufferRef::S16(buffer) if valid_bits <= 16 => {
+            let values = planes!(buffer, |v: &i16| signed_from_left_aligned(*v as i32, 16, valid_bits).unwrap_or(i32::MIN));
+            if values.iter().any(|v| *v == i32::MIN) {
+                return Err("Unable to preserve signed 16-bit decoder samples".into());
+            }
+            if valid_bits == 16 { NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()) }
+            else { NativePcmSamples::I20(values) }
+        }
+        symphonia::core::audio::AudioBufferRef::U16(buffer) if valid_bits <= 16 => {
+            let values = planes!(buffer, |v: &u16| (*v as i32 - 32_768) >> (16 - valid_bits));
+            if valid_bits == 16 { NativePcmSamples::I16(values.into_iter().map(|v| v as i16).collect()) }
+            else { NativePcmSamples::I20(values) }
+        }
+        symphonia::core::audio::AudioBufferRef::S24(buffer) if valid_bits <= 24 => {
+            let values = planes!(buffer, |v: &symphonia::core::sample::i24| signed_from_left_aligned(v.inner(), 24, valid_bits).unwrap_or(i32::MIN));
+            if values.iter().any(|v| *v == i32::MIN) {
+                return Err("Unable to preserve signed 24-bit decoder samples".into());
+            }
+            if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+        }
+        symphonia::core::audio::AudioBufferRef::U24(buffer) if valid_bits <= 24 => {
+            let values = planes!(buffer, |v: &symphonia::core::sample::u24| ((v.inner() as i64 - 8_388_608) >> (24 - valid_bits)) as i32);
+            if valid_bits == 24 { NativePcmSamples::I24(values) } else { NativePcmSamples::I20(values) }
+        }
+        symphonia::core::audio::AudioBufferRef::S32(buffer) if valid_bits <= 32 => {
+            let values = planes!(buffer, |v: &i32| signed_from_left_aligned(*v, 32, valid_bits).unwrap_or(i32::MIN));
+            if values.iter().any(|v| *v == i32::MIN) {
+                return Err("Unable to preserve signed 32-bit decoder samples".into());
+            }
+            match valid_bits {
+                20 => NativePcmSamples::I20(values),
+                24 => NativePcmSamples::I24(values),
+                32 => NativePcmSamples::I32(values),
+                _ => return Err("Unsupported valid-bit width for S32 decoder output".into()),
+            }
+        }
+        symphonia::core::audio::AudioBufferRef::U32(buffer) if valid_bits == 32 => {
+            NativePcmSamples::I32(planes!(buffer, |v: &u32| (*v ^ 0x8000_0000) as i32))
+        }
+        _ => return Err("This decoder sample representation is not eligible for native integer PCM".into()),
+    };
+    Ok(samples)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
