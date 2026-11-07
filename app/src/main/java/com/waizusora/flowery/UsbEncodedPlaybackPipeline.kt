@@ -2,8 +2,6 @@ package com.waizusora.flowery
 
 import android.hardware.usb.UsbDeviceConnection
 import org.json.JSONObject
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
 /**
  * Connects the Rust packet producer to the dedicated encoded libusb writer.
@@ -42,39 +40,22 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun pump(maxPackets: Int = 32): Int {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(maxPackets > 0)
-        when (NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle)) {
-            0, 1 -> Unit
-            2 -> throw IllegalStateException("Rust encoded packet producer was cancelled unexpectedly")
-            else -> throw IllegalStateException("Rust encoded packet producer failed")
-        }
-
-        var submitted = 0
-        while (submitted < maxPackets) {
-            val envelope = NativeAudio.nativePollUsbEncodedPacket(queueHandle, 0) ?: break
-            require(envelope.size >= HEADER_BYTES) { "Invalid encoded packet envelope" }
-            val header = ByteBuffer.wrap(envelope, 0, HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN)
-            val kind = header.get().toInt() and 0xff
-            val code = header.short.toInt() and 0xffff
-            val sequence = header.long
-            val presentationTimeUs = header.long // presentation timestamp in microseconds
-            if (presentationTimeUs > 0L) lastPositionMs = presentationTimeUs / 1000L
-            val durationUs = header.long // packet/burst duration in microseconds
-            check(kind == framingKind && code == formatCode) {
-                "Encoded packet framing does not match the opened USB profile"
-            }
-            check(sequence == expectedSequence) { "Encoded packet sequence discontinuity" }
-            expectedSequence++
-            val payloadLength = envelope.size - HEADER_BYTES
-            check(payloadLength > 0) { "Encoded packet payload is empty" }
-            check(session.writePacket(envelope, HEADER_BYTES, payloadLength, durationUs) == payloadLength) {
-                "Encoded USB transport did not accept the complete packet"
-            }
-            submitted++
-        }
-        if (submitted < maxPackets &&
-            NativeAudio.nativeGetUsbEncodedProducerWorkerStatus(producerHandle) == 1) {
-            ended = true
-        }
+        val result = NativeAudio.nativePumpUsbEncodedTransport(
+            queueHandle,
+            producerHandle,
+            session,
+            maxPackets,
+            expectedSequence,
+            framingKind,
+            formatCode,
+            lastPositionMs
+        )
+        check(result.size == 4) { "Native encoded transport scheduler returned an invalid status" }
+        val submitted = result[0].toInt()
+        expectedSequence = result[1]
+        lastPositionMs = result[2]
+        ended = result[3] != 0L
+        check(submitted >= 0) { "Native encoded transport scheduler failed" }
         return submitted
     }
 
