@@ -776,10 +776,12 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     JNIEnv* env, jobject object, jint file_descriptor, jint interface_number,
     jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
     jint framing_kind, jlong encoded_bytes_per_second,
-    jint encoded_frame_rate, jint encoded_frame_bytes) {
+    jint encoded_frame_rate, jint encoded_frame_bytes,
+    jint source_sample_rate, jboolean sampling_frequency_control) {
     if ((framing_kind != 1 && framing_kind != 2) || encoded_bytes_per_second <= 0 ||
         (framing_kind == 2 && (encoded_frame_rate <= 0 || encoded_frame_bytes != 4)) ||
-        (framing_kind == 1 && (encoded_frame_rate != 0 || encoded_frame_bytes != 0))) {
+        (framing_kind == 1 && (encoded_frame_rate != 0 || encoded_frame_bytes != 0)) ||
+        source_sample_rate <= 0 || source_sample_rate > 0x00ffffff) {
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(exception, "Encoded transport rate must be positive");
         return 0;
@@ -792,6 +794,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         interface_number, 0, JNI_FALSE);
     if (handle == 0 || env->ExceptionCheck()) return 0;
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    if (sampling_frequency_control == JNI_TRUE) {
+        int frequency_error = LIBUSB_SUCCESS;
+        if (!set_and_verify_uac1_frequency(session, source_sample_rate, &frequency_error)) {
+            close_session(session);
+            return throw_usb_error(env, "UAC1 encoded endpoint sampling-frequency SET_CUR/GET_CUR verification", frequency_error);
+        }
+    }
+    session->sample_rate = source_sample_rate;
     const uint64_t bytes_per_interval =
         (static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
         1000000ULL;
