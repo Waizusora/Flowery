@@ -942,11 +942,17 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
-    JNIEnv* env, jobject, jlong handle, jbyteArray encoded, jlong duration_us) {
+    JNIEnv* env, jobject, jlong handle, jbyteArray encoded, jint payload_offset, jint payload_length, jlong duration_us) {
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (session == nullptr || encoded == nullptr || !session->encoded_mode) return -1;
-    const jsize byte_count = env->GetArrayLength(encoded);
-    if (byte_count <= 0) return 0;
+    const jsize array_length = env->GetArrayLength(encoded);
+    if (payload_offset < 0 || payload_length <= 0 ||
+        payload_offset > array_length || payload_length > array_length - payload_offset) {
+        jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+        if (exception != nullptr) env->ThrowNew(exception, "Encoded payload range is outside the supplied byte array");
+        return -1;
+    }
+    const jsize byte_count = payload_length;
 
     // UAC1 Type-II is a sequence of independently encoded frames. Every frame
     // is split into full-size USB packets plus one short packet, followed by a
@@ -998,7 +1004,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         const auto frame_start = std::chrono::steady_clock::now();
         compact_encoded(session);
         session->pending_encoded.resize(frame_bytes);
-        env->GetByteArrayRegion(encoded, 0, byte_count,
+        env->GetByteArrayRegion(encoded, payload_offset, byte_count,
             reinterpret_cast<jbyte*>(session->pending_encoded.data()));
         if (env->ExceptionCheck()) { session->pending_encoded.clear(); return -1; }
         std::vector<unsigned int> frame_packets;
