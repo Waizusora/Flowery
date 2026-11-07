@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use jni::objects::JClass;
@@ -135,13 +135,15 @@ impl EncodedPacketQueue {
 
 
 
-pub(super) fn queue_ref(handle: jlong) -> Option<&'static EncodedPacketQueue> {
-    if handle == 0 { None } else { Some(unsafe { &*(handle as *const EncodedPacketQueue) }) }
+pub(super) fn queue_ref(handle: jlong) -> Option<Arc<EncodedPacketQueue>> {
+    if handle == 0 { return None; }
+    let raw = handle as *const EncodedPacketQueue;
+    unsafe { Arc::increment_strong_count(raw); Some(Arc::from_raw(raw)) }
 }
 
 struct EncodedProducerState {
     decoder: *mut crate::streaming::StreamDecoder,
-    queue: &'static EncodedPacketQueue,
+    queue: Arc<EncodedPacketQueue>,
     framing: EncodedFraming,
     sequence: u64,
     pending: Option<EncodedPacket>,
@@ -158,7 +160,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
 ) -> jlong {
     if max_packets <= 0 || max_bytes <= 0 { return 0; }
     match EncodedPacketQueue::new(max_packets as usize, max_bytes as usize) {
-        Ok(queue) => Box::into_raw(Box::new(queue)) as jlong,
+        Ok(queue) => Arc::into_raw(Arc::new(queue)) as jlong,
         Err(_) => 0,
     }
 }
@@ -176,7 +178,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePollUsbEncod
         EncodedFraming::Uac1TypeIi { format_tag } => (1u8, format_tag),
         EncodedFraming::Iec61937 { data_type } => (2u8, data_type),
     };
-    let mut bytes = Vec::<i8>::with_capacity(23 + packet.bytes.len());
+    let mut bytes = Vec::<i8>::with_capacity(27 + packet.bytes.len());
     bytes.push(kind as i8);
     bytes.extend_from_slice(&format.to_le_bytes().map(|value| value as i8));
     bytes.extend_from_slice(&packet.sequence.to_le_bytes().map(|value| value as i8));
@@ -288,7 +290,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClearUsbEnco
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedQueue(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    if handle != 0 { unsafe { drop(Box::from_raw(handle as *mut EncodedPacketQueue)); } }
+    if handle != 0 { unsafe { drop(Arc::from_raw(handle as *const EncodedPacketQueue)); } }
 }
 
 #[cfg(test)]
