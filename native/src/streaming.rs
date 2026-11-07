@@ -1006,6 +1006,7 @@ mod tests {
         let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
         stream.configure(48_000, &[0.0; 31]).unwrap();
         let format = crate::usb_pcm::PcmFormat {
+            encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
             sample_rate: 48_000, channels: 2, valid_bits: 16,
             subslot_bytes: 2, signed: true, little_endian: true,
         };
@@ -1026,6 +1027,48 @@ mod tests {
 
         drop(float_stream);
         drop(float_source);
+        drop(stream);
+        drop(source_file);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn ieee_float32_wav_reaches_usb_payload_bit_exact() {
+        let path = std::env::temp_dir().join(format!("flowery-ieee-float32-test-{}.wav", std::process::id()));
+        let patterns = [0x8000_0000_u32, 0x3f80_0000, 0x7fc0_1234, 0x0000_0001, 0xbf00_0000, 0x0000_0000];
+        let data_bytes = (patterns.len() * 4) as u32;
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"RIFF").unwrap();
+            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+            file.write_all(b"WAVEfmt ").unwrap();
+            file.write_all(&16_u32.to_le_bytes()).unwrap();
+            file.write_all(&3_u16.to_le_bytes()).unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
+            file.write_all(&(48_000_u32 * 8).to_le_bytes()).unwrap();
+            file.write_all(&8_u16.to_le_bytes()).unwrap();
+            file.write_all(&32_u16.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+            file.write_all(&data_bytes.to_le_bytes()).unwrap();
+            for bits in patterns { file.write_all(&bits.to_le_bytes()).unwrap(); }
+        }
+
+        let source_file = std::fs::File::open(&path).unwrap();
+        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
+        assert_eq!(stream.source_bits, 32);
+        assert!(stream.is_ieee_float32_source());
+        stream.configure(48_000, &[0.0; 31]).unwrap();
+        let format = crate::usb_pcm::PcmFormat {
+            encoding: crate::usb_pcm::PcmEncoding::IeeeFloat32,
+            sample_rate: 48_000, channels: 2, valid_bits: 32,
+            subslot_bytes: 4, signed: false, little_endian: true,
+        };
+        let actual = stream.read_usb_pcm(3, 1.0, format).unwrap();
+        let expected: Vec<u8> = patterns.iter().flat_map(|bits| bits.to_le_bytes()).collect();
+        assert_eq!(actual, expected);
+        assert!(stream.native_pcm_active());
+
         drop(stream);
         drop(source_file);
         std::fs::remove_file(path).unwrap();
