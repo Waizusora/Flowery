@@ -171,3 +171,12 @@ Android-specific SAF extension lookup and USB diagnostic capture are implemented
 ## Rust-owned playback route selection
 
 The route eligibility policy is centralized in `native/src/playback_policy.rs`. Kotlin supplies source facts obtained from the decoder and the user's direct-USB setting; Rust returns one of four route decisions: Android Float32, encoded AC-3 USB, source-native integer PCM USB candidate, or decoded Float32 USB. Kotlin remains responsible for performing the Android and USB operations required by the selected route. The route policy has native unit coverage, and CI verifies that all `NativeAudio` and `UsbDacNative` external declarations have matching Rust or C++ exports.
+
+
+## Native playback session and producer lifetime
+
+Each playback generation owns one registry-backed Rust session shared by its decoder and active output producer. The session is the authority for route identity, lifecycle phase, cancellation, and a checked monotonic seek epoch. Seek, phase changes, cancellation, and close are serialized so a seek cannot begin after teardown has committed. Closing a session always marks it cancelled before its registry entry is released; decoder storage remains alive while any producer or in-flight JNI call retains an `Arc`.
+
+The direct USB PCM producer is cancelled and its Rust worker is joined before its state is released. Destruction also synchronizes with any in-flight manual pump. The encoded producer remains incrementally pumped by the Kotlin transport loop, but observes the same session epoch: a seek invalidates pending and queued packets before accepting packets from the new decoder position. Encoded producer destruction rejects new work, waits for an in-flight producer operation, clears pending and queued packets, and closes the queue. The encoded queue remains bounded by both packet count and payload bytes.
+
+Kotlin continues to own Android document descriptors, USB permission and device connection lifetimes, and the calls that submit packets to the C++ libusb transport. C++ continues to own libusb transfer scheduling and reaping. These platform-owned resources must be stopped or drained before their handles are closed. The AAudio decode/pump scheduler and encoded packet-pump scheduler are still Kotlin-orchestrated; moving them into Rust is a separate migration step requiring worker-level pause, seek, EOF, cancellation, join, and transport-reap tests.
