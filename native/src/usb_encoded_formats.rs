@@ -149,8 +149,8 @@ pub(super) fn validate_uac1_encoded_descriptor(
                     if length < 9 { return Err("UAC1 Type-II format descriptor is truncated"); }
                     maximum_bitrate = u16::from_le_bytes([raw[offset + 4], raw[offset + 5]]);
                     let samples_per_frame = u16::from_le_bytes([raw[offset + 6], raw[offset + 7]]);
-                    if maximum_bitrate == 0 || samples_per_frame == 0 {
-                        return Err("UAC1 Type-II descriptor has invalid bitrate or frame size");
+                    if maximum_bitrate == 0 || samples_per_frame != 1536 {
+                        return Err("AC-3 Type-II descriptor must advertise a nonzero bitrate and 1536 samples per encoded frame");
                     }
                 } else if kind == UAC1_FORMAT_TYPE_III {
                     if length < 8 || raw[offset + 4] != 2 || raw[offset + 5] != 2 || raw[offset + 6] != 16 {
