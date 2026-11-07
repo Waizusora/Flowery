@@ -27,7 +27,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -151,17 +150,13 @@ fun FloweryNavigation(
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
     val lightTheme = theme == "Light" || (theme == "Auto" && !systemDark)
-    val foreground = if (lightTheme) Color(0xFF20212A) else Color.White
-    val muted = foreground.copy(alpha = .72f)
-    val background = Brush.verticalGradient(when (theme) {
-        "Light" -> listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
-        "Black" -> listOf(Color(0xFF101014), Color(0xFF191922), Color(0xFF24242D))
-        else -> if (systemDark) listOf(Color(0xFF24262C), Color(0xFF3B3E45), Color(0xFF53565D))
-            else listOf(Color(0xFFF2F3F7), Color(0xFFD9DCE4), Color(0xFFC5C9D2))
-    })
+    val foreground = if (lightTheme) Color(0xFF292629) else Color(0xFFF4F0F0)
+    val muted = if (lightTheme) Color(0xFF746A6E) else Color(0xFFC8B9BF)
+    val background = if (lightTheme) Color(0xFFF7F6F4) else Color(0xFF171719)
 
-    Scaffold(containerColor = Color.Transparent, bottomBar = {
-        if (destination != Destination.WELCOME) Row(Modifier.fillMaxWidth().background(Color.Transparent).padding(vertical = 6.dp),
+    FloweryTheme(darkTheme = !lightTheme) {
+    Scaffold(containerColor = background, bottomBar = {
+        if (destination != Destination.WELCOME) Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
             NavIcon(Icons.Default.Folder, "Folders", destination == Destination.FOLDERS, foreground) {
                 destination = Destination.FOLDERS; selectedFolder = null; virtualCueFolder = false
@@ -180,7 +175,7 @@ fun FloweryNavigation(
                         usbTransportActive -> "USB DAC direct transport active; decoded PCM is not bit-perfect"
                         else -> "USB DAC"
                     },
-                    tint = if (usbTransportActive) Color(0xFF1E90FF) else foreground
+                    tint = if (usbTransportActive) MaterialTheme.colorScheme.primary else foreground
                 )
             }
             NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
@@ -328,6 +323,7 @@ fun FloweryNavigation(
             Spacer(Modifier.height(8.dp))
         }
     }
+    }
 }
 
 private fun createAaudioLogLine(sample: LongArray, previous: LongArray?, openAttempt: LongArray?): String {
@@ -390,7 +386,7 @@ private fun NavIcon(
     foreground: Color,
     onClick: () -> Unit
 ) {
-    val accent = Color(0xFFD66B9A)
+    val accent = MaterialTheme.colorScheme.primary
     Column(
         modifier = Modifier
             .clickable(onClick = onClick)
