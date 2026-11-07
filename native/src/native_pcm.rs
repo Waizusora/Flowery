@@ -422,6 +422,7 @@ mod tests {
         assert_eq!(samples, NativePcmSamples::I24(vec![-8_388_608, -1, 1_193_046, 8_388_607]));
         assert_eq!(
             pack_native_integer_pcm(&samples, PcmFormat {
+                encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
                 sample_rate: 96_000, channels: 2, valid_bits: 24,
                 subslot_bytes: 3, signed: true, little_endian: true,
             }).unwrap(),

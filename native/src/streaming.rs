@@ -9,7 +9,7 @@ use jni::objects::{JClass, JFloatArray, JString};
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use rubato::{Fft, FixedSync, Resampler};
-use symphonia::core::audio::SampleBuffer;
+use symphonia::core::audio::{SampleBuffer, Signal};
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
