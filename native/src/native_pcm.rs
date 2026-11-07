@@ -313,4 +313,58 @@ mod tests {
             format(24, 3)
         ));
     }
+    #[test]
+    fn symphonia_signed_16_bit_planes_are_interleaved_without_sample_changes() {
+        use std::borrow::Cow;
+        use symphonia::core::audio::{AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec};
+        let spec = SignalSpec::new(48_000, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut buffer = AudioBuffer::<i16>::new(2, spec);
+        buffer.render_reserved(Some(2));
+        buffer.chan_mut(0).copy_from_slice(&[i16::MIN, 1234]);
+        buffer.chan_mut(1).copy_from_slice(&[-1, i16::MAX]);
+        let samples = from_symphonia_buffer(AudioBufferRef::S16(Cow::Owned(buffer)), 16, 2, 0).unwrap();
+        assert_eq!(samples, NativePcmSamples::I16(vec![i16::MIN, -1, 1234, i16::MAX]));
+        assert_eq!(
+            pack_native_integer_pcm(&samples, PcmFormat {
+                sample_rate: 48_000, channels: 2, valid_bits: 16,
+                subslot_bytes: 2, signed: true, little_endian: true,
+            }).unwrap(),
+            vec![0x00, 0x80, 0xff, 0xff, 0xd2, 0x04, 0xff, 0x7f]
+        );
+    }
+
+    #[test]
+    fn symphonia_flac_style_left_aligned_24_bit_samples_are_restored_exactly() {
+        use std::borrow::Cow;
+        use symphonia::core::audio::{AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec};
+        let spec = SignalSpec::new(96_000, Channels::FRONT_LEFT | Channels::FRONT_RIGHT);
+        let mut buffer = AudioBuffer::<i32>::new(2, spec);
+        buffer.render_reserved(Some(2));
+        buffer.chan_mut(0).copy_from_slice(&[i32::MIN, 0x12345600]);
+        buffer.chan_mut(1).copy_from_slice(&[-256, 0x7fffff00]);
+        let samples = from_symphonia_buffer(AudioBufferRef::S32(Cow::Owned(buffer)), 24, 2, 0).unwrap();
+        assert_eq!(samples, NativePcmSamples::I24(vec![-8_388_608, -1, 1_193_046, 8_388_607]));
+        assert_eq!(
+            pack_native_integer_pcm(&samples, PcmFormat {
+                sample_rate: 96_000, channels: 2, valid_bits: 24,
+                subslot_bytes: 3, signed: true, little_endian: true,
+            }).unwrap(),
+            vec![
+                0x00, 0x00, 0x80, 0xff, 0xff, 0xff,
+                0x56, 0x34, 0x12, 0xff, 0xff, 0x7f
+            ]
+        );
+    }
+
+    #[test]
+    fn native_extraction_rejects_nonzero_decoder_padding_bits() {
+        use std::borrow::Cow;
+        use symphonia::core::audio::{AudioBuffer, AudioBufferRef, Channels, Signal, SignalSpec};
+        let spec = SignalSpec::new(48_000, Channels::FRONT_LEFT);
+        let mut buffer = AudioBuffer::<i32>::new(1, spec);
+        buffer.render_reserved(Some(1));
+        buffer.chan_mut(0)[0] = 0x12345601;
+        assert!(from_symphonia_buffer(AudioBufferRef::S32(Cow::Owned(buffer)), 24, 1, 0).is_err());
+    }
+
 }
