@@ -55,7 +55,7 @@ internal class UsbPcmProducerAdapter(
         } catch (error: Throwable) {
             if (active()) {
                 diagnostics.record(
-                    "USB_PRODUCER_ERROR type=\${error.javaClass.simpleName} message=\${error.message ?: "no message"}"
+                    "USB_PRODUCER_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}"
                 )
                 failure.compareAndSet(null, error)
             }
