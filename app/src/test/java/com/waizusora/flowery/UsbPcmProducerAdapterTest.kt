@@ -8,7 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class UsbPcmProducerAdapterTest {
+class UsbPcmBlockDecoderTest {
     @Test
     fun decodesBoundedPcmBlockEnvelope() {
         val payload = byteArrayOf(1, 2, 3, 4, 5, 6)
@@ -20,7 +20,7 @@ class UsbPcmProducerAdapterTest {
             .put(payload)
             .array()
 
-        val block = UsbPcmProducerAdapter.decodeBlock(encoded)
+        val block = UsbPcmBlockDecoder.decode(encoded)
 
         assertFalse(block.endOfStream)
         assertEquals(7, block.epoch)
@@ -38,7 +38,7 @@ class UsbPcmProducerAdapterTest {
             .putLong(192L)
             .array()
 
-        val block = UsbPcmProducerAdapter.decodeBlock(encoded)
+        val block = UsbPcmBlockDecoder.decode(encoded)
 
         assertTrue(block.endOfStream)
         assertEquals(0, block.frames)
@@ -49,7 +49,7 @@ class UsbPcmProducerAdapterTest {
     @Test
     fun rejectsTruncatedOrEmptyNonTerminalBlocks() {
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
-            UsbPcmProducerAdapter.decodeBlock(ByteArray(16))
+            UsbPcmBlockDecoder.decode(ByteArray(16))
         }
         val empty = ByteBuffer.allocate(17).order(ByteOrder.LITTLE_ENDIAN)
             .put(0)
@@ -58,7 +58,7 @@ class UsbPcmProducerAdapterTest {
             .putLong(0L)
             .array()
         org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
-            UsbPcmProducerAdapter.decodeBlock(empty)
+            UsbPcmBlockDecoder.decode(empty)
         }
     }
 }
