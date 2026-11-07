@@ -300,30 +300,32 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
                     targetRate, outputRingCapacityFrames
                 )
-                var outputStarted = false
-                var reachedEnd = false
-                var eofSignalled = false
                 var appliedEqualizerRevision = equalizerRevision
                 check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentFrameLimit ?: -1L) == 0) {
                     "Unable to start the Rust-owned AAudio decode scheduler"
                 }
+                check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
+                    "Unable to start the Rust-owned AAudio output scheduler"
+                }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
-                    val tuningResult = NativeAudio.nativeTuneOutputBuffer()
-                    check(tuningResult == 0) {
-                        "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
-                    }
                     pendingSeekMs.getAndSet(null)?.let { requested ->
-                        val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
+                        val target = requested.coerceAtLeast(0L).let {
+                            if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it
+                        }
                         val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
                         NativeAudio.nativeStopStreamPump(handle)
-                        check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) { "Unable to flush the AAudio output stream for seeking" }
-                        outputStarted = false
+                        check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) {
+                            "Unable to flush the AAudio output stream for seeking"
+                        }
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
-                        reachedEnd = segmentFrameLimit?.let { targetFrame >= it } ?: false
-                        eofSignalled = false
-                        if (!reachedEnd) {
-                            val remainingFrames = segmentFrameLimit?.let { (it - targetFrame).coerceAtLeast(0L) } ?: -1L
+                        val reachedEnd = segmentFrameLimit?.let { targetFrame >= it } ?: false
+                        if (reachedEnd) {
+                            NativeAudio.nativeSetStreamEof()
+                        } else {
+                            val remainingFrames = segmentFrameLimit?.let {
+                                (it - targetFrame).coerceAtLeast(0L)
+                            } ?: -1L
                             check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
                                 "Unable to restart the Rust-owned AAudio decode scheduler after seeking"
                             }
@@ -331,32 +333,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         appliedEqualizerRevision = equalizerRevision
                         onState("Seeking · ${actual / 1000}s")
                     }
-                    if (reachedEnd) {
-                        if (!outputStarted && !paused) {
-                            check(NativeAudio.nativeStartStreamPlayback() == 0) {
-                                "AAudio could not start after PCM prebuffering"
-                            }
-                            outputStarted = true
-                        }
-                        if (!eofSignalled) {
-                            NativeAudio.nativeSetStreamEof()
-                            eofSignalled = true
-                        }
-                        if (!NativeAudio.nativeIsOutputActive()) {
-                            val errorCode = NativeAudio.nativeGetOutputError()
-                            check(errorCode == 0) { "AAudio output failed (error $errorCode)" }
-                            break
-                        }
-                        Thread.sleep(8)
-                        continue
-                    }
                     if (appliedEqualizerRevision != equalizerRevision) {
-                        check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) { "Unable to update streaming equalizer" }
+                        check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) {
+                            "Unable to update streaming equalizer"
+                        }
                         appliedEqualizerRevision = equalizerRevision
                     }
                     when (NativeAudio.nativeGetStreamPumpStatus(handle)) {
-                        1 -> reachedEnd = true
-                        0 -> Unit
+                        0, 1 -> Unit
                         2 -> {
                             // The session epoch changes immediately before the UI thread publishes
                             // the pending seek request. Allow that command to arrive before treating
@@ -370,22 +354,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                         else -> throw IllegalStateException("Rust AAudio decode scheduler failed")
                     }
-                    if (!outputStarted && !paused &&
-                        NativeAudio.nativeGetStreamBufferedFrames() >= lowWatermarkFrames) {
-                        check(NativeAudio.nativeStartStreamPlayback() == 0) {
-                            "AAudio could not start after PCM prebuffering"
+                    when (NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)) {
+                        0 -> Thread.sleep(8)
+                        1 -> break
+                        2 -> {
+                            if (stopped.get() || NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)) break
+                            throw IllegalStateException("Rust AAudio output scheduler stopped unexpectedly")
                         }
-                        outputStarted = true
-                    }
-                    while (outputStarted && !stopped.get() && playbackGeneration.get() == generation && pendingSeekMs.get() == null && NativeAudio.nativeGetStreamBufferedFrames() > lowWatermarkFrames) {
-                        val tuningResult = NativeAudio.nativeTuneOutputBuffer()
-                        check(tuningResult == 0) {
-                            "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
-                        }
-                        check(NativeAudio.nativeIsOutputActive()) {
-                            "AAudio output stopped unexpectedly (error ${NativeAudio.nativeGetOutputError()})"
-                        }
-                        Thread.sleep(4)
+                        else -> throw IllegalStateException(
+                            "Rust AAudio output scheduler failed (error ${NativeAudio.nativeGetOutputError()})"
+                        )
                     }
                 }
 
@@ -401,6 +379,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 if (handle != 0L) NativeAudio.nativeStopStreamPump(handle)
+                if (sessionHandle != 0L) NativeAudio.nativeStopOutputScheduler(sessionHandle)
                 if (sessionHandle != 0L) {
                     if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
