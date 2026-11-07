@@ -232,10 +232,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
                     "Unable to configure the streaming resampler and equalizer"
                 }
-                if (segmentStartMs > 0L) {
-                    val actualStart = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs)
-                    check(actualStart >= 0L) { "The decoder could not seek to the CUE track start." }
-                }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
@@ -286,7 +282,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
-                val segmentFrameLimit = segmentLengthMs?.let { NativeAudio.nativeFramesAtMilliseconds(it, targetRate) }
 
                 val routeName = if (deviceId != 0) "USB DAC" else "system output"
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
@@ -303,8 +298,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     targetRate, outputRingCapacityFrames
                 )
                 var appliedEqualizerRevision = equalizerRevision
-                check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentFrameLimit ?: -1L) == 0) {
-                    "Unable to start the Rust-owned AAudio decode scheduler"
+                check(NativeAudio.nativeStartSegmentedStreamPump(
+                    handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentStartMs, segmentEndMs ?: -1L
+                ) == 0) {
+                    "Unable to start the Rust-owned segmented AAudio decode scheduler"
                 }
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
@@ -314,17 +311,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         val target = requested.coerceAtLeast(0L).let {
                             if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it
                         }
-                        val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
                         val actual = NativeAudio.nativeSeekPlaybackSession(
-                            handle, sessionHandle, segmentStartMs + target, targetFrame
+                            handle, sessionHandle, segmentStartMs + target, DECODE_CHUNK_FRAMES,
+                            segmentStartMs, segmentEndMs ?: -1L
                         )
-                        check(actual >= 0L) { "The decoder rejected the requested seek position" }
-                        val remainingFrames = segmentFrameLimit?.let {
-                            (it - targetFrame).coerceAtLeast(0L)
-                        } ?: -1L
-                        check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
-                            "Unable to restart the Rust-owned AAudio decode scheduler after seeking"
-                        }
+                        check(actual >= 0L) { "The decoder rejected the requested seek position or worker restart" }
                         synchronized(seekLock) {
                             if (pendingSeekMs.get() == null) {
                                 seekInProgress.set(false)
