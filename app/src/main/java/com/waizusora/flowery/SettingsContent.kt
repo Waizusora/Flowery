@@ -353,7 +353,7 @@ private fun Detail(title: String, value: String, color: Color, muted: Color) {
 
 
 @Composable
-private fun Heading(title: String, color: Color) {
+internal fun Heading(title: String, color: Color) {
     Text(
         text = title,
         color = color,
