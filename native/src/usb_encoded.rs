@@ -207,6 +207,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
         return 0;
     };
     let decoder = unsafe { &mut *(decoder_handle as *mut crate::streaming::StreamDecoder) };
+    if let Err(error) = decoder.begin_encoded_stream() {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+        return 0;
+    }
     let framing = match framing_kind {
         1 if format_code != 0 => {
             if let Err(error) = decoder.validate_encoded_uac1_type_ii(
