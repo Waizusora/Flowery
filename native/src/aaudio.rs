@@ -221,9 +221,46 @@ pub(crate) fn signal_stream_eof() {
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.write.load(Ordering::Acquire).saturating_sub(o.read.load(Ordering::Acquire)).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(_:JNIEnv,_:JClass,v:f32){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.volume.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed);}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_PAUSED{return OK;}if s==STATE_STARTED{let r=AAudioStream_requestPause(e.stream);if r!=OK{return r;}return wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);}if s==STATE_PAUSING{return wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED);}INVALID_STATE}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s==STATE_PAUSED{let r=AAudioStream_requestStart(e.stream);if r!=OK{return r;}return wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);}if s==STATE_STARTING{return wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED);}INVALID_STATE}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutput(_:JNIEnv,_:JClass){let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());if let Some(o)=e.output.as_ref(){o.active.store(false,Ordering::Release);}unsafe{e.stop();}}
+pub(crate) fn pause_output_for_session() -> Option<i32> {
+    let e=engine().lock().unwrap_or_else(|p|p.into_inner());
+    if e.stream.is_null() { return None; }
+    Some(unsafe {
+        let s=AAudioStream_getState(e.stream);
+        if s==STATE_PAUSED { OK }
+        else if s==STATE_STARTED {
+            let r=AAudioStream_requestPause(e.stream);
+            if r!=OK { r } else { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
+        } else if s==STATE_PAUSING { wait_stream_state(e.stream,STATE_PAUSING,STATE_PAUSED) }
+        else { INVALID_STATE }
+    })
+}
+pub(crate) fn resume_output_for_session() -> Option<i32> {
+    let e=engine().lock().unwrap_or_else(|p|p.into_inner());
+    if e.stream.is_null() { return None; }
+    Some(unsafe {
+        let s=AAudioStream_getState(e.stream);
+        if s==STATE_STARTED { OK }
+        else if s==STATE_PAUSED {
+            let r=AAudioStream_requestStart(e.stream);
+            if r!=OK { r } else { wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED) }
+        } else if s==STATE_STARTING { wait_stream_state(e.stream,STATE_STARTING,STATE_STARTED) }
+        else { INVALID_STATE }
+    })
+}
+pub(crate) fn stop_output_for_session() {
+    let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());
+    if let Some(o)=e.output.as_ref(){o.active.store(false,Ordering::Release);}
+    unsafe { e.stop(); }
+}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseOutput(_:JNIEnv,_:JClass)->jint{
+    pause_output_for_session().unwrap_or(INVALID_STATE)
+}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeOutput(_:JNIEnv,_:JClass)->jint{
+    resume_output_for_session().unwrap_or(INVALID_STATE)
+}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutput(_:JNIEnv,_:JClass){
+    stop_output_for_session();
+}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(_:JNIEnv,_:JClass)->jboolean{if engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.active.load(Ordering::Acquire)).unwrap_or(false){JNI_TRUE}else{0}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.underruns.load(Ordering::Acquire).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputError(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.error.load(Ordering::Acquire)).unwrap_or(INVALID_STATE)}
