@@ -311,7 +311,6 @@ fun FloweryNavigation(
                             )
                             IconButton(
                                 onClick = onEdit,
-                                enabled = selectedTrack != null,
                                 modifier = Modifier.size(40.dp)
                             ) {
                                 Icon(Icons.Default.Edit, "Edit audio tags", tint = Color(0xFFD66B9A),
