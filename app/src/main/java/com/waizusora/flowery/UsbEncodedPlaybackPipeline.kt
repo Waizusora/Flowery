@@ -60,15 +60,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun seekTo(positionMs: Long): Long {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(positionMs >= 0)
-        NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
-        session.flush()
-        val actual = NativeAudio.nativeSeekUsbEncodedProducer(producerHandle, positionMs)
+        val actual = NativeAudio.nativeSeekUsbEncodedSession(producerHandle, session, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
         ended = false
         lastPositionMs = actual
-        check(NativeAudio.nativeStartUsbEncodedProducerWorker(producerHandle) == 0) {
-            "Unable to restart the Rust-owned encoded packet producer after seeking"
-        }
         return actual
     }
 
