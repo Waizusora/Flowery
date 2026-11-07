@@ -170,7 +170,11 @@ class PlaybackService : Service() {
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
             publishState(message)
-            if (message == "Playback finished") handleCompletion()
+            if (message == "Playback finished") {
+                // Completion is reported from the playback worker. Defer queue transitions
+                // so stopping the completed session never interrupts its own cleanup thread.
+                mainHandler.post { handleCompletion() }
+            }
         }
         createNotificationChannel()
         session = MediaSessionCompat(this, "FloweryPlayback").apply {
