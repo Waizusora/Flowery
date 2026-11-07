@@ -510,7 +510,8 @@ class PlaybackService : Service() {
         playbackState = when {
             message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
             message == "Paused" -> PlaybackStateCompat.STATE_PAUSED
-            message == "Stopped" || message == "Playback finished" -> PlaybackStateCompat.STATE_STOPPED
+            message == "Stopped" || message.startsWith("Playback finished") ||
+                message.startsWith("Playback error:") -> PlaybackStateCompat.STATE_STOPPED
             else -> playbackState
         }
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
