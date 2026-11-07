@@ -124,7 +124,7 @@ See [Audio engine](AUDIO_ENGINE.md) for details.
 ├── app/
 │   └── src/main/
 │       ├── cpp/                 # libusb USB transport and CMake configuration
-│       ├── java/.../flowery/    # Android UI, SettingsContent, service, SAF library, JNI bridge
+│       ├── java/.../flowery/    # Android UI, playback adapters, service, SAF library, JNI bridge
 │       └── AndroidManifest.xml
 ├── native/
 │   ├── Cargo.toml               # Rust dependencies
