@@ -47,6 +47,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var usbOutputBitDepth = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
+    @Volatile private var nativeSessionHandle = 0L
     @Volatile private var usbPlaybackMode = false
     @Volatile private var usbBitPerfectActive = false
     @Volatile private var usbNativeBitPerfectConfirmed = false
@@ -121,6 +122,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             var descriptor: ParcelFileDescriptor? = null
             var handle = 0L
+            var sessionHandle = 0L
             try {
                 previousWorker?.join(4_000L)
                 check(previousWorker?.isAlive != true) {
@@ -158,6 +160,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val playbackRoute = NativeAudio.nativeSelectPlaybackRoute(
                     bitPerfectRequested, isAc3Source, losslessSource, sourceBits, channels
                 )
+                sessionHandle = NativeAudio.nativeCreatePlaybackSession(handle, playbackRoute)
+                check(sessionHandle != 0L) { "The native playback session could not be created" }
+                nativeSessionHandle = sessionHandle
+                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 1) == 0) {
+                    "The native playback session could not enter the prepared state"
+                }
                 when (playbackRoute) {
                     1 -> {
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
@@ -216,6 +224,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
+                check(NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, 2) == 0) { "The native playback session was cancelled" }
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
                     "Unable to configure the streaming resampler and equalizer"
                 }
@@ -299,6 +308,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         "AAudio could not tune its output buffer after an underrun (error $tuningResult)"
                     }
                     pendingSeekMs.getAndSet(null)?.let { requested ->
+                        check(NativeAudio.nativePlaybackSessionBeginSeek(sessionHandle) > 0L) { "The native playback session rejected seek after cancellation" }
                         val target = requested.coerceAtLeast(0L).let { if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it }
                         val targetFrame = NativeAudio.nativeFramesAtMilliseconds(target, targetRate)
                         check(NativeAudio.nativeFlushStreamOutput(targetFrame, false) == 0) { "Unable to flush the AAudio output stream for seeking" }
@@ -387,6 +397,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (usbEnabled) diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
+                if (sessionHandle != 0L) {
+                    if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
+                    NativeAudio.nativeClosePlaybackSession(sessionHandle)
+                }
                 if (handle != 0L) {
                     if (decoderHandle == handle) decoderHandle = 0L
                     NativeAudio.nativeCloseStreamDecoder(handle)
@@ -791,15 +805,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L && !usbPlaybackMode) return
+        val session = nativeSessionHandle
+        if (session != 0L) NativeAudio.nativePlaybackSessionBeginSeek(session)
         pendingSeekMs.set(positionMs.coerceAtLeast(0L))
     }
 
     fun pause() {
         if (usbPlaybackMode) {
             paused = true
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 3)
             onState("Paused · USB exclusive")
         } else if (NativeAudio.nativePauseOutput() == 0) {
             paused = true
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 3)
             onState("Paused")
         }
     }
@@ -807,9 +825,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun resume() {
         if (usbPlaybackMode) {
             paused = false
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 2)
             onState("Playing · USB exclusive")
         } else if (NativeAudio.nativeResumeOutput() == 0) {
             paused = false
+            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionSetPhase(nativeSessionHandle, 2)
             onState("Playing · AAudio streaming")
         }
     }
@@ -830,6 +850,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
+        if (nativeSessionHandle != 0L) NativeAudio.nativeCancelPlaybackSession(nativeSessionHandle)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
         // Keep the worker reference until a later start or shutdown can join it.
