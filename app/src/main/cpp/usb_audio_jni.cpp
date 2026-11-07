@@ -1042,7 +1042,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
     compact_encoded(session);
     const size_t previous = session->pending_encoded.size();
     session->pending_encoded.resize(previous + static_cast<size_t>(byte_count));
-    env->GetByteArrayRegion(encoded, 0, byte_count,
+    env->GetByteArrayRegion(encoded, payload_offset, byte_count,
         reinterpret_cast<jbyte*>(session->pending_encoded.data() + previous));
     if (env->ExceptionCheck()) {
         session->pending_encoded.resize(previous);
