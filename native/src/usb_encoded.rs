@@ -332,7 +332,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     if state.session.cancelled.load(Ordering::Acquire) { return -3; }
     if state.ended { return -1; }
     if state.pending.is_none() {
-        let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
+        let decoder_owner = Arc::clone(&state.decoder);
+        let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
         match decoder.read_encoded_packet() {
             Ok(Some((source_bytes, timestamp_us, duration_us))) => {
                 if let Err(error) = decoder.validate_ac3_encoded_frame(&source_bytes) {
@@ -430,12 +431,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
     let Some(producer) = producer_ref(handle) else { return -1; };
     let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
     if state.session.cancelled.load(Ordering::Acquire) { return -1; }
-    let mut decoder = state.decoder.lock().unwrap_or_else(|error| error.into_inner());
+    let decoder_owner = Arc::clone(&state.decoder);
+    let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
     if let Err(error) = decoder.begin_encoded_stream() {
         let _ = env.throw_new("java/lang/IllegalStateException", error);
         return -1;
     }
-    match decoder.seek_to(position_ms as u64) {
+    let seek_result = decoder.seek_to(position_ms as u64);
+    drop(decoder);
+    match seek_result {
         Ok(actual_position) => {
             state.pending = None;
             state.ended = false;
