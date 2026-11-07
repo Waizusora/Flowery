@@ -64,9 +64,9 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             }
             check(sequence == expectedSequence) { "Encoded packet sequence discontinuity" }
             expectedSequence++
-            val payload = envelope.copyOfRange(HEADER_BYTES, envelope.size)
-            check(payload.isNotEmpty()) { "Encoded packet payload is empty" }
-            check(session.writePacket(payload, durationUs) == payload.size) {
+            val payloadLength = envelope.size - HEADER_BYTES
+            check(payloadLength > 0) { "Encoded packet payload is empty" }
+            check(session.writePacket(envelope, HEADER_BYTES, payloadLength, durationUs) == payloadLength) {
                 "Encoded USB transport did not accept the complete packet"
             }
             submitted++
