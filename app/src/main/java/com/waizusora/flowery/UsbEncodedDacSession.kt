@@ -9,7 +9,7 @@ import android.hardware.usb.UsbDeviceConnection
  * session never calls the PCM writer. The caller supplies the average encoded
  * transport rate in bytes per second, derived from the negotiated UAC profile.
  */
-internal class UsbEncodedDacSession private constructor(
+class UsbEncodedDacSession private constructor(
     private val connection: UsbDeviceConnection,
     private val nativeHandle: Long
 ) : AutoCloseable {
