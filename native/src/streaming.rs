@@ -4,9 +4,6 @@ use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
-use std::thread::{self, JoinHandle};
-use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use audioadapter_buffers::direct::InterleavedSlice;
@@ -890,6 +887,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfec
     ((lossless << 32) | decoder.source_bits as u64) as jlong
 }
 
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDurationMs(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
