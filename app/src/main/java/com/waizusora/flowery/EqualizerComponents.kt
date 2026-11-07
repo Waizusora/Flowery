@@ -9,6 +9,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 
@@ -18,6 +19,7 @@ internal fun VerticalEqualizerSlider(
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val palette = MaterialTheme.colorScheme
     Canvas(
         modifier = modifier.pointerInput(Unit) {
             fun valueAt(y: Float): Float =
@@ -39,14 +41,14 @@ internal fun VerticalEqualizerSlider(
         val thumbY = bottom - ((value + 12f) / 24f) * (bottom - top)
 
         drawLine(
-            color = Color(0xFF777777),
+            color = palette.outline,
             start = Offset(centerX, top),
             end = Offset(centerX, bottom),
             strokeWidth = 3.dp.toPx()
         )
         listOf(top + 24.dp.toPx(), bottom - 24.dp.toPx()).forEach { y ->
             drawLine(
-                color = Color(0xFFBDBDBD),
+                color = palette.onSurfaceVariant,
                 start = Offset(centerX - 21.dp.toPx(), y),
                 end = Offset(centerX - 16.dp.toPx(), y),
                 strokeWidth = 1.dp.toPx()
@@ -59,7 +61,7 @@ internal fun VerticalEqualizerSlider(
             )
         }
         drawRoundRect(
-            color = Color.White,
+            color = palette.primary,
             topLeft = Offset(centerX - 15.dp.toPx(), thumbY - 22.dp.toPx()),
             size = Size(30.dp.toPx(), 44.dp.toPx()),
             cornerRadius = CornerRadius(10.dp.toPx()),
