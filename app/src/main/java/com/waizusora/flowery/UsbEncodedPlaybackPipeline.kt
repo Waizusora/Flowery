@@ -75,7 +75,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         session.flush()
         val actual = NativeAudio.nativeSeekUsbEncodedProducer(producerHandle, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
-        expectedSequence = 0L
         ended = false
         return actual
     }
@@ -111,7 +110,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         const val UAC1_FORMAT_TYPE_II = 2
         const val UAC1_FORMAT_TYPE_III = 3
         const val UAC1_FORMAT_TAG_AC3 = 0x1002
-        const val UAC1_FORMAT_TAG_IEC61937 = 0x0001
+        const val UAC1_FORMAT_TAG_IEC61937 = 0x2001
         const val IEC61937_DATATYPE_AC3 = 0x0001
 
         /**
@@ -148,6 +147,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     formatCode == UAC1_FORMAT_TAG_AC3) ||
                 (framingKind == FRAMING_IEC61937_TYPE_III &&
                     formatType == UAC1_FORMAT_TYPE_III &&
+                    formatTag == UAC1_FORMAT_TAG_IEC61937 &&
                     formatCode == IEC61937_DATATYPE_AC3)
             ) { "Unsupported encoded codec/descriptor combination" }
 
