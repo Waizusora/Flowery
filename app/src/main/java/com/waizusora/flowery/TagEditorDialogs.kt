@@ -109,3 +109,18 @@ internal fun TagEditorDialog(tag: AudioTag, onDismiss: () -> Unit, onSave: (Audi
     }
 }
 
+@androidx.compose.runtime.Composable
+internal fun TagEditorField(
+    label: String,
+    value: String,
+    singleLine: Boolean = true,
+    onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = singleLine
+    )
+}
