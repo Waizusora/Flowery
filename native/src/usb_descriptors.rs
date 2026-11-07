@@ -735,13 +735,13 @@ mod tests {
 
         let uac2 = [
             9,4,0,0,0,1,1,0x20,0,
-            10,0x24,0x06,9,1,0x02,0,0,0,0,
+            14,0x24,0x06,9,1,0x02,0,0,0,0,0,0,0,0,
         ];
         assert_eq!(feature_unit_volume_control(&uac2), Some((9, 0, 0x20)));
 
         let without_volume = [
             9,4,0,0,0,1,1,0x20,0,
-            10,0x24,0x06,9,1,0x01,0,0,0,0,
+            14,0x24,0x06,9,1,0x01,0,0,0,0,0,0,0,0,
         ];
         assert_eq!(feature_unit_volume_control(&without_volume), None);
 
