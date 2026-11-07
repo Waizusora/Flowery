@@ -233,6 +233,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
         return -1;
     }
+    session.phase.store(command as i64, Ordering::Release);
+    if command == SessionPhase::Cancelled as jint {
+        session.cancelled.store(true, Ordering::Release);
+    }
     #[cfg(target_os = "android")]
     if session.route == 0 {
         let output_result = match command {
@@ -244,6 +248,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         };
         if let Some(result) = output_result {
             if result != 0 {
+                session.phase.store(current as i64, Ordering::Release);
                 let _ = env.throw_new(
                     "java/lang/IllegalStateException",
                     format!("Unable to apply AAudio session command (error {result})"),
@@ -254,10 +259,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         if command == SessionPhase::Cancelled as jint || command == SessionPhase::Failed as jint {
             crate::aaudio::stop_output_for_session();
         }
-    }
-    session.phase.store(command as i64, Ordering::Release);
-    if command == SessionPhase::Cancelled as jint {
-        session.cancelled.store(true, Ordering::Release);
     }
     0
 }
