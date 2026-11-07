@@ -93,7 +93,7 @@ enum StreamSourceMode {
 
 pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn Decoder>,
+    decoder: Option<Box<dyn Decoder>>,
     track_id: u32,
     source_rate: usize,
     source_bits: u8,
@@ -141,8 +141,11 @@ impl StreamDecoder {
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
-        let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
-            .map_err(|e| format!("Unsupported audio codec: {e}"))?;
+        let decoder = match symphonia::default::get_codecs().make(&params, &DecoderOptions::default()) {
+            Ok(decoder) => Some(decoder),
+            Err(error) if params.codec == symphonia::core::codecs::CODEC_TYPE_EAC3 => None,
+            Err(error) => return Err(format!("Unsupported audio codec: {error}")),
+        };
         Ok(Self {
             format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
@@ -175,7 +178,7 @@ impl StreamDecoder {
             SeekMode::Accurate,
             SeekTo::Time { time: Duration::from_millis(requested_ms).into(), track_id: Some(self.track_id) }
         ).map_err(|e| format!("Container seek failed: {e}"))?;
-        self.decoder.reset();
+        if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.input_pending.clear();
         self.output_pending.clear();
         self.eof = false;
@@ -333,14 +336,15 @@ impl StreamDecoder {
                     return Ok(false);
                 }
                 Err(Error::ResetRequired) => {
-                    self.decoder.reset();
+                    if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
                     continue;
                 }
                 Err(Error::IoError(error)) => return Err(format!("Audio stream I/O failed: {error}")),
                 Err(e) => return Err(format!("Audio packet read failed: {e}")),
             };
             if packet.track_id() != self.track_id { continue; }
-            match self.decoder.decode(&packet) {
+            let decoder = self.decoder.as_mut().ok_or_else(|| "This codec is available for encoded passthrough only; no PCM decoder is registered".to_string())?;
+            match decoder.decode(&packet) {
                 Ok(decoded) => {
                     self.consecutive_decode_errors = 0;
                     let spec = *decoded.spec();
@@ -365,7 +369,7 @@ impl StreamDecoder {
                     if self.consecutive_decode_errors >= 8 {
                         return Err(format!(
                             "Audio decoder rejected 8 consecutive packets (codec {:?}); last error: {reason}",
-                            self.decoder.codec_params().codec
+                            self.codec_type
                         ));
                     }
                     continue;
