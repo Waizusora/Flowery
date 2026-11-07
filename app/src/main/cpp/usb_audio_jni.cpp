@@ -73,6 +73,12 @@ struct UsbAudioSession {
     // region [pending_offset, size) is live; the prefix is compacted lazily.
     std::vector<unsigned char> pending_pcm;
     size_t pending_offset = 0;
+    // Encoded payload staging is intentionally separate from the PCM writer.
+    std::vector<unsigned char> pending_encoded;
+    size_t encoded_offset = 0;
+    uint64_t encoded_bytes_per_second = 0;
+    uint64_t encoded_rate_phase = 0;
+    bool encoded_mode = false;
     // Transfers currently queued on the endpoint, in submission order.
     std::vector<std::unique_ptr<InFlightTransfer>> in_flight;
     uint64_t next_sequence = 0;
@@ -481,6 +487,52 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
     return true;
 }
 
+// Queues encoded bytes on a dedicated path. Encoded payloads are split only
+// at USB service-interval boundaries; they never enter pending_pcm or submit_urb.
+bool submit_encoded_urb(UsbAudioSession* session,
+                        const std::vector<unsigned int>& packet_bytes,
+                        size_t total_bytes, TransportFailure* failure) {
+    auto entry = std::make_unique<InFlightTransfer>();
+    entry->sequence = session->next_sequence;
+    entry->owner = session;
+    entry->buffer.assign(
+        session->pending_encoded.begin() + static_cast<std::ptrdiff_t>(session->encoded_offset),
+        session->pending_encoded.begin() +
+            static_cast<std::ptrdiff_t>(session->encoded_offset + total_bytes));
+    const int packet_count = static_cast<int>(packet_bytes.size());
+    entry->transfer = libusb_alloc_transfer(packet_count);
+    if (entry->transfer == nullptr) {
+        record_failure(failure, "encoded_alloc_failed", LIBUSB_ERROR_NO_MEM);
+        return false;
+    }
+    libusb_fill_iso_transfer(
+        entry->transfer, session->handle, session->endpoint, entry->buffer.data(),
+        static_cast<int>(total_bytes), packet_count, on_transfer_complete, entry.get(), 0);
+    for (int i = 0; i < packet_count; ++i) {
+        entry->transfer->iso_packet_desc[i].length = packet_bytes[static_cast<size_t>(i)];
+    }
+    if (session->in_flight.empty()) session->last_progress = std::chrono::steady_clock::now();
+    const int result = libusb_submit_transfer(entry->transfer);
+    if (result != LIBUSB_SUCCESS) {
+        libusb_free_transfer(entry->transfer);
+        record_failure(failure, "encoded_submit_failed", result);
+        failure->sequence = entry->sequence;
+        return false;
+    }
+    session->encoded_offset += total_bytes;
+    ++session->next_sequence;
+    session->in_flight.push_back(std::move(entry));
+    return true;
+}
+
+void compact_encoded(UsbAudioSession* session) {
+    if (session->encoded_offset == 0) return;
+    session->pending_encoded.erase(
+        session->pending_encoded.begin(),
+        session->pending_encoded.begin() + static_cast<std::ptrdiff_t>(session->encoded_offset));
+    session->encoded_offset = 0;
+}
+
 // Waits for the dedicated event thread to publish completions and enforces
 // a progress watchdog against the oldest outstanding URB.
 bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
@@ -715,11 +767,39 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     return reinterpret_cast<jlong>(session);
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
+    JNIEnv* env, jobject object, jint file_descriptor, jint interface_number,
+    jint alternate_setting, jint endpoint, jint max_packet_bytes, jint interval,
+    jlong encoded_bytes_per_second) {
+    if (encoded_bytes_per_second <= 0) {
+        jclass exception = env->FindClass("java/lang/IllegalArgumentException");
+        if (exception != nullptr) env->ThrowNew(exception, "Encoded transport rate must be positive");
+        return 0;
+    }
+    // Reuse only the libusb session setup and interface-claiming lifecycle.
+    // The PCM writer is disabled for this session immediately after opening.
+    const jlong handle = Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
+        env, object, file_descriptor, interface_number, alternate_setting,
+        endpoint, max_packet_bytes, interval, 0, 0, 1, 1, 1, 0,
+        interface_number, 0, JNI_FALSE);
+    if (handle == 0 || env->ExceptionCheck()) return 0;
+    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    session->encoded_mode = true;
+    session->encoded_bytes_per_second = static_cast<uint64_t>(encoded_bytes_per_second);
+    return handle;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     JNIEnv* env, jobject, jlong handle, jbyteArray pcm, jint frame_count) {
     auto* session = reinterpret_cast<UsbAudioSession*>(handle);
     if (session == nullptr || pcm == nullptr || frame_count <= 0) return -1;
+    if (session->encoded_mode) {
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, "PCM writes are disabled for an encoded USB session");
+        return -1;
+    }
 
     const size_t bytes_per_frame =
         static_cast<size_t>(session->channels) * static_cast<size_t>(session->subslot_bytes);
@@ -823,6 +903,66 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     return frame_count;
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
+    JNIEnv* env, jobject, jlong handle, jbyteArray encoded) {
+    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    if (session == nullptr || encoded == nullptr || !session->encoded_mode) return -1;
+    const jsize byte_count = env->GetArrayLength(encoded);
+    if (byte_count <= 0) return 0;
+    const uint64_t max_buffer = session->encoded_bytes_per_second * 2ULL;
+    const size_t live = session->pending_encoded.size() - session->encoded_offset;
+    if (static_cast<uint64_t>(live) + static_cast<uint64_t>(byte_count) > max_buffer) {
+        jclass exception = env->FindClass("java/lang/IllegalStateException");
+        if (exception != nullptr) env->ThrowNew(exception, "Encoded USB staging queue is full");
+        return -1;
+    }
+    compact_encoded(session);
+    const size_t previous = session->pending_encoded.size();
+    session->pending_encoded.resize(previous + static_cast<size_t>(byte_count));
+    env->GetByteArrayRegion(encoded, 0, byte_count,
+        reinterpret_cast<jbyte*>(session->pending_encoded.data() + previous));
+    if (env->ExceptionCheck()) {
+        session->pending_encoded.resize(previous);
+        return -1;
+    }
+
+    TransportFailure failure;
+    std::vector<unsigned int> packet_bytes;
+    packet_bytes.reserve(kPacketsPerUrb);
+    while (true) {
+        reap_completed(session, &failure);
+        if (failure.failed) break;
+        uint64_t phase = session->encoded_rate_phase;
+        size_t total = 0;
+        packet_bytes.clear();
+        const size_t available = session->pending_encoded.size() - session->encoded_offset;
+        while (packet_bytes.size() < kPacketsPerUrb) {
+            const uint64_t scaled = session->encoded_bytes_per_second * session->interval_us + phase;
+            const unsigned int expected = static_cast<unsigned int>(scaled / 1000000ULL);
+            const uint64_t next_phase = scaled % 1000000ULL;
+            if (expected == 0 || expected > session->max_packet_bytes ||
+                total + expected > available) break;
+            packet_bytes.push_back(expected);
+            total += expected;
+            phase = next_phase;
+        }
+        if (packet_bytes.empty()) break;
+        if (session->in_flight.size() >= max_urbs_in_flight(session)) {
+            if (!wait_for_progress(session, &failure)) break;
+            continue;
+        }
+        if (!submit_encoded_urb(session, packet_bytes, total, &failure)) break;
+        session->encoded_rate_phase = phase;
+    }
+    if (failure.failed) {
+        abort_in_flight(session);
+        throw_transport_failure(env, session, failure);
+        return -1;
+    }
+    return byte_count;
+}
+
 // Submits any staged partial service interval as a short final packet and waits
 // until every queued URB has completed. Called at natural end of playback so the
 // tail of the stream is not truncated by session teardown.
@@ -834,6 +974,28 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
 
     TransportFailure failure;
     reap_completed(session, &failure);
+
+    if (session->encoded_mode) {
+        while (!failure.failed) {
+            const size_t remaining_encoded = session->pending_encoded.size() - session->encoded_offset;
+            if (remaining_encoded == 0) break;
+            if (session->in_flight.size() >= max_urbs_in_flight(session)) {
+                if (!wait_for_progress(session, &failure)) break;
+                continue;
+            }
+            const size_t tail = std::min<size_t>(remaining_encoded, session->max_packet_bytes);
+            const std::vector<unsigned int> final_packet{static_cast<unsigned int>(tail)};
+            if (!submit_encoded_urb(session, final_packet, tail, &failure)) break;
+        }
+        while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
+        if (failure.failed) {
+            abort_in_flight(session);
+            throw_transport_failure(env, session, failure);
+            return -1;
+        }
+        compact_encoded(session);
+        return 0;
+    }
 
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
@@ -872,6 +1034,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     abort_in_flight(session);
     session->pending_pcm.clear();
     session->pending_offset = 0;
+    session->pending_encoded.clear();
+    session->encoded_offset = 0;
+    session->encoded_rate_phase = 0;
     session->frame_phase = 0;
     session->feedback_phase = 0;
 }
