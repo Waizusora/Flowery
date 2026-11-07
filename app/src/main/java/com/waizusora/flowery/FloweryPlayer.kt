@@ -319,16 +319,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                         val actual = NativeAudio.nativeSeekStreamDecoder(handle, segmentStartMs + target)
                         check(actual >= 0L) { "The decoder rejected the requested seek position" }
-                        val reachedEnd = segmentFrameLimit?.let { targetFrame >= it } ?: false
-                        if (reachedEnd) {
-                            NativeAudio.nativeSetStreamEof()
-                        } else {
-                            val remainingFrames = segmentFrameLimit?.let {
-                                (it - targetFrame).coerceAtLeast(0L)
-                            } ?: -1L
-                            check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
-                                "Unable to restart the Rust-owned AAudio decode scheduler after seeking"
-                            }
+                        val remainingFrames = segmentFrameLimit?.let {
+                            (it - targetFrame).coerceAtLeast(0L)
+                        } ?: -1L
+                        check(NativeAudio.nativeStartStreamPump(handle, sessionHandle, DECODE_CHUNK_FRAMES, remainingFrames) == 0) {
+                            "Unable to restart the Rust-owned AAudio decode scheduler after seeking"
                         }
                         appliedEqualizerRevision = equalizerRevision
                         onState("Seeking · ${actual / 1000}s")
