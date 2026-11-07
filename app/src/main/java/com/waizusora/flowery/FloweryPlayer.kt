@@ -44,8 +44,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
-    private val seekInProgress = AtomicBoolean(false)
-    private val seekLock = Any()
+    @Volatile private var activeSegmentStartMs = 0L
+    @Volatile private var activeSegmentEndMs = -1L
 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
@@ -126,6 +126,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val previousWorker = worker
         stop()
         stopped.set(false)
+        activeSegmentStartMs = segmentStartMs.coerceAtLeast(0L)
+        activeSegmentEndMs = segmentEndMs ?: -1L
         val generation = playbackGeneration.incrementAndGet()
         worker = thread(name = "FloweryStreamPlayer") {
             runCatching {
@@ -301,6 +303,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     targetRate, outputRingCapacityFrames
                 )
                 var appliedEqualizerRevision = equalizerRevision
+                var lastReportedSeekPositionMs = -1L
                 check(NativeAudio.nativeStartSegmentedStreamPump(
                     handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentStartMs, segmentEndMs ?: -1L
                 ) == 0) {
@@ -310,33 +313,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
-                    pendingSeekMs.getAndSet(null)?.let { requested ->
-                        val target = requested.coerceAtLeast(0L).let {
-                            if (outputDurationMs > 0L) it.coerceAtMost(outputDurationMs) else it
-                        }
-                        val actual = NativeAudio.nativeSeekPlaybackSession(
-                            handle, sessionHandle, segmentStartMs + target, DECODE_CHUNK_FRAMES,
-                            segmentStartMs, segmentEndMs ?: -1L
-                        )
-                        check(actual >= 0L) { "The decoder rejected the requested seek position or worker restart" }
-                        synchronized(seekLock) {
-                            if (pendingSeekMs.get() == null) {
-                                seekInProgress.set(false)
-                                if (!paused) {
-                                    check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 2).toInt() == 0) {
-                                        "Unable to resume the AAudio session after seeking"
-                                    }
-                                }
-                            }
-                        }
-                        appliedEqualizerRevision = equalizerRevision
-                        onState("Seeking · ${actual / 1000}s")
-                    }
                     if (appliedEqualizerRevision != equalizerRevision) {
                         check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) {
                             "Unable to update streaming equalizer"
                         }
                         appliedEqualizerRevision = equalizerRevision
+                    }
+                    val completedSeekPosition = NativeAudio.nativeGetPlaybackSessionSeekPosition(sessionHandle)
+                    if (completedSeekPosition >= 0L && completedSeekPosition != lastReportedSeekPositionMs) {
+                        lastReportedSeekPositionMs = completedSeekPosition
+                        onState("Seeking · ${completedSeekPosition / 1000}s")
                     }
                     when (NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)) {
                         0 -> Thread.sleep(8)
@@ -675,23 +661,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun seekTo(positionMs: Long) {
         if (decoderHandle == 0L && !usbPlaybackMode) return
+        val boundedPosition = positionMs.coerceAtLeast(0L)
         val session = nativeSessionHandle
         if (session != 0L && !usbPlaybackMode) {
-            synchronized(seekLock) {
-                seekInProgress.set(true)
-                check(NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() == 0) {
-                    "Unable to pause the AAudio session for seeking"
-                }
-                NativeAudio.nativePlaybackSessionCommand(session, 8)
-                pendingSeekMs.set(positionMs.coerceAtLeast(0L))
-            }
+            val epoch = NativeAudio.nativeRequestPlaybackSessionSeek(
+                session,
+                activeSegmentStartMs + boundedPosition,
+                DECODE_CHUNK_FRAMES,
+                activeSegmentStartMs,
+                activeSegmentEndMs,
+            )
+            check(epoch >= 0L) { "The native AAudio session rejected the seek request" }
+            onState("Seeking…")
         } else {
             if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
             val producer = activeUsbPcmProducerHandle
             if (producer != 0L) {
-                NativeAudio.nativeRequestUsbPcmProducerSeek(producer, positionMs.coerceAtLeast(0L))
+                NativeAudio.nativeRequestUsbPcmProducerSeek(producer, boundedPosition)
             } else {
-                pendingSeekMs.set(positionMs.coerceAtLeast(0L))
+                pendingSeekMs.set(boundedPosition)
             }
         }
     }
@@ -717,14 +705,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             onState("Playing · USB exclusive")
         } else {
             val session = nativeSessionHandle
-            synchronized(seekLock) {
-                if (seekInProgress.get()) {
-                    paused = false
-                    onState("Seeking · resume queued")
-                } else if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() == 0) {
-                    paused = false
-                    onState("Playing · AAudio streaming")
-                }
+            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() == 0) {
+                paused = false
+                onState("Playing · AAudio streaming")
             }
         }
     }
@@ -753,7 +736,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputSampleRate = 0
         usbOutputBitDepth = 0
         pendingSeekMs.set(null)
-        seekInProgress.set(false)
+        activeSegmentStartMs = 0L
+        activeSegmentEndMs = -1L
         paused = false
         usbPlaybackMode = false
         usbPositionFrames = 0L
