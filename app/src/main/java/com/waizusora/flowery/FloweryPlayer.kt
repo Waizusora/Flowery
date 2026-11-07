@@ -309,6 +309,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 ) == 0) {
                     "Unable to start the Rust-owned segmented AAudio decode scheduler"
                 }
+                // Forward a seek requested while the decoder/session was still opening.
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    val epoch = NativeAudio.nativeRequestPlaybackSessionSeek(
+                        sessionHandle,
+                        segmentStartMs + requested.coerceAtLeast(0L),
+                        DECODE_CHUNK_FRAMES,
+                        segmentStartMs,
+                        segmentEndMs ?: -1L,
+                    )
+                    check(epoch >= 0L) { "The native AAudio session rejected the queued startup seek request" }
+                }
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
