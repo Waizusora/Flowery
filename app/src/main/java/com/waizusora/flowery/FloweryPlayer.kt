@@ -123,6 +123,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var descriptor: ParcelFileDescriptor? = null
             var handle = 0L
             var sessionHandle = 0L
+            var sessionFailed = false
             try {
                 previousWorker?.join(4_000L)
                 check(previousWorker?.isAlive != true) {
@@ -391,14 +392,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
                 if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
             } catch (error: InterruptedException) {
+                sessionFailed = !stopped.get()
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
+                sessionFailed = true
                 val usbEnabled = context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
                     .getBoolean("usb_bit_perfect_enabled", false)
                 if (usbEnabled) diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 if (sessionHandle != 0L) {
+                    if (!stopped.get()) NativeAudio.nativePlaybackSessionSetPhase(sessionHandle, if (sessionFailed) 7 else 5)
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
                     NativeAudio.nativeClosePlaybackSession(sessionHandle)
                 }
