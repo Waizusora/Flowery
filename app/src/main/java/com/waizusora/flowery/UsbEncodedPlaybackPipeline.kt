@@ -51,7 +51,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             val code = header.short.toInt() and 0xffff
             val sequence = header.long
             header.long // presentation timestamp in microseconds
-            header.long // packet/burst duration in microseconds
+            val durationUs = header.long // packet/burst duration in microseconds
             check(kind == framingKind && code == formatCode) {
                 "Encoded packet framing does not match the opened USB profile"
             }
@@ -59,7 +59,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             expectedSequence++
             val payload = envelope.copyOfRange(HEADER_BYTES, envelope.size)
             check(payload.isNotEmpty()) { "Encoded packet payload is empty" }
-            check(session.writePacket(payload) == payload.size) {
+            check(session.writePacket(payload, durationUs) == payload.size) {
                 "Encoded USB transport did not accept the complete packet"
             }
             submitted++
@@ -171,6 +171,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     validation.getInt("endpoint"),
                     validation.getInt("maxPacketBytes"),
                     validation.getInt("interval"),
+                    framingKind,
                     encodedBytesPerSecond
                 )
                 return UsbEncodedPlaybackPipeline(
