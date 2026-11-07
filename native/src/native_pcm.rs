@@ -277,7 +277,7 @@ mod tests {
     }
 
     #[test]
-    fn packs_native_24_bit_samples_into_four_byte_subslots_with_sign_extension() {
+    fn packs_native_24_bit_samples_left_justified_in_four_byte_subslots() {
         let samples = NativePcmSamples::I24(vec![-8_388_608, -1, 0, 8_388_607]);
         assert_eq!(
             pack_native_integer_pcm(&samples, format(24, 4)).unwrap(),
