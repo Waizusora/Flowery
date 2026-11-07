@@ -141,7 +141,7 @@ impl StreamDecoder {
         let lossless_source = is_lossless_codec(params.codec);
         let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
         let channels = params.channels.ok_or("Audio channel layout is unavailable")?.count();
-        if channels == 0 || channels > 2 { return Err(format!("AAudio streaming currently supports mono/stereo, found {channels} channels")); }
+        if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
         let decoder = symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|e| format!("Unsupported audio codec: {e}"))?;
         Ok(Self {
