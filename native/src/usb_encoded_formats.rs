@@ -93,6 +93,18 @@ pub(super) fn ac3_frame_size(frame: &[u8]) -> Result<usize, &'static str> {
     Ok(words * 2)
 }
 
+pub(super) fn ac3_frame_sample_rate(frame: &[u8]) -> Result<u32, &'static str> {
+    if frame.len() < 5 || frame[0] != 0x0b || frame[1] != 0x77 {
+        return Err("AC-3 sync word or frame header is invalid");
+    }
+    match frame[4] >> 6 {
+        0 => Ok(48_000),
+        1 => Ok(44_100),
+        2 => Ok(32_000),
+        _ => Err("AC-3 frame uses a reserved sample-rate code"),
+    }
+}
+
 /// Wraps one complete AC-3 sync frame in an IEC 61937 Type-III burst.
 /// The carrier is 16-bit stereo (4 bytes per sample period), 1536 periods
 /// per AC-3 burst. Payload length in Pd is expressed in bits.
