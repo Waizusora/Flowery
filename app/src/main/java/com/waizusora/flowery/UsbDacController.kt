@@ -461,7 +461,7 @@ class UsbDacController(context: Context) {
                             false
                         )
                         if (nativeHandle != 0L) {
-                            return UsbDacSession(connection, nativeHandle, profile, sampleRate)
+                            return UsbDacSession(connection, nativeHandle, profile, sampleRate, volumeUnit)
                         }
                         lastError = IllegalStateException(
                             "Native USB transport rejected alternate setting ${profile.alternateSetting} " +
