@@ -1107,30 +1107,30 @@ private fun FloweryApp(
                 }
                 Text("OUTPUT VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
-                Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("BASS · MID · TREBLE · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
                     shape = RoundedCornerShape(18.dp)
                 ) {
                     Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        ISO_BANDS.forEachIndexed { index, band ->
+                        listOf("Bass", "Mid", "Treble").forEachIndexed { index, label ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(48.dp)
+                                modifier = Modifier.width(72.dp)
                             ) {
                                 VerticalEqualizerSlider(
                                     value = equalizerGains[index],
                                     onValueChange = { onBandGain(index, it) },
-                                    modifier = Modifier.height(250.dp).width(44.dp)
+                                    modifier = Modifier.height(220.dp).width(52.dp)
                                 )
-                                Text(band, color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                Text(label, color = Color.White, style = MaterialTheme.typography.labelMedium)
                                 Text(
-                                    String.format(java.util.Locale.ROOT, "%.1f", equalizerGains[index]),
+                                    String.format(java.util.Locale.ROOT, "%+.1f dB", equalizerGains[index]),
                                     color = Color.White.copy(alpha = 0.72f),
                                     style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1
