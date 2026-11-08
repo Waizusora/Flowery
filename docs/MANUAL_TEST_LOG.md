@@ -188,11 +188,12 @@ Do not claim support for every possible format based only on this sample.
 
 ### TEST 10 — Playback stability
 
-**Status: PARTIAL — continuous playback passed; seek failed (2026-11-08)**
+**Status: PARTIAL — continuous playback passed; seek failed on multiple Android outputs (2026-11-08)**
 
 Confirmed:
 - 10-minute continuous playback: PASS. User reported normal audio with no interruption.
-- Seek: FAIL. When the user moved the duration slider through AUX output, playback position returned to 0:00, audio became silent, and the UI continued to show PLAY. The failure indicates that the AAudio seek session did not resume correctly; the precise native error remains undiagnosed.
+- Seek: FAIL on both built-in speaker and AUX. When the user moved the duration slider, playback position returned to 0:00 and audio became silent. This confirms the issue is not limited to the AUX route.
+- The AAudio seek scheduler previously discarded the underlying native seek error and exposed only a generic error code. A diagnostic change now preserves the native failure detail for the next controlled verification; this change is not itself proof that seek has been fixed.
 - Pause/resume and track navigation: NOT TESTED.
 
 1. Play a track continuously for at least 10 minutes.
