@@ -353,6 +353,19 @@ Test procedure:
 
 ### TEST 15 — Output routing: speaker, wired AUX, and Bluetooth
 
+**Status: PARTIAL — built-in speaker PASS; AUX and Bluetooth not yet tested (2026-11-08)**
+
+User-confirmed result:
+- Built-in speaker: **PASS**. Audio output through the phone's internal speaker was reported normal.
+- Wired AUX: **NOT RUN**.
+- Bluetooth: **NOT RUN**.
+
+Remaining procedure:
+1. Test wired AUX if the device supports it.
+2. Test Bluetooth headphones or speaker.
+3. Change system volume for each remaining route.
+4. Expected: audio uses the selected route and system volume behaves as intended for non-exclusive routes.
+
 1. Test the built-in speaker.
 2. Test wired AUX if the device supports it.
 3. Test Bluetooth headphones or speaker.
