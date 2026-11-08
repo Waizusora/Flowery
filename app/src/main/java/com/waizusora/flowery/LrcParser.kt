@@ -2,8 +2,7 @@ package com.waizusora.flowery
 
 import org.json.JSONArray
 
-data class LyricWord(val timeMs: Long, val text: String)
-data class LyricLine(val timeMs: Long, val text: String, val words: List<LyricWord> = emptyList())
+data class LyricWord(val timeMs: Long, val text: String)\ndata class LyricLine(val timeMs: Long, val text: String, val words: List<LyricWord> = emptyList())
 
 object LrcParser {
     /**

@@ -116,11 +116,8 @@ fun FloweryNavigation(
                 val controller = UsbDacController(context)
                 val devices = controller.audioDevices()
                 if (devices.isEmpty()) "No USB Audio Class device was detected when Record Log started."
-                else devices.joinToString(separator = "
-
-") { device ->
-                    "===== ${device.displayName} · ${device.identity} =====
-" +
+                else devices.joinToString(separator = "\n\n") { device ->
+                    "===== ${device.displayName} · ${device.identity} =====\n" +
                         if (controller.hasPermission(device.usbDevice)) controller.inspectDescriptors(device.usbDevice)
                         else "USB permission not granted; raw descriptors and clock ranges are unavailable."
                 }
@@ -131,8 +128,7 @@ fun FloweryNavigation(
                 val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
                     .format(java.util.Date())
                 fun logField(value: String): String =
-                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("
-", " ")
+                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
                 val playbackSnapshot = buildString {
                     append("$wallTime playbackSnapshot ")
                     append("isPlaying=$isPlaying positionMs=$positionMs durationMs=$durationMs ")
