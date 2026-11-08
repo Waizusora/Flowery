@@ -354,8 +354,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         1 -> break
                         2 -> {
                             if (stopped.get() || NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)) break
+                            val errorCode = NativeAudio.nativeGetPlaybackSessionError(sessionHandle)
+                            val seekDetail = NativeAudio.nativeGetPlaybackSessionSeekError(sessionHandle)
                             throw IllegalStateException(
-                                "Rust AAudio playback session failed (error ${NativeAudio.nativeGetPlaybackSessionError(sessionHandle)})"
+                                if (seekDetail.isBlank()) {
+                                    "Rust AAudio playback session failed (error $errorCode)"
+                                } else {
+                                    "Rust AAudio seek failed (error $errorCode): $seekDetail"
+                                }
                             )
                         }
                         else -> throw IllegalStateException(
