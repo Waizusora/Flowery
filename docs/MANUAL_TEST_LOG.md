@@ -688,3 +688,14 @@ Source review at main commit `045d23d` identified a lifecycle-dispatch defect th
 **Code changes:** `5e05743` (initial lifecycle mapping), `a221301` (investigation record), `bec3da1` (restore explicit lifecycle-message classification), and the follow-up explicit Direct USB start-event commit.
 
 **Status: SOURCE-LEVEL PAUSE DISPATCH DEFECT ADDRESSED WITH AN EXPLICIT, GENERATION-CHECKED START EVENT; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.** Do not reconnect the DAC or perform Direct USB playback tests until the packet/transport and hum investigations are resolved and mitigation is reviewed.
+
+USB transport diagnostic snapshot correction (2026-11-09; source-only investigation):
+
+- Review of `flowery-usb-diagnostic-1794150606280.txt` showed the 24-bit/96 kHz watchdog failure recorded three URBs outstanding at the moment of timeout, but the `submitted`, `callbacks`, and event-loop counters were read only when the exception was formatted. The caller first ran `abort_in_flight()`, which can deliver cancellation callbacks and change those counters. Therefore the logged equality `submitted=26769; callbacks=26769` did not represent the state at the timeout boundary and must not be interpreted as proof that all queued transfers had completed normally.
+- Updated native transport failure reporting to snapshot submitted-transfer count, completion-callback count, event-loop iteration count, event-loop error, and event-loop idle age before abort/cancellation begins. The exception now reports the captured failure-time values rather than teardown-time counters. This is diagnostic-only; packet sizing, transfer scheduling, cancellation policy, and playback behavior are unchanged.
+- The 16-bit/44.1 kHz logs consistently report the first packet failure at transfer sequence 3, packet index 8: requested 24 bytes, actual 20 bytes, with transfer and packet status both COMPLETED. The captured legacy logs do not include the newer packet-length/phase fields, so the precise host-controller/endpoint cause remains unresolved.
+- No DAC was connected and no physical USB playback test was performed. The direct USB safety hold remains active.
+
+**Code change:** `04ba572` — `fix: snapshot USB transport diagnostics before teardown`.
+
+**Status: DIAGNOSTIC TIMING CORRECTED IN SOURCE; CI VALIDATION PENDING; DIRECT USB TRANSPORT DEFECTS AND SAFETY HOLD REMAIN UNRESOLVED.**
