@@ -43,6 +43,9 @@ struct InFlightTransfer {
     libusb_transfer* transfer = nullptr;
     std::atomic<bool> completed{false};
     uint64_t sequence = 0;
+    uint64_t frame_phase_before = 0;
+    uint64_t frame_phase_after = 0;
+    std::vector<unsigned int> requested_packet_lengths;
     UsbAudioSession* owner = nullptr;
 };
 
@@ -70,6 +73,7 @@ struct UsbAudioSession {
     uint64_t feedback_phase = 0;
     uint64_t frame_phase = 0;
     uint32_t interval_us = 1000;
+    int device_speed = LIBUSB_SPEED_UNKNOWN;
     // PCM that has been accepted from the caller but not yet submitted. The
     // region [pending_offset, size) is live; the prefix is compacted lazily.
     std::vector<unsigned char> pending_pcm;
@@ -114,6 +118,13 @@ struct TransportFailure {
     unsigned int packet_status = 0;
     unsigned int actual_length = 0;
     unsigned int requested_length = 0;
+    unsigned int packet_count = 0;
+    uint64_t frame_phase_before = 0;
+    uint64_t frame_phase_after = 0;
+    int scheduled_start_frame = 0;
+    unsigned int transfer_flags = 0;
+    int device_speed = LIBUSB_SPEED_UNKNOWN;
+    std::vector<unsigned int> requested_packet_lengths;
     size_t in_flight_at_failure = 0;
     long long idle_ms_at_failure = 0;
 };
@@ -282,6 +293,13 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
                         failure->packet_status = static_cast<unsigned int>(packet.status);
                         failure->actual_length = packet.actual_length;
                         failure->requested_length = packet.length;
+                        failure->packet_count = static_cast<unsigned int>(transfer->num_iso_packets);
+                        failure->frame_phase_before = entry->frame_phase_before;
+                        failure->frame_phase_after = entry->frame_phase_after;
+                        failure->scheduled_start_frame = transfer->start_frame;
+                        failure->transfer_flags = transfer->flags;
+                        failure->device_speed = session->device_speed;
+                        failure->requested_packet_lengths = entry->requested_packet_lengths;
                         break;
                     }
                 }
@@ -451,12 +469,28 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
                             std::strcmp(failure.reason, "packet_error") == 0;
     const char* transfer_name = has_status ? transfer_status_name(failure.transfer_status) : "n/a";
     const char* packet_name = failure.failed_packet >= 0 ? transfer_status_name(failure.packet_status) : "n/a";
-    char message[768];
+    char packet_lengths[256] = {};
+    if (!failure.requested_packet_lengths.empty() && failure.failed_packet >= 0) {
+        const size_t failed = static_cast<size_t>(failure.failed_packet);
+        const size_t begin = failed > 4 ? failed - 4 : 0;
+        const size_t end = std::min(failure.requested_packet_lengths.size(), failed + 5);
+        size_t used = 0;
+        for (size_t index = begin; index < end && used < sizeof(packet_lengths); ++index) {
+            const int written = std::snprintf(packet_lengths + used, sizeof(packet_lengths) - used,
+                "%s%zu:%u", index == begin ? "" : ",", index,
+                failure.requested_packet_lengths[index]);
+            if (written < 0) break;
+            used += std::min(static_cast<size_t>(written), sizeof(packet_lengths) - used);
+        }
+    }
+    char message[1024];
     std::snprintf(
         message, sizeof(message),
         "USB isochronous transfer failed: reason=%s; %s (%d); "
         "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
+        "packet_count=%u; phase_before=%llu; phase_after=%llu; start_frame=%d; "
+        "transfer_flags=%u; device_speed=%d; packet_lengths_near_failure=%s; "
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_loop_idle_ms=%lld; "
@@ -466,7 +500,11 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.sequence), failure.in_flight_at_failure,
         failure.idle_ms_at_failure, failure.failed_packet, failure.packet_status,
         packet_name, failure.actual_length,
-        failure.requested_length, session->interval_us, session->sample_rate,
+        failure.requested_length, failure.packet_count,
+        static_cast<unsigned long long>(failure.frame_phase_before),
+        static_cast<unsigned long long>(failure.frame_phase_after),
+        failure.scheduled_start_frame, failure.transfer_flags, failure.device_speed,
+        packet_lengths, session->interval_us, session->sample_rate,
         session->endpoint,
         static_cast<unsigned long long>(session->submitted_transfer_count.load(std::memory_order_relaxed)),
         static_cast<unsigned long long>(session->completed_transfer_callback_count.load(std::memory_order_relaxed)),
@@ -487,9 +525,13 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
 // Queues one isochronous URB whose packets have the given byte lengths. The
 // payload is consumed from the front of the pending PCM region.
 bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
-                size_t total_bytes, TransportFailure* failure) {
+                size_t total_bytes, uint64_t frame_phase_before,
+                uint64_t frame_phase_after, TransportFailure* failure) {
     auto entry = std::make_unique<InFlightTransfer>();
     entry->sequence = session->next_sequence;
+    entry->frame_phase_before = frame_phase_before;
+    entry->frame_phase_after = frame_phase_after;
+    entry->requested_packet_lengths = packet_bytes;
     entry->owner = session;
     entry->buffer.assign(
         session->pending_pcm.begin() + static_cast<std::ptrdiff_t>(session->pending_offset),
@@ -680,6 +722,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
     session->feedback_max_packet_bytes = static_cast<uint16_t>(feedback_max_packet_bytes);
 
     const int speed = libusb_get_device_speed(libusb_get_device(session->handle));
+    session->device_speed = speed;
     session->interval_us = service_interval_us(speed, session->interval);
     if (session->feedback_endpoint != 0) {
         const bool high_speed = speed == LIBUSB_SPEED_HIGH || speed == LIBUSB_SPEED_SUPER || speed == LIBUSB_SPEED_SUPER_PLUS;
@@ -957,7 +1000,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             continue;
         }
 
-        if (!submit_urb(session, packet_bytes, planned_frames * bytes_per_frame, &failure)) break;
+        if (!submit_urb(session, packet_bytes, planned_frames * bytes_per_frame,
+                        session->frame_phase, phase, &failure)) break;
         session->frame_phase = phase;
         session->feedback_phase = feedback_phase;
     }
