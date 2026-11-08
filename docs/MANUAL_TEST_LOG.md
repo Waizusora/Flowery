@@ -400,3 +400,8 @@ Retest procedure:
 5. Include whether Repeat was Off/All/One and the active output route.
 
 Do not classify the cause or mark this test PASS until queue size/index and process-exit/service lifecycle evidence are reviewed.
+
+CI follow-up (2026-11-08):
+- Workflow run #1442 (`42464600678`) failed at `:app:compileDebugKotlin` in `NowPlayingDestination.kt`.
+- Root cause: three Compose text imports had been written as one source line containing literal `\n` characters. Kotlin consequently treated the following imports as invalid top-level syntax and could not resolve `buildAnnotatedString`/`withStyle`.
+- Corrected the imports to three actual Kotlin import lines. Awaiting the workflow result for the corrective commit.
