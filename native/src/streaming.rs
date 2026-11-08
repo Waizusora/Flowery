@@ -28,6 +28,10 @@ use symphonia::core::probe::Hint;
 
 const FREQUENCIES: [f32; 31] = [20.0,25.0,31.5,40.0,50.0,63.0,80.0,100.0,125.0,160.0,200.0,250.0,315.0,400.0,500.0,630.0,800.0,1000.0,1250.0,1600.0,2000.0,2500.0,3150.0,4000.0,5000.0,6300.0,8000.0,10000.0,12500.0,16000.0,20000.0];
 
+// A lower Q widens each band's response around its ISO center frequency.
+// Q=3.0 is intentionally broader than the strict one-third-octave Q (~4.318).
+const EQ_BAND_Q: f32 = 3.0;
+
 #[derive(Clone, Copy, Default)]
 struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
 
@@ -68,7 +72,7 @@ fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> Biquad
     if frequency >= sample_rate as f32 * 0.49 { return BiquadCoefficients { b0:1.0, ..Default::default() }; }
     let a = 10.0_f32.powf(gain_db.clamp(-12.0,12.0) / 40.0);
     let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate as f32;
-    let alpha = omega.sin() / (2.0 * 4.318_f32);
+    let alpha = omega.sin() / (2.0 * EQ_BAND_Q);
     let cosine = omega.cos();
     let a0 = 1.0 + alpha / a;
     BiquadCoefficients {
@@ -1339,6 +1343,40 @@ mod tests {
         drop(stream);
         drop(source_file);
         std::fs::remove_file(path).unwrap();
+    }
+
+    fn biquad_magnitude_db(coefficients: BiquadCoefficients, frequency: f32, sample_rate: f32) -> f32 {
+        let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
+        let z1 = std::f32::consts::Complex32::new(omega.cos(), -omega.sin());
+        let z2 = z1 * z1;
+        let numerator = std::f32::consts::Complex32::new(coefficients.b0, 0.0)
+            + z1 * coefficients.b1
+            + z2 * coefficients.b2;
+        let denominator = std::f32::consts::Complex32::new(1.0, 0.0)
+            + z1 * coefficients.a1
+            + z2 * coefficients.a2;
+        20.0 * (numerator.norm() / denominator.norm()).log10()
+    }
+
+    #[test]
+    fn equalizer_band_response_is_wider_than_strict_one_third_octave() {
+        let center_hz = 1_000.0;
+        let sample_rate = 48_000.0;
+        let coefficients = make_coefficients(center_hz, 12.0, sample_rate as usize);
+        let center_gain = biquad_magnitude_db(coefficients, center_hz, sample_rate);
+        let sixth_octave_gain = biquad_magnitude_db(
+            coefficients,
+            center_hz * 2.0_f32.powf(1.0 / 6.0),
+            sample_rate,
+        );
+        let third_octave_gain = biquad_magnitude_db(
+            coefficients,
+            center_hz * 2.0_f32.powf(1.0 / 3.0),
+            sample_rate,
+        );
+        assert!((center_gain - 12.0).abs() < 0.1, "center gain should match the requested dB value");
+        assert!(sixth_octave_gain > 7.0, "the response should remain strong across a sixth octave");
+        assert!(third_octave_gain > 3.0, "the response should extend beyond the strict one-third-octave profile");
     }
 
     #[test]
