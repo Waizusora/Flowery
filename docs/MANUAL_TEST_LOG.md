@@ -234,12 +234,28 @@ Final manual retest (2026-11-08; user-confirmed):
 
 ### TEST 11 — Equalizer interaction and audio processing
 
-1. Open DSP/EQ.
-2. Change one band by a clearly noticeable amount.
-3. Return to playback and listen at a safe volume.
-4. Toggle EQ off and on.
-5. Expected: controls retain their selected values and audible processing changes consistently.
-6. Record whether the change is audible; UI movement alone is not proof that DSP is active.
+**Status: PARTIAL — audible response confirmed; effect strength and latency need investigation**
+
+Manual observation (user-confirmed, 2026-11-08):
+- The user raised and lowered an individual EQ band to **+12 dB** and **-12 dB** during playback.
+- An audible change was present in both directions, confirming that the EQ adjustment affects the sound.
+- The perceived change was subtle, even at these settings.
+- The audible change began approximately **3 seconds** after the adjustment.
+- Output route for this EQ test: not specified; USB DAC was not in use.
+
+Not yet verified:
+- Whether all 31 bands respond correctly across their frequency ranges.
+- Whether EQ OFF/ON bypass behaves correctly.
+- Whether band values persist after leaving and reopening the EQ screen or restarting playback.
+- Whether the approximately 3-second response delay is intentional smoothing/buffering or an implementation latency issue.
+
+Next checks:
+1. Repeat a controlled adjustment on a low, mid, and high frequency band.
+2. Check whether the audible response delay is consistently around 3 seconds.
+3. Toggle EQ OFF/ON and verify the bypass effect.
+4. Reopen the EQ screen and verify the selected values remain intact.
+
+Do not mark the full EQ test PASS until the remaining checks are completed. The audible response is user-confirmed; the subtle effect and observed delay are recorded as findings, not yet diagnosed as defects.
 
 ### TEST 12 — Lyrics display
 
