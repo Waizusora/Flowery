@@ -302,7 +302,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
                 onState("Playing · Rust AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
-                // Keep at least 1.5 seconds of decoded PCM queued to tolerate scheduler and decoder delays.
+                // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
                     targetRate, outputRingCapacityFrames
                 )

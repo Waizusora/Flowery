@@ -114,13 +114,20 @@ static ENGINE:OnceLock<Mutex<Engine>>=OnceLock::new();
 fn engine()-> &'static Mutex<Engine>{ENGINE.get_or_init(||Mutex::new(Engine::new()))}
 
 /// Returns free PCM frames in the bounded output ring.
-pub(crate) fn available_output_frames() -> usize {
+/// Returns queued frames, free ring capacity, and the producer's latency budget.
+pub(crate) fn output_queue_budget() -> Option<(usize, usize, usize)> {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     engine.output.as_ref().map(|output| {
         let read = output.read.load(Ordering::Acquire);
         let write = output.write.load(Ordering::Acquire);
-        output.capacity.saturating_sub(write.saturating_sub(read)) as usize
-    }).unwrap_or(0)
+        let queued = write.saturating_sub(read);
+        let free = output.capacity.saturating_sub(queued);
+        let target = crate::playback_policy::target_queue_frames(
+            output.rate,
+            output.capacity.min(i32::MAX as u64) as i32,
+        );
+        (queued as usize, free as usize, target)
+    })
 }
 
 /// Copies interleaved float PCM into the output ring without crossing JNI.

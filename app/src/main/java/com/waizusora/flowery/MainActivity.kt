@@ -161,6 +161,7 @@ class MainActivity : ComponentActivity() {
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
     private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
+    private var equalizerEnabled by mutableStateOf(true)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -243,6 +244,8 @@ class MainActivity : ComponentActivity() {
         )
         getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
             .putBoolean("usb_diagnostic_recording", false).apply()
+        equalizerEnabled = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+            .getBoolean("equalizer_enabled", true)
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -279,10 +282,25 @@ class MainActivity : ComponentActivity() {
                 positionMs = playbackPositionMs,
                 durationMs = playbackDurationMs,
                 equalizerGains = equalizerGains,
+                equalizerEnabled = equalizerEnabled,
                 onBandGain = { index, gain ->
                     equalizerGains[index] = gain
                     sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
-                        putExtra(PlaybackService.EXTRA_GAINS, equalizerGains.toFloatArray())
+                        putExtra(
+                            PlaybackService.EXTRA_GAINS,
+                            if (equalizerEnabled) equalizerGains.toFloatArray() else FloatArray(31)
+                        )
+                    }
+                },
+                onEqualizerEnabled = { enabled ->
+                    equalizerEnabled = enabled
+                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                        .putBoolean("equalizer_enabled", enabled).apply()
+                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
+                        putExtra(
+                            PlaybackService.EXTRA_GAINS,
+                            if (enabled) equalizerGains.toFloatArray() else FloatArray(31)
+                        )
                     }
                 },
                 onAddFolder = { folderPicker.launch(null) },

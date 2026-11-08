@@ -981,8 +981,12 @@ fn start_stream_pump_worker(
                 thread_status.store(2, Ordering::Release);
                 break;
             }
-            let available = crate::aaudio::available_output_frames();
-            if available == 0 {
+            let Some((queued, available, queue_target)) = crate::aaudio::output_queue_budget() else {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            let remaining_budget = queue_target.saturating_sub(queued);
+            if available == 0 || remaining_budget == 0 {
                 thread::sleep(Duration::from_millis(2));
                 continue;
             }
@@ -993,7 +997,7 @@ fn start_stream_pump_worker(
                 thread_status.store(-2, Ordering::Release);
                 break;
             }
-            let mut frames = chunk_frames.min(available);
+            let mut frames = chunk_frames.min(available).min(remaining_budget);
             if let Some(limit) = frame_limit {
                 let remaining = limit.saturating_sub(produced_frames);
                 if remaining == 0 {

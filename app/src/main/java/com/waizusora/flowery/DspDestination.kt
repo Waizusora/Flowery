@@ -17,10 +17,12 @@ import java.util.Locale
 internal fun DspDestination(
     volume: Float,
     equalizerGains: List<Float>,
+    equalizerEnabled: Boolean,
     foreground: Color,
     muted: Color,
     onVolume: (Float) -> Unit,
-    onBandGain: (Int, Float) -> Unit
+    onBandGain: (Int, Float) -> Unit,
+    onEqualizerEnabled: (Boolean) -> Unit
 ) {
     Heading("DSP", foreground)
     Text("Output volume", color = foreground, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
@@ -31,6 +33,21 @@ internal fun DspDestination(
         color = muted,
         style = MaterialTheme.typography.bodySmall
     )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Equalizer", color = foreground, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+            Text(
+                if (equalizerEnabled) "Enabled · 31-band processing" else "Bypassed · band settings retained",
+                color = muted,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        Switch(checked = equalizerEnabled, onCheckedChange = onEqualizerEnabled)
+    }
     Text("31-band ISO equalizer · ±12 dB", color = foreground, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         shape = RoundedCornerShape(18.dp)) {

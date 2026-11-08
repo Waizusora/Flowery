@@ -51,8 +51,9 @@ fun FloweryNavigation(
     context: Context, folders: List<LibraryFolder>, tracks: List<AudioTrackItem>,
     isPlaying: Boolean, shuffleEnabled: Boolean, repeatMode: Int, selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?, lyrics: List<LyricLine>, volume: Float, positionMs: Long, durationMs: Long,
-    equalizerGains: List<Float>, status: String,
-    onBandGain: (Int, Float) -> Unit, onAddFolder: () -> Unit,
+    equalizerGains: List<Float>, equalizerEnabled: Boolean, status: String,
+    onBandGain: (Int, Float) -> Unit, onEqualizerEnabled: (Boolean) -> Unit,
+    onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
     onScan: () -> Unit, onRefreshFolder: (LibraryFolder) -> Unit,
     onPlay: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
@@ -246,10 +247,12 @@ fun FloweryNavigation(
                 Destination.DSP -> DspDestination(
                     volume = volume,
                     equalizerGains = equalizerGains,
+                    equalizerEnabled = equalizerEnabled,
                     foreground = foreground,
                     muted = muted,
                     onVolume = onVolume,
-                    onBandGain = onBandGain
+                    onBandGain = onBandGain,
+                    onEqualizerEnabled = onEqualizerEnabled
                 )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     usbDiagnosticRecording = usbDiagnosticRecording,
