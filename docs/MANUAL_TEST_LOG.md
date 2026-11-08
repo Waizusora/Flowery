@@ -357,7 +357,7 @@ Test procedure:
 
 User-confirmed result:
 - Built-in speaker: **PASS**. Audio output through the phone's internal speaker was reported normal.
-- Wired AUX: **NOT RUN**.
+- Wired AUX: **PASS**. User confirmed normal wired AUX output (2026-11-08).
 - Bluetooth: **NOT RUN**.
 
 Remaining procedure:
