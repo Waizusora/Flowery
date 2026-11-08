@@ -1,6 +1,6 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_policy::select_playback_route;
-use jni::objects::{JClass, JString};
+use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
@@ -404,7 +404,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackS
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekError(
-    env: JNIEnv, _class: JClass, handle: jlong,
+    mut env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jstring {
     let detail = session_ref(handle)
         .map(|session| session.seek_error.lock().unwrap_or_else(|error| error.into_inner()).clone())
