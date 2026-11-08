@@ -586,8 +586,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             diagnostics.record(
                 "USB_VOLUME_PROFILE deviceKey=${activeUsbDeviceKey} " +
                     "profile=${if (volumeState.hardwareVolumeAvailable) "hardware_synchronized" else "software_only"} " +
-                    "initialVolume=${softwareVolume} persistedVolume=${volumeController.usbVolume(activeUsbDeviceKey!!)} " +
-                    "physicalVolumeControl=${volumeState.hardwareVolumeAvailable}"
+                    "featureUnitAdvertised=${usbSession.hardwareVolumeAvailable} " +
+                    "hardwareVolumeActive=${volumeState.hardwareVolumeAvailable} " +
+                    "initialVolume=${softwareVolume} persistedVolume=${volumeController.usbVolume(activeUsbDeviceKey!!)}"
             )
             diagnostics.record("USB_PCM_GAIN gainBypass=${usbBitPerfectActive} producerGain=${if (usbBitPerfectActive) 1.0 else softwareVolume} softwareVolumeEnabled=${usbSoftwareGainEnabled} ducking=${!usbBitPerfectActive} nativeBitPerfect=awaiting_producer queueDepthBlocks=${UsbPcmPlaybackPipeline.QUEUE_DEPTH_BLOCKS} prebufferBlocks=${UsbPcmPlaybackPipeline.PREBUFFER_BLOCKS}")
 
