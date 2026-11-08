@@ -1,6 +1,6 @@
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_policy::select_playback_route;
-use jni::objects::JClass;
+use jni::objects::{JClass, JString};
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_FALSE, JNI_TRUE};
 use jni::JNIEnv;
 use std::collections::HashMap;
@@ -40,6 +40,7 @@ pub(super) struct SessionState {
     pub(super) gate: Mutex<()>,
     pub(super) decoder: Arc<Mutex<StreamDecoder>>,
     pub(super) error_code: AtomicI32,
+    pub(super) seek_error: Mutex<String>,
     pub(super) seek_request: Mutex<Option<AAudioSeekRequest>>,
     pub(super) last_seek_position_ms: AtomicI64,
 }
@@ -147,6 +148,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         gate: Mutex::new(()),
         decoder,
         error_code: AtomicI32::new(0),
+        seek_error: Mutex::new(String::new()),
         seek_request: Mutex::new(None),
         last_seek_position_ms: AtomicI64::new(-1),
     });
@@ -191,6 +193,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
         gate: Mutex::new(()),
         decoder,
         error_code: AtomicI32::new(0),
+        seek_error: Mutex::new(String::new()),
         seek_request: Mutex::new(None),
         last_seek_position_ms: AtomicI64::new(-1),
     })
@@ -396,6 +399,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackS
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jint {
     session_ref(handle).map(|session| session.error_code.load(Ordering::Acquire)).unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekError(
+    env: JNIEnv, _class: JClass, handle: jlong,
+) -> jni::sys::jstring {
+    let detail = session_ref(handle)
+        .map(|session| session.seek_error.lock().unwrap_or_else(|error| error.into_inner()).clone())
+        .unwrap_or_else(|| "Playback session is no longer valid".to_string());
+    env.new_string(detail).map(|value| value.into_raw()).unwrap_or(std::ptr::null_mut())
 }
 
 #[no_mangle]
