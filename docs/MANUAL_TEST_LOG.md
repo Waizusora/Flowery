@@ -698,4 +698,17 @@ USB transport diagnostic snapshot correction (2026-11-09; source-only investigat
 
 **Code change:** `04ba572` — `fix: snapshot USB transport diagnostics before teardown`.
 
-**Status: DIAGNOSTIC TIMING CORRECTED IN SOURCE; CI VALIDATION PENDING; DIRECT USB TRANSPORT DEFECTS AND SAFETY HOLD REMAIN UNRESOLVED.**
+**Status: DIAGNOSTIC TIMING CORRECTED IN SOURCE; CI #1500 SUCCESS; DIRECT USB TRANSPORT DEFECTS AND SAFETY HOLD REMAIN UNRESOLVED.**
+
+
+Direct USB write cancellation review (2026-11-09; source-only investigation):
+
+- Confirmed that `UsbDacSession.writePcm()`, `flush()`, and `close()` are synchronized on the same session monitor. The PCM playback worker calls `writePcm()` synchronously from `UsbPcmPlaybackPipeline.pollAndWrite()`.
+- In native `nativeWriteIsochronous()`, the writer can block in `wait_for_progress()` while the in-flight URB window is full. That wait polls the event condition in 5 ms intervals and can continue until the 1,500 ms no-progress watchdog fires.
+- `FloweryPlayer.pause()` sets the paused flag and pauses the decoder session, but it does not signal the active native USB writer. The PCM pipeline checks the paused flag only after `pollAndWrite()` returns; only then can it call `dacSession.flush()`. Consequently, the synchronized flush cannot preempt a write currently holding the session monitor.
+- `FloweryPlayer.stop()` marks playback stopped, cancels the decoder session, calls `nativeStopOutput()`, and interrupts the worker thread. A thread interrupt does not safely cancel a synchronous JNI/libusb operation already in progress. The worker's finalizer closes the USB pipeline only after the write returns.
+- This is a confirmed control-path limitation and a plausible explanation for delayed Pause/Stop response during transport stalls. It is not proof of the reported loud hum's cause, and it does not explain the independent 16-bit/44.1 kHz short-packet completion or 24-bit/96 kHz drain timeout.
+- A safe follow-up design requires a cancellation signal that can be requested without mutating the in-flight queue from a second thread. Native queue submission, completion reaping, transfer cancellation, and buffer ownership must remain single-owner; session-handle lifetime must also be protected against a concurrent close. The cancellation result must distinguish a user-requested pause/stop from a transport failure and must define how unsent PCM and packet phase are preserved or discarded. No concurrent `nativeFlush()` call was added because it would race with the playback worker's `in_flight` vector and transfer ownership.
+- No source code behavior was changed in this review. No DAC was connected and no physical USB playback test was performed. The Direct USB safety hold remains active.
+
+**Status: PAUSE/STOP NON-PREEMPTIBLE WRITE PATH CONFIRMED BY SOURCE INSPECTION; SAFE CANCELLATION DESIGN REQUIRED BEFORE IMPLEMENTATION; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
