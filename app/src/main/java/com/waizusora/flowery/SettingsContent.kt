@@ -60,22 +60,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                         style = MaterialTheme.typography.titleMedium)
                     Text(usbDacDeviceName, color = color, style = MaterialTheme.typography.bodyMedium)
                     Text(usbDacUiStatus, color = muted, style = MaterialTheme.typography.bodySmall)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = onConnectUsbDac, enabled = usbDacConnected,
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                            Icon(Icons.Default.Usb, contentDescription = null)
-                            Text("  Sambungkan DAC")
-                        }
-                        OutlinedButton(onClick = onReleaseUsbDac,
-                            enabled = usbDacPermissionGranted || status.contains("USB exclusive", ignoreCase = true),
-                            modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Default.LinkOff, contentDescription = null)
-                            Text("  Lepas DAC")
-                        }
-                    }
-                    Text("Lepas DAC menghentikan playback USB dan menutup koneksi/interface Flowery agar aplikasi lain dapat mencoba menggunakan DAC. Android tidak menyediakan API publik bagi aplikasi biasa untuk mencabut grant USB Flowery secara paksa; grant sementara berakhir saat DAC dilepas dari perangkat.",
-                        color = muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
             val bitPerfectActive = status.contains("BIT PERFECT", ignoreCase = true)
