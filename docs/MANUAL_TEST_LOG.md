@@ -580,3 +580,12 @@ USB DAC volume-slider movement diagnostics (2026-11-08):
 - These records distinguish slider callback activity from service-driven state updates and startup restoration. They do not by themselves prove physical touch input; correlate timestamps with the user's interaction and the Android input timeline if needed.
 - No volume policy, gain mapping, DAC Feature Unit request, or playback transport behavior was changed.
 - **Status: DIAGNOSTIC INSTRUMENTATION ADDED; CI AND A CONTROLLED PHYSICAL RETEST REQUIRED.** Keep the DAC volume at a confirmed low level. During retest, do not touch the slider after setting it to a safe value; capture the diagnostic log if the displayed value changes.
+
+
+USB DAC 16-bit / 44.1 kHz routed-playback comparison (2026-11-08, diagnostic recorded 21:50 +0700):
+
+- User reports that a FLAC 16-bit / 44.1 kHz track played smoothly through the connected DAC, advanced automatically to the next track in the folder, and continued smoothly until the user pressed Pause. This is a positive user-observed result for the tested 16/44.1 playback scenario.
+- Important route qualification from the supplied diagnostic `flowery-usb-diagnostic-1794149450582.txt`: `usbPermissionGranted=false`, `usbDirectAvailable=false`, and `USB_AUTO_DETECTION result=direct_transport_unavailable fallback=android_route`. The active AAudio stream reports 44,100 Hz, device ID 1829, and `SHARED` mode. The DAC is therefore reached through Android's USB audio routing in this capture; this is not evidence that Flowery's direct libusb/AAudio-exclusive USB transport was active.
+- The diagnostic was captured with playback paused at approximately 84,256 ms of a 304,106 ms track. It does not contain a direct USB transfer session, decoder EOF, or direct-transport completion events. It cannot validate direct-USB pause/resume, bit-perfect output, or the previously failing direct-USB end-of-track drain.
+- The contrast with the earlier 24-bit / 96 kHz test is diagnostically useful: the 16/44.1 test succeeded on Android's shared USB route, while the earlier 24/96 test exercised Flowery's direct libusb route and stalled during final isochronous drain. These tests use different output paths, so the improvement cannot be attributed to sample rate or bit depth alone.
+- **Status: ANDROID-ROUTED USB PLAYBACK AT 16/44.1 USER-REPORTED PASS; DIRECT USB TRANSPORT STILL UNRESOLVED.** A controlled comparison must confirm the route in each capture before drawing conclusions about format compatibility.
