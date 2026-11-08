@@ -500,3 +500,11 @@ USB DAC Pause defect and fix (2026-11-08):
 - Fix committed: both PCM and encoded USB playback paths now call the existing synchronized USB-session `flush()` once when entering the paused state. This cancels and reaps queued endpoint transfers; the playback loop remains paused until resume. The PCM/encoded producer queues are retained for continuation, although a small amount of audio already handed to the transport may be discarded at the pause boundary.
 - Updated `UsbDacNative.kt` documentation to describe flush usage for pause as well as seek.
 - **Status: RETEST REQUIRED.** The code change has not yet been built or physically verified on the user's DAC. Do not mark Pause as PASS until the user confirms that audio stops promptly and resumes correctly.
+
+USB DAC natural track-completion report (2026-11-08; user-confirmed):
+- During playback through the USB DAC, a track that was not the last track in the folder reached its end and playback stopped instead of advancing to the next track.
+- The playback notification remained visible, but the playback position stopped.
+- This is a distinct observation from the earlier unexpected app/service termination in TEST 18: the user reports that the notification remains present, so this report does not establish that the service or process terminated.
+- Source path to verify: USB pipeline end-of-stream / `Playback finished` callback, followed by `PlaybackService.handleCompletion()`, native queue transition, and the next `playCurrent()` request.
+- Existing diagnostics to inspect during reproduction: `DIRECT_USB_FINISHED`, `DECODER_EOF`, `TRACK_COMPLETION`, `PLAY_CURRENT`, and `PLAYBACK_START_FAILURE`. The expected queue size, completed index, next index, Repeat mode, and exact USB route must be captured before assigning a root cause.
+- **Status: INVESTIGATION REQUIRED / RETEST REQUIRED.** No code change has been made for this report; the cause is not yet established. The earlier non-USB track-completion retest remains PASS and does not verify USB DAC completion.
