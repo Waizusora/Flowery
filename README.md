@@ -10,7 +10,7 @@ Flowery is an Android music player focused on local music, transparent audio rou
 - **Native playback engine** — Rust handles audio decoding, streaming resampling, equalization, and bounded PCM buffering.
 - **Audio output** — AAudio for Android audio routes and direct USB Audio Class (UAC) transport for supported USB DACs.
 - **Automatic Bit-perfect detection** — No manual toggle. Flowery evaluates the connected, permissioned USB DAC and reports Bit-perfect only after the native playback producer confirms source-preserving output. External digital capture is still needed for hardware verification.
-- **31-band equalizer** — ISO one-third-octave graphic EQ with an explicit enable/bypass control and bounded output-queue latency.
+- **31-band equalizer** — Graphic EQ using ISO preferred center frequencies, broader Q=3.0 band responses, ±12 dB gain range, explicit enable/bypass control, and bounded output-queue latency.
 - **Metadata and lyrics** — Read and edit supported tags with Lofty and display synchronized sidecar LRC lyrics.
 - **Playback controls** — Queue, seek, shuffle, repeat, and Android media-session controls.
 
