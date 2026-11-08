@@ -90,7 +90,9 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         while (playbackActive()) {
             if (isPaused()) {
                 if (!transportDrainedForPause) {
-                    drainTransport()
+                    // Cancel queued endpoint transfers instead of draining them;
+                    // otherwise the DAC keeps playing buffered audio after Pause.
+                    session.flush()
                     transportDrainedForPause = true
                 }
                 Thread.sleep(10)
