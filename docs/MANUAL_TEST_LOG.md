@@ -302,6 +302,12 @@ Implementation committed for retest (2026-11-08):
 - Top/bottom scroll space allows the first and final lyric lines to reach the centered position.
 - Automated parser tests cover enhanced word timestamps, word-only timestamps, offset metadata, standard LRC, and current-line lookup. Device playback timing, visual centering, and the user's actual LRC file still require manual retest.
 
+Additional manual observation — track without available lyrics (user-reported, 2026-11-08):
+- A track with no readable sidecar or embedded lyrics displays the `No synchronized lyric found` empty state.
+- No crash or other playback/display issue was observed. **No-lyrics empty-state handling: PASS.**
+- This is expected with the current feature scope: automatic lyric discovery/download and embedded-lyrics extraction have not yet been implemented. The empty state does not indicate a failure of an implemented lyric search feature.
+- Automatic online `.lrc` retrieval and embedded lyric extraction remain future implementation work and are not counted as failed tests.
+
 Retest required:
 1. Install the latest build and play the same track/LRC file.
 2. Confirm no `<mm:ss.xx>` markers are visible in lyric text.
