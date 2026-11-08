@@ -335,26 +335,21 @@ Test procedure:
 
 ### TEST 14 — Background playback and interruption behavior
 
-**Status: PASS — background playback and incoming-call interruption verified**
+**Status: PASS — background playback, screen lock, and incoming-call pause verified**
 
 Manual result (user-confirmed, 2026-11-08):
-- Incoming-call interruption retest (user-confirmed, 2026-11-08): an incoming phone call successfully caused Flowery to pause playback.
-- This confirms the tested interruption-to-pause behavior. Automatic resume after the call was not reported and is not marked as verified.
 - Background playback and screen-lock behavior were reported as normal.
-- Phone-call interruption and playback recovery have not yet been tested.
+- An incoming phone call successfully caused Flowery to pause playback.
+- After the call ended, playback remained paused until the user manually pressed Play. This is the observed behavior; automatic resume after a call is not implemented/verified by this test.
+- No unexpected playback restart was reported.
 
 Test procedure:
 1. Start playback.
 2. Send Flowery to the background or lock the screen.
 3. Verify playback continues as designed.
 4. Return to the app and verify progress and track information.
-5. If practical, test a normal audio interruption (for example, a phone call) and verify recovery.
-
-1. Start playback.
-2. Send Flowery to the background or lock the screen.
-3. Verify playback continues as designed.
-4. Return to the app and verify progress and track information.
-5. If practical, test a normal audio interruption (for example, a phone call) and verify recovery.
+5. Receive an incoming phone call and verify playback pauses.
+6. After the call ends, verify playback remains paused until manually resumed.
 
 ### TEST 15 — Output routing: speaker, wired AUX, and Bluetooth
 
