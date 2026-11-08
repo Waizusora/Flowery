@@ -258,6 +258,9 @@ Next checks:
 4. Reopen the EQ screen and verify the selected values remain intact.
 
 Do not mark the full EQ test PASS until the remaining checks are completed. The audible response is user-confirmed; the subtle effect and observed delay are recorded as findings, not yet diagnosed as defects.
+- Source inspection (2026-11-08): the DSP screen currently exposes 31 band sliders and output volume, but its `DspDestination` composable has no EQ enable/bypass control or callback. The absence of EQ ON/OFF is consistent with the current UI implementation, not a missed user interaction.
+- Source inspection also found that Android-route playback updates the Rust streaming decoder's EQ gains on the decode worker, before it reads and queues subsequent PCM chunks. PCM already decoded and placed in the output ring buffer retains the old EQ processing; changing decoder coefficients cannot retroactively change those queued frames. The latest supplied playback diagnostic showed the output queue near 131072 frames. At 44.1 kHz, 131072 frames represent approximately 2.97 seconds of audio, which closely matches the user's observed approximately 3-second delay. This is a strong, evidence-based explanation for the delay, but the exact queue occupancy at the moment of the EQ adjustment was not captured, so it is not yet proven as the sole cause.
+- No source code was changed during this inspection. A fix should address the amount of already-processed PCM buffered ahead of the output, or move EQ application to a suitable downstream processing stage with real-time-safe state handling; simply adding an ON/OFF UI control would not resolve the response latency.
 
 ### TEST 12 — Lyrics display
 
