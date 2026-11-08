@@ -285,7 +285,7 @@ Final EQ retest after the three-control / strict ISO-band revision (2026-11-08; 
 
 ### TEST 12 — Lyrics display
 
-**Status: PARTIAL — sidecar LRC display confirmed; enhanced-LRC rendering and centered scrolling require manual retest**
+**Status: PASS for the final regression checks (2026-11-08); broader lyric-source coverage remains incomplete**
 
 Initial manual observation (user-confirmed, 2026-11-08):
 - A local `.lrc` sidecar file is detected and lyrics appear during playback.
@@ -305,6 +305,10 @@ Implementation committed for retest (2026-11-08):
 Additional manual observation — track without available lyrics (user-reported, 2026-11-08):
 - A track with no readable sidecar or embedded lyrics displays the `No synchronized lyric found` empty state.
 - No crash or other playback/display issue was observed. **No-lyrics empty-state handling: PASS.**
+
+Final regression retest (2026-11-08; user-confirmed):
+- The user confirmed all four lyric checks passed on the tested build: lyrics display, active-line centering and timing, enhanced-LRC timestamp markers hidden from displayed text, and clean handling of a track without lyrics.
+- This confirms the tested lyric UI and rendering behavior. Automatic online lyric retrieval and embedded-lyrics extraction remain unimplemented and are not covered by this PASS.
 - This is expected with the current feature scope: automatic lyric discovery/download and embedded-lyrics extraction have not yet been implemented. The empty state does not indicate a failure of an implemented lyric search feature.
 - Automatic online `.lrc` retrieval and embedded lyric extraction remain future implementation work and are not counted as failed tests.
 
@@ -389,7 +393,7 @@ Deferred until software playback tests are complete and compatible hardware is a
 
 ### TEST 17 — Final regression
 
-**Status: PARTIAL — Stages 1–4 and Library regression PASS; Lyrics regression remains (2026-11-08)**
+**Status: PASS — all final regression stages completed (2026-11-08)**
 
 User-confirmed results:
 - **Stage 1 — Installation and app launch: PASS.** Flowery reopened successfully; Library and Now Playing screens displayed normally.
@@ -400,7 +404,7 @@ User-confirmed results:
   - Shuffle: **PASS** (user-confirmed, 2026-11-08).
 - **Stage 4 — EQ: PASS (user-confirmed, 2026-11-08).** The user reported checks 1–4 passed. This confirms the EQ regression checks performed in this stage; the exact individual observations were not separately itemized.
 - **Library regression: PASS (user-confirmed, 2026-11-08).** The user reported that the Library check behaved normally.
-- **Lyrics regression: NOT RUN.** This remains outstanding.
+- **Lyrics regression: PASS (user-confirmed, 2026-11-08).** The user confirmed all four checks passed: synchronized lyrics display, active-line centering/timing, hidden enhanced-LRC timestamp markers, and clean handling of tracks without lyrics.
 
 1. Repeat installation/launch.
 2. Repeat playback, progress, seek, pause/resume, next/previous, repeat, and shuffle.
