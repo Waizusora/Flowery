@@ -568,3 +568,15 @@ USB DAC volume and end-of-track retest report (2026-11-08, diagnostic file recor
 - During the first session, many USB_VOLUME_REQUEST / USB_VOLUME_APPLIED pairs show the requested software volume changing repeatedly (roughly 0.08-0.17), with hardware=false. These are Flowery slider change requests, not evidence that the DAC itself is changing its volume. The log does not identify whether the repeated UI input came from touch interaction, touch noise, or another UI event; further UI event instrumentation is needed before assigning a cause.
 - The stage-2 report that 6% remains after track change is PASS for software-volume persistence across track changes. It does not establish hardware volume operation because the supplied stage-1 log shows hardwareVolumeActive=false, and stage 2 has no corresponding diagnostic capture.
 - Status: software-volume persistence across track changes PASS (user-confirmed); USB hardware-volume control NOT VERIFIED; USB end-of-track transport drain FAIL / INVESTIGATION REQUIRED; audible pacing stutter remains. Avoid prolonged DAC listening until the volume behavior is stable and confirmed at a safe level.
+
+
+USB DAC volume-slider movement diagnostics (2026-11-08):
+
+- User reports that during the first playback session the initial output level was too high; they manually reduced it to approximately 8–10%, after which the displayed slider value rose slightly and then moved down to approximately 4% without a deliberate adjustment. On a later test, setting 6% and changing tracks preserved 6%.
+- Added source-labelled UI diagnostics in MainActivity:
+  - `source=slider_on_value_change` records values delivered by the Compose volume slider callback, including the previous UI value and requested value.
+  - `source=playback_broadcast` records volume values received from PlaybackService broadcasts, including the previous UI value and playback status.
+  - `source=initial_system_restore`, `source=initial_usb_restore`, and `source=initial_usb_readback` identify startup restoration and asynchronous USB hardware/software volume resolution.
+- These records distinguish slider callback activity from service-driven state updates and startup restoration. They do not by themselves prove physical touch input; correlate timestamps with the user's interaction and the Android input timeline if needed.
+- No volume policy, gain mapping, DAC Feature Unit request, or playback transport behavior was changed.
+- **Status: DIAGNOSTIC INSTRUMENTATION ADDED; CI AND A CONTROLLED PHYSICAL RETEST REQUIRED.** Keep the DAC volume at a confirmed low level. During retest, do not touch the slider after setting it to a safe value; capture the diagnostic log if the displayed value changes.
