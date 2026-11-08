@@ -339,16 +339,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         lastReportedSeekPositionMs = completedSeekPosition
                         onState("Seeking · ${completedSeekPosition / 1000}s")
                     }
-                    when (NativeAudio.nativeGetStreamPumpStatus(handle)) {
-                        -2 -> {
-                            val detail = NativeAudio.nativeGetStreamPumpError(handle)
-                            throw IllegalStateException(
-                                if (detail.isBlank()) "Rust audio decoder failed without an error detail."
-                                else "Rust audio decoder failed: $detail"
-                            )
-                        }
-                        -1 -> throw IllegalStateException("The Rust audio decode worker is unavailable.")
-                    }
+                    // The native AAudio output scheduler owns decode-worker lifecycle monitoring.
+                    // Do not poll the worker registry here: a seek temporarily removes and
+                    // replaces its entry, so a concurrent Kotlin poll can report a false
+                    // "worker unavailable" failure during that valid transition.
                     when (NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)) {
                         0 -> Thread.sleep(8)
                         1 -> break
