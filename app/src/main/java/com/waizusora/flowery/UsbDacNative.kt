@@ -60,7 +60,7 @@ internal object UsbDacNative {
  * streaming interface. Calls must be made off the UI thread. A write returns
  * once the PCM has been staged and the bounded isochronous window has accepted
  * it, so up to roughly 256 ms of previously written audio may still be queued
- * on the endpoint. Use [drain] at natural end of playback and [flush] on seek.
+ * on the endpoint. Use [drain] at natural end of playback and [flush] on seek or pause.
  * Closing the session cancels queued transfers and releases native resources.
  */
 internal class UsbDacSession internal constructor(
