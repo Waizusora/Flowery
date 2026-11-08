@@ -14,8 +14,6 @@ Symphonia probes the selected document and decodes the default audio track packe
 
 Rubato 5 uses a fixed-ratio synchronous FFT resampler. Its instance and filter history persist across chunks. When source and output sample rates match, conversion is bypassed. The normal AAudio route selects rates from Android output-device capabilities and validates the result when opening AAudio. Direct USB instead derives supported rates from UAC2 clock RANGE responses and confirms the selected rate through native SET_CUR/GET_CUR negotiation.
 
-## 31-band graphic equalizer
-
 ## Three-band controls and 31-band ISO equalizer
 
 The DSP screen exposes three vertical controls: Bass, Mid, and Treble. These are user-facing tone controls, not three standalone filters. Flowery maps them onto the native 31-band graphic equalizer using the ISO preferred center-frequency sequence: 20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000 and 20000 Hz. Bass is held through 200 Hz and transitions smoothly to Mid by 500 Hz; Mid is held from 500 Hz through 2 kHz and transitions smoothly to Treble by 5 kHz; Treble is held above 5 kHz. The interpolation is performed in log-frequency space with a smoothstep curve, avoiding abrupt gain steps between adjacent ISO bands.
