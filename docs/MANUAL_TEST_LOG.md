@@ -241,6 +241,7 @@ Manual observation (user-confirmed, 2026-11-08):
 - An audible change was present in both directions, confirming that the EQ adjustment affects the sound.
 - The perceived change was subtle, even at these settings.
 - The audible change began approximately **3 seconds** after the adjustment.
+- Follow-up clarification: the sound does **not** change gradually during those 3 seconds; it remains unchanged, then the new EQ setting becomes audible after approximately 3 seconds.
 - In a follow-up listening check, the EQ effect was perceived as **slightly stronger / more noticeable**, rather than merely faint; the response delay remained present.
 - Output route for this EQ test: not specified; USB DAC was not in use.
 
