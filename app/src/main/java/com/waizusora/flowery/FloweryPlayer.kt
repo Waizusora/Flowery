@@ -685,11 +685,21 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun currentVolumeFraction(): Float =
         if (usbPlaybackMode) softwareVolume.coerceIn(0f, 1f) else volumeController.systemVolumeFraction()
 
-    fun positionMs(): Long =
-        if (usbPlaybackMode && activeUsbEncodedPipeline != null) activeUsbEncodedPipeline?.positionMs() ?: 0L
-        else if (usbPlaybackMode && outputSampleRate > 0) usbPositionFrames * 1000L / outputSampleRate
-        else if (outputSampleRate > 0) NativeAudio.nativeGetOutputPositionFrames() * 1000L / outputSampleRate
-        else 0L
+    fun positionMs(): Long {
+        // Playback teardown can reset outputSampleRate concurrently with the service's
+        // progress ticker. Read it once so the zero check and division use the same value.
+        if (usbPlaybackMode) {
+            activeUsbEncodedPipeline?.let { return it.positionMs() }
+        }
+        val sampleRate = outputSampleRate
+        if (sampleRate <= 0) return 0L
+        val frames = if (usbPlaybackMode) {
+            usbPositionFrames
+        } else {
+            NativeAudio.nativeGetOutputPositionFrames()
+        }
+        return frames * 1000L / sampleRate
+    }
 
     fun durationMs(): Long = outputDurationMs
 
