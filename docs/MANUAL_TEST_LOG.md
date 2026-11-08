@@ -650,7 +650,7 @@ USB Direct diagnostic instrumentation update (2026-11-08):
 
 ### TEST 21 — Settings > Audio USB DAC controls removal
 
-**Status: PARTIAL — Stage 1 PASS; Stage 2 NOT RUN**
+**Status: PASS — Stages 1 and 2 user-confirmed (2026-11-08)**
 
 Build reference:
 - Main-branch commit: `3390e972b72aa49e75e04b29db1cfdc54716fd89` (`3390e97`).
@@ -663,9 +663,11 @@ Stage 1 — Settings > Audio UI (user-confirmed, 2026-11-08): **PASS**
 - USB Diagnostics can be opened.
 - The user reported the complete Stage 1 checklist as PASS.
 
-Stage 2 — non-USB playback regression: **NOT RUN**
-- With no USB DAC connected, verify built-in Speaker playback, Pause/Resume, and Next track.
-- Confirm audio is clean and playback controls remain functional.
-- Do not connect the USB DAC or run direct USB playback as part of this test. The direct USB safety hold recorded above remains active because the loud hum continued after the app Pause action and stopped only when the DAC was physically disconnected.
+Stage 2 — non-USB playback regression (user-confirmed, 2026-11-08): **PASS**
+- Built-in Speaker playback: **PASS**.
+- Pause/Resume: **PASS**.
+- Next track: **PASS**.
+- User reported the complete Stage 2 as PASS; no separate audio-quality detail was supplied beyond the stage result.
+- The USB DAC was not part of this stage. Direct USB playback remains under the separate safety hold recorded above.
 
-**Current result:** Settings > Audio UI change is user-confirmed PASS. TEST 21 remains PARTIAL until Stage 2 is reported. This test does not change or clear any USB DAC transport/safety status.
+**Current result:** TEST 21 **PASS**. Both the Settings > Audio UI checks and the non-USB playback regression are user-confirmed. This result does not change or clear any USB DAC transport/safety status.
