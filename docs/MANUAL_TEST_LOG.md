@@ -621,3 +621,11 @@ Cross-test conclusions:
 - The 24-bit/96 kHz shared-route log also reports audible stutter by user observation, but its diagnostic cannot attribute that to libusb because direct USB was unavailable.
 - Source review confirms the current native reaper treats any isochronous packet whose `actual_length` differs from its requested `length` as a fatal `packet_error`. libusb documents per-packet actual length as the amount actually transferred and notes that an isochronous transfer may have overall status COMPLETED while individual packet descriptors carry the meaningful completion status/length. The short report must be investigated rather than suppressed.
 - **Status: DIRECT USB 16/44.1 FAIL — REPRODUCIBLE EARLY SHORT-PACKET ERROR; DIRECT USB 24/96 FAIL — FINAL-DRAIN STALL; ANDROID SHARED 24/96 — USER-REPORTED STUTTER.** No transport fix is claimed. Next engineering investigation: trace the first URB's per-packet requested/actual lengths, frame-phase progression, endpoint descriptor fields, and host-controller completion timing before changing packetization or failure policy.
+
+USB DAC safety report — loud high-pitched hum on direct USB 16-bit / 44.1 kHz playback (2026-11-08; user-reported):
+
+- During the direct USB test using a 16-bit / 44.1 kHz FLAC file, pressing Play produced a loud high-pitched humming/buzzing sound ("nging").
+- Treat this as a safety-critical output fault. Direct USB playback testing is suspended pending investigation. Do not ask the user to repeat playback or increase volume.
+- The prior diagnostic for this mode showed repeated isochronous packet errors on endpoint 0x04 (packet 8: actual_length=20, requested_length=24) shortly after direct USB session startup. This is a plausible transport/data-integrity concern, but the log does not prove the short-packet report caused the audible hum.
+- Immediate guidance: stop playback, disconnect the USB DAC from the phone if the noise continues, and do not retry direct USB output until a code-level investigation and a safe low-level validation plan are available. Use the normal Android-routed output only if it remains clean and at a low volume.
+- **Status: SAFETY HOLD — DIRECT USB OUTPUT MUST NOT BE PHYSICALLY RETESTED UNTIL INVESTIGATION AND MITIGATION.**
