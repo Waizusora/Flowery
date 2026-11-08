@@ -405,3 +405,9 @@ CI follow-up (2026-11-08):
 - Workflow run #1442 (`42464600678`) failed at `:app:compileDebugKotlin` in `NowPlayingDestination.kt`.
 - Root cause: three Compose text imports had been written as one source line containing literal `\n` characters. Kotlin consequently treated the following imports as invalid top-level syntax and could not resolve `buildAnnotatedString`/`withStyle`.
 - Corrected the imports to three actual Kotlin import lines. Awaiting the workflow result for the corrective commit.
+
+
+CI follow-up update (2026-11-08):
+- Corrective workflow run #1443 (`42464929664`) for commit `fc931a9f049a7342f21cfc03832eeedaa07e5533` completed with **success**.
+- All workflow steps passed, including Rust native unit tests, Kotlin/JNI declaration verification, Android unit tests, native library builds, and debug/release APK builds.
+- This confirms the source compiles and automated tests pass for this commit. It does not replace physical-device retesting of lyrics or playback behavior.
