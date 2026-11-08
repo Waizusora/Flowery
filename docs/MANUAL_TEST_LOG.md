@@ -197,8 +197,7 @@ Confirmed:
 - Pause/resume and track navigation: NOT TESTED.
 
 1. Play a track continuously for at least 10 minutes.
-2. Seek several times.
-3. Pause and resume several times.
+2. Seek several times.3. Pause and resume several times.
 4. Navigate between tracks.
 5. Expected: no crash, stuck progress, unintended silence, or persistent speed/pitch change.
 
@@ -397,8 +396,7 @@ These observations confirm that audio is reaching the connected DAC, but they do
 
 Deferred until software playback tests are complete and compatible hardware is available.
 
-1. Connect a supported USB DAC.
-2. Use **Sambungkan DAC** once to grant Android USB access if prompted; this is a connection permission action, not a Bit-perfect switch.
+1. Connect a supported USB DAC.2. Use **Sambungkan DAC** once to grant Android USB access if prompted; this is a connection permission action, not a Bit-perfect switch.
 3. Start playback and verify Flowery automatically detects the permissioned DAC and selects a compatible output route.
 4. Verify the Bit-perfect status changes to ACTIVE only when the native producer confirms source-preserving output; otherwise verify that the UI reports NOT ACTIVE or UNAVAILABLE with a reason.
 5. Verify selected output route.
@@ -597,7 +595,6 @@ USB DAC direct-route FLAC 16-bit / 44.1 kHz retest (2026-11-08; user-reported):
 - The new observation confirms that the failure is not limited to 24-bit / 96 kHz content. It does not yet identify whether the direct USB session fails during device/interface initialization, alternate-setting or sample-rate setup, the first PCM submission, or a subsequent transport error.
 - No diagnostic capture for this exact immediate-stop attempt has been reviewed yet. Do not infer a decoder-format incompatibility or change transport behavior until the direct USB error and session events are captured.
 - **Status: DIRECT USB FLAC 16/44.1 FAIL — IMMEDIATE STOP (USER-REPORTED); ROOT CAUSE UNKNOWN; DIAGNOSTIC CAPTURE REQUIRED.** Keep the USB software volume at the previously verified safe setting and avoid prolonged listening until output level and transport stability are confirmed.
-
 Three-route USB DAC diagnostic comparison from latest CI build (2026-11-08; user-supplied files in `Waizusora/Log`):
 
 1. `flowery-usb-diagnostic-24bit96shared.txt` (user label: `usb-diagnostic-shared24bit`):
@@ -650,3 +647,25 @@ USB Direct diagnostic instrumentation update (2026-11-08):
 - The new fields are intended to determine whether the reported sequence 3 / packet 8 mismatch is already present in Flowery's packet plan or appears only after host-controller submission. They also provide evidence for reviewing scheduling phase and endpoint timing.
 - No DAC was connected and no physical USB test was performed for this change. Compilation/CI status must be checked independently; this change does not resolve the hum and does not lift the safety hold.
 - **Status: CODE-ONLY DIAGNOSTIC CHANGE; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
+
+### TEST 21 — Settings > Audio USB DAC controls removal
+
+**Status: PARTIAL — Stage 1 PASS; Stage 2 NOT RUN**
+
+Build reference:
+- Main-branch commit: `3390e972b72aa49e75e04b29db1cfdc54716fd89` (`3390e97`).
+- GitHub Actions workflow #1491 (`42500172069`): **SUCCESS**. Debug and Release APK build steps and the listed automated checks completed successfully.
+
+Stage 1 — Settings > Audio UI (user-confirmed, 2026-11-08): **PASS**
+- USB DAC card remains visible and presents its device name/status.
+- The manual **Sambungkan DAC** and **Lepas DAC** controls are absent.
+- Information Audio can be opened.
+- USB Diagnostics can be opened.
+- The user reported the complete Stage 1 checklist as PASS.
+
+Stage 2 — non-USB playback regression: **NOT RUN**
+- With no USB DAC connected, verify built-in Speaker playback, Pause/Resume, and Next track.
+- Confirm audio is clean and playback controls remain functional.
+- Do not connect the USB DAC or run direct USB playback as part of this test. The direct USB safety hold recorded above remains active because the loud hum continued after the app Pause action and stopped only when the DAC was physically disconnected.
+
+**Current result:** Settings > Audio UI change is user-confirmed PASS. TEST 21 remains PARTIAL until Stage 2 is reported. This test does not change or clear any USB DAC transport/safety status.
