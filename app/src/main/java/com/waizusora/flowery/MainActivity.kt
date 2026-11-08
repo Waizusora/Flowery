@@ -205,7 +205,16 @@ class MainActivity : ComponentActivity() {
                 repeatMode = intent.getIntExtra(PlaybackService.EXTRA_REPEAT_MODE, 0).coerceIn(0, 2)
             }
             if (intent.hasExtra(PlaybackService.EXTRA_VOLUME)) {
-                volume = intent.getFloatExtra(PlaybackService.EXTRA_VOLUME, volume).coerceIn(0f, 1f)
+                val previousVolume = volume
+                val reportedVolume = intent.getFloatExtra(PlaybackService.EXTRA_VOLUME, volume).coerceIn(0f, 1f)
+                if (kotlin.math.abs(previousVolume - reportedVolume) >= 0.001f) {
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "VOLUME_UI_SOURCE source=playback_broadcast previous=$previousVolume reported=$reportedVolume " +
+                            "status=${reportedStatus ?: "none"}"
+                    )
+                }
+                volume = reportedVolume
             }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
@@ -357,7 +366,17 @@ class MainActivity : ComponentActivity() {
                         sendPlaybackCommand(PlaybackService.ACTION_RESUME)
                     }
                 },
-                onVolume = { volume = it; sendPlaybackCommand(PlaybackService.ACTION_VOLUME) { putExtra(PlaybackService.EXTRA_VALUE, it) } },
+                onVolume = {
+                    val previousVolume = volume
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "VOLUME_UI_SOURCE source=slider_on_value_change previous=$previousVolume requested=$it"
+                    )
+                    volume = it
+                    sendPlaybackCommand(PlaybackService.ACTION_VOLUME) {
+                        putExtra(PlaybackService.EXTRA_VALUE, it)
+                    }
+                },
                 onPrevious = { sendPlaybackCommand(PlaybackService.ACTION_PREVIOUS) },
                 onNext = { sendPlaybackCommand(PlaybackService.ACTION_NEXT) },
                 onShuffle = { sendPlaybackCommand(PlaybackService.ACTION_SHUFFLE) },
@@ -452,15 +471,28 @@ class MainActivity : ComponentActivity() {
             .getBoolean("usb_bit_perfect_enabled", false)
         val connectedDac = if (directUsbEnabled) usbDacController.audioDevices().singleOrNull() else null
         if (connectedDac == null) {
-            volume = volumeController.systemVolumeFraction()
+            val restoredVolume = volumeController.systemVolumeFraction()
+            Log.i("FloweryDiagnostics", "VOLUME_UI_SOURCE source=initial_system_restore value=$restoredVolume")
+            volume = restoredVolume
             return
         }
-        volume = volumeController.usbVolume(connectedDac.identity)
+        val restoredSoftwareVolume = volumeController.usbVolume(connectedDac.identity)
+        Log.i(
+            "FloweryDiagnostics",
+            "VOLUME_UI_SOURCE source=initial_usb_restore value=$restoredSoftwareVolume device=${connectedDac.identity}"
+        )
+        volume = restoredSoftwareVolume
         io.execute {
             val hardwareVolume = usbDacController.readHardwareVolumeFraction(connectedDac.usbDevice)
             volumeController.usbProfile(connectedDac.identity, hardwareVolume != null)
             runOnUiThread {
-                volume = hardwareVolume ?: volumeController.usbVolume(connectedDac.identity)
+                val resolvedVolume = hardwareVolume ?: volumeController.usbVolume(connectedDac.identity)
+                Log.i(
+                    "FloweryDiagnostics",
+                    "VOLUME_UI_SOURCE source=initial_usb_readback value=$resolvedVolume hardwareAvailable=${hardwareVolume != null} " +
+                        "device=${connectedDac.identity}"
+                )
+                volume = resolvedVolume
             }
         }
     }
