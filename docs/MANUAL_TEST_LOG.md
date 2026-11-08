@@ -521,3 +521,12 @@ USB DAC natural-completion diagnostic capture (2026-11-08; user-supplied `flower
 - The log does not establish why the USB host/device stopped completing the outstanding isochronous transfers. In particular, it does not yet distinguish a DAC/endpoint behavior, host-controller/libusb event-delivery issue, or a scheduling/packetization defect in the transport implementation. The descriptor snapshot reports an adaptive OUT endpoint and does not advertise supported sample rates in the selected profile; this alone is not proof of incompatibility at 96 kHz.
 - No transport code change is made based on this capture alone. Do not suppress the watchdog or treat a failed drain as successful completion: doing so could truncate queued audio and conceal a transport failure.
 - **Status: ROOT CAUSE OF THE QUEUE-ADVANCE FAILURE IDENTIFIED; UNDERLYING ISOCHRONOUS TRANSPORT STALL INVESTIGATION REQUIRED.** USB DAC physical retest remains required after a transport fix. Earlier non-USB track-completion PASS remains valid only for the non-USB route.
+
+
+USB DAC isochronous queue-depth mitigation (2026-11-08; source change committed):
+
+- Reduced the native isochronous scheduling target from 192 ms to 32 ms. With 64 packets per URB and a 125 us service interval, each URB spans approximately 8 ms, so the target normally permits about four URBs in flight instead of up to 24.
+- Reduced the hard in-flight URB cap from 24 to 8. The existing 1,500 ms no-progress watchdog remains enabled; a failed drain is not treated as successful playback completion.
+- Added native transport counters to future stall exceptions: successful URB submissions, transfer callbacks received, event-loop iterations, libusb event-loop error, time since the last event-loop iteration, configured queue target, and hard URB cap.
+- The change is a bounded scheduling-depth mitigation and diagnostic experiment. The supplied log proves that the prior transport window had 23 outstanding URBs when progress stopped, but it does not prove that queue depth alone caused the endpoint stall.
+- **Status: IMPLEMENTED; BUILD/CI AND PHYSICAL USB DAC RETEST REQUIRED.** No claim is made yet that the DAC stall or automatic next-track transition is fixed. Preserve the user's previously confirmed safe software-volume setting before testing.
