@@ -188,7 +188,7 @@ Do not claim support for every possible format based only on this sample.
 
 ### TEST 10 — Playback stability
 
-**Status: PARTIAL — continuous playback passed; seek failed on multiple Android outputs (2026-11-08)**
+**Status: PARTIAL — continuous playback and seek passed on user retest; pause/resume and track navigation remain untested (2026-11-08)**
 
 Confirmed:
 - 10-minute continuous playback: PASS. User reported normal audio with no interruption.
@@ -217,6 +217,13 @@ Diagnostic evidence received (2026-11-08; source: `Waizusora/Log/flowery-usb-dia
 - Source inspection found that the Kotlin playback loop independently polled `nativeGetStreamPumpStatus()` and treated a missing worker-registry entry (`-1`) as an immediate playback failure. The native AAudio output scheduler already monitors decode-worker health; its source comment explicitly says Kotlin should observe the scheduler rather than poll the worker a second time. During a seek, the native seek path temporarily removes and replaces the worker registry entry, so the extra Kotlin poll can observe a transient absence and report a false worker-unavailable error. This is a credible code-level race; the supplied diagnostic alone does not prove that a seek-triggered replacement caused these two startup failures.
 - Code change committed to `main` in `c80ca90c3d46a086c9f2559579ac9690f9de3108`: removed the redundant Kotlin worker-status poll and left worker lifecycle/error monitoring to the native AAudio scheduler. A genuinely missing worker is still handled by the native scheduler and surfaced as a playback-session failure; the change does not suppress native failure handling.
 - The updated code has not yet been built or retested on the user's phone. TEST 10 remains PARTIAL; speaker playback and seek require a controlled retest. The earlier speaker/AUX seek result remains FAIL until verified. Pause/resume and track navigation remain NOT TESTED.
+
+Retest after the decode-worker polling fix (2026-11-08):
+- **Seek: PASS (user-confirmed).** The user reported that seeking now succeeds after installing/testing the updated build. This supersedes the earlier speaker/AUX seek failures for the tested configuration; the exact output route and number of repeated seeks were not specified in the report.
+- Diagnostic file received: `Waizusora/Log/flowery-usb-diagnostic-1794112393872.txt`, recorded at 2026-11-08 11:33:13 +0700. It identifies the FLAC track `As I Lay Dying - The Darkest Nights` (duration 231826 ms) and a final snapshot of `playing=false`, `positionMs=68526`, route status `Paused`.
+- The diagnostic shows three Android-route FLAC play requests and a shared 44.1 kHz AAudio stream (actual device ID 910). No USB DAC was detected; consistent with the earlier speaker-route clarification, this is not evidence of a USB DAC fault and this file does not test direct USB output.
+- **Diagnostic limitation:** sampled playback snapshots mostly report `positionMs=0` and `isPlaying=false`; the final header reports a paused position of 68526 ms. The file contains no explicit seek-request/completion event, and its AAudio telemetry reports `callbackCount=0` and `framesWritten=0` while queued PCM remains near capacity. Consequently, this diagnostic does not independently prove audible output or seek completion. The user's successful manual retest is recorded as the seek result; the telemetry discrepancy remains an observation, not a confirmed playback defect.
+- Pause/resume and next/previous track navigation: NOT TESTED. TEST 10 therefore remains PARTIAL.
 
 ### TEST 11 — Equalizer interaction and audio processing
 
