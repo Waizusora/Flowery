@@ -285,11 +285,30 @@ Final EQ retest after the three-control / strict ISO-band revision (2026-11-08; 
 
 ### TEST 12 — Lyrics display
 
-1. Play a track with a known local `.lrc` file.
-2. Verify that lyrics appear and synchronize with playback.
-3. Test a track with embedded lyrics if available.
-4. Test a track with no lyrics.
-5. Expected: available lyrics are displayed; missing lyrics are handled without a crash.
+**Status: PARTIAL — sidecar LRC display confirmed; enhanced-LRC rendering and centered scrolling require manual retest**
+
+Initial manual observation (user-confirmed, 2026-11-08):
+- A local `.lrc` sidecar file is detected and lyrics appear during playback.
+- The user reports that lyric changes appear slightly early by an estimated few milliseconds; the exact offset has not been measured.
+- The lyric list does not keep the active line centered before and during scrolling. The requested behavior is to place the upcoming/current line in the center, keep it centered as playback advances, and scroll in sync with each line's timing.
+- The supplied screenshot shows inline enhanced-LRC word timestamps such as `<00:31.59>` being displayed as visible lyric text. These are timing markers and must be parsed and hidden.
+- The screenshot's format uses per-word timestamps. The desired behavior is to highlight each word at its timestamp while keeping the active lyric line centered. Plain line-timed LRC must continue to work.
+- The user's final clarification is interpreted as: timestamp metadata must not appear in displayed lyric text.
+
+Implementation committed for retest (2026-11-08):
+- The native LRC parser now recognizes standard square-bracket line timestamps and enhanced angle-bracket word timestamps. Angle-bracket markers are removed from display text; word timing is retained for word-level highlighting. Files containing word timestamps without a square-bracket line timestamp use the first word timestamp as the line start.
+- The parser applies a valid `[offset:+/-milliseconds]` metadata value to line and word timestamps. No arbitrary default offset is applied because the user's reported early timing has not been measured.
+- The Now Playing lyric list centers the upcoming/active line and keeps it centered as the active line changes. Enhanced-LRC words highlight according to their own timestamps; standard LRC continues to highlight the active line.
+- Top/bottom scroll space allows the first and final lyric lines to reach the centered position.
+- Automated parser tests cover enhanced word timestamps, word-only timestamps, offset metadata, standard LRC, and current-line lookup. Device playback timing, visual centering, and the user's actual LRC file still require manual retest.
+
+Retest required:
+1. Install the latest build and play the same track/LRC file.
+2. Confirm no `<mm:ss.xx>` markers are visible in lyric text.
+3. Confirm the active line stays centered from before the first lyric through subsequent lines.
+4. Confirm enhanced word highlighting follows the vocal timing and standard LRC remains line-synchronized.
+5. Report whether the lyrics still lead the vocal; if so, estimate the offset or use the `[offset:]` metadata for calibration.
+6. Confirm that a track with no readable/synchronized LRC is handled cleanly without showing raw timestamp text or crashing.
 
 ### TEST 13 — Library update and folder management
 

@@ -25,7 +25,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.Alignment\nimport androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -76,9 +76,16 @@ fun FloweryNavigation(
     var lyricsVisible by remember { mutableStateOf(false) }
     val lyricListState = rememberLazyListState()
     val activeLyricIndex = remember(lyrics, positionMs) { lyrics.indexOfLast { it.timeMs <= positionMs } }
-    LaunchedEffect(lyricsVisible, activeLyricIndex) {
-        if (lyricsVisible && activeLyricIndex >= 0) {
-            lyricListState.animateScrollToItem(activeLyricIndex + 1)
+    val lyricDensity = LocalDensity.current
+    LaunchedEffect(lyricsVisible, activeLyricIndex, lyrics.size) {
+        if (lyricsVisible && lyrics.isNotEmpty()) {
+            val targetIndex = activeLyricIndex.coerceAtLeast(0) + 1
+            val viewportHeight = lyricListState.layoutInfo.viewportSize.height
+            val fallbackItemHeight = with(lyricDensity) { 56.dp.roundToPx() }
+            val itemHeight = lyricListState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.index == targetIndex }?.size ?: fallbackItemHeight
+            val centerOffset = (viewportHeight / 2 - itemHeight / 2).coerceAtLeast(0)
+            lyricListState.animateScrollToItem(targetIndex, scrollOffset = -centerOffset)
         }
     }
     val libraryScanActive = status.startsWith("Scanning selected folders") || status.startsWith("Refreshing ")

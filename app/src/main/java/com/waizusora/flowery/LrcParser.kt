@@ -2,7 +2,7 @@ package com.waizusora.flowery
 
 import org.json.JSONArray
 
-data class LyricLine(val timeMs: Long, val text: String)
+data class LyricWord(val timeMs: Long, val text: String)\ndata class LyricLine(val timeMs: Long, val text: String, val words: List<LyricWord> = emptyList())
 
 object LrcParser {
     /**
@@ -18,7 +18,15 @@ object LrcParser {
                 add(
                     LyricLine(
                         timeMs = entry.getLong("timeMs"),
-                        text = entry.getString("text")
+                        text = entry.getString("text"),
+                        words = entry.optJSONArray("words")?.let { wordEntries ->
+                            buildList(wordEntries.length()) {
+                                for (wordIndex in 0 until wordEntries.length()) {
+                                    val word = wordEntries.getJSONObject(wordIndex)
+                                    add(LyricWord(word.getLong("timeMs"), word.getString("text")))
+                                }
+                            }
+                        }.orEmpty()
                     )
                 )
             }

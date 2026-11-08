@@ -21,7 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontWeight\nimport androidx.compose.ui.text.SpanStyle\nimport androidx.compose.ui.text.buildAnnotatedString\nimport androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,15 +74,30 @@ internal fun NowPlayingDestination(
                                     state = lyricListState,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    contentPadding = PaddingValues(vertical = 18.dp)
+                                    contentPadding = PaddingValues(vertical = 120.dp)
                                 ) {
-                                    item(key = "lyrics-spacer-top") { Spacer(Modifier.height(24.dp)) }
+                                    item(key = "lyrics-spacer-top") { Spacer(Modifier.height(120.dp)) }
                                     itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
                                         val active = index == activeLyricIndex
+                                        val activeWordIndex = if (active) line.words.indexOfLast { it.timeMs <= positionMs } else -1
+                                        val displayedText = if (line.words.isEmpty()) {
+                                            buildAnnotatedString { append(line.text.ifBlank { "♪" }) }
+                                        } else {
+                                            buildAnnotatedString {
+                                                line.words.forEachIndexed { wordIndex, word ->
+                                                    if (active && wordIndex == activeWordIndex) {
+                                                        withStyle(SpanStyle(
+                                                            color = MaterialTheme.colorScheme.primary,
+                                                            fontWeight = FontWeight.Bold
+                                                        )) { append(word.text) }
+                                                    } else append(word.text)
+                                                }
+                                            }
+                                        }
                                         Text(
-                                            line.text.ifBlank { "♪" },
-                                            color = if (active) MaterialTheme.colorScheme.primary else muted,
-                                            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                            displayedText,
+                                            color = if (active && line.words.isEmpty()) MaterialTheme.colorScheme.primary else muted,
+                                            fontWeight = if (active && line.words.isEmpty()) FontWeight.Bold else FontWeight.Normal,
                                             fontSize = if (active) 21.sp else 16.sp,
                                             textAlign = TextAlign.Center,
                                             modifier = Modifier.fillMaxWidth()
@@ -93,7 +108,7 @@ internal fun NowPlayingDestination(
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                         )
                                     }
-                                    item(key = "lyrics-spacer-bottom") { Spacer(Modifier.height(32.dp)) }
+                                    item(key = "lyrics-spacer-bottom") { Spacer(Modifier.height(120.dp)) }
                                 }
                             }
                             Text(
