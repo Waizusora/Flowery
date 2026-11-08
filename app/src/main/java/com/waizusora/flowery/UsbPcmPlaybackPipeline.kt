@@ -160,6 +160,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         )
 
         var firstTransfer = true
+        var transportFlushedForPause = false
         var lastHardwareVolumePollNs = 0L
         var starvationEvents = 0L
         var chunks = 0L
@@ -168,9 +169,16 @@ internal class UsbPcmPlaybackPipeline private constructor(
 
         while (playbackActive()) {
             if (isPaused()) {
+                if (!transportFlushedForPause) {
+                    // Stop audio already submitted to the USB endpoint; pausing the
+                    // producer alone does not cancel libusb transfers already in flight.
+                    dacSession.flush()
+                    transportFlushedForPause = true
+                }
                 Thread.sleep(10)
                 continue
             }
+            transportFlushedForPause = false
             val producerFailure = workerError
             check(producerFailure.isBlank()) {
                 "Rust USB PCM producer worker failed: $producerFailure"
