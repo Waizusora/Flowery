@@ -549,3 +549,13 @@ USB DAC software-volume persistence report (2026-11-08):
 - The existing preference write used asynchronous `SharedPreferences.apply()`. Updated it to synchronously commit the requested per-device fraction and verify the stored value before returning. A persistence failure now raises an explicit error instead of silently continuing with an unconfirmed value.
 - Added diagnostics for the USB volume request, applied value, per-device key, and value restored when a new USB session attaches. This will distinguish a failed persistence write from a request that never reaches the USB volume policy or a key mismatch.
 - **Status: CODE UPDATED; CI AND PHYSICAL RETEST REQUIRED.** The new implementation is not yet verified on the user's DAC. Do not resume prolonged listening tests until the slider displays 5% after starting another track and the diagnostic confirms `initialVolume=0.05` with a matching `persistedVolume=0.05`.
+
+
+USB DAC unified volume control and UAC2 Feature Unit correction (2026-11-08):
+
+- User proposes one Output volume control in Flowery, with the implementation selecting the DAC's own USB volume mechanism when the connected DAC exposes a usable Feature Unit. A separate UI control for DACs with or without physical buttons is not required.
+- Source inspection found the UAC2 playback-session constructor parsed UsbFeatureUnit from the descriptor but did not pass it into UsbDacSession. The UAC1 path already passed the parsed unit. Consequently, the KTMicro device's advertised UAC2 master-channel volume control was discarded before the active session was created, causing the policy to fall back to software gain.
+- Corrected the UAC2 session construction to pass the descriptor-derived Feature Unit into UsbDacSession. The existing policy then attempts GET_RANGE and GET_CUR before selecting hardware volume; if the control is not readable, software gain remains the fallback.
+- Updated the DSP screen explanation to describe one slider and its automatic hardware/software backend. Added separate diagnostics for Feature Unit advertisement and successful active hardware-volume read.
+- This is a source-level correction only. The descriptor advertising a Feature Unit does not prove that GET_RANGE, GET_CUR, and SET_CUR work on this device.
+- **Status: IMPLEMENTED; CI AND PHYSICAL USB DAC RETEST REQUIRED.** Do not resume prolonged listening until the slider is confirmed at a safe low setting and diagnostics report `featureUnitAdvertised=true` and `hardwareVolumeActive=true`. USB transport stutter/end-of-track failure remains a separate unresolved issue.
