@@ -21,13 +21,14 @@ namespace {
 
 // Isochronous transport tuning.
 //
-// Keep fewer, longer isochronous URBs queued to reduce completion/event-loop
-// overhead while retaining a bounded scheduling horizon. At a 125 us service
-// interval, one 64-packet URB covers 8 ms; the adaptive window targets about
-// 192 ms of queued audio and is replenished as URBs complete.
+// Keep the scheduling horizon deliberately short. A 64-packet URB covers 8 ms
+// at a 125 us service interval; a 32 ms target therefore keeps roughly four
+// URBs queued instead of the previous 192 ms / 24-URB window. This bounds
+// endpoint/controller scheduling depth while retaining enough work to avoid
+// submitting one service interval at a time.
 constexpr size_t kPacketsPerUrb = 64;
-constexpr size_t kMaxUrbsInFlight = 24;
-constexpr uint64_t kTargetQueuedAudioUs = 192000ULL;
+constexpr size_t kMaxUrbsInFlight = 8;
+constexpr uint64_t kTargetQueuedAudioUs = 32000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
 // because it cancels queued isochronous URBs and breaks the scheduling chain.
@@ -88,6 +89,10 @@ struct UsbAudioSession {
     std::vector<std::unique_ptr<InFlightTransfer>> in_flight;
     uint64_t next_sequence = 0;
     std::chrono::steady_clock::time_point last_progress{};
+    std::atomic<uint64_t> submitted_transfer_count{0};
+    std::atomic<uint64_t> completed_transfer_callback_count{0};
+    std::atomic<uint64_t> event_loop_iteration_count{0};
+    std::atomic<int64_t> last_event_loop_ns{0};
     std::atomic<bool> event_thread_running{false};
     std::atomic<int> event_loop_error{LIBUSB_SUCCESS};
     std::thread event_thread;
@@ -118,7 +123,10 @@ void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     if (entry != nullptr) {
         UsbAudioSession* owner = entry->owner;
         entry->completed.store(true, std::memory_order_release);
-        if (owner != nullptr) owner->event_condition.notify_all();
+        if (owner != nullptr) {
+            owner->completed_transfer_callback_count.fetch_add(1, std::memory_order_relaxed);
+            owner->event_condition.notify_all();
+        }
     }
 }
 
@@ -195,6 +203,11 @@ void event_loop_main(UsbAudioSession* session) {
         timeval timeout{0, 10000};
         const int result = libusb_handle_events_timeout_completed(
             session->context, &timeout, nullptr);
+        session->event_loop_iteration_count.fetch_add(1, std::memory_order_relaxed);
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        session->last_event_loop_ns.store(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
+            std::memory_order_release);
         if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
             session->event_loop_error.store(result, std::memory_order_release);
             session->event_condition.notify_all();
@@ -444,14 +457,29 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "USB isochronous transfer failed: reason=%s; %s (%d); "
         "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
-        "interval_us=%u; sample_rate=%d; endpoint=0x%02X",
+        "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
+        "submitted=%llu; callbacks=%llu; event_loops=%llu; "
+        "event_loop_error=%d; event_loop_idle_ms=%lld; "
+        "queue_target_us=%llu; max_urbs=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
         failure.transfer_status, transfer_name,
         static_cast<unsigned long long>(failure.sequence), failure.in_flight_at_failure,
         failure.idle_ms_at_failure, failure.failed_packet, failure.packet_status,
         packet_name, failure.actual_length,
         failure.requested_length, session->interval_us, session->sample_rate,
-        session->endpoint);
+        session->endpoint,
+        static_cast<unsigned long long>(session->submitted_transfer_count.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(session->completed_transfer_callback_count.load(std::memory_order_relaxed)),
+        static_cast<unsigned long long>(session->event_loop_iteration_count.load(std::memory_order_relaxed)),
+        session->event_loop_error.load(std::memory_order_acquire),
+        [&session]() -> long long {
+            const int64_t last_ns = session->last_event_loop_ns.load(std::memory_order_acquire);
+            if (last_ns <= 0) return -1;
+            const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+            return std::max<int64_t>(0, (now_ns - last_ns) / 1000000LL);
+        }(),
+        static_cast<unsigned long long>(kTargetQueuedAudioUs), kMaxUrbsInFlight);
     jclass exception = env->FindClass("java/lang/IllegalStateException");
     if (exception != nullptr) env->ThrowNew(exception, message);
 }
@@ -493,6 +521,7 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
     session->pending_offset += total_bytes;
     ++session->next_sequence;
     session->in_flight.push_back(std::move(entry));
+    session->submitted_transfer_count.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -531,6 +560,7 @@ bool submit_encoded_urb(UsbAudioSession* session,
     session->encoded_offset += total_bytes;
     ++session->next_sequence;
     session->in_flight.push_back(std::move(entry));
+    session->submitted_transfer_count.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
