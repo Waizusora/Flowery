@@ -247,7 +247,7 @@ Manual observation (user-confirmed, 2026-11-08):
 
 Not yet verified:
 - Whether all 31 bands respond correctly across their frequency ranges.
-- Whether EQ OFF/ON bypass behaves correctly.
+- EQ ON/OFF bypass: **NOT AVAILABLE IN THE CURRENT MENU**. The user confirmed that no EQ ON/OFF control is present in the menu they tested; this item cannot currently be tested from that UI.
 - Whether band values persist after leaving and reopening the EQ screen or restarting playback.
 - Whether the approximately 3-second response delay is intentional smoothing/buffering or an implementation latency issue.
 
