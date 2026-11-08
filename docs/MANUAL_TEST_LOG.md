@@ -335,6 +335,19 @@ Test procedure:
 
 ### TEST 14 — Background playback and interruption behavior
 
+**Status: PARTIAL PASS — background playback verified; phone-call interruption not tested**
+
+Manual result (user-confirmed, 2026-11-08):
+- Background playback and screen-lock behavior were reported as normal.
+- Phone-call interruption and playback recovery have not yet been tested.
+
+Test procedure:
+1. Start playback.
+2. Send Flowery to the background or lock the screen.
+3. Verify playback continues as designed.
+4. Return to the app and verify progress and track information.
+5. If practical, test a normal audio interruption (for example, a phone call) and verify recovery.
+
 1. Start playback.
 2. Send Flowery to the background or lock the screen.
 3. Verify playback continues as designed.
@@ -381,7 +394,7 @@ Deferred until software playback tests are complete and compatible hardware is a
 
 ### TEST 18 — Unexpected application/service termination during playback
 
-**Status: RETEST REQUIRED — diagnostic instrumentation committed; root cause not yet established**
+**Status: RETEST REQUIRED — crash cause identified and defensive fix committed; device retest pending**
 
 User-reported observation (2026-11-08):
 - When a track finishes, Flowery sometimes closes and the music notification disappears at the same time.
@@ -399,6 +412,15 @@ Diagnostic instrumentation committed:
 - On Android 11 (API 30+) app launch logs Android's recent `ApplicationExitInfo` reason/status/importance/PSS/RSS and a memory snapshot.
 - No queue policy, service restart policy, decoder, DSP, or output behavior was changed.
 - Capture instructions are in `docs/PLAYBACK_DIAGNOSTICS.md`.
+
+ADB log review (2026-11-08; user-supplied `Waizusora/Log/logcat.txt`):
+- The captured incident is a confirmed Java/Kotlin process crash, not an Android low-memory kill.
+- At 16:48:24, the service loaded a queue of 72 tracks at index 2 (Repeat Off, Shuffle Off) and began `Through Struggle`.
+- At 16:48:25, the main thread crashed with `java.lang.ArithmeticException: divide by zero` in `FloweryPlayer.positionMs(FloweryPlayer.kt:691)`, called by `PlaybackCoordinator.positionMs()` and the `PlaybackService` progress ticker.
+- On the next launch, `ApplicationExitInfo` reported `reason=4` and `description=crash`. The log also showed a later new service start and playback of another track.
+- The stack trace points to the position calculation's sample-rate denominator. Source inspection found that `stop()` and USB playback teardown can reset the volatile `outputSampleRate` to zero while the progress ticker reads it. The previous expression checked the field and then read it again for division, allowing a teardown race between those reads.
+- Defensive fix committed: `positionMs()` now snapshots the sample rate once, returns zero when the snapshot is non-positive, and uses that same snapshot for the frame-to-millisecond conversion. The encoded USB pipeline continues to supply its own position.
+- This fix addresses the exact crash path shown in the log. It does not yet prove all unexpected termination scenarios are resolved.
 
 Retest procedure:
 1. Install the diagnostic build and clear logcat.
