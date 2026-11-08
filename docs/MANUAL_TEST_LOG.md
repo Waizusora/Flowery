@@ -335,9 +335,11 @@ Test procedure:
 
 ### TEST 14 — Background playback and interruption behavior
 
-**Status: PARTIAL PASS — background playback verified; phone-call interruption not tested**
+**Status: PASS — background playback and incoming-call interruption verified**
 
 Manual result (user-confirmed, 2026-11-08):
+- Incoming-call interruption retest (user-confirmed, 2026-11-08): an incoming phone call successfully caused Flowery to pause playback.
+- This confirms the tested interruption-to-pause behavior. Automatic resume after the call was not reported and is not marked as verified.
 - Background playback and screen-lock behavior were reported as normal.
 - Phone-call interruption and playback recovery have not yet been tested.
 
