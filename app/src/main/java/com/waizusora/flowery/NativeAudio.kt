@@ -41,6 +41,7 @@ object NativeAudio {
     external fun nativePlaybackSessionEpoch(session: Long): Long
     external fun nativePlaybackSessionIsCancelled(session: Long): Boolean
     external fun nativeGetPlaybackSessionError(session: Long): Int
+    external fun nativeGetPlaybackSessionSeekError(session: Long): String
     external fun nativeCancelPlaybackSession(session: Long)
     external fun nativeClosePlaybackSession(session: Long)
     external fun nativeGetStreamInfo(handle: Long): Long
