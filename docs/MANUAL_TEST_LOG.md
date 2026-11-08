@@ -589,3 +589,11 @@ USB DAC 16-bit / 44.1 kHz routed-playback comparison (2026-11-08, diagnostic rec
 - The diagnostic was captured with playback paused at approximately 84,256 ms of a 304,106 ms track. It does not contain a direct USB transfer session, decoder EOF, or direct-transport completion events. It cannot validate direct-USB pause/resume, bit-perfect output, or the previously failing direct-USB end-of-track drain.
 - The contrast with the earlier 24-bit / 96 kHz test is diagnostically useful: the 16/44.1 test succeeded on Android's shared USB route, while the earlier 24/96 test exercised Flowery's direct libusb route and stalled during final isochronous drain. These tests use different output paths, so the improvement cannot be attributed to sample rate or bit depth alone.
 - **Status: ANDROID-ROUTED USB PLAYBACK AT 16/44.1 USER-REPORTED PASS; DIRECT USB TRANSPORT STILL UNRESOLVED.** A controlled comparison must confirm the route in each capture before drawing conclusions about format compatibility.
+
+USB DAC direct-route FLAC 16-bit / 44.1 kHz retest (2026-11-08; user-reported):
+
+- After granting Flowery USB permission, the user attempted to play a FLAC 16-bit / 44.1 kHz track through the direct USB DAC route. Playback stopped immediately, before the track duration/progress could begin advancing.
+- This is a different result from the earlier 16/44.1 test, which played smoothly through Android's AAudio shared USB route while Flowery's direct USB permission was not granted.
+- The new observation confirms that the failure is not limited to 24-bit / 96 kHz content. It does not yet identify whether the direct USB session fails during device/interface initialization, alternate-setting or sample-rate setup, the first PCM submission, or a subsequent transport error.
+- No diagnostic capture for this exact immediate-stop attempt has been reviewed yet. Do not infer a decoder-format incompatibility or change transport behavior until the direct USB error and session events are captured.
+- **Status: DIRECT USB FLAC 16/44.1 FAIL — IMMEDIATE STOP (USER-REPORTED); ROOT CAUSE UNKNOWN; DIAGNOSTIC CAPTURE REQUIRED.** Keep the USB software volume at the previously verified safe setting and avoid prolonged listening until output level and transport stability are confirmed.
