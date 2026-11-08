@@ -389,6 +389,12 @@ Deferred until software playback tests are complete and compatible hardware is a
 
 ### TEST 17 — Final regression
 
+**Status: PARTIAL — Stage 1 PASS; remaining regression stages not yet tested (2026-11-08)**
+
+User-confirmed result:
+- **Stage 1 — Installation and app launch: PASS.** Flowery reopened successfully; Library and Now Playing screens displayed normally.
+- Stages 2–4: **NOT RUN**.
+
 1. Repeat installation/launch.
 2. Repeat playback, progress, seek, pause/resume, next/previous, repeat, and shuffle.
 3. Verify library and lyrics screens.
