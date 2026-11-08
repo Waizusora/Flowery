@@ -202,6 +202,13 @@ Confirmed:
 4. Navigate between tracks.
 5. Expected: no crash, stuck progress, unintended silence, or persistent speed/pitch change.
 
+
+Continuation checkpoint (2026-11-08):
+- Repository review on `main` confirmed that `FloweryPlayer.seekTo()` submits a bounded seek request to the native AAudio playback session and rejects a negative native epoch. The playback loop also checks the output-scheduler status and reports the native seek-error detail when the scheduler fails.
+- This is a source-code inspection only. It does not demonstrate that a seek completes successfully on a physical device, and it does not change the existing **FAIL** result for speaker/AUX seeking.
+- No Android device-control or instrumentation session was available during this continuation, so the required installed-build retest could not be executed. **TEST 10 remains PARTIAL; seek retest is still required.**
+- Next controlled check: install the latest `main` build, start a track on the built-in speaker, seek to a middle position, and capture the exact Flowery playback error/diagnostic if audio stops. Repeat on AUX only after the speaker check passes. Then verify pause/resume and track navigation before proceeding to TEST 11.
+
 ### TEST 11 — Equalizer interaction and audio processing
 
 1. Open DSP/EQ.
