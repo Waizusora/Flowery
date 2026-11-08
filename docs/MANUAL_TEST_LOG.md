@@ -493,3 +493,10 @@ Physical-device retest after fix (2026-11-08; user-confirmed):
 - Scenario B — natural track completion with Repeat Off, using a track that was not the final visible item: **PASS**. No unexpected application closure was observed; queue completion behaved normally.
 - Scenario C — sequential selection of multiple different tracks: **PASS**. Audio and playback notification remained normal.
 - These results verify the reported reproduction scenarios on the user's device. They do not prove that every possible crash or service-termination path is eliminated.
+
+USB DAC Pause defect and fix (2026-11-08):
+- User reported that pressing Pause changed the UI icon to the paused state, but audio from the USB DAC continued playing continuously.
+- Source inspection confirmed that the PCM transport loop stopped polling new producer blocks while paused, but did not cancel isochronous USB transfers already submitted to libusb. The encoded AC-3 path called `drainTransport()` on pause, which explicitly waited for queued audio to finish rather than stopping it.
+- Fix committed: both PCM and encoded USB playback paths now call the existing synchronized USB-session `flush()` once when entering the paused state. This cancels and reaps queued endpoint transfers; the playback loop remains paused until resume. The PCM/encoded producer queues are retained for continuation, although a small amount of audio already handed to the transport may be discarded at the pause boundary.
+- Updated `UsbDacNative.kt` documentation to describe flush usage for pause as well as seek.
+- **Status: RETEST REQUIRED.** The code change has not yet been built or physically verified on the user's DAC. Do not mark Pause as PASS until the user confirms that audio stops promptly and resumes correctly.
