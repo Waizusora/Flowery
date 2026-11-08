@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media.session.MediaButtonReceiver
 import android.support.v4.media.MediaMetadataCompat
@@ -167,6 +168,7 @@ class PlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i("FloweryDiagnostics", "SERVICE_CREATE pid=${android.os.Process.myPid()}")
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
             publishState(message)
@@ -221,6 +223,7 @@ class PlaybackService : Service() {
                     if (uri != null && uri !in queue) queue.add(uri)
                     queueIndex = queue.indexOf(uri).coerceAtLeast(0)
                 }
+                Log.i("FloweryDiagnostics", "QUEUE_LOAD source=ACTION_PLAY size=${queue.size} index=$queueIndex repeat=$repeatMode shuffle=$shuffle")
                 startForeground(NOTIFICATION_ID, buildNotification())
                 playCurrent()
             }
@@ -239,6 +242,7 @@ class PlaybackService : Service() {
                 queuePlaylistOrders.clear()
                 queuePlaylistOrders.addAll(intent.getIntegerArrayListExtra(EXTRA_PLAYLIST_ORDERS).orEmpty())
                 queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+                Log.i("FloweryDiagnostics", "QUEUE_LOAD source=ACTION_QUEUE size=${queue.size} index=$queueIndex repeat=$repeatMode shuffle=$shuffle")
                 if (queue.isNotEmpty()) playCurrent()
             }
             ACTION_PAUSE -> pausePlayback()
@@ -361,7 +365,11 @@ class PlaybackService : Service() {
     }
 
     private fun playCurrent() {
-        val uriText = queue.getOrNull(queueIndex) ?: return
+        val uriText = queue.getOrNull(queueIndex) ?: run {
+            Log.e("FloweryDiagnostics", "PLAY_CURRENT_ABORT queueSize=${queue.size} index=$queueIndex; selected item is missing")
+            return
+        }
+        Log.i("FloweryDiagnostics", "PLAY_CURRENT index=$queueIndex queueSize=${queue.size} title=${queueTitles.getOrNull(queueIndex).orEmpty()} repeat=$repeatMode shuffle=$shuffle")
         if (!requestFocus()) {
             publishState("Playback could not start because audio focus was denied")
             return
@@ -397,6 +405,7 @@ class PlaybackService : Service() {
                 playbackState = PlaybackStateCompat.STATE_PLAYING
                 publishSessionState()
             } catch (error: Throwable) {
+                Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$queueIndex queueSize=${queue.size} title=$currentTitle", error)
                 publishState("Unable to load file: ${error.message}")
             }
         }
@@ -456,6 +465,7 @@ class PlaybackService : Service() {
     }
 
     private fun stopPlayback() {
+        Log.w("FloweryDiagnostics", "STOP_PLAYBACK index=$queueIndex queueSize=${queue.size} repeat=$repeatMode shuffle=$shuffle")
         player.stop()
         resumeAfterFocus = false
         hasAudioFocus = false
@@ -492,7 +502,10 @@ class PlaybackService : Service() {
     }
 
     private fun handleCompletion() {
-        when (val nextIndex = queueState.transition(queue.size, PlaybackQueueState.Action.COMPLETION)) {
+        val completedIndex = queueIndex
+        val nextIndex = queueState.transition(queue.size, PlaybackQueueState.Action.COMPLETION)
+        Log.i("FloweryDiagnostics", "TRACK_COMPLETION completedIndex=$completedIndex queueSize=${queue.size} nextIndex=$nextIndex repeat=$repeatMode shuffle=$shuffle")
+        when (nextIndex) {
             -2 -> {
                 player.stop()
                 playCurrent()
@@ -583,7 +596,13 @@ class PlaybackService : Service() {
         }
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.w("FloweryDiagnostics", "SERVICE_TASK_REMOVED index=$queueIndex queueSize=${queue.size} playbackState=$playbackState")
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        Log.w("FloweryDiagnostics", "SERVICE_DESTROY index=$queueIndex queueSize=${queue.size} playbackState=$playbackState")
         player.close { queueState.close() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()

@@ -370,3 +370,33 @@ Deferred until software playback tests are complete and compatible hardware is a
 - Update the test status and observed behavior; retain failure history rather than silently rewriting failures as passes.
 - When a fix is made, record its commit and mark the affected test **RETEST REQUIRED** until the user verifies it on an installed build.
 - Keep hardware-only tests deferred until software tests are complete.
+
+### TEST 18 — Unexpected application/service termination during playback
+
+**Status: RETEST REQUIRED — diagnostic instrumentation committed; root cause not yet established**
+
+User-reported observation (2026-11-08):
+- When a track finishes, Flowery sometimes closes and the music notification disappears at the same time.
+- The same unexpected closure has also occurred when selecting a track.
+- The missing notification suggests the foreground playback service or app process stopped. It does not distinguish an intentional app stop from an Android process kill, Java crash, native crash, or ANR.
+
+Source inspection:
+- The service removes its foreground notification and calls `stopSelf()` when native queue transition returns `-1`.
+- Native queue policy returns `-1` at the end of the loaded queue when Repeat is Off. This is expected only if the selected item is actually the final item in the loaded queue.
+- The activity builds the queue from the `folderTracks` list supplied by the selected library screen (or the full scanned list for the resume path). The actual queue size/index during the incident has not yet been captured.
+- The service declares `foregroundServiceType="mediaPlayback"` and currently returns `START_NOT_STICKY`; this does not prove Android caused the termination.
+
+Diagnostic instrumentation committed:
+- Added `FloweryDiagnostics` log events for service lifecycle/task removal, queue size/index, track start, natural completion transition, intentional stop, and playback-start exceptions.
+- On Android 11 (API 30+) app launch logs Android's recent `ApplicationExitInfo` reason/status/importance/PSS/RSS and a memory snapshot.
+- No queue policy, service restart policy, decoder, DSP, or output behavior was changed.
+- Capture instructions are in `docs/PLAYBACK_DIAGNOSTICS.md`.
+
+Retest procedure:
+1. Install the diagnostic build and clear logcat.
+2. Play a track that is not the final visible item in its folder.
+3. If Flowery closes, relaunch it once to record historical process-exit details.
+4. Capture `FloweryDiagnostics`, `AndroidRuntime`, and `ActivityManager` logcat records.
+5. Include whether Repeat was Off/All/One and the active output route.
+
+Do not classify the cause or mark this test PASS until queue size/index and process-exit/service lifecycle evidence are reviewed.

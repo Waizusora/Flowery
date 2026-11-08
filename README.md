@@ -79,3 +79,5 @@ Known limitations include:
 
 See the repository's [LICENSE](LICENSE) file and the applicable licenses of third-party dependencies before redistributing Flowery. Dependency notices and the Noto Sans SIL Open Font License 1.1 text are provided in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [LICENSES/NotoSans-OFL.txt](LICENSES/NotoSans-OFL.txt).
 \n\n### Enhanced LRC playback\n\nThe native lyrics parser recognizes enhanced angle-bracket word timestamps as well as standard line timestamps. Timestamp markers are hidden from displayed text and drive word highlighting; the active lyric line remains centered during playback. Valid `[offset:+/-milliseconds]` metadata is applied to line and word timestamps.\n
+
+Playback termination diagnostics and logcat capture instructions are documented in [docs/PLAYBACK_DIAGNOSTICS.md](docs/PLAYBACK_DIAGNOSTICS.md).

@@ -1,5 +1,6 @@
 package com.waizusora.flowery
 
+import android.app.ActivityManager
 import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -12,6 +13,7 @@ import android.os.Bundle
 import android.os.Build
 import android.hardware.usb.UsbDevice
 import android.util.Base64
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -96,6 +98,23 @@ import org.json.JSONArray
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
+    private fun logPreviousProcessExitReasons() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            Log.i("FloweryDiagnostics", "PROCESS_START api=${Build.VERSION.SDK_INT}; historical exit reasons require API 30+")
+            return
+        }
+        val activityManager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
+        val memory = ActivityManager.MemoryInfo().also(activityManager::getMemoryInfo)
+        Log.i("FloweryDiagnostics", "PROCESS_START pid=${android.os.Process.myPid()} availableMemoryBytes=${memory.availMem} lowMemory=${memory.lowMemory} memoryThresholdBytes=${memory.threshold}")
+        runCatching { activityManager.getHistoricalProcessExitReasons(packageName, 0, 5) }
+            .onSuccess { exits ->
+                exits.forEach { exit ->
+                    Log.w("FloweryDiagnostics", "PREVIOUS_PROCESS_EXIT timestamp=${exit.timestamp} reason=${exit.reason} status=${exit.status} importance=${exit.importance} pssKb=${exit.pss} rssKb=${exit.rss} description=${exit.description.orEmpty()}")
+                }
+                if (exits.isEmpty()) Log.i("FloweryDiagnostics", "PREVIOUS_PROCESS_EXIT none reported by Android")
+            }
+            .onFailure { error -> Log.e("FloweryDiagnostics", "Unable to read historical process exit reasons", error) }
+    }
     @Suppress("DEPRECATION")
     private fun Intent.usbDeviceExtra(): UsbDevice? =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -238,6 +257,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        logPreviousProcessExitReasons()
         androidx.core.content.ContextCompat.registerReceiver(
             this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION),
             androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
