@@ -160,7 +160,7 @@ class MainActivity : ComponentActivity() {
     }
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
-    private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
+    private val equalizerGains = mutableStateListOf(0f, 0f, 0f)
     private var equalizerEnabled by mutableStateOf(true)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
@@ -244,8 +244,11 @@ class MainActivity : ComponentActivity() {
         )
         getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
             .putBoolean("usb_diagnostic_recording", false).apply()
-        equalizerEnabled = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-            .getBoolean("equalizer_enabled", true)
+        val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+        equalizerEnabled = audioPreferences.getBoolean("equalizer_enabled", true)
+        equalizerGains[0] = audioPreferences.getFloat("equalizer_bass_db", 0f).coerceIn(-12f, 12f)
+        equalizerGains[1] = audioPreferences.getFloat("equalizer_mid_db", 0f).coerceIn(-12f, 12f)
+        equalizerGains[2] = audioPreferences.getFloat("equalizer_treble_db", 0f).coerceIn(-12f, 12f)
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -284,11 +287,20 @@ class MainActivity : ComponentActivity() {
                 equalizerGains = equalizerGains,
                 equalizerEnabled = equalizerEnabled,
                 onBandGain = { index, gain ->
-                    equalizerGains[index] = gain
+                    require(index in 0..2) { "The three-band equalizer index must be Bass, Mid, or Treble" }
+                    val boundedGain = gain.coerceIn(-12f, 12f)
+                    equalizerGains[index] = boundedGain
+                    val preferenceKey = when (index) {
+                        0 -> "equalizer_bass_db"
+                        1 -> "equalizer_mid_db"
+                        else -> "equalizer_treble_db"
+                    }
+                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
+                        .putFloat(preferenceKey, boundedGain).apply()
                     sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
                         putExtra(
                             PlaybackService.EXTRA_GAINS,
-                            if (equalizerEnabled) equalizerGains.toFloatArray() else FloatArray(31)
+                            if (equalizerEnabled) ThreeBandEqualizer.expand(equalizerGains) else FloatArray(31)
                         )
                     }
                 },
@@ -299,7 +311,7 @@ class MainActivity : ComponentActivity() {
                     sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
                         putExtra(
                             PlaybackService.EXTRA_GAINS,
-                            if (enabled) equalizerGains.toFloatArray() else FloatArray(31)
+                            if (enabled) ThreeBandEqualizer.expand(equalizerGains) else FloatArray(31)
                         )
                     }
                 },
@@ -860,7 +872,6 @@ class MainActivity : ComponentActivity() {
 
 }
 
-internal val ISO_BANDS = listOf("20", "25", "31.5", "40", "50", "63", "80", "100", "125", "160", "200", "250", "315", "400", "500", "630", "800", "1k", "1.25k", "1.6k", "2k", "2.5k", "3.15k", "4k", "5k", "6.3k", "8k", "10k", "12.5k", "16k", "20k")
 private val Gold = Color(0xFFE0E0E0)
 private val DeepGold = Color(0xFF777B82)
 private val Ink = Color(0xFF29251B)

@@ -268,6 +268,13 @@ Do not mark the full EQ test PASS until the remaining checks are completed. The 
 - **Retest required:** install the updated build and compare a single-band boost/cut at low, mid, and high frequencies. Check for excessive overlap or tonal coloration, verify EQ bypass still removes the effect, and confirm playback remains free of dropouts. The source/test change is not a substitute for listening verification. This is a subjective listening observation and does not by itself establish an incorrect dB implementation. Further inspection of the Rust peaking-filter coefficient calculation, band center frequencies/Q, and gain-update path is required before changing gain behavior.
 - TEST 11 remains PARTIAL until the perceived strength is investigated and the complete band/persistence checks are performed. The latest user retest confirms that the queue-latency fix, bypass control, and playback stability work on the tested configuration.
 
+Design revision (2026-11-08; user-approved):
+- The DSP UI is simplified from 31 visible sliders to three vertical controls: **Bass, Mid, and Treble**. The slider style is retained.
+- The three controls are mapped onto all 31 native ISO preferred center frequencies. Bass remains flat through 200 Hz and smoothly transitions to Mid by 500 Hz; Mid remains flat from 500 Hz through 2 kHz and smoothly transitions to Treble by 5 kHz; Treble remains flat above 5 kHz. Interpolation uses log-frequency smoothstep.
+- The native filters are restored from Q=3.0 to the strict ISO one-third-octave Q relation, approximately **4.318**. The 31 ISO center frequencies and ±12 dB per-band gain clamp remain unchanged.
+- Bass, Mid, and Treble values are persisted independently. EQ ON/OFF continues to bypass or restore the mapped 31-band gain array without discarding the three control values.
+- The prior Q=3.0 listening retest does not validate this revised response. **Retest required** after installing the updated build: compare Bass, Mid, and Treble independently at positive and negative gain; verify smooth tonal transitions, bypass, persisted values, prompt response, and absence of dropouts. TEST 11 remains PARTIAL until the user confirms these checks.
+
 ### TEST 12 — Lyrics display
 
 1. Play a track with a known local `.lrc` file.

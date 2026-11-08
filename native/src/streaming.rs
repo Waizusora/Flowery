@@ -28,9 +28,8 @@ use symphonia::core::probe::Hint;
 
 const FREQUENCIES: [f32; 31] = [20.0,25.0,31.5,40.0,50.0,63.0,80.0,100.0,125.0,160.0,200.0,250.0,315.0,400.0,500.0,630.0,800.0,1000.0,1250.0,1600.0,2000.0,2500.0,3150.0,4000.0,5000.0,6300.0,8000.0,10000.0,12500.0,16000.0,20000.0];
 
-// A lower Q widens each band's response around its ISO center frequency.
-// Q=3.0 is intentionally broader than the strict one-third-octave Q (~4.318).
-const EQ_BAND_Q: f32 = 3.0;
+// ISO one-third-octave bandwidth: Q = 1 / (2^(1/6) - 2^(-1/6)).
+const EQ_BAND_Q: f32 = 4.318_473;
 
 #[derive(Clone, Copy, Default)]
 struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
@@ -1362,24 +1361,16 @@ mod tests {
     }
 
     #[test]
-    fn equalizer_band_response_is_wider_than_strict_one_third_octave() {
+    fn equalizer_uses_strict_iso_one_third_octave_q() {
+        let expected_q = 1.0
+            / (2.0_f32.powf(1.0 / 6.0) - 2.0_f32.powf(-1.0 / 6.0));
+        assert!((EQ_BAND_Q - expected_q).abs() < 0.001);
+
         let center_hz = 1_000.0;
         let sample_rate = 48_000.0;
         let coefficients = make_coefficients(center_hz, 12.0, sample_rate as usize);
         let center_gain = biquad_magnitude_db(coefficients, center_hz, sample_rate);
-        let sixth_octave_gain = biquad_magnitude_db(
-            coefficients,
-            center_hz * 2.0_f32.powf(1.0 / 6.0),
-            sample_rate,
-        );
-        let third_octave_gain = biquad_magnitude_db(
-            coefficients,
-            center_hz * 2.0_f32.powf(1.0 / 3.0),
-            sample_rate,
-        );
         assert!((center_gain - 12.0).abs() < 0.1, "center gain should match the requested dB value");
-        assert!(sixth_octave_gain > 7.0, "the response should remain strong across a sixth octave");
-        assert!(third_octave_gain > 3.0, "the response should extend beyond the strict one-third-octave profile");
     }
 
     #[test]
