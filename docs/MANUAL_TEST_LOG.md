@@ -188,7 +188,7 @@ Do not claim support for every possible format based only on this sample.
 
 ### TEST 10 — Playback stability
 
-**Status: PARTIAL — continuous playback and seek passed on user retest; pause/resume and track navigation remain untested (2026-11-08)**
+**Status: PASS — seek, pause/resume, and next/previous confirmed by user (2026-11-08)**
 
 Confirmed:
 - 10-minute continuous playback: PASS. User reported normal audio with no interruption.
@@ -223,7 +223,14 @@ Retest after the decode-worker polling fix (2026-11-08):
 - Diagnostic file received: `Waizusora/Log/flowery-usb-diagnostic-1794112393872.txt`, recorded at 2026-11-08 11:33:13 +0700. It identifies the FLAC track `As I Lay Dying - The Darkest Nights` (duration 231826 ms) and a final snapshot of `playing=false`, `positionMs=68526`, route status `Paused`.
 - The diagnostic shows three Android-route FLAC play requests and a shared 44.1 kHz AAudio stream (actual device ID 910). No USB DAC was detected; consistent with the earlier speaker-route clarification, this is not evidence of a USB DAC fault and this file does not test direct USB output.
 - **Diagnostic limitation:** sampled playback snapshots mostly report `positionMs=0` and `isPlaying=false`; the final header reports a paused position of 68526 ms. The file contains no explicit seek-request/completion event, and its AAudio telemetry reports `callbackCount=0` and `framesWritten=0` while queued PCM remains near capacity. Consequently, this diagnostic does not independently prove audible output or seek completion. The user's successful manual retest is recorded as the seek result; the telemetry discrepancy remains an observation, not a confirmed playback defect.
-- Pause/resume and next/previous track navigation: NOT TESTED. TEST 10 therefore remains PARTIAL.
+- At the time of this diagnostic review, pause/resume and next/previous had not yet been confirmed. This historical status is superseded by the user-confirmed retest below.
+
+Final manual retest (2026-11-08; user-confirmed):
+- **Seek: PASS.** Moving the playback position successfully seeks to the selected position.
+- **Pause/resume: PASS.** Pause stops playback and resume continues playback successfully.
+- **Next/previous: PASS.** Next advances to the next track and Previous returns to the preceding track successfully.
+- These results complete the playback-stability checks in TEST 10. Earlier seek failures and diagnostic limitations above are retained as historical records; they are superseded for the tested build/configuration by this successful user retest.
+- No claim is made here about USB DAC or exclusive/bit-perfect output; those remain covered by TEST 16.
 
 ### TEST 11 — Equalizer interaction and audio processing
 
