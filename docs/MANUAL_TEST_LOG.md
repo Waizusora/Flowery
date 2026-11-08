@@ -671,3 +671,20 @@ Stage 2 — non-USB playback regression (user-confirmed, 2026-11-08): **PASS**
 - The USB DAC was not part of this stage. Direct USB playback remains under the separate safety hold recorded above.
 
 **Current result:** TEST 21 **PASS**. Both the Settings > Audio UI checks and the non-USB playback regression are user-confirmed. This result does not change or clear any USB DAC transport/safety status.
+
+
+### Direct USB safety investigation — playback lifecycle and Pause dispatch (2026-11-09)
+
+Source review at main commit `045d23d` identified a lifecycle-dispatch defect that matches the reported Pause behavior:
+
+- `PlaybackCoordinator` transitioned its native lifecycle controller to `PLAYING` only when `FloweryPlayer` emitted a status beginning with `Playing`. Both direct USB playback routes instead emit route-specific startup statuses beginning with `USB exclusive` and do not emit a `Playing` status before entering their USB playback loops.
+- The native lifecycle controller therefore remained in `PREPARING` during direct USB playback. `PlaybackCoordinator.pause()` only forwarded Pause while its state was `PLAYING`, so the Pause command could be ignored even though `PlaybackService` updated the user-facing playback state to Paused. This is a confirmed source-level explanation for the UI/audio state mismatch; it does not, by itself, prove the sole cause of the reported sustained hum.
+- Corrected the coordinator callback so `USB exclusive` startup statuses also produce the lifecycle `EVENT_START`. The direct USB path has already moved its native playback session into the running phase and enabled its USB route before emitting these statuses. This allows the existing Pause/Resume guards to forward commands to the USB worker.
+- PCM pause handling checks the paused flag at the playback-loop boundary and flushes the endpoint after the current `writePcm` call returns. Therefore, Pause may wait for an in-progress native write to finish before the flush is reached. The native writer uses a 1,500 ms no-progress watchdog and bounded in-flight URB scheduling; this source inspection does not establish a worst-case audible tail under every controller behavior.
+- Repeated-start review: `PlaybackService` submits `playCurrent()` work to a single-thread executor. `FloweryPlayer.play()` signals stop on the previous worker, starts the replacement worker, and makes that worker join the previous worker for up to 4,000 ms before opening its next source/session. This is evidence against an intentional parallel-session start in the normal path, but it is not runtime proof that every teardown race is resolved.
+- Native USB teardown calls `abort_in_flight()` before stopping the event thread and releasing the alternate setting/interfaces. It waits up to 2,000 ms for cancellation callbacks; if transfers cannot be reaped, it retains the session rather than freeing buffers still potentially referenced by the host controller. Kotlin retries native close up to three times. This is conservative resource-lifetime handling, but a failed reap can leave the connection/session retained and does not establish acoustic safety.
+- No USB DAC was connected and no physical USB playback test was performed during this investigation. The packet short-completion at 16/44.1 kHz and final-drain stall at 24/96 kHz remain separate unresolved transport defects.
+
+**Code change:** commit `5e05743` — `fix: transition direct USB playback into active lifecycle state`.
+
+**Status: SOURCE-LEVEL PAUSE DISPATCH DEFECT FIXED; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.** Do not reconnect the DAC or perform Direct USB playback tests until the packet/transport and hum investigations are resolved and mitigation is reviewed.
