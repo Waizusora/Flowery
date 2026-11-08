@@ -209,6 +209,14 @@ Continuation checkpoint (2026-11-08):
 - No Android device-control or instrumentation session was available during this continuation, so the required installed-build retest could not be executed. **TEST 10 remains PARTIAL; seek retest is still required.**
 - Next controlled check: install the latest `main` build, start a track on the built-in speaker, seek to a middle position, and capture the exact Flowery playback error/diagnostic if audio stops. Repeat on AUX only after the speaker check passes. Then verify pause/resume and track navigation before proceeding to TEST 11.
 
+Diagnostic evidence received (2026-11-08; source: `Waizusora/Log/flowery-usb-diagnostic-1794111375694.txt`, recorded at 2026-11-08 11:16:15 +0700):
+- The diagnostic captured two FLAC playback requests. Both ended with `IllegalStateException: The Rust audio decode worker is unavailable.` (11:16:02.935 and 11:16:07.371).
+- The track metadata was available (`durationMs=231826`), but playback remained stopped at `positionMs=0`; the final snapshot reported `playing=false`.
+- USB detection reported `connected=false`, `permissionGranted=false`, and `No USB Audio Class DAC detected`. Direct USB transport was unavailable and the app selected the Android-route fallback. This run therefore does not test DAC playback or exclusive USB output.
+- AAudio telemetry briefly reported a shared 44.1 kHz stream on actual device ID 3, but `callbackCount=0`, `framesWritten=0`, and hardware frame/timestamp counters remained zero. This is not evidence of successful audio output.
+- The log narrows the immediate failure to Rust decode-worker availability before successful audio production. It does not establish the underlying cause (for example, worker startup, native session lifecycle, or decoder initialization); inspect the Rust/JNI startup and error propagation before changing the diagnosis.
+- No code fix or successful physical-device retest is established by this diagnostic. TEST 10 remains PARTIAL; seek remains FAIL pending a controlled retest. Pause/resume and track navigation remain NOT TESTED.
+
 ### TEST 11 — Equalizer interaction and audio processing
 
 1. Open DSP/EQ.
