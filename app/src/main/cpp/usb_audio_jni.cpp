@@ -127,6 +127,12 @@ struct TransportFailure {
     std::vector<unsigned int> requested_packet_lengths;
     size_t in_flight_at_failure = 0;
     long long idle_ms_at_failure = 0;
+    uint64_t submitted_at_failure = 0;
+    uint64_t callbacks_at_failure = 0;
+    uint64_t event_loops_at_failure = 0;
+    int event_loop_error_at_failure = LIBUSB_SUCCESS;
+    long long event_loop_idle_ms_at_failure = -1;
+    bool snapshot_captured = false;
 };
 
 void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
@@ -204,6 +210,23 @@ void record_failure(TransportFailure* failure, const char* reason, int code) {
     failure->failed = true;
     failure->reason = reason;
     failure->code = code;
+}
+
+// Capture counters before cancellation callbacks can change the observed totals.
+void snapshot_transport_failure(const UsbAudioSession* session, TransportFailure* failure) {
+    if (failure->snapshot_captured) return;
+    failure->submitted_at_failure = session->submitted_transfer_count.load(std::memory_order_acquire);
+    failure->callbacks_at_failure = session->completed_transfer_callback_count.load(std::memory_order_acquire);
+    failure->event_loops_at_failure = session->event_loop_iteration_count.load(std::memory_order_acquire);
+    failure->event_loop_error_at_failure = session->event_loop_error.load(std::memory_order_acquire);
+    const int64_t last_ns = session->last_event_loop_ns.load(std::memory_order_acquire);
+    if (last_ns > 0) {
+        const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        failure->event_loop_idle_ms_at_failure =
+            std::max<int64_t>(0, (now_ns - last_ns) / 1000000LL);
+    }
+    failure->snapshot_captured = true;
 }
 
 // Owns libusb event processing on a dedicated thread. Transfer submission and
@@ -507,17 +530,11 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.scheduled_start_frame, failure.transfer_flags, failure.device_speed,
         packet_lengths, session->interval_us, session->sample_rate,
         session->endpoint,
-        static_cast<unsigned long long>(session->submitted_transfer_count.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(session->completed_transfer_callback_count.load(std::memory_order_relaxed)),
-        static_cast<unsigned long long>(session->event_loop_iteration_count.load(std::memory_order_relaxed)),
-        session->event_loop_error.load(std::memory_order_acquire),
-        [&session]() -> long long {
-            const int64_t last_ns = session->last_event_loop_ns.load(std::memory_order_acquire);
-            if (last_ns <= 0) return -1;
-            const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            return std::max<int64_t>(0, (now_ns - last_ns) / 1000000LL);
-        }(),
+        static_cast<unsigned long long>(failure.submitted_at_failure),
+        static_cast<unsigned long long>(failure.callbacks_at_failure),
+        static_cast<unsigned long long>(failure.event_loops_at_failure),
+        failure.event_loop_error_at_failure,
+        failure.event_loop_idle_ms_at_failure,
         static_cast<unsigned long long>(kTargetQueuedAudioUs), kMaxUrbsInFlight);
     jclass exception = env->FindClass("java/lang/IllegalStateException");
     if (exception != nullptr) env->ThrowNew(exception, message);
@@ -1008,6 +1025,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     }
 
     if (failure.failed) {
+        snapshot_transport_failure(session, &failure);
         abort_in_flight(session);
         throw_transport_failure(env, session, failure);
         return -1;
@@ -1089,6 +1107,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         frame_packets.push_back(0); // UAC1 transfer delimiter between encoded frames
         TransportFailure frame_failure;
         if (!submit_encoded_urb(session, frame_packets, frame_bytes, &frame_failure)) {
+            snapshot_transport_failure(session, &frame_failure);
             throw_transport_failure(env, session, frame_failure);
             return -1;
         }
@@ -1096,6 +1115,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (!wait_for_progress(session, &frame_failure)) break;
         }
         if (frame_failure.failed) {
+            snapshot_transport_failure(session, &frame_failure);
             abort_in_flight(session);
             throw_transport_failure(env, session, frame_failure);
             return -1;
@@ -1176,6 +1196,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         session->encoded_feedback_phase = feedback_phase;
     }
     if (failure.failed) {
+        snapshot_transport_failure(session, &failure);
         abort_in_flight(session);
         throw_transport_failure(env, session, failure);
         return -1;
@@ -1198,6 +1219,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     if (session->encoded_mode == 1) {
         while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
         if (failure.failed) {
+            snapshot_transport_failure(session, &failure);
             abort_in_flight(session);
             throw_transport_failure(env, session, failure);
             return -1;
@@ -1222,6 +1244,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         }
         while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
         if (failure.failed) {
+            snapshot_transport_failure(session, &failure);
             abort_in_flight(session);
             throw_transport_failure(env, session, failure);
             return -1;
@@ -1250,6 +1273,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     }
 
     if (failure.failed) {
+        snapshot_transport_failure(session, &failure);
         abort_in_flight(session);
         throw_transport_failure(env, session, failure);
         return -1;
