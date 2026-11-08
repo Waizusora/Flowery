@@ -597,3 +597,27 @@ USB DAC direct-route FLAC 16-bit / 44.1 kHz retest (2026-11-08; user-reported):
 - The new observation confirms that the failure is not limited to 24-bit / 96 kHz content. It does not yet identify whether the direct USB session fails during device/interface initialization, alternate-setting or sample-rate setup, the first PCM submission, or a subsequent transport error.
 - No diagnostic capture for this exact immediate-stop attempt has been reviewed yet. Do not infer a decoder-format incompatibility or change transport behavior until the direct USB error and session events are captured.
 - **Status: DIRECT USB FLAC 16/44.1 FAIL — IMMEDIATE STOP (USER-REPORTED); ROOT CAUSE UNKNOWN; DIAGNOSTIC CAPTURE REQUIRED.** Keep the USB software volume at the previously verified safe setting and avoid prolonged listening until output level and transport stability are confirmed.
+
+Three-route USB DAC diagnostic comparison from latest CI build (2026-11-08; user-supplied files in `Waizusora/Log`):
+
+1. `flowery-usb-diagnostic-24bit96shared.txt` (user label: `usb-diagnostic-shared24bit`):
+   - Flowery USB permission was not granted; the log reports `usbDirectAvailable=false` and `fallback=android_route`.
+   - AAudio reports 96,000 Hz and `SHARED` mode. The user reports audible delay/stutter.
+   - This is Android-routed USB audio, not Flowery's direct libusb session. The log does not show direct USB endpoint transfers or a direct-transport error.
+2. `flowery-usb-diagnostic-permission16bit44.txt`:
+   - USB permission was granted and the direct path entered three times for FLAC PCM at 44,100 Hz, stereo, `PCM_INTEGER_S16_LE`, endpoint `0x04`.
+   - Descriptor snapshot identifies UAC2 interface 2, alternate setting 1 as 16-bit stereo PCM, 2-byte subslot, 196-byte maximum packet, 125 us service interval, adaptive synchronization. The descriptor does not advertise a rate list; clock-source GET_RANGE requests were unavailable.
+   - All three attempts fail within approximately 0.4 seconds of direct-session entry with the same error: `reason=packet_error`, transfer status COMPLETED, packet status COMPLETED, packet index 8, `actual_length=20`, `requested_length=24`, at 44,100 Hz. Only seven URBs had been submitted. Decoder configuration completed successfully at 44.1 kHz and selected integer S16 PCM before the transport error.
+   - This is a repeatable short isochronous OUT packet report, not a decoder EOF or final-drain timeout. The log does not establish whether the short packet originates in host-controller/USBFS reporting, endpoint scheduling, or packet construction/timing. Do not ignore the short packet or mark the session healthy without evidence; doing so could conceal dropped PCM data.
+3. `flowery-usb-diagnostic-1794150606280.txt` (user label: 24-bit / 96 kHz):
+   - USB permission was granted; direct USB path entered at 96,000 Hz, stereo, endpoint `0x04`.
+   - The decoder produced 623 chunks and 20,397,862 frames, then reported `DECODER_EOF`.
+   - Final transport drain failed with `LIBUSB_ERROR_TIMEOUT (-7)`: three URBs outstanding and no progress for 1,503 ms. The event loop was still running (`event_loop_error=0`, `event_loop_idle_ms=0`), with the 32 ms queue target and 8-URB cap active.
+   - No `DIRECT_USB_FINISHED` event was emitted; the player reports a playback error and the queue cannot advance normally. This reproduces the previously observed end-of-track stall. The file reports 96,000 Hz, not 97,000 Hz.
+   
+Cross-test conclusions:
+- The 16/44.1 shared-route success from the earlier diagnostic does not predict direct USB behavior: that earlier run had no Flowery USB permission and used AAudio SHARED.
+- The latest direct USB 16/44.1 failure occurs at the beginning of transfer and has a different signature from the 24/96 final-drain stall. The problem is therefore not confined to 24-bit/96 kHz files, and the two failures should be investigated separately.
+- The 24-bit/96 kHz shared-route log also reports audible stutter by user observation, but its diagnostic cannot attribute that to libusb because direct USB was unavailable.
+- Source review confirms the current native reaper treats any isochronous packet whose `actual_length` differs from its requested `length` as a fatal `packet_error`. libusb documents per-packet actual length as the amount actually transferred and notes that an isochronous transfer may have overall status COMPLETED while individual packet descriptors carry the meaningful completion status/length. The short report must be investigated rather than suppressed.
+- **Status: DIRECT USB 16/44.1 FAIL — REPRODUCIBLE EARLY SHORT-PACKET ERROR; DIRECT USB 24/96 FAIL — FINAL-DRAIN STALL; ANDROID SHARED 24/96 — USER-REPORTED STUTTER.** No transport fix is claimed. Next engineering investigation: trace the first URB's per-packet requested/actual lengths, frame-phase progression, endpoint descriptor fields, and host-controller completion timing before changing packetization or failure policy.
