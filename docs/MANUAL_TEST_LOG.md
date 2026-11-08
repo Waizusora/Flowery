@@ -390,6 +390,8 @@ Initial USB DAC test (2026-11-08; user-confirmed):
 - User perceived a small, persistent delay during playback: **ISSUE REPORTED; cause not established**.
 - Selecting a track took approximately 3 seconds before audio began: **ISSUE REPORTED; cause not established**.
 - Output volume was perceived as excessively loud: **SAFETY-RELEVANT ISSUE; further volume testing paused**. Do not increase volume until the active hardware/software volume path is verified.
+- User confirmed the DAC has **no physical volume buttons or knob**. Software volume is therefore required for safe level control on this device.
+- Source inspection: the per-device USB software-volume default is 20%, but previously saved values are restored and can be higher. The current saved value and the value actually applied during this test have not yet been captured.
 
 These observations confirm that audio is reaching the connected DAC, but they do not establish bit-perfect output, exclusive ownership, sample-rate preservation, or correct volume control. The delay and excessive volume require investigation before proceeding with the remaining TEST 16 checks.
 
