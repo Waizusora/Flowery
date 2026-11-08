@@ -52,7 +52,16 @@ class OutputVolumeController(context: Context) {
         preferences.getFloat(key(deviceKey), 0.20f).coerceIn(0f, 1f)
 
     fun setUsbVolume(deviceKey: String, fraction: Float) {
-        preferences.edit().putFloat(key(deviceKey), fraction.coerceIn(0f, 1f)).apply()
+        val normalized = fraction.coerceIn(0f, 1f)
+        // Volume is a safety-critical setting for USB DACs without hardware controls.
+        // Persist synchronously so a rapid track transition or service teardown cannot
+        // leave the previous default value to be restored by the next USB session.
+        check(preferences.edit().putFloat(key(deviceKey), normalized).commit()) {
+            "Unable to persist USB DAC software volume."
+        }
+        check(usbVolume(deviceKey) == normalized) {
+            "Persisted USB DAC software volume does not match the requested value."
+        }
     }
 
     private fun key(deviceKey: String) = "usb_volume_" + deviceKey.hashCode().toUInt().toString(16)
