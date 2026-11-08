@@ -641,3 +641,12 @@ USB Direct code-only investigation — PCM packet phase and completion telemetry
 - The user reports that the loud hum continued after pressing Pause and stopped only after physically disconnecting the DAC. Do not ask for or perform another physical USB Direct test. Treat this as a safety-critical fault; code/log-only investigation remains mandatory.
 - Next code-only action: add bounded failure telemetry for each submitted URB (sequence, packet count, frame phase before/after planning, and requested lengths around the failing packet), then review URB scheduling flags/start-frame behavior and the UAC2 adaptive endpoint's clock relationship. No transport fix or safety clearance is claimed by this note.
 - **Status: SAFETY HOLD — DIRECT USB OUTPUT MUST NOT BE PHYSICALLY RETESTED.**
+
+
+USB Direct diagnostic instrumentation update (2026-11-08):
+
+- Native PCM URB metadata now records the requested packet-length vector, packet count, fractional frame phase before and after planning, endpoint device speed, libusb transfer flags, and the host-scheduled start-frame value when a packet completion mismatch is detected.
+- The thrown transport diagnostic includes the requested packet lengths surrounding the failed packet. This is diagnostic-only: packet sizing, transfer scheduling, completion validation, cancellation policy, and playback routing are unchanged.
+- The new fields are intended to determine whether the reported sequence 3 / packet 8 mismatch is already present in Flowery's packet plan or appears only after host-controller submission. They also provide evidence for reviewing scheduling phase and endpoint timing.
+- No DAC was connected and no physical USB test was performed for this change. Compilation/CI status must be checked independently; this change does not resolve the hum and does not lift the safety hold.
+- **Status: CODE-ONLY DIAGNOSTIC CHANGE; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
