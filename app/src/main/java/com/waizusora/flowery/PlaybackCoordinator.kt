@@ -31,11 +31,7 @@ internal class PlaybackCoordinator(
     }
     private val engine = FloweryPlayer(context) { message ->
         if (!closed.get()) when {
-            // Direct USB startup reports route-specific progress messages instead of
-            // "Playing". Treat those messages as the start event so lifecycle-gated
-            // Pause/Resume commands reach the USB playback worker.
-            message.startsWith("Playing") || message.startsWith("USB exclusive") ->
-                transition(EVENT_START)
+            message.startsWith("Playing") -> transition(EVENT_START)
             message.startsWith("Paused") -> transition(EVENT_PAUSE)
             message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
                 transition(EVENT_FAIL)
