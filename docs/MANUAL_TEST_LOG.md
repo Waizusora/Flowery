@@ -234,7 +234,7 @@ Final manual retest (2026-11-08; user-confirmed):
 
 ### TEST 11 — Equalizer interaction and audio processing
 
-**Status: PARTIAL — audible response confirmed; effect strength and latency need investigation**
+**Status: PARTIAL — response latency and bypass verified; perceived EQ strength still needs investigation**
 
 Manual observation (user-confirmed, 2026-11-08):
 - The user raised and lowered an individual EQ band to **+12 dB** and **-12 dB** during playback.
@@ -262,7 +262,9 @@ Do not mark the full EQ test PASS until the remaining checks are completed. The 
 - Source inspection also found that Android-route playback updates the Rust streaming decoder's EQ gains on the decode worker, before it reads and queues subsequent PCM chunks. PCM already decoded and placed in the output ring buffer retains the old EQ processing; changing decoder coefficients cannot retroactively change those queued frames. The latest supplied playback diagnostic showed the output queue near 131072 frames. At 44.1 kHz, 131072 frames represent approximately 2.97 seconds of audio, which closely matches the user's observed approximately 3-second delay. This is a strong, evidence-based explanation for the delay, but the exact queue occupancy at the moment of the EQ adjustment was not captured, so it is not yet proven as the sole cause.
 - Implementation update (2026-11-08): the Rust AAudio decode producer now caps queued PCM to approximately 250 ms at normal music sample rates, while retaining the larger ring as spare capacity. The output scheduler starts after an approximately 100 ms prebuffer. This prevents the producer from filling nearly three seconds of already-processed PCM ahead of playback. Rust policy tests cover queue-target and low-water calculations.
 - Implementation update (2026-11-08): the DSP screen now has an EQ enable/bypass switch. Disabling EQ sends a flat gain configuration to the playback service; the 31 slider values remain visible and are retained in the UI, and enabling EQ reapplies those values. The enabled state is saved in app preferences.
-- Verification status: source changes and native policy tests are committed, but this environment has not run an Android device test. **TEST 11 remains PARTIAL / RETEST REQUIRED** until the user installs the new build and confirms that EQ changes become audible promptly, that OFF/ON bypass works, and that playback has no underruns or dropouts. USB DAC behavior is not covered by this speaker/AUX change.
+- User retest after the latency/bypass changes (2026-11-08): **response latency: PASS** (EQ changes are audible promptly); **bypass: PASS** (the user can hear the difference between EQ enabled and disabled); **playback stability: PASS** (the user reports no dropouts or interruptions during this test). The route was not explicitly restated in this retest; USB DAC operation is not claimed.
+- Remaining finding: **EQ effect strength is still perceived as too weak**, including when using the available positive gain adjustment. This is a subjective listening observation and does not by itself establish an incorrect dB implementation. Further inspection of the Rust peaking-filter coefficient calculation, band center frequencies/Q, and gain-update path is required before changing gain behavior.
+- TEST 11 remains PARTIAL until the perceived strength is investigated and the complete band/persistence checks are performed. The latest user retest confirms that the queue-latency fix, bypass control, and playback stability work on the tested configuration.
 
 ### TEST 12 — Lyrics display
 
