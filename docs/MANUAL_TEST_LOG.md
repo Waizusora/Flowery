@@ -318,6 +318,14 @@ Retest required:
 
 ### TEST 13 — Library update and folder management
 
+**Status: PASS — user-confirmed (2026-11-08)**
+
+Manual result:
+- The user confirmed the folder/library update test works normally.
+- Result recorded as PASS based on the user's report. Individual sub-step observations (second folder, update scan, newly added file, duplicate handling, folder removal, and source-file preservation) were not reported separately.
+
+Test procedure:
+
 1. Add a second music folder.
 2. Run an update scan.
 3. Add a new audio file to an included folder and run update scan again.
