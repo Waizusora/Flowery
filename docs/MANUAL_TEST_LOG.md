@@ -378,6 +378,21 @@ Remaining procedure:
 
 ### TEST 16 — USB DAC and exclusive output
 
+Initial USB DAC test (2026-11-08; user-confirmed):
+
+- USB DAC detected by Flowery: **PASS**.
+- Android USB permission prompt appeared and permission was granted: **PASS**.
+- DAC was not shown in Now Playing: **NOT VERIFIED / UI GAP**. No Bit-perfect status was visible there.
+- Audio output through the USB DAC: **PASS**.
+- Built-in phone speaker remained silent during USB DAC playback: **PASS**.
+- Playback continued without audible clicks, pops, crackling, or dropouts during the observed interval: **PASS**.
+- Playback progress advanced normally: **PASS**.
+- User perceived a small, persistent delay during playback: **ISSUE REPORTED; cause not established**.
+- Selecting a track took approximately 3 seconds before audio began: **ISSUE REPORTED; cause not established**.
+- Output volume was perceived as excessively loud: **SAFETY-RELEVANT ISSUE; further volume testing paused**. Do not increase volume until the active hardware/software volume path is verified.
+
+These observations confirm that audio is reaching the connected DAC, but they do not establish bit-perfect output, exclusive ownership, sample-rate preservation, or correct volume control. The delay and excessive volume require investigation before proceeding with the remaining TEST 16 checks.
+
 Deferred until software playback tests are complete and compatible hardware is available.
 
 1. Connect a supported USB DAC.
