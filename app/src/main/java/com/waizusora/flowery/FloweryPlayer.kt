@@ -198,10 +198,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 2).toInt() == 0) {
                     "The native playback session could not enter the running state"
                 }
+                if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 when (playbackRoute) {
                     1 -> {
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
                         usbPlaybackMode = true
+                        onState("Playing · USB exclusive · preparing encoded output…")
                         playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
@@ -209,6 +211,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=true")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_SOURCE_PRESERVING_CANDIDATE sourceBits=${sourceBits}")
                         usbPlaybackMode = true
+                        onState("Playing · USB exclusive · preparing decoded PCM output…")
                         playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
@@ -216,6 +219,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=false")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
                         usbPlaybackMode = true
+                        onState("Playing · USB exclusive · preparing decoded PCM output…")
                         playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
                         return@thread
                     }
