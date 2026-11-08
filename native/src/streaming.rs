@@ -1347,15 +1347,18 @@ mod tests {
 
     fn biquad_magnitude_db(coefficients: BiquadCoefficients, frequency: f32, sample_rate: f32) -> f32 {
         let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
-        let z1 = std::f32::consts::Complex32::new(omega.cos(), -omega.sin());
-        let z2 = z1 * z1;
-        let numerator = std::f32::consts::Complex32::new(coefficients.b0, 0.0)
-            + z1 * coefficients.b1
-            + z2 * coefficients.b2;
-        let denominator = std::f32::consts::Complex32::new(1.0, 0.0)
-            + z1 * coefficients.a1
-            + z2 * coefficients.a2;
-        20.0 * (numerator.norm() / denominator.norm()).log10()
+        let cos1 = omega.cos();
+        let sin1 = -omega.sin();
+        let cos2 = (2.0 * omega).cos();
+        let sin2 = -(2.0 * omega).sin();
+
+        let numerator_real = coefficients.b0 + coefficients.b1 * cos1 + coefficients.b2 * cos2;
+        let numerator_imag = coefficients.b1 * sin1 + coefficients.b2 * sin2;
+        let denominator_real = 1.0 + coefficients.a1 * cos1 + coefficients.a2 * cos2;
+        let denominator_imag = coefficients.a1 * sin1 + coefficients.a2 * sin2;
+        let numerator_magnitude = (numerator_real * numerator_real + numerator_imag * numerator_imag).sqrt();
+        let denominator_magnitude = (denominator_real * denominator_real + denominator_imag * denominator_imag).sqrt();
+        20.0 * (numerator_magnitude / denominator_magnitude).log10()
     }
 
     #[test]
