@@ -25,7 +25,8 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment\nimport androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -115,8 +116,11 @@ fun FloweryNavigation(
                 val controller = UsbDacController(context)
                 val devices = controller.audioDevices()
                 if (devices.isEmpty()) "No USB Audio Class device was detected when Record Log started."
-                else devices.joinToString(separator = "\n\n") { device ->
-                    "===== ${device.displayName} · ${device.identity} =====\n" +
+                else devices.joinToString(separator = "
+
+") { device ->
+                    "===== ${device.displayName} · ${device.identity} =====
+" +
                         if (controller.hasPermission(device.usbDevice)) controller.inspectDescriptors(device.usbDevice)
                         else "USB permission not granted; raw descriptors and clock ranges are unavailable."
                 }
@@ -127,7 +131,8 @@ fun FloweryNavigation(
                 val wallTime = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US)
                     .format(java.util.Date())
                 fun logField(value: String): String =
-                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+                    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("
+", " ")
                 val playbackSnapshot = buildString {
                     append("$wallTime playbackSnapshot ")
                     append("isPlaying=$isPlaying positionMs=$positionMs durationMs=$durationMs ")
