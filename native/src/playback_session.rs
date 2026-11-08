@@ -337,6 +337,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback seek epoch is exhausted or cancelled");
         return -1;
     };
+    *session.seek_error.lock().unwrap_or_else(|error| error.into_inner()) = String::new();
     *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
         Some(AAudioSeekRequest {
             max_frames: max_frames as usize,
