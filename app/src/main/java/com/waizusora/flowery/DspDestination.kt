@@ -26,7 +26,7 @@ internal fun DspDestination(
     Slider(value = volume, onValueChange = onVolume)
     Text("${(volume * 100).toInt()}%", color = muted, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.End)
     Text(
-        "USB DAC: software gain is saved separately for each DAC and remains available without a physical volume control. Speaker, AUX and Bluetooth follow Android media volume.",
+        "USB DAC: this single control uses the DAC's USB hardware volume when its Feature Unit is readable; otherwise it uses Flowery software gain. Speaker, AUX and Bluetooth follow Android media volume.",
         color = muted,
         style = MaterialTheme.typography.bodySmall
     )
