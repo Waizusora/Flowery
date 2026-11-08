@@ -364,9 +364,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                                 }
                             )
                         }
-                        else -> throw IllegalStateException(
-                            "Rust AAudio output scheduler failed (error ${NativeAudio.nativeGetPlaybackSessionError(sessionHandle)})"
-                        )
+                        else -> {
+                            val schedulerStatus = NativeAudio.nativeGetOutputSchedulerStatus(sessionHandle)
+                            val errorCode = NativeAudio.nativeGetPlaybackSessionError(sessionHandle)
+                            val seekDetail = NativeAudio.nativeGetPlaybackSessionSeekError(sessionHandle)
+                            throw IllegalStateException(
+                                if (schedulerStatus == -903 || seekDetail.isNotBlank()) {
+                                    "Rust AAudio seek failed (error $errorCode): ${seekDetail.ifBlank { "No native seek detail was provided." }}"
+                                } else {
+                                    "Rust AAudio output scheduler failed (status $schedulerStatus, error $errorCode)"
+                                }
+                            )
+                        }
                     }
                 }
 
