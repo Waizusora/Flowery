@@ -508,3 +508,16 @@ USB DAC natural track-completion report (2026-11-08; user-confirmed):
 - Source path to verify: USB pipeline end-of-stream / `Playback finished` callback, followed by `PlaybackService.handleCompletion()`, native queue transition, and the next `playCurrent()` request.
 - Existing diagnostics to inspect during reproduction: `DIRECT_USB_FINISHED`, `DECODER_EOF`, `TRACK_COMPLETION`, `PLAY_CURRENT`, and `PLAYBACK_START_FAILURE`. The expected queue size, completed index, next index, Repeat mode, and exact USB route must be captured before assigning a root cause.
 - **Status: INVESTIGATION REQUIRED / RETEST REQUIRED.** No code change has been made for this report; the cause is not yet established. The earlier non-USB track-completion retest remains PASS and does not verify USB DAC completion.
+
+
+USB DAC natural-completion diagnostic capture (2026-11-08; user-supplied `flowery-usb-diagnostic-1794139484748.txt`):
+
+- DAC: KTMicro KT-384/32 HIFI, VID/PID `31B2:0111`; active output endpoint `0x04`; negotiated sample rate 96,000 Hz.
+- The diagnostic snapshot identifies the current source as `YOASOBI - 02. Idol`, duration 212,477 ms, and reports `playing=false` with a USB transport error.
+- Playback telemetry records 623 PCM chunks and 20,397,862 frames submitted. The final partial chunk was accepted; the decoder then emitted `DECODER_EOF` at 19:04:22.911.
+- At 19:04:24.508, the direct USB path emitted `DIRECT_USB_ERROR`; at 19:04:24.684, the player emitted `PLAYBACK_ERROR`. The error was the native transport's own stall watchdog: `LIBUSB_ERROR_TIMEOUT (-7)`, reason `stalled`, oldest outstanding sequence 26746, 23 transfers in flight, and no reported progress for approximately 1,503 ms.
+- Source inspection confirms that the PCM pipeline calls `dacSession.drain()` after decoder EOF. The native `nativeDrain()` waits for all queued isochronous transfers to complete and calls `wait_for_progress()`; that function raises the reported timeout when outstanding transfers make no progress for `kStallTimeoutMs = 1500`.
+- Consequently, decoder EOF is reached, but the transport drain throws before `DIRECT_USB_FINISHED` and before the player reports `Playback finished`. The playback service therefore does not receive a normal completion event to advance the queue. This explains the stopped position and lack of automatic next-track transition in this capture.
+- The log does not establish why the USB host/device stopped completing the outstanding isochronous transfers. In particular, it does not yet distinguish a DAC/endpoint behavior, host-controller/libusb event-delivery issue, or a scheduling/packetization defect in the transport implementation. The descriptor snapshot reports an adaptive OUT endpoint and does not advertise supported sample rates in the selected profile; this alone is not proof of incompatibility at 96 kHz.
+- No transport code change is made based on this capture alone. Do not suppress the watchdog or treat a failed drain as successful completion: doing so could truncate queued audio and conceal a transport failure.
+- **Status: ROOT CAUSE OF THE QUEUE-ADVANCE FAILURE IDENTIFIED; UNDERLYING ISOCHRONOUS TRANSPORT STALL INVESTIGATION REQUIRED.** USB DAC physical retest remains required after a transport fix. Earlier non-USB track-completion PASS remains valid only for the non-USB route.
