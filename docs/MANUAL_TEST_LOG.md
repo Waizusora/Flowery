@@ -394,7 +394,10 @@ Deferred until software playback tests are complete and compatible hardware is a
 User-confirmed results:
 - **Stage 1 — Installation and app launch: PASS.** Flowery reopened successfully; Library and Now Playing screens displayed normally.
 - **Stage 2 — Playback controls: PASS.** Playback progress advanced, seeking worked, Pause/Play worked, and Next/Previous worked. The user confirmed audio continued without interruption.
-- Stages 3–4: **NOT RUN**.
+- **Stage 3 — Playback modes: IN PROGRESS.**
+  - Repeat One: **PASS** (user-confirmed, 2026-11-08).
+  - Repeat All and Shuffle: **NOT RUN**.
+- Stage 4: **NOT RUN**.
 
 1. Repeat installation/launch.
 2. Repeat playback, progress, seek, pause/resume, next/previous, repeat, and shuffle.
