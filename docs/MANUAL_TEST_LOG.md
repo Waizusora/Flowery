@@ -275,6 +275,14 @@ Design revision (2026-11-08; user-approved):
 - Bass, Mid, and Treble values are persisted independently. EQ ON/OFF continues to bypass or restore the mapped 31-band gain array without discarding the three control values.
 - The prior Q=3.0 listening retest does not validate this revised response. **Retest required** after installing the updated build: compare Bass, Mid, and Treble independently at positive and negative gain; verify smooth tonal transitions, bypass, persisted values, prompt response, and absence of dropouts. TEST 11 remains PARTIAL until the user confirms these checks.
 
+Final EQ retest after the three-control / strict ISO-band revision (2026-11-08; user-confirmed):
+- **Bass, Mid, and Treble controls: PASS.** The user confirmed that all three EQ controls function.
+- **Perceived EQ strength: PASS (subjective listening confirmation).** The user confirmed that the tonal adjustment strength is now satisfactory.
+- The user’s confirmation applies to the latest three-control build. It supersedes the earlier concern that EQ boost/cut felt too weak.
+- EQ response latency and bypass were already reported as working in the preceding manual retest. The user has not separately reported a new regression in those behaviors.
+- **Remaining coverage:** persistence after app restart, systematic frequency-response measurement, and exhaustive checks across all 31 internal ISO filters have not been independently verified. USB DAC behavior remains outside this test and is tracked under TEST 16.
+- TEST 11 is recorded as **PASS for the user-facing three-band EQ behavior**, with the remaining engineering/route coverage limitations retained above.
+
 ### TEST 12 — Lyrics display
 
 1. Play a track with a known local `.lrc` file.
