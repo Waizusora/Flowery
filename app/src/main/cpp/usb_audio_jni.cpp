@@ -296,7 +296,8 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
                         failure->packet_count = static_cast<unsigned int>(transfer->num_iso_packets);
                         failure->frame_phase_before = entry->frame_phase_before;
                         failure->frame_phase_after = entry->frame_phase_after;
-                        failure->scheduled_start_frame = transfer->start_frame;
+                        // libusb's public transfer structure does not expose the host-scheduled start frame.
+                        failure->scheduled_start_frame = -1;
                         failure->transfer_flags = transfer->flags;
                         failure->device_speed = session->device_speed;
                         failure->requested_packet_lengths = entry->requested_packet_lengths;
@@ -1237,7 +1238,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         if (!failure.failed) {
             const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
             if (remaining <= session->max_packet_bytes) {
-                submit_urb(session, tail, remaining, &failure);
+                submit_urb(session, tail, remaining, session->frame_phase,
+                           session->frame_phase, &failure);
             } else {
                 record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
             }
