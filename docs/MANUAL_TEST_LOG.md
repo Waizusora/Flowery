@@ -391,7 +391,7 @@ Deferred until software playback tests are complete and compatible hardware is a
 
 ### TEST 18 — Unexpected application/service termination during playback
 
-**Status: RETEST REQUIRED — crash cause identified and defensive fix committed; device retest pending**
+**Status: PASS — user-confirmed retest after defensive fix (2026-11-08)**
 
 User-reported observation (2026-11-08):
 - When a track finishes, Flowery sometimes closes and the music notification disappears at the same time.
@@ -438,3 +438,11 @@ CI follow-up update (2026-11-08):
 - Corrective workflow run #1443 (`42464929664`) for commit `fc931a9f049a7342f21cfc03832eeedaa07e5533` completed with **success**.
 - All workflow steps passed, including Rust native unit tests, Kotlin/JNI declaration verification, Android unit tests, native library builds, and debug/release APK builds.
 - This confirms the source compiles and automated tests pass for this commit. It does not replace physical-device retesting of lyrics or playback behavior.
+
+
+Physical-device retest after fix (2026-11-08; user-confirmed):
+- Installed build containing defensive fix commit `360c1f7`; CI workflow #1447 completed successfully and produced the tested APK artifact.
+- Scenario A — repeated track selection (5–10 changes): **PASS**. Flowery remained open and playback behavior remained normal.
+- Scenario B — natural track completion with Repeat Off, using a track that was not the final visible item: **PASS**. No unexpected application closure was observed; queue completion behaved normally.
+- Scenario C — sequential selection of multiple different tracks: **PASS**. Audio and playback notification remained normal.
+- These results verify the reported reproduction scenarios on the user's device. They do not prove that every possible crash or service-termination path is eliminated.
