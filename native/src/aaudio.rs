@@ -296,7 +296,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     Ok(_) => {
                         start_requested = false;
                     }
-                    Err(_) => {
+                    Err(error) => {
+                        *worker_session.seek_error.lock().unwrap_or_else(|poison| poison.into_inner()) = error;
                         worker_session.error_code.store(-903, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
                         thread_status.store(-903, Ordering::Release);
