@@ -973,3 +973,10 @@ Validation scope:
 - UsbEncodedPlaybackPipeline.close() now performs producer stop, producer destruction, queue close, queue destruction, and USB-session close through the step tracker. The USB session remains the final retryable step because its native handle and Android connection must remain owned until libusb confirms transfer reclamation.
 - Added Kotlin unit tests verifying that completed cleanup steps are not repeated and that a failed step is retried until it succeeds.
 - Validation scope: deterministic lifecycle unit tests and CI compilation/test execution. This does not simulate libusb or prove controller-side transfer ownership. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+### 2026-11-09 — Retain encoded USB sessions after failed open-time cleanup
+
+- The teardown audit found an ownership gap in the encoded pipeline's construction-failure path: if the USB session had opened but its close could not confirm transfer reclamation, the local session reference could be lost when `open()` propagated the failure. The native registry intentionally retained the native session, but Kotlin did not retain the Android `UsbDeviceConnection` owner for a later retry.
+- `UsbEncodedDacSession` now keeps failed-close instances in an identity-based process-lifetime pending-close registry. The session remains strongly referenced, including its Android connection, until both native close and connection close succeed.
+- Pending closes are retried during engine teardown and before opening another encoded USB transport. Failed retries remain retained and are reported as incomplete teardown; they are not treated as successful release.
+- This change addresses Kotlin-side ownership retention only. It does not prove libusb/controller behavior, force-free resources, or establish physical audio safety. CI validation is required. Direct USB Safety Hold remains active; no physical DAC test was performed.
