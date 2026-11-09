@@ -23,7 +23,7 @@ private: std::atomic<int> state_{static_cast<int>(ControlRequest::Run)};
 };
 inline bool request_control_serialized(
  ControlState& control, ControlRequest requested, std::mutex& mutex,
- std::condition_variable& wake) noexcept {
+ std::condition_variable& wake) {
  std::lock_guard<std::mutex> lock(mutex);
  return control.request(requested,wake);
 }
