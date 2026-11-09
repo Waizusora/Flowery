@@ -888,3 +888,13 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - Added a host-native policy test for the exclusive-event-ownership precondition. The native test suite now reports 11 policy scenarios.
 - Scope limitation: this host test validates the eligibility predicate only. It does not simulate libusb callbacks, kernel/controller ownership, or prove that every platform will recover after a fatal event-handler error. CI verification is pending.
 - Direct USB playback remains under the existing safety hold. No physical DAC test was performed or requested.
+
+
+## 2026-11-09 — Callback-dispatch completion barrier for USB transfer reclamation
+
+- Tightened audio-transfer reclamation: a callback now publishes its completion iteration, and the writer may free the transfer only after the corresponding `libusb_handle_events_timeout_completed()` call has returned and the event-loop iteration counter has advanced.
+- Applied the same barrier to the feedback transfer. Its in-flight state is cleared only after the callback has decided not to resubmit and has published the required dispatch iteration. Teardown waits for both conditions before freeing the feedback transfer.
+- The dedicated event thread and the bounded failed-loop teardown pump both advance the same dispatch counter after each libusb event-handler call.
+- Added a host-native policy test covering incomplete callbacks, completion before dispatch return, completion after dispatch return, and missing callback barriers. The native control suite now reports 12 scenarios.
+- This narrows the callback/teardown race window and prevents reclamation based solely on a completion flag published from inside a callback. The test validates the reclamation predicate, not libusb's real callback delivery or USB controller behavior.
+- CI verification is pending. Direct USB playback remains under the existing safety hold; no physical DAC test was performed.
