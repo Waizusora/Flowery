@@ -124,7 +124,14 @@ internal class UsbDacSession internal constructor(
         return volumeControl(0x01, data) == 2
     }
     @Volatile
+    private var nativeClosed = false
+
+    @Volatile
+    private var connectionClosed = false
+
+    @Volatile
     private var closed = false
+
     private var volumeRangeLoaded = false
     private var cachedVolumeRange: Pair<Int, Int>? = null
 
@@ -140,9 +147,9 @@ internal class UsbDacSession internal constructor(
     }
 
     // Deliberately unsynchronized: these requests must wake a writer blocked inside JNI.
-    fun requestPause(): Boolean = !closed && UsbDacNative.nativeRequestPause(nativeHandle)
-    fun requestResume(): Boolean = !closed && UsbDacNative.nativeRequestResume(nativeHandle)
-    fun requestStop(): Boolean = !closed && UsbDacNative.nativeRequestStop(nativeHandle)
+    fun requestPause(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestPause(nativeHandle)
+    fun requestResume(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestResume(nativeHandle)
+    fun requestStop(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestStop(nativeHandle)
 
     /** Blocks until all queued audio, including a trailing partial packet, has been transmitted. */
     @Synchronized
@@ -163,23 +170,42 @@ internal class UsbDacSession internal constructor(
     @Synchronized
     override fun close() {
         if (closed) return
-        for (attempt in 0 until 3) {
-            if (UsbDacNative.nativeClose(nativeHandle)) {
-                closed = true
-                connection.close()
-                return
-            }
-            if (attempt < 2) {
-                try {
-                    Thread.sleep(50L)
-                } catch (interrupted: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    throw IllegalStateException("Interrupted while waiting for USB transfers to finish teardown", interrupted)
+
+        // Native and Android ownership have separate completion points. Once
+        // nativeClose succeeds, never retry it with the released native handle.
+        if (!nativeClosed) {
+            requestStop()
+            var nativeCloseConfirmed = false
+            for (attempt in 0 until 3) {
+                if (UsbDacNative.nativeClose(nativeHandle)) {
+                    nativeClosed = true
+                    nativeCloseConfirmed = true
+                    break
+                }
+                if (attempt < 2) {
+                    try {
+                        Thread.sleep(50L)
+                    } catch (interrupted: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw IllegalStateException(
+                            "Interrupted while waiting for USB transfers to finish teardown",
+                            interrupted
+                        )
+                    }
                 }
             }
+            if (!nativeCloseConfirmed) {
+                throw IllegalStateException(
+                    "libusb could not confirm that all in-flight transfers were reaped; " +
+                        "the USB connection remains open for a safe retry"
+                )
+            }
         }
-        throw IllegalStateException(
-            "libusb could not confirm that all in-flight transfers were reaped; the USB connection remains open for a safe retry"
-        )
+
+        if (!connectionClosed) {
+            connection.close()
+            connectionClosed = true
+        }
+        closed = true
     }
 }
