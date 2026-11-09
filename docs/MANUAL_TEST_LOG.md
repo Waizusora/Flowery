@@ -1004,3 +1004,9 @@ Validation scope:
 - Seek now flushes the transport before advancing the playback epoch. If transfer reclamation fails, the decoder epoch is not advanced and no replacement worker is started.
 - Lock-order review: producer workers resolve producer handles but never acquire the worker-registry lock. The serialized lifecycle therefore does not introduce a worker-to-registry join cycle. JNI flush uses the existing native USB session path and does not call back into the Rust worker registry.
 - Validation scope: source-level lifecycle and lock-order correction; CI native, USB-control, Kotlin/JNI, and Android checks required. No test here simulates Android scheduling, libusb callback delivery, or USB controller behavior. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+### 2026-11-09 — Remove the legacy encoded seek bypass
+
+- The producer API audit found an obsolete JNI seek entry point that changed the decoder and queue directly without stopping the registered producer worker, flushing the USB transport, or using the session epoch transition. That path could leave already-submitted transport data from the previous position in flight and did not provide the same lifecycle guarantees as `nativeSeekUsbEncodedSession`.
+- Repository-wide code search found no callers beyond the Kotlin external declaration and its native implementation. The unused declaration and JNI entry point have been removed. Encoded playback now exposes the transport-aware session seek path as its only seek operation.
+- Validation scope: repository code search, source/API removal, and CI JNI/native/Android checks. This does not simulate libusb callback delivery or USB controller behavior. Direct USB Safety Hold remains active; no physical DAC test was performed.
