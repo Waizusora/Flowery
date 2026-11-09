@@ -712,3 +712,15 @@ Direct USB write cancellation review (2026-11-09; source-only investigation):
 - No source code behavior was changed in this review. No DAC was connected and no physical USB playback test was performed. The Direct USB safety hold remains active.
 
 **Status: PAUSE/STOP NON-PREEMPTIBLE WRITE PATH CONFIRMED BY SOURCE INSPECTION; SAFE CANCELLATION DESIGN REQUIRED BEFORE IMPLEMENTATION; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
+
+
+Direct USB cancellation design refinement (2026-11-09; source-only):
+
+- Further inspection of `nativeWriteIsochronous()` confirms it appends the full Kotlin PCM block to `pending_pcm`, then submits complete service-interval packets until no complete packet remains or the in-flight URB window is full. A call can return while submitted URBs are still outstanding; the normal window is bounded by eight URBs and a 32 ms target queue.
+- When the window is full, `wait_for_progress()` blocks in 5 ms condition-variable waits and checks the 1,500 ms no-progress watchdog. The worker cannot reach the Kotlin pause branch or its synchronized `flush()` until this JNI call returns.
+- A cancellation request must not call `abort_in_flight()`, `reap_completed()`, mutate `in_flight`, or clear PCM buffers from the requesting thread. Those operations must remain on the writer thread because the callback and in-flight owner lifetimes are tied to that queue.
+- Candidate safe split: a cross-thread request only publishes an atomic control intent and wakes the condition variable; the writer thread observes it, performs any required transfer cancellation/reaping itself, then returns a typed result. Session close must wait until both the writer and cancellation requester have released their native-handle leases. A Kotlin-side lifecycle read/write lock (read lease for write and request, exclusive lease for close) or a native shared-handle registry could provide that lifetime guarantee; the raw pointer must never be dereferenced concurrently with close.
+- Pause and Stop have different data semantics. Stop may discard pending PCM and abort outstanding URBs. Pause should preserve the producer/decoder position and avoid replaying or skipping frames; simply cancelling a block after some of its URBs were submitted is not sufficient. A pause design must define whether it drains the already-submitted bounded window before returning, and how pending unsubmitted PCM is retained.
+- No code behavior was changed in this refinement. CI #1501 for the preceding documentation commit completed successfully. No DAC was connected and no physical USB test was performed; Direct USB Safety Hold remains active.
+
+**Status: SINGLE-WRITER CANCELLATION ARCHITECTURE DEFINED AT DESIGN LEVEL; IMPLEMENTATION NOT STARTED; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
