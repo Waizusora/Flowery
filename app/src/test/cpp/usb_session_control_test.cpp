@@ -101,6 +101,26 @@ void test_encoded_type_iii_pause_preserves_packet_cursor_and_phase() {
  assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
         flowery::usb::EncodedControlAction::Submit);
 }
+
+void test_pause_request_is_serialized_with_encoded_submission() {
+ ControlState control; std::mutex mutex; std::condition_variable wake;
+ std::promise<void> submit_lock_acquired; std::atomic<int> submitted{0};
+ std::thread writer([&]{
+  std::unique_lock<std::mutex> lock(mutex);
+  submit_lock_acquired.set_value();
+  if(flowery::usb::encoded_submit_allowed(control)) ++submitted;
+ });
+ submit_lock_acquired.get_future().wait();
+ // Pause is published under the same mutex as the production submit gate.
+ assert(flowery::usb::request_control_serialized(
+     control,ControlRequest::Pause,mutex,wake));
+ writer.join();
+ {
+  std::lock_guard<std::mutex> lock(mutex);
+  assert(!flowery::usb::encoded_submit_allowed(control));
+ }
+ assert(submitted.load()==1);
+}
 void test_encoded_stop_takes_priority_over_pause_and_aborts() {
  ControlState control; std::condition_variable wake;
  assert(control.request(ControlRequest::Pause,wake));
@@ -140,5 +160,6 @@ int main() {
  test_encoded_type_iii_pause_preserves_packet_cursor_and_phase();
  test_encoded_stop_takes_priority_over_pause_and_aborts();
  test_close_waits_for_active_encoded_writer_lease_after_stop_request();
- std::cout<<"USB session control tests passed (8 scenarios).\n"; return 0;
+ test_pause_request_is_serialized_with_encoded_submission();
+ std::cout<<"USB session control tests passed (9 scenarios).\n"; return 0;
 }
