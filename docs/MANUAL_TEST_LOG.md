@@ -845,3 +845,14 @@ USB session contract documentation correction (2026-11-09):
 - Corrected the UsbDacSession API documentation: Pause is a non-destructive control request and does not call native flush; flush is reserved for playback-position changes such as seek. This aligns the KDoc with the current PCM implementation and avoids documenting a destructive Pause operation.
 - This is a documentation-only correction. It does not extend Pause/Stop handling to encoded transport or change native runtime behavior. Direct USB Safety Hold remains active.
 
+Encoded USB lifecycle control implementation (2026-11-09; source change):
+
+- Extended the native encoded USB writer to observe the session control state on the writer-owning JNI thread. UAC1 Type-II encoded frames are retained while waiting for Pause/Resume and are not split; Pause waits for the current frame's submitted transfer to complete before blocking for Resume.
+- Extended IEC 61937 Type-III packet scheduling to honor Pause at URB boundaries. The writer drains the already-submitted bounded window, retains the unsubmitted encoded suffix and encoded-rate/feedback phase, and waits for Resume before submitting further URBs.
+- Stop handling now aborts and reaps in-flight encoded transfers on the writer thread, then clears staged encoded bytes and encoded pacing state. A stop during an encoded write is returned as a normal stopped write result so a packet already removed from the Rust queue is not misreported as a transport error.
+- Encoded nativeDrain now checks Stop and Pause. Stop aborts and clears staged data; Pause drains the current submitted window and returns without submitting the remaining staged tail. Kotlin treats the native stopped result as normal cancellation.
+- Added non-blocking Pause/Resume/Stop forwarding from FloweryPlayer to the encoded USB session. Removed the encoded play loop's destructive flush-on-pause behavior; flush remains for seek/position changes.
+- The JNI writer remains the sole owner of in-flight transfer queues, encoded offsets, and cancellation/reaping. The control request path only publishes the atomic request and wakes the condition variable.
+- Validation is pending on CI #1524. The existing host-native tests exercise the shared ControlState and session lifetime primitives; they do not yet emulate encoded frame scheduling or a libusb controller. No USB DAC was connected and no physical playback test was performed. Direct USB Safety Hold remains active.
+
+**Status: ENCODED USB PAUSE/RESUME/STOP PATH IMPLEMENTED IN SOURCE; CI VALIDATION PENDING; ENCODED CONTROLLER-LEVEL TEST COVERAGE AND DIRECT USB SAFETY REVIEW STILL REQUIRED.**
