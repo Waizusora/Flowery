@@ -1193,3 +1193,11 @@ Validation scope:
 - Rewrote both fixtures as Rust raw string literals with actual line breaks. The malformed FILE test still verifies that an unterminated quoted filename clears the active file reference; the missing-FILE test still verifies that a track without a valid file reference is ignored.
 - The failure occurred before the native test binary could run; this correction addresses compilation only. CI must complete successfully before the change is considered verified.
 - No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Exclude encoder delay and padding from presentation duration
+
+- The stream duration was previously derived directly from Symphonia's `n_frames`, even when codec metadata also declared leading encoder delay or trailing encoder padding. Those decoded frames are excluded from gapless presentation and must not extend the user-visible duration or seek clamp.
+- Added a presentation-frame calculation that subtracts optional delay and padding metadata using saturating arithmetic. Missing frame counts remain unknown (represented by the existing zero-duration sentinel); missing trim values are treated as zero, and a zero sample rate is rejected.
+- Stream duration now uses the trimmed presentation-frame count. Added native unit tests for delay/padding subtraction, untrimmed and unknown metadata, excessive trim metadata, millisecond conversion, and invalid sample rates.
+- Validation is pending CI. The tests cover metadata arithmetic and do not substitute for end-to-end gapless fixtures across every supported container/codec. No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.

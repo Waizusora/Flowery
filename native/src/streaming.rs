@@ -67,6 +67,36 @@ fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
+fn presentation_frame_count(
+    decoded_frames: Option<u64>,
+    encoder_delay: Option<u32>,
+    encoder_padding: Option<u32>,
+) -> Option<u64> {
+    decoded_frames.map(|frames| {
+        frames
+            .saturating_sub(u64::from(encoder_delay.unwrap_or(0)))
+            .saturating_sub(u64::from(encoder_padding.unwrap_or(0)))
+    })
+}
+
+fn presentation_duration_ms(
+    decoded_frames: Option<u64>,
+    encoder_delay: Option<u32>,
+    encoder_padding: Option<u32>,
+    sample_rate: u32,
+) -> u64 {
+    if sample_rate == 0 {
+        return 0;
+    }
+
+    presentation_frame_count(decoded_frames, encoder_delay, encoder_padding)
+        .map(|frames| {
+            ((frames as u128 * 1000) / u128::from(sample_rate))
+                .min(u64::MAX as u128) as u64
+        })
+        .unwrap_or(0)
+}
+
 fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> BiquadCoefficients {
     if frequency >= sample_rate as f32 * 0.49 { return BiquadCoefficients { b0:1.0, ..Default::default() }; }
     let a = 10.0_f32.powf(gain_db.clamp(-12.0,12.0) / 40.0);
@@ -177,7 +207,14 @@ impl StreamDecoder {
         };
         let lossless_source = is_lossless_codec(params.codec);
         let ieee_float_source = params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE;
-        let duration_ms = params.n_frames.map(|frames| (frames as u128 * 1000u128 / source_rate as u128) as u64).unwrap_or(0);
+        // CodecParameters::n_frames includes the encoded stream extent. Delay and
+        // padding identify decoded frames that must not contribute to presentation time.
+        let duration_ms = presentation_duration_ms(
+            params.n_frames,
+            params.delay,
+            params.padding,
+            source_rate as u32,
+        );
         // Some MP4/M4A ALAC tracks expose neither a channel bitmask nor a
         // channel layout in Symphonia's track parameters. The mandatory ALAC
         // magic-cookie configuration still declares the channel count.
@@ -1220,6 +1257,39 @@ mod tests {
     #[test]
     fn stream_format_enables_gapless_packet_trimming() {
         assert!(gapless_format_options().enable_gapless);
+    }
+
+    #[test]
+    fn presentation_frame_count_excludes_encoder_delay_and_padding() {
+        assert_eq!(
+            presentation_frame_count(Some(100_000), Some(576), Some(1_024)),
+            Some(98_400)
+        );
+    }
+
+    #[test]
+    fn presentation_frame_count_preserves_untrimmed_and_unknown_lengths() {
+        assert_eq!(presentation_frame_count(Some(48_000), None, None), Some(48_000));
+        assert_eq!(presentation_frame_count(None, Some(312), Some(1_200)), None);
+    }
+
+    #[test]
+    fn presentation_frame_count_saturates_when_trim_metadata_exceeds_stream_length() {
+        assert_eq!(
+            presentation_frame_count(Some(1_000), Some(700), Some(500)),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn presentation_duration_uses_trimmed_frames_and_rejects_invalid_rate() {
+        assert_eq!(
+            presentation_duration_ms(Some(100_000), Some(576), Some(1_024), 44_100),
+            2_231
+        );
+        assert_eq!(presentation_duration_ms(Some(48_000), None, None, 48_000), 1_000);
+        assert_eq!(presentation_duration_ms(Some(48_000), None, None, 0), 0);
+        assert_eq!(presentation_duration_ms(None, None, None, 48_000), 0);
     }
 
     #[test]
