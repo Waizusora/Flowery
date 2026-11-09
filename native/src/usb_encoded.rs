@@ -315,7 +315,8 @@ fn stop_encoded_producer_worker_locked(
             ENCODED_WORKER_PANICKED,
         );
         if let Some(producer) = producer_ref(handle) {
-            producer.queue.close();
+            let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.queue.close();
         }
         return false;
     }
