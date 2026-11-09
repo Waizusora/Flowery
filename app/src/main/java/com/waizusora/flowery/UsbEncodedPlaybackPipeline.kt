@@ -74,7 +74,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     /** Seeks the demuxer to a packet boundary and flushes old queued USB data. */
     @Synchronized
     fun seekTo(positionMs: Long): Long {
-        check(!closed) { "Encoded playback pipeline is closed" }
+        lifecycle.checkOpen()
         require(positionMs >= 0)
         val actual = NativeAudio.nativeSeekUsbEncodedSession(producerHandle, session, positionMs)
         check(actual >= 0) { "Encoded stream seek failed" }
@@ -86,7 +86,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     /** Waits for currently submitted encoded data without advancing the source decoder. */
     @Synchronized
     fun drainTransport() {
-        check(!closed) { "Encoded playback pipeline is closed" }
+        lifecycle.checkOpen()
         session.drain()
     }
 
@@ -133,7 +133,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     /** Pumps remaining source packets, then waits for the encoded endpoint to drain. */
     @Synchronized
     fun drain() {
-        check(!closed) { "Encoded playback pipeline is closed" }
+        lifecycle.checkOpen()
         while (!ended) {
             val submitted = pump()
             if (submitted == USB_ENCODED_WRITE_STOPPED) return
