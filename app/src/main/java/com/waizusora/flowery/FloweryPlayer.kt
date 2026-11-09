@@ -45,7 +45,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
-    private val usbSeekLock = Any()
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
 
@@ -620,15 +619,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             )
             pipeline = writer
             activeUsbPcmPipeline = writer
-            synchronized(usbSeekLock) {
-                activeUsbPcmProducerHandle = writer.producerHandle
-                pendingSeekMs.getAndSet(null)?.let { requested ->
-                    check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 8) >= 0L) {
-                        "The native USB PCM session rejected the queued startup seek epoch"
-                    }
-                    NativeAudio.nativeRequestUsbPcmProducerSeek(writer.producerHandle, requested)
-                }
-            }
+            activeUsbPcmProducerHandle = writer.producerHandle
 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
                 !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
@@ -636,6 +627,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val summary = writer.playUntil(
                 playbackActive = { playbackActive() },
                 isPaused = { paused },
+                takePendingSeekMs = { pendingSeekMs.getAndSet(null) },
+                onSeek = { requested ->
+                    diagnostics.record("USB_PCM_SEEK requestedMs=${requested} epochCommitted=true")
+                    onState("Seeking…")
+                },
                 onPrebufferReady = { queuedBlocks, endReached, waitMs ->
                     diagnostics.record(
                         "USB_PREBUFFER_READY queuedBlocks=${queuedBlocks} endReached=${endReached} " +
@@ -698,9 +694,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             throw error
         } finally {
             val writerHandle = pipeline?.producerHandle ?: 0L
-            synchronized(usbSeekLock) {
-                if (activeUsbPcmProducerHandle == writerHandle) activeUsbPcmProducerHandle = 0L
-            }
+            if (activeUsbPcmProducerHandle == writerHandle) activeUsbPcmProducerHandle = 0L
             usbSoftwareGainEnabled = false
             if (session != null) activeUsbSession = session
             try {
@@ -762,22 +756,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(epoch >= 0L) { "The native AAudio session rejected the seek request" }
             onState("Seeking…")
         } else {
-            synchronized(usbSeekLock) {
-                val producer = activeUsbPcmProducerHandle
-                val encodedPipelineActive = activeUsbEncodedPipeline != null
-                if (shouldAdvanceUsbSessionEpochBeforeSeek(encodedPipelineActive, producer)) {
-                    if (session != 0L) {
-                        check(NativeAudio.nativePlaybackSessionCommand(session, 8) >= 0L) {
-                            "The native USB PCM session rejected the seek epoch"
-                        }
-                    }
-                    NativeAudio.nativeRequestUsbPcmProducerSeek(producer, boundedPosition)
-                } else {
-                    // Encoded playback commits its epoch only after transport flush and
-                    // decoder seek succeed. Startup seeks wait for their producer owner.
-                    pendingSeekMs.set(boundedPosition)
-                }
-            }
+            // PCM and encoded USB pipelines apply the request on their writer
+            // thread, where epoch transition and transport flush cannot overlap
+            // an in-progress packet submission.
+            pendingSeekMs.set(boundedPosition)
+            onState("Seeking…")
         }
     }
 
