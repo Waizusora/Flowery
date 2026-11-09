@@ -766,8 +766,9 @@ enum class EncodedControlResult { Running, Stopped, Failed };
 EncodedControlResult honor_encoded_write_control(
     UsbAudioSession* session, TransportFailure* failure) {
     for (;;) {
-        const int control = session->control.load();
-        if (control == kSessionControlStop) {
+        const auto action = flowery::usb::encoded_control_action(
+            session->control.load(), session->in_flight.size());
+        if (action == flowery::usb::EncodedControlAction::Abort) {
             if (!abort_in_flight(session)) {
                 record_failure(failure, "encoded_stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
                 return EncodedControlResult::Failed;
@@ -779,13 +780,11 @@ EncodedControlResult honor_encoded_write_control(
             session->encoded_frame_deadline_valid = false;
             return EncodedControlResult::Stopped;
         }
-        if (control != kSessionControlPause) return EncodedControlResult::Running;
-
-        while (!session->in_flight.empty()) {
-            if (session->control.load() == kSessionControlStop) break;
+        if (action == flowery::usb::EncodedControlAction::Submit) return EncodedControlResult::Running;
+        if (action == flowery::usb::EncodedControlAction::DrainInFlight) {
             if (!wait_for_progress(session, failure)) return EncodedControlResult::Failed;
+            continue;
         }
-        if (session->control.load() == kSessionControlStop) continue;
 
         std::unique_lock<std::mutex> lock(session->event_mutex);
         session->event_condition.wait(lock, [&]() {
@@ -1437,9 +1436,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     }
     if (session->encoded_mode == 2) {
         while (!failure.failed) {
-            const int control = session->control.load();
-            if (control == kSessionControlStop) return stop_encoded_writer();
-            if (control == kSessionControlPause) {
+            const auto control_action = flowery::usb::encoded_control_action(
+                session->control.load(), session->in_flight.size());
+            if (control_action == flowery::usb::EncodedControlAction::Abort) return stop_encoded_writer();
+            if (control_action == flowery::usb::EncodedControlAction::WaitForResume) return 0;
+            if (control_action == flowery::usb::EncodedControlAction::DrainInFlight) {
                 if (!drain_encoded_window()) {
                     if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
                     break;
