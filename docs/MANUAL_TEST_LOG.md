@@ -1034,3 +1034,11 @@ Validation scope:
 - Replaced numeric worker-state literals with named constants and centralized the transport-availability mapping. Running and EOF permit queue draining; cancellation produces the cancellation error; panic, worker failure, and unknown states fail closed as unavailable.
 - Added a native unit test covering running, EOF, cancellation, ordinary failure, panic, and unknown status values. This verifies the scheduler's state policy; it does not simulate thread scheduling, libusb callbacks, USB controller behavior, or physical output.
 - CI validation is required. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — Prevent encoded packet sequence wraparound
+
+- Replaced the producer's wrapping sequence increment with checked arithmetic. Sequence exhaustion now terminates the producer with an explicit error rather than allowing a packet sequence to wrap to zero and potentially become ambiguous.
+- Reused the named stopped-worker status constant for the worker's explicit stop path; no raw status literal remains in that lifecycle transition.
+- Added a native boundary test for normal increment, the final valid increment, and exhaustion at the maximum sequence value.
+- Validation is source/unit-test/CI only. This does not simulate USB controller behavior or prove physical output safety; Direct USB Safety Hold remains active.
