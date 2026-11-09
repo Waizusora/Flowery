@@ -259,14 +259,58 @@ fn encoded_worker_registry() -> &'static Mutex<HashMap<i64, EncodedProducerWorke
     ENCODED_PRODUCER_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn stop_encoded_producer_worker(handle: jlong) {
-    // Keep the registry lock through join so a concurrent start cannot replace
-    // the worker entry while the previous worker is still being stopped.
-    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
+fn stop_encoded_producer_worker_locked(
+    workers: &mut HashMap<i64, EncodedProducerWorker>,
+    handle: jlong,
+) {
     if let Some(worker) = workers.remove(&handle) {
         worker.stop.store(true, Ordering::Release);
         let _ = worker.thread.join();
     }
+}
+
+fn stop_encoded_producer_worker(handle: jlong) {
+    // Keep the registry lock through join so a concurrent start cannot replace
+    // the worker entry while the previous worker is still being stopped.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
+    stop_encoded_producer_worker_locked(&mut workers, handle);
+}
+
+fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProducerWorker> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let thread = thread::Builder::new()
+        .name("flowery-usb-encoded-producer".into())
+        .spawn(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                while !thread_stop.load(Ordering::Acquire) {
+                    match pump_encoded_producer(handle) {
+                        Ok(1) => {}
+                        Ok(0) => thread::sleep(Duration::from_millis(2)),
+                        Ok(-1) => {
+                            thread_status.store(1, Ordering::Release);
+                            break;
+                        }
+                        Ok(-3) => {
+                            thread_status.store(2, Ordering::Release);
+                            break;
+                        }
+                        Ok(_) | Err(_) => {
+                            thread_status.store(-2, Ordering::Release);
+                            break;
+                        }
+                    }
+                }
+            }));
+            if outcome.is_err() {
+                thread_status.store(-3, Ordering::Release);
+            } else if thread_stop.load(Ordering::Acquire) {
+                thread_status.store(2, Ordering::Release);
+            }
+        })?;
+    Ok(EncodedProducerWorker { stop, status, thread })
 }
 
 
@@ -576,53 +620,17 @@ fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbEncodedProducerWorker(
     mut env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jint {
+    // Serialize validation, replacement, spawn, and registry insertion with
+    // seek and destroy. The worker never acquires this registry lock.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
     if producer_ref(handle).is_none() {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
         return -1;
     }
-    // Serialize replacement, spawn, and registry insertion as one lifecycle
-    // operation. The worker never acquires this registry lock.
-    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
-    if let Some(previous) = workers.remove(&handle) {
-        previous.stop.store(true, Ordering::Release);
-        let _ = previous.thread.join();
-    }
-    let stop = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(AtomicI32::new(0));
-    let thread_stop = Arc::clone(&stop);
-    let thread_status = Arc::clone(&status);
-    let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            while !thread_stop.load(Ordering::Acquire) {
-                match pump_encoded_producer(handle) {
-                    Ok(1) => {}
-                    Ok(0) => thread::sleep(Duration::from_millis(2)),
-                    Ok(-1) => {
-                        thread_status.store(1, Ordering::Release);
-                        break;
-                    }
-                    Ok(-3) => {
-                        thread_status.store(2, Ordering::Release);
-                        break;
-                    }
-                    Ok(_) | Err(_) => {
-                        thread_status.store(-2, Ordering::Release);
-                        break;
-                    }
-                }
-            }
-        }));
-        if outcome.is_err() {
-            // Contain a Rust panic at the worker boundary and publish a
-            // terminal error instead of silently losing worker status.
-            thread_status.store(-3, Ordering::Release);
-        } else if thread_stop.load(Ordering::Acquire) {
-            thread_status.store(2, Ordering::Release);
-        }
-    });
-    match spawned {
-        Ok(thread) => {
-            workers.insert(handle, EncodedProducerWorker { stop, status, thread });
+    stop_encoded_producer_worker_locked(&mut workers, handle);
+    match spawn_encoded_producer_worker(handle) {
+        Ok(worker) => {
+            workers.insert(handle, worker);
             0
         }
         Err(error) => {
@@ -682,11 +690,17 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded session seek request");
         return -1;
     }
+
+    // Hold the worker registry lock for the entire stop/flush/seek/restart
+    // transition. This prevents concurrent start or destroy from replacing
+    // the worker between removal and reinsertion.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
     let Some(producer) = producer_ref(handle) else {
         let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer is no longer valid");
         return -1;
     };
-    stop_encoded_producer_worker(handle);
+    stop_encoded_producer_worker_locked(&mut workers, handle);
+
     let session = {
         let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
         if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) {
@@ -695,6 +709,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         }
         Arc::clone(&state.session)
     };
+
+    // Flush first. If libusb cannot confirm the old transfers were reaped,
+    // do not advance the decoder epoch or publish a new producer worker.
+    if let Err(error) = env.call_method(&transport, "flush", "()V", &[]) {
+        if !env.exception_check().unwrap_or(false) {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+        }
+        return -1;
+    }
+
     {
         let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
         if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
@@ -702,12 +726,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
             return -1;
         }
     }
-    if let Err(error) = env.call_method(&transport, "flush", "()V", &[]) {
-        if !env.exception_check().unwrap_or(false) {
-            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
-        }
-        return -1;
-    }
+
     let actual = {
         let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
         let decoder_owner = Arc::clone(&state.decoder);
@@ -732,37 +751,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
             }
         }
     };
-    let stop = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(AtomicI32::new(0));
-    let thread_stop = Arc::clone(&stop);
-    let thread_status = Arc::clone(&status);
-    let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
-        while !thread_stop.load(Ordering::Acquire) {
-            match pump_encoded_producer(handle) {
-                Ok(1) => {}
-                Ok(0) => thread::sleep(Duration::from_millis(2)),
-                Ok(-1) => {
-                    thread_status.store(1, Ordering::Release);
-                    break;
-                }
-                Ok(-3) => {
-                    thread_status.store(2, Ordering::Release);
-                    break;
-                }
-                Ok(_) | Err(_) => {
-                    thread_status.store(-2, Ordering::Release);
-                    break;
-                }
-            }
-        }
-        if thread_stop.load(Ordering::Acquire) {
-            thread_status.store(2, Ordering::Release);
-        }
-    });
-    match spawned {
-        Ok(thread) => {
-            encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
-                .insert(handle, EncodedProducerWorker { stop, status, thread });
+
+    match spawn_encoded_producer_worker(handle) {
+        Ok(worker) => {
+            workers.insert(handle, worker);
             actual
         }
         Err(error) => {
@@ -810,7 +802,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    stop_encoded_producer_worker(handle);
+    // Serialize worker stop/join with concurrent start and seek. Remove the
+    // producer only after no worker for this handle can still be running.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
+    stop_encoded_producer_worker_locked(&mut workers, handle);
     remove_producer(handle);
 }
 
