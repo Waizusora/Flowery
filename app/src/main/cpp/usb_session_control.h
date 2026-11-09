@@ -1,6 +1,7 @@
 #pragma once
 #include <atomic>
-#include <cstddef>\n#include <cstdint>
+#include <cstddef>
+#include <cstdint>
 #include <condition_variable>
 #include <mutex>
 #include <shared_mutex>
