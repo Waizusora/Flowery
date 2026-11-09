@@ -1201,3 +1201,12 @@ Validation scope:
 - Added a presentation-frame calculation that subtracts optional delay and padding metadata using saturating arithmetic. Missing frame counts remain unknown (represented by the existing zero-duration sentinel); missing trim values are treated as zero, and a zero sample rate is rejected.
 - Stream duration now uses the trimmed presentation-frame count. Added native unit tests for delay/padding subtraction, untrimmed and unknown metadata, excessive trim metadata, millisecond conversion, and invalid sample rates.
 - Validation is pending CI. The tests cover metadata arithmetic and do not substitute for end-to-end gapless fixtures across every supported container/codec. No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Conservative CUE frame-to-millisecond boundaries
+
+- CUE INDEX 01 positions use 75 frames per second, while the current playback segment contract is expressed in integer milliseconds. The previous conversion rounded both boundaries down, which could begin a track before its indexed start and let its end boundary extend beyond the exact CUE boundary.
+- Added overflow-safe frame conversion helpers: track starts round upward and track ends round downward. The Kotlin CUE model uses the same policy. Negative frame values are clamped to zero.
+- Added native tests for frame positions 0, 1, 2, 74, and 75, plus negative and maximum-range inputs.
+- This is a conservative millisecond-boundary improvement, not sample-frame-exact CUE seeking. The playback API still accepts milliseconds; a future frame-native seek contract is required to eliminate sub-millisecond quantization entirely.
+- Validation is pending CI. No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.

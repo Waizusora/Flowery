@@ -41,6 +41,18 @@ fn key(path: &str) -> Option<String> {
 fn parent(path: &str) -> &str { path.rsplit_once('/').map(|(p, _)| p).unwrap_or("") }
 fn ext(name: &str) -> &str { name.rsplit_once('.').map(|(_, e)| e).unwrap_or("") }
 
+fn cue_start_frame_to_ms(frame: i64) -> i64 {
+    let frame = frame.max(0);
+    (frame / 75).saturating_mul(1000)
+        .saturating_add(((frame % 75) * 1000 + 74) / 75)
+}
+
+fn cue_end_frame_to_ms(frame: i64) -> i64 {
+    let frame = frame.max(0);
+    (frame / 75).saturating_mul(1000)
+        .saturating_add((frame % 75) * 1000 / 75)
+}
+
 fn resolve<'a>(raw: &str, base: &str, paths: &'a HashMap<String, &'a Entry>,
     uris: &'a HashMap<String, &'a Entry>) -> Option<&'a Entry> {
     let path = normalize_playlist_path(raw)?;
@@ -98,8 +110,8 @@ fn build_root(root: &Root, tracks: &mut Vec<Track>, seen: &mut HashSet<String>) 
                 tracks.push(Track {
                     uri: item.uri.clone(), title: cue.title, folder: root.name.clone(),
                     mime_type: item.mime_type.clone(), sidecar_lyrics_uri: sidecars.get(&item.uri).cloned(),
-                    cue_start_ms: Some(cue.start_frame.saturating_mul(1000) / 75),
-                    cue_end_ms: cue.end_frame.map(|v| v.saturating_mul(1000) / 75),
+                    cue_start_ms: Some(cue_start_frame_to_ms(cue.start_frame)),
+                    cue_end_ms: cue.end_frame.map(cue_end_frame_to_ms),
                     cue_playlist: Some(label.clone()), playlist_name: None, playlist_order: None,
                 });
             }
@@ -158,7 +170,30 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeBuildLibrary
 
 #[cfg(test)]
 mod tests {
-    use super::{build, Snapshot};
+    use super::{build, cue_end_frame_to_ms, cue_start_frame_to_ms, Snapshot};
+
+    #[test]
+    fn cue_frame_conversion_rounds_starts_up_and_ends_down() {
+        assert_eq!(cue_start_frame_to_ms(0), 0);
+        assert_eq!(cue_start_frame_to_ms(1), 14);
+        assert_eq!(cue_start_frame_to_ms(2), 27);
+        assert_eq!(cue_start_frame_to_ms(74), 987);
+        assert_eq!(cue_start_frame_to_ms(75), 1_000);
+
+        assert_eq!(cue_end_frame_to_ms(0), 0);
+        assert_eq!(cue_end_frame_to_ms(1), 13);
+        assert_eq!(cue_end_frame_to_ms(2), 26);
+        assert_eq!(cue_end_frame_to_ms(74), 986);
+        assert_eq!(cue_end_frame_to_ms(75), 1_000);
+    }
+
+    #[test]
+    fn cue_frame_conversion_is_non_negative_and_safe_for_large_values() {
+        assert_eq!(cue_start_frame_to_ms(-1), 0);
+        assert_eq!(cue_end_frame_to_ms(-1), 0);
+        assert!(cue_start_frame_to_ms(i64::MAX) >= cue_end_frame_to_ms(i64::MAX));
+    }
+
     #[test]
     fn matches_sidecars_by_directory_and_builds_playlist_and_cue_tracks() {
         let input = r##"{"roots":[{"name":"Music","entries":[
