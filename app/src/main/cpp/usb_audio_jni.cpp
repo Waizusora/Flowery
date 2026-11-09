@@ -45,6 +45,9 @@ struct InFlightTransfer {
     std::vector<unsigned char> buffer;
     libusb_transfer* transfer = nullptr;
     std::atomic<bool> completed{false};
+    // The transfer is reclaimable only after the libusb event-dispatch call
+    // that invoked its callback has returned.
+    std::atomic<uint64_t> callback_return_iteration{0};
     uint64_t sequence = 0;
     uint64_t frame_phase_before = 0;
     uint64_t frame_phase_after = 0;
@@ -68,6 +71,7 @@ struct UsbAudioSession {
     std::vector<unsigned char> feedback_buffer;
     std::atomic<bool> feedback_stopped{false};
     std::atomic<bool> feedback_in_flight{false};
+    std::atomic<uint64_t> feedback_callback_return_iteration{0};
     std::atomic<bool> feedback_valid{false};
     std::atomic<uint32_t> feedback_rate_fp{0};
     std::atomic<int64_t> feedback_last_update_ns{0};
@@ -146,18 +150,22 @@ void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     auto* entry = static_cast<InFlightTransfer*>(transfer->user_data);
     if (entry != nullptr) {
         UsbAudioSession* owner = entry->owner;
-        entry->completed.store(true, std::memory_order_release);
         if (owner != nullptr) {
             owner->completed_transfer_callback_count.fetch_add(1, std::memory_order_relaxed);
             owner->event_condition.notify_all();
+            entry->callback_return_iteration.store(
+                owner->event_loop_iteration_count.load(std::memory_order_acquire) + 1,
+                std::memory_order_release);
         }
+        // Publish completion last. Reaping also waits for the event-loop
+        // iteration barrier, proving this callback has returned to libusb.
+        entry->completed.store(true, std::memory_order_release);
     }
 }
 
 void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
     auto* session = static_cast<UsbAudioSession*>(transfer->user_data);
     if (session == nullptr) return;
-    session->feedback_in_flight.store(false, std::memory_order_release);
     if (transfer->status == LIBUSB_TRANSFER_COMPLETED && transfer->num_iso_packets > 0) {
         const auto& packet = transfer->iso_packet_desc[0];
         const unsigned char* data = libusb_get_iso_packet_buffer_simple(transfer, 0);
@@ -183,7 +191,6 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
             }
         }
     }
-    session->event_condition.notify_all();
     {
         std::lock_guard<std::mutex> lock(session->event_mutex);
         if (flowery::usb::feedback_resubmit_allowed(
@@ -197,6 +204,11 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
                 session->event_loop_error.store(result, std::memory_order_release);
             }
         }
+    }
+    if (!session->feedback_in_flight.load(std::memory_order_acquire)) {
+        session->feedback_callback_return_iteration.store(
+            session->event_loop_iteration_count.load(std::memory_order_acquire) + 1,
+            std::memory_order_release);
     }
     session->event_condition.notify_all();
 }
@@ -246,7 +258,8 @@ void event_loop_main(UsbAudioSession* session) {
         timeval timeout{0, 10000};
         const int result = libusb_handle_events_timeout_completed(
             session->context, &timeout, nullptr);
-        session->event_loop_iteration_count.fetch_add(1, std::memory_order_relaxed);
+        session->event_loop_iteration_count.fetch_add(1, std::memory_order_release);
+        session->event_condition.notify_all();
         const auto now = std::chrono::steady_clock::now().time_since_epoch();
         session->last_event_loop_ns.store(
             std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
@@ -285,6 +298,8 @@ bool pump_failed_event_loop_for_teardown(UsbAudioSession* session, Pending pendi
         timeval timeout{0, 10000};
         const int result = libusb_handle_events_timeout_completed(
             session->context, &timeout, nullptr);
+        session->event_loop_iteration_count.fetch_add(1, std::memory_order_release);
+        session->event_condition.notify_all();
         if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
             // Retry only within the same teardown deadline. A persistent
             // dispatcher failure must not turn into an unbounded cleanup wait.
@@ -306,15 +321,18 @@ bool stop_event_thread(UsbAudioSession* session) {
     if (session->feedback_transfer != nullptr) {
         const auto deadline = std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(kTeardownTimeoutMs);
-        while (session->feedback_in_flight.load(std::memory_order_acquire) &&
+        auto feedback_callback_pending = [&]() {
+            return session->feedback_in_flight.load(std::memory_order_acquire) ||
+                   session->feedback_callback_return_iteration.load(std::memory_order_acquire) >
+                       session->event_loop_iteration_count.load(std::memory_order_acquire);
+        };
+        while (feedback_callback_pending() &&
                std::chrono::steady_clock::now() < deadline) {
             std::unique_lock<std::mutex> lock(session->event_mutex);
             session->event_condition.wait_for(lock, std::chrono::milliseconds(10));
         }
-        if (session->feedback_in_flight.load(std::memory_order_acquire) &&
-            !pump_failed_event_loop_for_teardown(session, [&]() {
-                return session->feedback_in_flight.load(std::memory_order_acquire);
-            })) {
+        if (feedback_callback_pending() &&
+            !pump_failed_event_loop_for_teardown(session, feedback_callback_pending)) {
             // Keep the session, transfer buffer, and callback context alive if
             // the controller's ownership cannot be returned within the bound.
             return false;
@@ -337,7 +355,10 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
     size_t write_index = 0;
     for (size_t read_index = 0; read_index < queue.size(); ++read_index) {
         std::unique_ptr<InFlightTransfer>& entry = queue[read_index];
-        if (!entry->completed.load(std::memory_order_acquire)) {
+        if (!flowery::usb::transfer_reclaimable(
+                entry->completed.load(std::memory_order_acquire),
+                entry->callback_return_iteration.load(std::memory_order_acquire),
+                session->event_loop_iteration_count.load(std::memory_order_acquire))) {
             if (write_index != read_index) queue[write_index] = std::move(entry);
             ++write_index;
             continue;
