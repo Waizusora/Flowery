@@ -92,9 +92,9 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
                 }
             }
             "FILE" => {
-                if let Some(file_name) = parse_cue_file_name(value) {
-                    current_file = file_name;
-                }
+                current_file = parse_cue_file_name(value)
+                    .filter(|file_name| !file_name.trim().is_empty())
+                    .unwrap_or_default();
             }
             "TRACK" => {
                 if let Some(number) = value.split_whitespace().next()
@@ -138,6 +138,9 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
 
     let valid: Vec<CueTrack> = parsed.into_iter().filter_map(|track| {
         if invalid_files.contains(&track.file_name) {
+            return None;
+        }
+        if track.file_name.trim().is_empty() {
             return None;
         }
         let start_frame = track.start_frame?;
@@ -301,6 +304,20 @@ mod tests {
     #[test]
     fn rejects_non_monotonic_cue_indexes_for_the_affected_file() {
         let cue = "FILE \"disc.flac\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:10\nTRACK 02 AUDIO\nINDEX 01 00:00:20\nTRACK 03 AUDIO\nINDEX 01 00:00:15\n";
+        assert!(parse_cue(cue).tracks.is_empty());
+    }
+
+    #[test]
+    fn malformed_file_directive_does_not_reuse_the_previous_file() {
+        let cue = "FILE \\"valid.flac\\" WAVE\\nTRACK 01 AUDIO\\nINDEX 01 00:00:00\\nFILE \\"unterminated WAVE\\nTRACK 02 AUDIO\\nINDEX 01 00:01:00\\n";
+        let parsed = parse_cue(cue);
+        assert_eq!(parsed.tracks.len(), 1);
+        assert_eq!(parsed.tracks[0].file_name, "valid.flac");
+    }
+
+    #[test]
+    fn cue_tracks_without_a_valid_file_reference_are_ignored() {
+        let cue = "TRACK 01 AUDIO\\nINDEX 01 00:00:00\\n";
         assert!(parse_cue(cue).tracks.is_empty());
     }
 

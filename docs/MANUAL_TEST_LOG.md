@@ -1178,3 +1178,10 @@ Validation scope:
 - Reject all tracks associated with a FILE entry when its valid INDEX 01 positions are non-increasing, preventing invalid zero-length or reversed track ranges from being exposed.
 - Added native regression coverage for tab-separated quoted FILE directives and non-monotonic CUE indexes.
 - No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
+
+### 2026-11-10 — Reject CUE tracks with invalid file references
+
+- A malformed FILE directive previously left the prior filename active, allowing following tracks to be associated with the wrong audio file.
+- FILE parsing now clears the active filename when the directive is malformed or empty, and tracks without a valid file reference are excluded.
+- Added native regression tests for malformed quoted filenames and tracks declared before any valid FILE directive.
+- CI validation is pending. No physical audio output or DAC test was performed; Direct USB Safety Hold remains active.
