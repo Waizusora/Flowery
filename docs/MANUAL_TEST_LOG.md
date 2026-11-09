@@ -906,3 +906,12 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - The initial submission path now publishes `feedback_in_flight=true` before calling `libusb_submit_transfer()`, then rolls it back if submission fails. It no longer writes the in-flight flag after a successful submit, so it cannot overwrite a callback's state transition.
 - Added a host-native ordering scenario to the USB session control test suite. The suite now reports 13 scenarios. This test models the state ordering; it does not invoke libusb or reproduce scheduler/controller timing.
 - CI validation is pending. Direct USB remains under the existing Safety Hold; no physical DAC test was performed.
+
+
+## 2026-11-09 — PCM submission serialized with Pause and Stop
+
+- The PCM writer previously checked the control state before calling `libusb_submit_transfer()` without holding the same mutex used by Pause/Stop publication. A control request could therefore land after the check but before submission, allowing an additional URB to be queued after Pause or Stop had been requested.
+- Added a PCM submission gate that holds `event_mutex` across the final Run-state check and the libusb submit call. Pause/Stop publication uses the same mutex, making the decision and submission linearizable. The encoded path now uses the same shared submission predicate.
+- Applied the gate to normal PCM writes and the final staged PCM packet submitted by drain. If drain observes Pause before the tail submission, it drains only already-submitted URBs and preserves the unsent PCM suffix and phase for Resume. Stop retains its existing abort-and-clear behavior.
+- Added a host-native concurrency scenario for PCM submission versus Pause publication. The USB session control suite now reports 14 scenarios. The host test exercises the shared policy/lock ordering; it does not call libusb or model hardware scheduling.
+- CI validation is pending. Direct USB remains under the existing Safety Hold; no physical DAC test was performed.
