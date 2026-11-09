@@ -130,7 +130,7 @@ void test_pause_request_is_serialized_with_encoded_submission() {
  requester.join();
  {
   std::lock_guard<std::mutex> lock(mutex);
-  assert(!flowery::usb::encoded_submit_allowed(control));
+  assert(!flowery::usb::submission_allowed(control));
  }
  assert(submitted.load()==1);
 }
