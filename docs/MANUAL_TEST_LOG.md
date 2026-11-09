@@ -856,3 +856,12 @@ Encoded USB lifecycle control implementation (2026-11-09; source change):
 - Validation is pending on CI #1524. The existing host-native tests exercise the shared ControlState and session lifetime primitives; they do not yet emulate encoded frame scheduling or a libusb controller. No USB DAC was connected and no physical playback test was performed. Direct USB Safety Hold remains active.
 
 **Status: ENCODED USB PAUSE/RESUME/STOP PATH IMPLEMENTED IN SOURCE; CI VALIDATION PENDING; ENCODED CONTROLLER-LEVEL TEST COVERAGE AND DIRECT USB SAFETY REVIEW STILL REQUIRED.**
+
+Encoded USB boundary-policy tests (2026-11-09; source change):
+
+- Extracted the encoded writer's control decision into the shared native encoded_control_action policy used by the production encoded writer and encoded drain: Run permits submission; Pause drains outstanding URBs and then waits for Resume; Stop takes priority and requests abort.
+- Added host-native scenarios for UAC1 Type-II frame completion before Pause, IEC 61937 Type-III URB-window drain while preserving the unsent cursor and rate/feedback phase, Stop priority over Pause, and Close waiting for an active encoded-writer lease after Stop.
+- These tests exercise the production control-decision policy and lifetime gate with deterministic in-memory transfer counts. They do not invoke libusb, emulate USB controller completion/error behavior, or prove endpoint electrical/audio safety.
+- CI validation is pending for the current main revision. Direct USB remains under Safety Hold; no physical DAC test was performed.
+
+**Status: ENCODED CONTROL POLICY TESTS ADDED; CI VALIDATION PENDING; LIBUSB CONTROLLER-LEVEL COVERAGE AND DIRECT USB SAFETY REVIEW STILL REQUIRED.**
