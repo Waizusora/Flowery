@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -44,7 +43,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var usbNativeBitPerfectConfirmed = false
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
-    private val pendingSeekMs = AtomicReference<Long?>(null)
+    private val pendingSeekMs = UsbSeekRequestMailbox()
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
 
@@ -334,7 +333,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "Unable to start the Rust-owned segmented AAudio decode scheduler"
                 }
                 // Forward a seek requested while the decoder/session was still opening.
-                pendingSeekMs.getAndSet(null)?.let { requested ->
+                pendingSeekMs.take()?.let { requested ->
                     val epoch = NativeAudio.nativeRequestPlaybackSessionSeek(
                         sessionHandle,
                         segmentStartMs + requested.coerceAtLeast(0L),
@@ -461,7 +460,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             openedPipeline.playUntil(
                 playbackActive = { playbackActive() },
                 isPaused = { paused },
-                takePendingSeekMs = { pendingSeekMs.getAndSet(null) },
+                takePendingSeekMs = { pendingSeekMs.take() },
                 segmentStartMs = segmentStartMs,
                 segmentEndMs = segmentEndMs,
                 onSeek = { bounded, actual ->
@@ -627,7 +626,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val summary = writer.playUntil(
                 playbackActive = { playbackActive() },
                 isPaused = { paused },
-                takePendingSeekMs = { pendingSeekMs.getAndSet(null) },
+                takePendingSeekMs = { pendingSeekMs.take() },
                 onSeek = { requested ->
                     diagnostics.record("USB_PCM_SEEK requestedMs=${requested} epochCommitted=true")
                     onState("Seeking…")
@@ -759,7 +758,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             // PCM and encoded USB pipelines apply the request on their writer
             // thread, where epoch transition and transport flush cannot overlap
             // an in-progress packet submission.
-            pendingSeekMs.set(boundedPosition)
+            pendingSeekMs.request(boundedPosition)
             onState("Seeking…")
         }
     }
@@ -883,7 +882,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputDurationMs = 0L
         outputSampleRate = 0
         usbOutputBitDepth = 0
-        pendingSeekMs.set(null)
+        pendingSeekMs.clear()
         activeSegmentStartMs = 0L
         activeSegmentEndMs = -1L
         paused = false
