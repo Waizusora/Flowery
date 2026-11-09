@@ -337,12 +337,14 @@ fn start_producer_worker(producer: Arc<UsbPcmProducer>) -> Result<(), String> {
     Ok(())
 }
 
-fn join_worker_under_lock(
+fn stop_worker_under_lock(
     worker: &Mutex<Option<JoinHandle<()>>>,
+    worker_cancelled: &AtomicBool,
 ) -> Result<(), String> {
-    // Keep the worker slot locked until join completes. Otherwise a concurrent
-    // start could reset cancellation and revive the worker being stopped.
+    // Publish cancellation only after acquiring the worker slot. Otherwise a
+    // concurrent start could reset the flag while stop is waiting for the lock.
     let mut worker = worker.lock().unwrap_or_else(|error| error.into_inner());
+    worker_cancelled.store(true, Ordering::Release);
     if let Some(handle) = worker.take() {
         handle.join().map_err(|_| "USB PCM producer worker panicked during shutdown".to_string())?;
     }
@@ -350,8 +352,7 @@ fn join_worker_under_lock(
 }
 
 fn stop_producer_worker(producer: &UsbPcmProducer) -> Result<(), String> {
-    producer.worker_cancelled.store(true, Ordering::Release);
-    join_worker_under_lock(&producer.worker)
+    stop_worker_under_lock(&producer.worker, &producer.worker_cancelled)
 }
 
 #[no_mangle]
@@ -477,25 +478,41 @@ mod handle_tests {
 
 #[cfg(test)]
 mod worker_lifecycle_tests {
-    use super::join_worker_under_lock;
+    use super::stop_worker_under_lock;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
     use std::thread;
     use std::time::{Duration, Instant};
 
     #[test]
-    fn stop_holds_worker_slot_until_join_completes() {
+    fn stop_serializes_cancellation_and_join_against_concurrent_start() {
         let slot = Arc::new(Mutex::new(None));
-        let (started_tx, started_rx) = mpsc::channel();
-        let (release_tx, release_rx) = mpsc::channel();
-        let worker = thread::spawn(move || {
-            started_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
-        });
-        *slot.lock().unwrap() = Some(worker);
-        let stopping_slot = Arc::clone(&slot);
-        let stopper = thread::spawn(move || join_worker_under_lock(&stopping_slot));
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let (start_locked_tx, start_locked_rx) = mpsc::channel();
+        let (allow_start_tx, allow_start_rx) = mpsc::channel();
 
-        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let starting_slot = Arc::clone(&slot);
+        let starting_cancelled = Arc::clone(&cancelled);
+        let starter = thread::spawn(move || {
+            let mut worker_slot = starting_slot.lock().unwrap();
+            start_locked_tx.send(()).unwrap();
+            allow_start_rx.recv().unwrap();
+            starting_cancelled.store(false, Ordering::Release);
+            let worker_cancelled = Arc::clone(&starting_cancelled);
+            *worker_slot = Some(thread::spawn(move || {
+                while !worker_cancelled.load(Ordering::Acquire) {
+                    thread::yield_now();
+                }
+            }));
+        });
+
+        start_locked_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let stopping_slot = Arc::clone(&slot);
+        let stopping_cancelled = Arc::clone(&cancelled);
+        let stopper = thread::spawn(move || {
+            stop_worker_under_lock(&stopping_slot, &stopping_cancelled)
+        });
+
         let deadline = Instant::now() + Duration::from_secs(1);
         let mut observed_locked = false;
         while Instant::now() < deadline {
@@ -509,9 +526,11 @@ mod worker_lifecycle_tests {
             }
             thread::yield_now();
         }
-        assert!(observed_locked, "stop must hold the worker slot while joining");
-        release_tx.send(()).unwrap();
+        assert!(observed_locked, "start must retain the worker slot while publishing its worker");
+        allow_start_tx.send(()).unwrap();
+        starter.join().unwrap();
         stopper.join().unwrap().unwrap();
+        assert!(cancelled.load(Ordering::Acquire));
         assert!(slot.try_lock().is_ok());
     }
 }

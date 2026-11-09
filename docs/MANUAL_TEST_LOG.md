@@ -1123,6 +1123,6 @@ Validation scope:
 
 - CI #1650 completed successfully, including native unit tests, USB session control tests, JNI contract checks, Android unit tests, native Android library builds, and debug/release APK packaging.
 - A source audit found a race in the Rust PCM producer lifecycle: stop removed the worker handle and released the worker mutex before joining. A concurrent start could observe an empty slot, reset the cancellation flag, and start another worker while the previous worker was still exiting.
-- Updated stop/join to retain the worker-slot mutex until the join completes. Worker start now rejects producers already marked for destruction, and destruction publishes that terminal state before stopping the worker.
-- Added a deterministic regression test that verifies the worker slot remains locked while join is waiting for the worker to finish.
+- Updated stop/join to retain the worker-slot mutex through cancellation publication and thread join. Publishing cancellation under the same lock prevents a concurrent start from resetting the flag while stop waits. Worker start also rejects producers already marked for destruction, and destruction publishes that terminal state before stopping the worker.
+- Added a deterministic regression test that interleaves start and stop and verifies cancellation remains terminal after the worker has been joined.
 - CI verification for this correction is pending. No physical USB DAC test was performed; Direct USB Safety Hold remains active.
