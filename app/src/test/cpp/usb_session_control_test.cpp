@@ -50,6 +50,19 @@ void test_repeated_stop_is_idempotent_and_terminal() {
  assert(control.request(ControlRequest::Stop,wake)); assert(!control.request(ControlRequest::Pause,wake));
  assert(!control.request(ControlRequest::Run,wake)); assert(control.load()==static_cast<int>(ControlRequest::Stop));
 }
+void test_moving_a_session_lease_invalidates_the_source() {
+ SessionLifetimeGate gate;
+ auto source=gate.acquire();
+ assert(static_cast<bool>(source));
+ auto destination=std::move(source);
+ assert(!static_cast<bool>(source));
+ assert(static_cast<bool>(destination));
+ auto replacement=gate.acquire();
+ assert(static_cast<bool>(replacement));
+ replacement=std::move(destination);
+ assert(!static_cast<bool>(destination));
+ assert(static_cast<bool>(replacement));
+}
 void test_close_waits_for_active_lease_and_rejects_new_ones() {
  SessionLifetimeGate gate; auto active=gate.acquire(); assert(static_cast<bool>(active));
  std::promise<void> started,finished; auto done=finished.get_future();
@@ -236,6 +249,7 @@ void test_transfer_reclaim_waits_until_callback_dispatch_returns() {
 int main() {
  test_pause_wakes_blocked_writer_without_submitting(); test_resume_wakes_paused_writer();
  test_repeated_stop_is_idempotent_and_terminal(); test_close_waits_for_active_lease_and_rejects_new_ones();
+ test_moving_a_session_lease_invalidates_the_source();
  test_encoded_uac1_pause_finishes_frame_before_waiting();
  test_encoded_type_iii_pause_preserves_packet_cursor_and_phase();
  test_encoded_stop_takes_priority_over_pause_and_aborts();
@@ -246,5 +260,5 @@ int main() {
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (14 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (15 scenarios).\n"; return 0;
 }
