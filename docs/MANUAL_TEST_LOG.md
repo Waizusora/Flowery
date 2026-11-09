@@ -1108,3 +1108,12 @@ Validation scope:
 - Corrected the teardown path to acquire the producer state mutex (recovering a poisoned mutex consistently with the surrounding lifecycle code) and close `state.queue` after the worker join reports panic. This preserves the intended fail-closed queue behavior without changing the producer architecture.
 - The fix is committed as `f5a374138832e955b77b692d1ff550d122c71edf`. CI verification for this correction is pending; no test result is claimed here.
 - No physical USB DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — CI #1649 verification of encoded producer teardown fix
+
+- GitHub Actions run #1649 completed successfully for commit `cc154128d2c74fb5de11feab0adc7c195136afc4`.
+- The workflow passed native unit tests, native USB session control tests, Kotlin/native JNI declaration verification, Android unit tests, native Android library builds, debug and release APK builds, and APK artifact upload.
+- The workflow uploaded the `flowery-apks` artifact. The GitHub release publication step was skipped by the workflow; no release publication is claimed.
+- This run verifies the host-side build and automated test gates for the encoded producer teardown correction. It does not validate physical USB transfer cancellation, DAC mute behavior, or hardware playback safety.
+- No physical USB DAC test was performed. Direct USB Safety Hold remains active.
