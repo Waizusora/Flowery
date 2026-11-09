@@ -26,6 +26,11 @@ class UsbEncodedDacSession private constructor(
         )
     }
 
+    // Deliberately unsynchronized so control requests can wake a JNI writer.
+    fun requestPause(): Boolean = !closed && UsbDacNative.nativeRequestPause(nativeHandle)
+    fun requestResume(): Boolean = !closed && UsbDacNative.nativeRequestResume(nativeHandle)
+    fun requestStop(): Boolean = !closed && UsbDacNative.nativeRequestStop(nativeHandle)
+
     /** Waits until every staged encoded service interval has completed. */
     @Synchronized
     fun drain() {
@@ -47,6 +52,7 @@ class UsbEncodedDacSession private constructor(
     @Synchronized
     override fun close() {
         if (closed) return
+        requestStop()
         for (attempt in 0 until 3) {
             if (UsbDacNative.nativeClose(nativeHandle)) {
                 closed = true
