@@ -114,13 +114,15 @@ void test_pause_request_is_serialized_with_encoded_submission() {
   if(flowery::usb::encoded_submit_allowed(control)) ++submitted;
  });
  submit_lock_acquired.get_future().wait();
- std::promise<void> request_finished;
+ std::promise<void> request_started,request_finished;
  auto request_done=request_finished.get_future();
  std::thread requester([&]{
+  request_started.set_value();
   assert(flowery::usb::request_control_serialized(
       control,ControlRequest::Pause,mutex,wake));
   request_finished.set_value();
  });
+ request_started.get_future().wait();
  // The request must wait while the writer owns the submission gate.
  assert(request_done.wait_for(40ms)==std::future_status::timeout);
  release_submit.set_value();
