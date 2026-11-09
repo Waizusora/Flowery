@@ -271,8 +271,9 @@ void event_loop_main(UsbAudioSession* session) {
 // session and all callback-referenced memory rather than freeing it.
 template <typename Pending>
 bool pump_failed_event_loop_for_teardown(UsbAudioSession* session, Pending pending) {
-    if (session->event_loop_error.load(std::memory_order_acquire) == LIBUSB_SUCCESS ||
-        session->event_thread_running.load(std::memory_order_acquire)) {
+    if (!flowery::usb::failed_dispatcher_teardown_pump_allowed(
+            session->event_thread_running.load(std::memory_order_acquire),
+            session->event_loop_error.load(std::memory_order_acquire), LIBUSB_SUCCESS)) {
         return false;
     }
     if (session->event_thread.joinable()) {
