@@ -28,6 +28,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
+    fun requestPause(): Boolean = session.requestPause()
+    fun requestResume(): Boolean = session.requestResume()
+    fun requestStop(): Boolean = session.requestStop()
+
     /**
      * Pumps source frames into the bounded Rust queue and submits available
      * complete packets to the encoded endpoint. Returns the number submitted.
@@ -86,19 +90,13 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         segmentEndMs: Long?,
         onSeek: (boundedPositionMs: Long, actualPositionMs: Long) -> Unit,
     ) {
-        var transportDrainedForPause = false
         while (playbackActive()) {
             if (isPaused()) {
-                if (!transportDrainedForPause) {
-                    // Cancel queued endpoint transfers instead of draining them;
-                    // otherwise the DAC keeps playing buffered audio after Pause.
-                    session.flush()
-                    transportDrainedForPause = true
-                }
+                // The native encoded writer owns Pause at frame/URB boundaries.
+                // Do not flush: that would discard an already-dequeued packet.
                 Thread.sleep(10)
                 continue
             }
-            transportDrainedForPause = false
 
             takePendingSeekMs()?.let { requested ->
                 val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
