@@ -316,12 +316,15 @@ class PlaybackService : Service() {
                     hasAudioFocus = true
                     mainHandler.postDelayed({
                         if (resumeAfterFocus && !isCallAudioMode()) {
-                            resumeAfterFocus = false
-                            player.setDucked(false)
-                            player.resume()
-                            playbackState = PlaybackStateCompat.STATE_PLAYING
-                            publishSessionState()
-                            publishState("Playing · call ended")
+                            if (player.resume()) {
+                                resumeAfterFocus = false
+                                player.setDucked(false)
+                                playbackState = PlaybackStateCompat.STATE_PLAYING
+                                publishSessionState()
+                                publishState("Playing · call ended")
+                            } else {
+                                publishState("Resume request was rejected")
+                            }
                         }
                     }, 400L)
                 }
@@ -355,11 +358,14 @@ class PlaybackService : Service() {
     private fun scheduleCallModeCheck() {
         mainHandler.postDelayed({
             if (isCallAudioMode() && playbackState == PlaybackStateCompat.STATE_PLAYING) {
-                resumeAfterFocus = true
-                player.pause()
-                playbackState = PlaybackStateCompat.STATE_PAUSED
-                publishSessionState()
-                publishState("Paused · phone or app call")
+                if (player.pause()) {
+                    resumeAfterFocus = true
+                    playbackState = PlaybackStateCompat.STATE_PAUSED
+                    publishSessionState()
+                    publishState("Paused · phone or app call")
+                } else {
+                    publishState("Pause request was rejected")
+                }
             }
         }, 500L)
     }
@@ -439,7 +445,10 @@ class PlaybackService : Service() {
 
     private fun pauseForOutputChange() {
         resumeAfterFocus = false
-        player.pause()
+        if (!player.pause()) {
+            publishState("Pause request was rejected")
+            return
+        }
         playbackState = PlaybackStateCompat.STATE_PAUSED
         publishSessionState()
         publishState("Paused · audio output changed. Press Play to resume.")
@@ -447,7 +456,10 @@ class PlaybackService : Service() {
 
     private fun pausePlayback() {
         resumeAfterFocus = false
-        player.pause()
+        if (!player.pause()) {
+            publishState("Pause request was rejected")
+            return
+        }
         playbackState = PlaybackStateCompat.STATE_PAUSED
         publishSessionState()
         publishState("Paused")
@@ -458,9 +470,12 @@ class PlaybackService : Service() {
         resumeAfterFocus = false
         if (playbackState == PlaybackStateCompat.STATE_STOPPED) playCurrent()
         else {
-            if (requestFocus()) player.resume()
-            playbackState = PlaybackStateCompat.STATE_PLAYING
-            publishSessionState()
+            if (requestFocus() && player.resume()) {
+                playbackState = PlaybackStateCompat.STATE_PLAYING
+                publishSessionState()
+            } else {
+                publishState("Resume request was rejected")
+            }
         }
     }
 

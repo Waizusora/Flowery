@@ -57,19 +57,17 @@ internal class PlaybackCoordinator(
     }
 
     @Synchronized
-    fun pause() {
-        if (state() == State.PLAYING) {
-            engine.pause()
-            transition(EVENT_PAUSE)
-        }
+    fun pause(): Boolean {
+        if (state() != State.PLAYING || !engine.pause()) return false
+        transition(EVENT_PAUSE)
+        return true
     }
 
     @Synchronized
-    fun resume() {
-        if (state() == State.PAUSED) {
-            engine.resume()
-            transition(EVENT_RESUME)
-        }
+    fun resume(): Boolean {
+        if (state() != State.PAUSED || !engine.resume()) return false
+        transition(EVENT_RESUME)
+        return true
     }
 
     @Synchronized fun seekTo(positionMs: Long) = engine.seekTo(positionMs)

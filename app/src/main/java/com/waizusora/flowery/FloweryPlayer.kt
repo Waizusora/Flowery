@@ -763,36 +763,60 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
     }
 
-    fun pause() {
+    fun pause(): Boolean {
         if (usbPlaybackMode) {
             paused = true
-            activeUsbSession?.requestPause()
-            activeUsbEncodedPipeline?.requestPause()
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
-            onState("Paused · USB exclusive")
-        } else {
-            val session = nativeSessionHandle
-            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() == 0) {
-                paused = true
-                onState("Paused")
+            val transportAccepted = activeUsbEncodedPipeline?.requestPause()
+                ?: activeUsbSession?.requestPause()
+                ?: false
+            if (!transportAccepted) {
+                paused = false
+                return false
             }
+            val session = nativeSessionHandle
+            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) {
+                activeUsbEncodedPipeline?.requestResume()
+                activeUsbSession?.requestResume()
+                paused = false
+                return false
+            }
+            onState("Paused · USB exclusive")
+            return true
         }
+
+        val session = nativeSessionHandle
+        if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) {
+            return false
+        }
+        paused = true
+        onState("Paused")
+        return true
     }
 
-    fun resume() {
+    fun resume(): Boolean {
         if (usbPlaybackMode) {
-            activeUsbSession?.requestResume()
-            activeUsbEncodedPipeline?.requestResume()
-            paused = false
-            if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
-            onState("Playing · USB exclusive")
-        } else {
+            val transportAccepted = activeUsbEncodedPipeline?.requestResume()
+                ?: activeUsbSession?.requestResume()
+                ?: false
+            if (!transportAccepted) return false
             val session = nativeSessionHandle
-            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() == 0) {
-                paused = false
-                onState("Playing · AAudio streaming")
+            if (session != 0L && NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() != 0) {
+                activeUsbEncodedPipeline?.requestPause()
+                activeUsbSession?.requestPause()
+                return false
             }
+            paused = false
+            onState("Playing · USB exclusive")
+            return true
         }
+
+        val session = nativeSessionHandle
+        if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() != 0) {
+            return false
+        }
+        paused = false
+        onState("Playing · AAudio streaming")
+        return true
     }
 
     fun stopAndJoin(timeoutMs: Long = 4_000L): Boolean {

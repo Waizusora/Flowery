@@ -1144,3 +1144,12 @@ Validation scope:
 - Added native regression coverage for a short 44.1 kHz stream resampled to 48 kHz, asserting the exact 480-frame output count and stable repeated EOF reads.
 - Added a direct USB native-PCM EOF regression asserting the final partial read is emitted once and subsequent reads remain empty.
 - CI validation is pending. These host-side tests do not emulate real-time Android scheduling, output-device latency, libusb transport, or DAC hardware. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — Playback position and pause/resume state synchronization audit
+
+- Audited the AAudio output-frame position counter, seek flush position, segment-relative frame accounting, decoder frame accounting, and the service progress ticker.
+- Confirmed AAudio progress is derived from frames consumed by the output callback rather than frames merely decoded or queued. A seek resets that counter to the segment-relative output frame, and pause stops callback consumption so the reported position remains stable while paused. USB progress remains based on transport-accepted frame counts; this is a transport-progress estimate and can lead audible presentation by the endpoint's queued-transfer latency.
+- Found a lifecycle synchronization defect: pause/resume requests could be rejected by the native AAudio session or USB transport while Kotlin still advanced the coordinator/service state as though the request had succeeded.
+- Changed playback engine and coordinator pause/resume methods to return acceptance status. The service now publishes PAUSED/PLAYING only after the underlying control request succeeds; failed requests preserve the prior playback state. USB control failures also roll back the local paused flag and attempt to restore the previous transport direction.
+- Automated CI validation is pending. This audit does not measure physical output latency or verify DAC presentation timestamps. Direct USB Safety Hold remains active; no physical DAC test was performed.
