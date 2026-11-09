@@ -989,3 +989,10 @@ Validation scope:
 - The pending-session registry continues to retain the Kotlin session and Android connection until the full close sequence succeeds. open() also retries pending sessions and fails closed if any remain unresolved.
 - Validation scope: source-level state/ownership correction plus CI compilation and unit tests. This does not simulate libusb callback behavior or establish physical audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.
 - A subsequent retry-path check added a separate `connectionClosed` state. If Android connection release itself throws, later retries skip both the already-completed native close and any connection close that has already returned successfully; the session is removed from the pending registry only after both ownership steps are confirmed.
+
+### 2026-11-09 — Serialize encoded producer worker lifecycle and contain panics
+
+- The Rust worker audit found that worker replacement was split across registry removal/join and later insertion. Concurrent start calls could interleave those operations and overwrite a live worker entry, losing the handle needed to stop and join that worker.
+- Worker stop now retains the registry lock through removal and join. Worker start serializes prior-worker stop/join, thread creation, and registry insertion under the same registry lock. The worker body does not acquire that registry lock, so joining while holding it does not create a worker-to-registry lock cycle.
+- The producer thread body is now guarded by `catch_unwind`. A panic is contained at the worker boundary and publishes terminal status `-3`, rather than silently leaving the worker status at its initial value. The worker is still joined during teardown before its producer is destroyed.
+- Validation scope: source-level synchronization and panic-boundary hardening; CI native/Kotlin/Android tests required. This does not simulate Android scheduling, libusb callbacks, or USB controller behavior. Direct USB Safety Hold remains active; no physical DAC test was performed.
