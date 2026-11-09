@@ -24,3 +24,27 @@ class LibraryTextEncodingTest {
         assertEquals("東京", LibraryTextEncoding.decode(bytes, "not-a-real-charset"))
     }
 }
+
+
+class CueTrackBoundaryTest {
+    @Test
+    fun cueBoundariesRoundStartUpAndEndDown() {
+        val track = CueTrack(1, "Track", null, "disc.flac", 1L, 1L)
+        assertEquals(14L, track.startTimeMs)
+        assertEquals(13L, track.endTimeMs)
+    }
+
+    @Test
+    fun cueBoundaryConversionSaturatesInsteadOfOverflowing() {
+        val track = CueTrack(1, "Track", null, "disc.flac", Long.MAX_VALUE, Long.MAX_VALUE)
+        assertEquals(Long.MAX_VALUE, track.startTimeMs)
+        assertEquals(Long.MAX_VALUE, track.endTimeMs)
+    }
+
+    @Test
+    fun negativeCueBoundaryIsClampedToZero() {
+        val track = CueTrack(1, "Track", null, "disc.flac", -1L, -1L)
+        assertEquals(0L, track.startTimeMs)
+        assertEquals(0L, track.endTimeMs)
+    }
+}

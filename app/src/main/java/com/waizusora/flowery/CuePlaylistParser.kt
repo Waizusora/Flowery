@@ -39,6 +39,26 @@ object LibraryTextEncoding {
     }
 }
 
+private fun cueFrameToMilliseconds(frame: Long, roundUp: Boolean): Long {
+    val frames = frame.coerceAtLeast(0L)
+    val wholeSeconds = frames / 75L
+    val fractionalFrames = frames % 75L
+    if (wholeSeconds > Long.MAX_VALUE / 1000L) return Long.MAX_VALUE
+
+    val wholeMilliseconds = wholeSeconds * 1000L
+    val fractionalNumerator = fractionalFrames * 1000L
+    val fractionalMilliseconds = if (roundUp) {
+        (fractionalNumerator + 74L) / 75L
+    } else {
+        fractionalNumerator / 75L
+    }
+    return if (wholeMilliseconds > Long.MAX_VALUE - fractionalMilliseconds) {
+        Long.MAX_VALUE
+    } else {
+        wholeMilliseconds + fractionalMilliseconds
+    }
+}
+
 data class CueTrack(
     val number: Int,
     val title: String,
@@ -48,15 +68,10 @@ data class CueTrack(
     val endFrame: Long?
 ) {
     /** CUE time is expressed in 75 CD frames per second. Start boundaries round up to avoid early playback. */
-    val startTimeMs: Long get() {
-        val frames = startFrame.coerceAtLeast(0L)
-        return (frames / 75L) * 1000L + ((frames % 75L) * 1000L + 74L) / 75L
-    }
+    val startTimeMs: Long get() = cueFrameToMilliseconds(startFrame, roundUp = true)
+
     /** End boundaries round down so a segment cannot extend into the following track. */
-    val endTimeMs: Long? get() = endFrame?.let { value ->
-        val frames = value.coerceAtLeast(0L)
-        (frames / 75L) * 1000L + (frames % 75L) * 1000L / 75L
-    }
+    val endTimeMs: Long? get() = endFrame?.let { cueFrameToMilliseconds(it, roundUp = false) }
 }
 
 data class CueSheet(val title: String?, val performer: String?, val tracks: List<CueTrack>)

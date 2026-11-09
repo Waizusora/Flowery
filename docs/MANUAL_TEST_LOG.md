@@ -1218,3 +1218,11 @@ Validation scope:
 - CUE track ranges are now resolved in reverse order using the next later INDEX 01 position for each individual file. Playlist display order remains unchanged, and tracks without a later boundary for the same file remain open-ended.
 - Added a native regression test with interleaved references to two audio files. It verifies that each track receives the next timestamp belonging to its own file, even when another file's track appears between them.
 - CI validation is pending. This is parser/range metadata coverage only; it does not change millisecond-based playback seek precision or validate physical audio output. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Prevent overflow in Kotlin CUE boundary conversion
+
+- A cross-language consistency audit found that Rust catalog conversion used saturating arithmetic, while the Kotlin CUE model multiplied whole seconds by 1,000 without an overflow check. A syntactically valid, extremely large CUE timestamp could therefore wrap to a negative millisecond value in Kotlin.
+- Centralized Kotlin CUE frame conversion and added saturation for both the whole-second and fractional components. Start boundaries still round upward and end boundaries still round downward; negative values remain clamped to zero.
+- Added Android unit tests for normal rounding, negative inputs, and Long.MAX_VALUE saturation.
+- CI validation is pending. This protects metadata conversion arithmetic and does not add sample-frame-native seeking or validate physical audio output. Direct USB Safety Hold remains active.
