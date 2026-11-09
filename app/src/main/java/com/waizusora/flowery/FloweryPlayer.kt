@@ -737,11 +737,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(epoch >= 0L) { "The native AAudio session rejected the seek request" }
             onState("Seeking…")
         } else {
-            if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
             val producer = activeUsbPcmProducerHandle
-            if (producer != 0L) {
+            val encodedPipelineActive = activeUsbEncodedPipeline != null
+            if (shouldAdvanceUsbSessionEpochBeforeSeek(encodedPipelineActive, producer)) {
+                if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
                 NativeAudio.nativeRequestUsbPcmProducerSeek(producer, boundedPosition)
             } else {
+                // Encoded playback commits its epoch only after transport flush and
+                // decoder seek succeed. Startup seeks likewise wait for their owner.
                 pendingSeekMs.set(boundedPosition)
             }
         }
