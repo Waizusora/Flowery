@@ -28,7 +28,7 @@ inline bool request_control_serialized(
  std::lock_guard<std::mutex> lock(mutex);
  return control.request(requested,wake);
 }
-inline bool encoded_submit_allowed(const ControlState& control) noexcept {
+inline bool submission_allowed(const ControlState& control) noexcept {
  return control.load()==static_cast<int>(ControlRequest::Run);
 }
 inline bool feedback_resubmit_allowed(bool stopped, bool event_thread_running,
