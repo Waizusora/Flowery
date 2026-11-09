@@ -814,3 +814,20 @@ CI #1511 compile correction (2026-11-09):
 - CI must be rerun to validate the correction. No USB DAC was connected or physically tested; Direct USB Safety Hold remains active.
 
 **Status: CI #1511 FAILURE DIAGNOSED; LEASE RELEASE API CORRECTION COMMITTED; VALIDATION PENDING.**
+
+### TEST 22 — Playback completion and Stop cleanup regression (2026-11-09)
+
+**Status: PASS — user-confirmed on the APK produced by CI #1513**
+
+User-confirmed observations using the built-in Speaker or AUX output, with no USB DAC connected:
+
+- Track completed and the next track started automatically: **PASS**.
+- Manual Stop during playback: **PASS**.
+- Play after Stop: **PASS**.
+- Application crash during these checks: **NO**.
+
+This retest covers the completion-cleanup path associated with the previously observed invalid native playback-session transition. It confirms the reported scenarios on the tested build; it does not establish broader playback stability or validate USB Direct output.
+
+**Build:** CI #1513 — https://github.com/Waizusora/Flowery/actions/runs/42546444838  
+**Safety note:** Direct USB DAC playback was not tested. The Direct USB Safety Hold remains active.
+
