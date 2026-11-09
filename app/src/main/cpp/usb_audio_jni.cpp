@@ -1381,18 +1381,27 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         return 0;
     }
 
-    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+    auto stop_pcm_writer = [&]() -> jint {
         if (!abort_in_flight(session)) return -1;
         session->pending_pcm.clear();
         session->pending_offset = 0;
         session->frame_phase = 0;
         session->feedback_phase = 0;
         return -2;
+    };
+    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        return stop_pcm_writer();
     }
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
+            if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+                return stop_pcm_writer();
+            }
             if (!wait_for_progress(session, &failure)) break;
+        }
+        if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+            return stop_pcm_writer();
         }
         if (!failure.failed) {
             const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
@@ -1405,7 +1414,13 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         }
     }
     while (!failure.failed && !session->in_flight.empty()) {
+        if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+            return stop_pcm_writer();
+        }
         wait_for_progress(session, &failure);
+    }
+    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        return stop_pcm_writer();
     }
 
     if (failure.failed) {

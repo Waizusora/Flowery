@@ -55,7 +55,7 @@ internal object UsbDacNative {
     external fun nativeRequestPause(handle: Long): Boolean
     external fun nativeRequestResume(handle: Long): Boolean
     external fun nativeRequestStop(handle: Long): Boolean
-    external fun nativeClose(handle: Long)
+    external fun nativeClose(handle: Long): Boolean
 }
 
 /**

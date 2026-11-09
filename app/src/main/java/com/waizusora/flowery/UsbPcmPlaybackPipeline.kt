@@ -114,7 +114,6 @@ internal class UsbPcmPlaybackPipeline private constructor(
 
         val writeStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
         val acceptedFrames = dacSession.writePcm(block.pcm, block.frames)
-        if (acceptedFrames == UsbDacSession.WRITE_STOPPED) return null
         val transportDurationMs = (android.os.SystemClock.elapsedRealtimeNanos() - writeStartedNs)
             .coerceAtLeast(0L) / 1_000_000.0
         return UsbPcmWriteResult(
@@ -161,6 +160,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         )
 
         var firstTransfer = true
+        var transportFlushedForPause = false
         var lastHardwareVolumePollNs = 0L
         var starvationEvents = 0L
         var chunks = 0L
@@ -169,11 +169,16 @@ internal class UsbPcmPlaybackPipeline private constructor(
 
         while (playbackActive()) {
             if (isPaused()) {
-                dacSession.requestPause()
+                if (!transportFlushedForPause) {
+                    // Stop audio already submitted to the USB endpoint; pausing the
+                    // producer alone does not cancel libusb transfers already in flight.
+                    dacSession.flush()
+                    transportFlushedForPause = true
+                }
                 Thread.sleep(10)
                 continue
             }
-            dacSession.requestResume()
+            transportFlushedForPause = false
             val producerFailure = workerError
             check(producerFailure.isBlank()) {
                 "Rust USB PCM producer worker failed: $producerFailure"

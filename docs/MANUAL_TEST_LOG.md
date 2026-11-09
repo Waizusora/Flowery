@@ -759,3 +759,11 @@ Direct USB PCM cancellation implementation — Stage 2 (2026-11-09; source chang
 - Automated validation is pending. No DAC was connected and no physical playback test was performed. This change does not fix the independent 16-bit/44.1 kHz short-packet issue, the 24-bit/96 kHz drain timeout, or establish acoustic safety. Direct USB Safety Hold remains active.
 
 **Status: PCM PAUSE/RESUME/STOP REQUEST PATH IMPLEMENTED; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
+
+
+Stage 2 follow-up correction (2026-11-09):
+
+- Restored the Kotlin JNI declaration of nativeClose to its Boolean return type; the initial Stage 2 edit had accidentally omitted the explicit return type.
+- Extended Stop handling into the PCM nativeDrain path so a Stop request also wakes and cancels a writer that is finishing the final drain, rather than only interrupting nativeWriteIsochronous.
+- The stop result is distinct from a transport failure; transfer-reap failure still returns an error and retains native resources according to the existing teardown policy.
+- CI validation is pending. No DAC was connected or physically tested. Direct USB Safety Hold remains active.
