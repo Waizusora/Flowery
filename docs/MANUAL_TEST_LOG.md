@@ -1051,3 +1051,11 @@ Validation scope:
 - EOF remains a distinct drainable state so packets successfully queued before normal end-of-stream can complete. The gate is not a hardware-level emergency stop and does not establish that already-submitted USB transfers have been cancelled or reaped.
 - Added a native concurrency regression test proving terminal failure publication cannot pass an active submission gate and is observable as a terminal transport error after the gate is released.
 - Validation scope: native synchronization policy and regression test, followed by CI. No physical DAC test was performed. Direct USB Safety Hold remains active; no claim of hardware safety or resolution of the prior high-pitched noise is made.
+
+
+### 2026-11-09 — Keep encoded seek epoch ownership transactional
+
+- The cross-layer seek audit found that FloweryPlayer advanced the shared playback-session epoch before handing an encoded seek to the pipeline. The encoded producer could observe that intermediate epoch and decode/queue data from the old decoder position before the pipeline reached its transport flush and decoder seek.
+- Encoded seeks now remain pending until UsbEncodedPlaybackPipeline.seekTo performs its ordered stop/join, transport flush, decoder seek, epoch advance, queue reset, and producer restart. Startup seeks also avoid advancing an epoch when no PCM producer exists. Active PCM producer seeks retain their existing epoch invalidation before the producer seek request.
+- Added a Kotlin policy helper and unit tests covering encoded, active PCM, startup, and conflicting-handle cases.
+- Validation scope: Kotlin policy tests and CI. No physical DAC test was performed. Direct USB Safety Hold remains active; this change does not establish hardware output safety or resolve the previously reported high-pitched noise.
