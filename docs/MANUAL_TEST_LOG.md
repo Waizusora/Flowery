@@ -1160,3 +1160,12 @@ Validation scope:
 - Found that a USB PCM seek could be committed by the producer while the writer remained paused, but the Kotlin progress counter was only replaced when the first new-epoch PCM block was later polled. This left the visible position stale until Resume.
 - Updated the seek-commit callback to publish the bounded, segment-relative target in output frames immediately. The first new-epoch block still replaces the estimate with its authoritative producer frame position.
 - CI validation is pending. This change updates UI progress only; it does not resume the USB transport or relax Direct USB Safety Hold.
+
+
+### 2026-11-10 — CUE directive whitespace and timestamp validation
+
+- Normalized CUE directive separation across spaces and tabs so INDEX 01 entries are not silently dropped when a sheet uses repeated whitespace.
+- Tightened CUE frame timestamp parsing to reject negative minutes and arithmetic overflow instead of accepting or saturating invalid positions.
+- Restricted parsed track numbers to the CUE-defined 1–99 range.
+- Added native regression coverage for tab/repeated-whitespace directives, quoted filenames containing spaces, track range boundaries, invalid track numbers, negative timestamps, and overflow.
+- CI validation is pending. No physical audio output or DAC test was performed.

@@ -48,10 +48,10 @@ fn parse_cue_time(value: &str) -> Option<i64> {
     let minutes = parts.next()?.parse::<i64>().ok()?;
     let seconds = parts.next()?.parse::<i64>().ok()?;
     let frames = parts.next()?.parse::<i64>().ok()?;
-    if parts.next().is_some() || !(0..=59).contains(&seconds) || !(0..=74).contains(&frames) {
+    if parts.next().is_some() || minutes < 0 || !(0..=59).contains(&seconds) || !(0..=74).contains(&frames) {
         return None;
     }
-    Some(minutes.saturating_mul(60).saturating_add(seconds).saturating_mul(75).saturating_add(frames))
+    minutes.checked_mul(60)?.checked_add(seconds)?.checked_mul(75)?.checked_add(frames)
 }
 
 pub(super) fn parse_cue(text: &str) -> CueSheet {
@@ -62,7 +62,8 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
 
     for raw in text.lines() {
         let line = raw.trim().trim_start_matches('﻿');
-        let (command, value) = line.split_once(' ').unwrap_or((line, ""));
+        let (command, value) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        let value = value.trim_start();
         match command.to_ascii_uppercase().as_str() {
             "TITLE" => {
                 let title = unquote(value);
@@ -85,7 +86,10 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
                 current_file = unquote(file_name);
             }
             "TRACK" => {
-                if let Some(number) = value.split_whitespace().next().and_then(|v| v.parse::<i64>().ok()) {
+                if let Some(number) = value.split_whitespace().next()
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .filter(|number| (1..=99).contains(number))
+                {
                     parsed.push(PendingCueTrack {
                         number,
                         file_name: current_file.clone(),
@@ -94,9 +98,12 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
                 }
             }
             "INDEX" => {
-                if let Some(time) = value.strip_prefix("01 ") {
-                    if let Some(track) = parsed.last_mut() {
-                        track.start_frame = parse_cue_time(time.trim());
+                let mut fields = value.split_whitespace();
+                if fields.next() == Some("01") {
+                    if let (Some(time), None, Some(track)) =
+                        (fields.next(), fields.next(), parsed.last_mut())
+                    {
+                        track.start_frame = parse_cue_time(time);
                     }
                 }
             }
@@ -241,6 +248,26 @@ mod tests {
         assert_eq!(parsed.tracks[0].performer.as_deref(), Some("Artist"));
         assert_eq!(parsed.tracks[0].end_frame, Some(14_437));
         assert_eq!(parsed.tracks[1].start_frame, 14_437);
+    }
+
+    #[test]
+    fn parses_cue_directives_with_tabs_and_repeated_whitespace() {
+        let cue = "TITLE   \"Album\"\nFILE   \"disc one.flac\"   WAVE\nTRACK   01   AUDIO\nTITLE   \"First track\"\nINDEX   01   00:00:00\nTRACK\\t02\\tAUDIO\nINDEX\\t01\\t03:12:37\n";
+        let parsed = parse_cue(cue);
+        assert_eq!(parsed.title.as_deref(), Some("Album"));
+        assert_eq!(parsed.tracks.len(), 2);
+        assert_eq!(parsed.tracks[0].file_name, "disc one.flac");
+        assert_eq!(parsed.tracks[0].end_frame, Some(14_437));
+        assert_eq!(parsed.tracks[1].start_frame, 14_437);
+    }
+
+    #[test]
+    fn rejects_negative_or_overflowing_cue_timestamps_and_invalid_track_numbers() {
+        assert_eq!(super::parse_cue_time("-1:00:00"), None);
+        assert_eq!(super::parse_cue_time("9223372036854775807:00:00"), None);
+        assert_eq!(super::parse_cue_time("00:60:00"), None);
+        let cue = "FILE \"disc.flac\" WAVE\nTRACK 00 AUDIO\nINDEX 01 00:00:00\nTRACK 100 AUDIO\nINDEX 01 00:01:00\nTRACK 01 AUDIO\nINDEX 01 -1:00:00\n";
+        assert!(parse_cue(cue).tracks.is_empty());
     }
 
     #[test]
