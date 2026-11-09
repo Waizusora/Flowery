@@ -59,9 +59,18 @@ class SessionLifetimeGate {
 public:
  class Lease {
  public:
-  Lease()=default; Lease(Lease&&) noexcept=default; Lease& operator=(Lease&&) noexcept=default;
+  Lease()=default;
+  Lease(Lease&& other) noexcept
+      : lock_(std::move(other.lock_)), valid_(std::exchange(other.valid_, false)) {}
+  Lease& operator=(Lease&& other) noexcept {
+   if (this != &other) {
+    lock_ = std::move(other.lock_);
+    valid_ = std::exchange(other.valid_, false);
+   }
+   return *this;
+  }
   Lease(const Lease&)=delete; Lease& operator=(const Lease&)=delete;
-  explicit operator bool() const noexcept{return valid_;}
+  explicit operator bool() const noexcept{return valid_ && lock_.owns_lock();}
   void release() noexcept { if (lock_.owns_lock()) lock_.unlock(); valid_=false; }
  private:
   friend class SessionLifetimeGate;
