@@ -160,7 +160,11 @@ internal class UsbPcmPlaybackPipeline private constructor(
             // The playback loop owns all writes, so no PCM write can overlap this
             // flush. It cancels transfers from the previous decoder position.
             dacSession.flush()
-            activeEpoch = NativeAudio.nativePlaybackSessionEpoch(playbackSessionHandle).toInt()
+            val committedEpoch = NativeAudio.nativePlaybackSessionEpoch(playbackSessionHandle).toInt()
+            check(committedEpoch >= 0) {
+                "The native USB PCM session did not publish the new seek epoch"
+            }
+            activeEpoch = committedEpoch
             onSeek(requested)
         }
 
