@@ -734,3 +734,15 @@ Direct USB pause/cancellation design review (2026-11-09; source-only investigati
 - Stop remains a distinct operation: it may discard pending audio, but must request cancellation through a lifetime-safe session handle and let the writer-owning thread reap or abort URBs. Session close must wait until both the writer and any cancellation request have released their session leases before freeing the native session.
 - The current JNI API exposes the native session address as a raw pointer and each JNI entry point casts the supplied handle directly. Adding an unsynchronized cross-thread cancel JNI call against that raw pointer would introduce a use-after-free race with `nativeClose()`. A registry-backed, reference-counted native handle (or an equivalent lifetime gate) is required before concurrent cancellation can be introduced safely.
 - No code or transport behavior was changed in this review. This is an implementation constraint derived from source inspection, not a verified fix for the reported high-pitched hum. Direct USB Safety Hold remains active; no DAC connection or physical retest was performed.
+
+
+Direct USB native session-handle registry implementation (2026-11-09; source change):
+
+- Replaced JNI-visible native pointer values with monotonically allocated opaque session IDs stored in a native registry.
+- Added per-session shared lifecycle locking. PCM write, encoded write, drain, and flush JNI entry points acquire a registry lease before dereferencing a session.
+- Native close prevents new leases, waits for active operations to release their shared leases, then tears down libusb resources and deletes the session. If transfer teardown cannot be confirmed, the handle remains registered and can be retried.
+- Encoded-session setup resolves the opaque handle through the registry and closes the registered session on post-open validation failures.
+- This change establishes native handle lifetime protection only. It does not add cross-thread cancellation, alter packet scheduling, fix the observed packet-length mismatch, or establish that Direct USB output is safe. Direct USB Safety Hold remains active; no DAC connection or physical retest was performed.
+- CI and native compilation are pending. Do not treat source-level changes as validated until CI completes.
+
+**Status: REGISTRY-BACKED JNI SESSION HANDLES IMPLEMENTED; VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**

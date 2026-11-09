@@ -12,6 +12,8 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <unordered_map>
 #include <sys/time.h>
 #include <thread>
 #include <utility>
@@ -105,6 +107,8 @@ struct UsbAudioSession {
     bool claimed = false;
     bool control_claimed = false;
     int control_interface = -1;
+    // Shared JNI leases keep the session alive while an operation is in progress.
+    std::shared_mutex lifecycle_mutex;
 };
 
 // Describes the first failure observed on the transport.
@@ -359,7 +363,7 @@ bool abort_in_flight(UsbAudioSession* session) {
     return session->in_flight.empty();
 }
 
-bool close_session(UsbAudioSession* session) {
+bool close_session_resources(UsbAudioSession* session) {
     if (session == nullptr) return true;
     if (session->handle != nullptr) {
         if (!abort_in_flight(session)) return false;
@@ -379,6 +383,59 @@ bool close_session(UsbAudioSession* session) {
         libusb_exit(session->context);
         session->context = nullptr;
     }
+    return true;
+}
+
+bool close_session(UsbAudioSession* session) {
+    if (!close_session_resources(session)) return false;
+    delete session;
+    return true;
+}
+
+std::mutex g_session_registry_mutex;
+std::unordered_map<jlong, UsbAudioSession*> g_session_registry;
+std::atomic<jlong> g_next_session_handle{1};
+
+struct SessionLease {
+    UsbAudioSession* session = nullptr;
+    std::shared_lock<std::shared_mutex> lock;
+    SessionLease() = default;
+    explicit SessionLease(UsbAudioSession* value)
+        : session(value), lock(value->lifecycle_mutex) {}
+    SessionLease(SessionLease&&) noexcept = default;
+    SessionLease& operator=(SessionLease&&) noexcept = default;
+    SessionLease(const SessionLease&) = delete;
+    SessionLease& operator=(const SessionLease&) = delete;
+};
+
+jlong register_session(UsbAudioSession* session) {
+    if (session == nullptr) return 0;
+    const jlong handle = g_next_session_handle.fetch_add(1, std::memory_order_relaxed);
+    if (handle <= 0) return 0;
+    std::lock_guard<std::mutex> lock(g_session_registry_mutex);
+    g_session_registry.emplace(handle, session);
+    return handle;
+}
+
+SessionLease acquire_session(jlong handle) {
+    if (handle == 0) return {};
+    std::lock_guard<std::mutex> lock(g_session_registry_mutex);
+    const auto found = g_session_registry.find(handle);
+    if (found == g_session_registry.end()) return {};
+    return SessionLease(found->second);
+}
+
+bool close_registered_session(jlong handle) {
+    if (handle == 0) return true;
+    std::unique_lock<std::mutex> registry_lock(g_session_registry_mutex);
+    const auto found = g_session_registry.find(handle);
+    if (found == g_session_registry.end()) return true;
+    UsbAudioSession* session = found->second;
+    std::unique_lock<std::shared_mutex> session_lock(session->lifecycle_mutex);
+    if (!close_session_resources(session)) return false;
+    g_session_registry.erase(found);
+    session_lock.unlock();
+    registry_lock.unlock();
     delete session;
     return true;
 }
@@ -864,7 +921,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
         }
     }
 
-    return reinterpret_cast<jlong>(session);
+    return register_session(session);
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -890,11 +947,15 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         endpoint, max_packet_bytes, interval, feedback_endpoint, feedback_max_packet_bytes,
         1, 1, 1, 0, interface_number, 0, JNI_FALSE);
     if (handle == 0 || env->ExceptionCheck()) return 0;
-    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    auto lease = acquire_session(handle);
+    auto* session = lease.session;
+    if (session == nullptr) return 0;
     if (sampling_frequency_control == JNI_TRUE) {
         int frequency_error = LIBUSB_SUCCESS;
         if (!set_and_verify_uac1_frequency(session, source_sample_rate, &frequency_error)) {
-            close_session(session);
+            lease.lock.unlock();
+            lease.session = nullptr;
+            close_registered_session(handle);
             return throw_usb_error(env, "UAC1 encoded endpoint sampling-frequency SET_CUR/GET_CUR verification", frequency_error);
         }
     }
@@ -905,7 +966,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         : ((static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
            1000000ULL);
     if (bytes_per_interval == 0 || bytes_per_interval > session->max_packet_bytes) {
-        close_session(session);
+        lease.lock.unlock();
+        lease.session = nullptr;
+        close_registered_session(handle);
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
         if (exception != nullptr) env->ThrowNew(
             exception, "Encoded transport rate exceeds the selected endpoint service-interval capacity");
@@ -921,7 +984,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     JNIEnv* env, jobject, jlong handle, jbyteArray pcm, jint frame_count) {
-    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    auto lease = acquire_session(handle);
+    auto* session = lease.session;
     if (session == nullptr || pcm == nullptr || frame_count <= 0) return -1;
     if (session->encoded_mode != 0) {
         jclass exception = env->FindClass("java/lang/IllegalStateException");
@@ -1036,7 +1100,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
     JNIEnv* env, jobject, jlong handle, jbyteArray encoded, jint payload_offset, jint payload_length, jlong duration_us) {
-    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    auto lease = acquire_session(handle);
+    auto* session = lease.session;
     if (session == nullptr || encoded == nullptr || !session->encoded_mode) return -1;
     const jsize array_length = env->GetArrayLength(encoded);
     if (payload_offset < 0 || payload_length <= 0 ||
@@ -1210,7 +1275,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     JNIEnv* env, jobject, jlong handle) {
-    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    auto lease = acquire_session(handle);
+    auto* session = lease.session;
     if (session == nullptr) return -1;
 
     TransportFailure failure;
@@ -1287,7 +1353,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
 extern "C" JNIEXPORT jint JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     JNIEnv*, jobject, jlong handle) {
-    auto* session = reinterpret_cast<UsbAudioSession*>(handle);
+    auto lease = acquire_session(handle);
+    auto* session = lease.session;
     if (session == nullptr) return -1;
     if (!abort_in_flight(session)) return -1;
     session->pending_pcm.clear();
@@ -1305,5 +1372,5 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_waizusora_flowery_UsbDacNative_nativeClose(
     JNIEnv*, jobject, jlong handle) {
-    return close_session(reinterpret_cast<UsbAudioSession*>(handle)) ? JNI_TRUE : JNI_FALSE;
+    return close_registered_session(handle) ? JNI_TRUE : JNI_FALSE;
 }
