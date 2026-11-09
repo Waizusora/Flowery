@@ -479,8 +479,15 @@ struct SessionLease {
     explicit SessionLease(UsbAudioSession* value) : lock(value->lifecycle.acquire()) {
         if (lock) session = value;
     }
-    SessionLease(SessionLease&&) noexcept = default;
-    SessionLease& operator=(SessionLease&&) noexcept = default;
+    SessionLease(SessionLease&& other) noexcept
+        : session(std::exchange(other.session, nullptr)), lock(std::move(other.lock)) {}
+    SessionLease& operator=(SessionLease&& other) noexcept {
+        if (this != &other) {
+            lock = std::move(other.lock);
+            session = std::exchange(other.session, nullptr);
+        }
+        return *this;
+    }
     SessionLease(const SessionLease&) = delete;
     SessionLease& operator=(const SessionLease&) = delete;
 };
