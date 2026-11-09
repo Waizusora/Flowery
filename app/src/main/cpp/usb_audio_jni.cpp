@@ -435,6 +435,11 @@ bool close_registered_session(jlong handle) {
     const auto found = g_session_registry.find(handle);
     if (found == g_session_registry.end()) return true;
     UsbAudioSession* session = found->second;
+    // Publish terminal Stop before waiting for active JNI leases. An encoded
+    // writer may be blocked in Pause and must be woken before Close can drain it.
+    flowery::usb::request_control_serialized(
+        session->control, flowery::usb::ControlRequest::Stop,
+        session->event_mutex, session->event_condition);
     auto session_lock = session->lifecycle.begin_close();
     if (!close_session_resources(session)) return false;
     g_session_registry.erase(found);
