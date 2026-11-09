@@ -1059,3 +1059,11 @@ Validation scope:
 - Encoded seeks now remain pending until UsbEncodedPlaybackPipeline.seekTo performs its ordered stop/join, transport flush, decoder seek, epoch advance, queue reset, and producer restart. Startup seeks also avoid advancing an epoch when no PCM producer exists. Active PCM producer seeks retain their existing epoch invalidation before the producer seek request.
 - Added a Kotlin policy helper and unit tests covering encoded, active PCM, startup, and conflicting-handle cases.
 - Validation scope: Kotlin policy tests and CI. No physical DAC test was performed. Direct USB Safety Hold remains active; this change does not establish hardware output safety or resolve the previously reported high-pitched noise.
+
+
+### 2026-11-09 — Serialize USB seek dispatch with PCM producer startup
+
+- A follow-up review found a startup handoff gap: a seek arriving before the direct USB PCM producer handle was published was retained in the shared pending-seek slot, but the PCM path did not consume that slot after producer creation.
+- Added a seek-dispatch monitor shared by the UI seek path and PCM producer publication/teardown. A pending startup seek is now transferred to the newly created PCM producer before playback enters its submission loop. Active PCM seeks continue to advance the session epoch and enqueue the producer seek under the same dispatch lock; encoded seeks remain owned by the encoded pipeline's transactional seek.
+- Added the startup handoff without changing the PCM ring-buffer, decode, DSP, or transport architecture. The existing Kotlin policy tests cover which path owns the epoch transition; the handoff itself remains subject to CI validation.
+- No physical USB DAC test was performed. Direct USB Safety Hold remains active; this source-level correction is not evidence of hardware safety or a resolution of the reported noise.
