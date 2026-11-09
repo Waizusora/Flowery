@@ -20,6 +20,16 @@ public:
  }
 private: std::atomic<int> state_{static_cast<int>(ControlRequest::Run)};
 };
+enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
+
+inline EncodedControlAction encoded_control_action(int control, std::size_t in_flight) noexcept {
+ if (control == static_cast<int>(ControlRequest::Stop)) return EncodedControlAction::Abort;
+ if (control == static_cast<int>(ControlRequest::Pause)) {
+  return in_flight == 0 ? EncodedControlAction::WaitForResume
+                        : EncodedControlAction::DrainInFlight;
+ }
+ return EncodedControlAction::Submit;
+}
 class SessionLifetimeGate {
 public:
  class Lease {
