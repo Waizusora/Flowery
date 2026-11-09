@@ -1067,3 +1067,11 @@ Validation scope:
 - Added a seek-dispatch monitor shared by the UI seek path and PCM producer publication/teardown. A pending startup seek is now transferred to the newly created PCM producer before playback enters its submission loop. Active PCM seeks continue to advance the session epoch and enqueue the producer seek under the same dispatch lock; encoded seeks remain owned by the encoded pipeline's transactional seek.
 - Added the startup handoff without changing the PCM ring-buffer, decode, DSP, or transport architecture. The existing Kotlin policy tests cover which path owns the epoch transition; the handoff itself remains subject to CI validation.
 - No physical USB DAC test was performed. Direct USB Safety Hold remains active; this source-level correction is not evidence of hardware safety or a resolution of the reported noise.
+
+
+### 2026-11-09 — Fail closed on encoded worker stop and join failures
+
+- The worker teardown review found that stop requested only the worker's stop flag and ignored the JoinHandle result. A scheduler that had already cloned the worker status/gate could still observe RUNNING while teardown was waiting for the worker to exit, and an unexpected thread panic during join was silently discarded.
+- Stop now publishes STOPPED while holding the same submission gate used by packet writes, preserving FAILED/PANICKED terminal states. The worker is then joined and the result is checked. An unexpected join panic publishes PANICKED, closes the encoded queue, and causes start/seek/stop callers to fail closed; encoded seek still attempts transport flush before returning a join failure.
+- Added a native regression test for stop-state publication. The test verifies the status transition policy, not a real libusb cancellation or transfer-reclamation event.
+- No physical DAC test was performed. Direct USB Safety Hold remains active. Worker join success and queue closure do not establish that the device has physically stopped producing sound; transport teardown still requires independent native and hardware-level evidence.
