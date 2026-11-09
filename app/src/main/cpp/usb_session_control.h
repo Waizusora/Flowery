@@ -33,8 +33,12 @@ public:
   std::shared_lock<std::shared_mutex> lock_; bool valid_=false;
  };
  Lease acquire() const {
+  if (closing_.load(std::memory_order_acquire)) {
+   return Lease(std::shared_lock<std::shared_mutex>{},false);
+  }
   std::shared_lock<std::shared_mutex> lock(mutex_);
-  return Lease(std::move(lock),!closing_.load(std::memory_order_acquire));
+  if (closing_.load(std::memory_order_acquire)) return Lease(std::move(lock),false);
+  return Lease(std::move(lock),true);
  }
  std::unique_lock<std::shared_mutex> begin_close() {
   closing_.store(true,std::memory_order_release); return std::unique_lock<std::shared_mutex>(mutex_);

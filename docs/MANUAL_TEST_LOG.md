@@ -786,3 +786,11 @@ Native USB session-control unit tests (2026-11-09; source change):
 - These tests cover host-native control/lifetime primitives. They do not emulate a libusb controller, validate acoustic output, or resolve the observed packet-size and drain defects. No DAC was connected or physically tested; Direct USB Safety Hold remains active.
 
 **Status: FOUR HOST-NATIVE CONTROL/LIFETIME TESTS ADDED; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
+
+Native session close-gate test hardening (2026-11-09):
+
+- The first local execution exposed a close-time contention issue: a new lease attempt could block acquiring the shared mutex while Close was waiting for an existing lease to drain.
+- Updated SessionLifetimeGate::acquire() to reject immediately when the closing flag is already set, while retaining the post-lock check to close the race with a concurrent begin_close().
+- Recompiled and ran the four host-native tests locally with C++17, pthreads, and -Wall -Wextra -Werror; all four scenarios passed.
+- GitHub Actions validation for this correction is pending. No USB DAC was connected or physically tested; Direct USB Safety Hold remains active.
