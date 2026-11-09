@@ -111,7 +111,7 @@ void test_pause_request_is_serialized_with_encoded_submission() {
   std::unique_lock<std::mutex> lock(mutex);
   submit_lock_acquired.set_value();
   release.wait();
-  if(flowery::usb::encoded_submit_allowed(control)) ++submitted;
+  if(flowery::usb::submission_allowed(control)) ++submitted;
  });
  submit_lock_acquired.get_future().wait();
  std::promise<void> request_started,request_finished;
@@ -131,6 +131,37 @@ void test_pause_request_is_serialized_with_encoded_submission() {
  {
   std::lock_guard<std::mutex> lock(mutex);
   assert(!flowery::usb::encoded_submit_allowed(control));
+ }
+ assert(submitted.load()==1);
+}
+void test_pause_request_is_serialized_with_pcm_submission() {
+ ControlState control; std::mutex mutex; std::condition_variable wake;
+ std::promise<void> submit_lock_acquired, release_submit;
+ auto release=release_submit.get_future();
+ std::atomic<int> submitted{0};
+ std::thread writer([&]{
+  std::unique_lock<std::mutex> lock(mutex);
+  submit_lock_acquired.set_value();
+  release.wait();
+  if(flowery::usb::submission_allowed(control)) ++submitted;
+ });
+ submit_lock_acquired.get_future().wait();
+ std::promise<void> request_started,request_finished;
+ auto request_done=request_finished.get_future();
+ std::thread requester([&]{
+  request_started.set_value();
+  assert(flowery::usb::request_control_serialized(
+      control,ControlRequest::Pause,mutex,wake));
+  request_finished.set_value();
+ });
+ request_started.get_future().wait();
+ assert(request_done.wait_for(40ms)==std::future_status::timeout);
+ release_submit.set_value();
+ writer.join();
+ requester.join();
+ {
+  std::lock_guard<std::mutex> lock(mutex);
+  assert(!flowery::usb::submission_allowed(control));
  }
  assert(submitted.load()==1);
 }
@@ -210,9 +241,10 @@ int main() {
  test_encoded_stop_takes_priority_over_pause_and_aborts();
  test_close_requests_stop_before_waiting_for_encoded_writer_lease();
  test_pause_request_is_serialized_with_encoded_submission();
+ test_pause_request_is_serialized_with_pcm_submission();
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (13 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (14 scenarios).\n"; return 0;
 }
