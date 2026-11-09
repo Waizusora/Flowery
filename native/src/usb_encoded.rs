@@ -3,6 +3,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicU64, AtomicI32, Ordering};
 use std::thread::{self, JoinHandle};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::streaming::{decoder_ref, StreamDecoder};
 use crate::playback_session::{session_ref, SessionState};
 use std::time::{Duration, Instant};
@@ -259,8 +260,10 @@ fn encoded_worker_registry() -> &'static Mutex<HashMap<i64, EncodedProducerWorke
 }
 
 fn stop_encoded_producer_worker(handle: jlong) {
-    let worker = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
-    if let Some(worker) = worker {
+    // Keep the registry lock through join so a concurrent start cannot replace
+    // the worker entry while the previous worker is still being stopped.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(worker) = workers.remove(&handle) {
         worker.stop.store(true, Ordering::Release);
         let _ = worker.thread.join();
     }
@@ -577,42 +580,53 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbEnco
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
         return -1;
     }
-    stop_encoded_producer_worker(handle);
+    // Serialize replacement, spawn, and registry insertion as one lifecycle
+    // operation. The worker never acquires this registry lock.
+    let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(previous) = workers.remove(&handle) {
+        previous.stop.store(true, Ordering::Release);
+        let _ = previous.thread.join();
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
     let spawned = thread::Builder::new().name("flowery-usb-encoded-producer".into()).spawn(move || {
-        while !thread_stop.load(Ordering::Acquire) {
-            match pump_encoded_producer(handle) {
-                Ok(1) => {}
-                Ok(0) => thread::sleep(Duration::from_millis(2)),
-                Ok(-1) => {
-                    thread_status.store(1, Ordering::Release);
-                    break;
-                }
-                Ok(-3) => {
-                    thread_status.store(2, Ordering::Release);
-                    break;
-                }
-                Ok(_) | Err(_) => {
-                    thread_status.store(-2, Ordering::Release);
-                    break;
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            while !thread_stop.load(Ordering::Acquire) {
+                match pump_encoded_producer(handle) {
+                    Ok(1) => {}
+                    Ok(0) => thread::sleep(Duration::from_millis(2)),
+                    Ok(-1) => {
+                        thread_status.store(1, Ordering::Release);
+                        break;
+                    }
+                    Ok(-3) => {
+                        thread_status.store(2, Ordering::Release);
+                        break;
+                    }
+                    Ok(_) | Err(_) => {
+                        thread_status.store(-2, Ordering::Release);
+                        break;
+                    }
                 }
             }
-        }
-        if thread_stop.load(Ordering::Acquire) {
+        }));
+        if outcome.is_err() {
+            // Contain a Rust panic at the worker boundary and publish a
+            // terminal error instead of silently losing worker status.
+            thread_status.store(-3, Ordering::Release);
+        } else if thread_stop.load(Ordering::Acquire) {
             thread_status.store(2, Ordering::Release);
         }
     });
     match spawned {
         Ok(thread) => {
-            encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner())
-                .insert(handle, EncodedProducerWorker { stop, status, thread });
+            workers.insert(handle, EncodedProducerWorker { stop, status, thread });
             0
         }
         Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            let _ = env.throw_new("java/lang/IllegalStateException", format!("Unable to start encoded producer worker: {error}"));
             -1
         }
     }
