@@ -1,6 +1,8 @@
 package com.waizusora.flowery
 
 import android.hardware.usb.UsbDeviceConnection
+import java.util.Collections
+import java.util.IdentityHashMap
 
 internal const val USB_ENCODED_WRITE_STOPPED = -2
 
@@ -58,9 +60,17 @@ class UsbEncodedDacSession private constructor(
         requestStop()
         for (attempt in 0 until 3) {
             if (UsbDacNative.nativeClose(nativeHandle)) {
-                closed = true
-                connection.close()
-                return
+                try {
+                    connection.close()
+                    closed = true
+                    forgetPendingClose()
+                    return
+                } catch (error: Throwable) {
+                    // The native session is already gone, but retain the Android
+                    // connection so a later retry can complete its release.
+                    rememberPendingClose()
+                    throw error
+                }
             }
             if (attempt < 2) {
                 try {
@@ -71,12 +81,34 @@ class UsbEncodedDacSession private constructor(
                 }
             }
         }
+        rememberPendingClose()
         throw IllegalStateException(
             "libusb could not confirm that all encoded transfers were reaped; the USB connection remains open for a safe retry"
         )
     }
 
+    private fun rememberPendingClose() {
+        synchronized(pendingCloseLock) { pendingCloseSessions.add(this) }
+    }
+
+    private fun forgetPendingClose() {
+        synchronized(pendingCloseLock) { pendingCloseSessions.remove(this) }
+    }
+
     companion object {
+        private val pendingCloseLock = Any()
+        private val pendingCloseSessions: MutableSet<UsbEncodedDacSession> =
+            Collections.newSetFromMap(IdentityHashMap())
+
+        /**
+         * Retries sessions retained after an earlier close could not confirm
+         * native transfer reclamation or Android connection release.
+         */
+        internal fun retryPendingCloseSessions() {
+            val pending = synchronized(pendingCloseLock) { pendingCloseSessions.toList() }
+            pending.forEach { session -> runCatching { session.close() } }
+        }
+
         fun open(
             connection: UsbDeviceConnection,
             interfaceNumber: Int,
