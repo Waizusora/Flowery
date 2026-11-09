@@ -293,21 +293,40 @@ fn encoded_worker_registry() -> &'static Mutex<HashMap<i64, EncodedProducerWorke
     ENCODED_PRODUCER_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn stop_encoded_producer_worker_locked(
-    workers: &mut HashMap<i64, EncodedProducerWorker>,
-    handle: jlong,
-) {
-    if let Some(worker) = workers.remove(&handle) {
-        worker.stop.store(true, Ordering::Release);
-        let _ = worker.thread.join();
+fn request_encoded_worker_stop(worker: &EncodedProducerWorker) {
+    worker.stop.store(true, Ordering::Release);
+    let _gate = worker.submission_gate.lock().unwrap_or_else(|error| error.into_inner());
+    let status = worker.status.load(Ordering::Acquire);
+    if matches!(status, ENCODED_WORKER_RUNNING | ENCODED_WORKER_EOF) {
+        worker.status.store(ENCODED_WORKER_STOPPED, Ordering::Release);
     }
 }
 
-fn stop_encoded_producer_worker(handle: jlong) {
+fn stop_encoded_producer_worker_locked(
+    workers: &mut HashMap<i64, EncodedProducerWorker>,
+    handle: jlong,
+) -> bool {
+    let Some(worker) = workers.remove(&handle) else { return true; };
+    request_encoded_worker_stop(&worker);
+    if worker.thread.join().is_err() {
+        publish_encoded_worker_status(
+            &worker.submission_gate,
+            &worker.status,
+            ENCODED_WORKER_PANICKED,
+        );
+        if let Some(producer) = producer_ref(handle) {
+            producer.queue.close();
+        }
+        return false;
+    }
+    true
+}
+
+fn stop_encoded_producer_worker(handle: jlong) -> bool {
     // Keep the registry lock through join so a concurrent start cannot replace
     // the worker entry while the previous worker is still being stopped.
     let mut workers = encoded_worker_registry().lock().unwrap_or_else(|error| error.into_inner());
-    stop_encoded_producer_worker_locked(&mut workers, handle);
+    stop_encoded_producer_worker_locked(&mut workers, handle)
 }
 
 fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProducerWorker> {
@@ -698,7 +717,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbEnco
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid compressed USB producer handle");
         return -1;
     }
-    stop_encoded_producer_worker_locked(&mut workers, handle);
+    if !stop_encoded_producer_worker_locked(&mut workers, handle) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Previous encoded producer worker did not join cleanly");
+        return -1;
+    }
     match spawn_encoded_producer_worker(handle) {
         Ok(worker) => {
             workers.insert(handle, worker);
@@ -721,9 +743,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbEncode
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbEncodedProducerWorker(
-    _env: JNIEnv, _class: JClass, handle: jlong,
+    mut env: JNIEnv, _class: JClass, handle: jlong,
 ) {
-    stop_encoded_producer_worker(handle);
+    if !stop_encoded_producer_worker(handle) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer worker failed to join");
+    }
 }
 
 #[no_mangle]
@@ -770,7 +794,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer is no longer valid");
         return -1;
     };
-    stop_encoded_producer_worker_locked(&mut workers, handle);
+    let previous_worker_joined = stop_encoded_producer_worker_locked(&mut workers, handle);
 
     let session = {
         let state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
@@ -787,6 +811,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         if !env.exception_check().unwrap_or(false) {
             let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
         }
+        return -1;
+    }
+    if !previous_worker_joined {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded producer worker failed to join; seek was aborted after transport flush");
         return -1;
     }
 
@@ -899,6 +927,24 @@ mod tests {
             super::next_encoded_sequence(u64::MAX),
             Err("Encoded packet sequence exhausted")
         );
+    }
+
+    #[test]
+    fn worker_stop_publishes_terminal_status_before_join_returns() {
+        let worker = super::EncodedProducerWorker {
+            stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            status: std::sync::Arc::new(std::sync::atomic::AtomicI32::new(super::ENCODED_WORKER_RUNNING)),
+            submission_gate: std::sync::Arc::new(std::sync::Mutex::new(())),
+            thread: std::thread::spawn(|| {}),
+        };
+
+        super::request_encoded_worker_stop(&worker);
+        assert!(worker.stop.load(std::sync::atomic::Ordering::Acquire));
+        assert_eq!(
+            worker.status.load(std::sync::atomic::Ordering::Acquire),
+            super::ENCODED_WORKER_STOPPED
+        );
+        assert!(worker.thread.join().is_ok());
     }
 
     #[test]
