@@ -468,11 +468,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             diagnostics.record("ENCODED_USB_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
             throw error
         } finally {
-            activeUsbEncodedPipeline = null
             activeUsbSession = null
             usbSoftwareGainEnabled = false
             try {
                 pipeline?.close()
+                if (activeUsbEncodedPipeline === pipeline) activeUsbEncodedPipeline = null
             } finally {
                 usbPlaybackMode = false
                 usbBitPerfectActive = false
@@ -782,12 +782,36 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun stopAndJoin(timeoutMs: Long = 4_000L): Boolean {
         val activeWorker = worker
         stop()
-        if (activeWorker == null || activeWorker === Thread.currentThread()) return true
+        if (activeWorker != null && activeWorker !== Thread.currentThread()) {
+            val joined = try {
+                activeWorker.join(timeoutMs.coerceAtLeast(0L))
+                !activeWorker.isAlive
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
+            }
+            if (!joined) return false
+        } else if (activeWorker === Thread.currentThread()) {
+            return true
+        }
+        return retryPendingUsbEncodedClose()
+    }
+
+    /**
+     * Retries an encoded session close that previously failed to confirm native
+     * transfer reclamation. The pipeline reference is retained until close succeeds.
+     */
+    private fun retryPendingUsbEncodedClose(): Boolean {
+        val pending = activeUsbEncodedPipeline ?: return true
         return try {
-            activeWorker.join(timeoutMs.coerceAtLeast(0L))
-            !activeWorker.isAlive
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
+            pending.close()
+            if (activeUsbEncodedPipeline === pending) activeUsbEncodedPipeline = null
+            true
+        } catch (error: Throwable) {
+            diagnostics.record(
+                "ENCODED_USB_CLOSE_RETRY_FAILED type=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "no message"}"
+            )
             false
         }
     }
