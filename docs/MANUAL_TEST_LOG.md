@@ -1093,3 +1093,9 @@ Validation scope:
 - The PCM pipeline applies pending seeks during prebuffer and playback, including while paused. Startup seeks use the same path. Added Kotlin mailbox tests for latest-request coalescing, single consumption, clearing, and invalid negative positions.
 - This establishes a source-level serialization boundary for seek versus PCM packet submission. It does not prove that libusb cancellation always reaps every controller-owned transfer; native teardown still retains resources when transfer reclamation cannot be confirmed.
 - No physical DAC test was performed. Direct USB Safety Hold remains active; no hardware-safety claim is made.
+
+
+### 2026-11-09 — Preserve seek control while USB playback is paused
+
+- The writer-owned seek change was extended to keep pending seek requests actionable during Pause. Both PCM and encoded playback now consume pending seek requests before entering their paused wait path. The seek transaction flushes the previous position while leaving the output session paused; it does not implicitly Resume playback.
+- This aligns Pause → Seek → Resume behavior across the two direct USB pipelines at the source-control level. No device playback was performed, and no claim is made about physical DAC mute behavior during Pause or Stop.
