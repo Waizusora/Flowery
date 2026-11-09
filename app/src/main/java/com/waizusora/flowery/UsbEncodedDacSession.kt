@@ -1,5 +1,7 @@
 package com.waizusora.flowery
 
+internal const val USB_ENCODED_WRITE_STOPPED = -2
+
 import android.hardware.usb.UsbDeviceConnection
 
 /**
@@ -36,7 +38,7 @@ class UsbEncodedDacSession private constructor(
     fun drain() {
         check(!closed) { "Encoded USB session is closed" }
         val result = UsbDacNative.nativeDrain(nativeHandle)
-        check(result == 0 || result == WRITE_STOPPED) {
+        check(result == 0 || result == USB_ENCODED_WRITE_STOPPED) {
             "Encoded USB transport drain failed"
         }
     }
@@ -75,8 +77,6 @@ class UsbEncodedDacSession private constructor(
     }
 
     companion object {
-        private const val WRITE_STOPPED = -2
-
         fun open(
             connection: UsbDeviceConnection,
             interfaceNumber: Int,
