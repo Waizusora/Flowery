@@ -1383,7 +1383,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
 
         TransportFailure frame_failure;
         const auto control_result = honor_encoded_write_control(session, &frame_failure);
-        if (control_result == EncodedControlResult::Stopped) return byte_count;
+        if (control_result == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
         if (control_result == EncodedControlResult::Failed) {
             snapshot_transport_failure(session, &frame_failure);
             throw_transport_failure(env, session, frame_failure);
@@ -1397,7 +1397,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             });
             lock.unlock();
             const auto deadline_control = honor_encoded_write_control(session, &frame_failure);
-            if (deadline_control == EncodedControlResult::Stopped) return byte_count;
+            if (deadline_control == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
             if (deadline_control == EncodedControlResult::Failed) {
                 snapshot_transport_failure(session, &frame_failure);
                 throw_transport_failure(env, session, frame_failure);
@@ -1420,7 +1420,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
                 return -1;
             }
             const auto changed_control = honor_encoded_write_control(session, &frame_failure);
-            if (changed_control == EncodedControlResult::Stopped) return byte_count;
+            if (changed_control == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
             if (changed_control == EncodedControlResult::Failed) {
                 snapshot_transport_failure(session, &frame_failure);
                 throw_transport_failure(env, session, frame_failure);
@@ -1430,7 +1430,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         while (!frame_failure.failed && !session->in_flight.empty()) {
             if (!wait_for_progress(session, &frame_failure)) break;
             const auto control_result = honor_encoded_write_control(session, &frame_failure);
-            if (control_result == EncodedControlResult::Stopped) return byte_count;
+            if (control_result == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
             if (control_result == EncodedControlResult::Failed) break;
         }
         if (frame_failure.failed) {
@@ -1440,7 +1440,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             return -1;
         }
         const auto after_frame_control = honor_encoded_write_control(session, &frame_failure);
-        if (after_frame_control == EncodedControlResult::Stopped) return byte_count;
+        if (after_frame_control == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
         if (after_frame_control == EncodedControlResult::Failed) {
             snapshot_transport_failure(session, &frame_failure);
             throw_transport_failure(env, session, frame_failure);
@@ -1450,7 +1450,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         session->encoded_offset = 0;
         session->next_encoded_frame_due = frame_start + std::chrono::microseconds(effective_duration_us);
         session->encoded_frame_deadline_valid = true;
-        return byte_count;
+        return -2; // Stop cancels this encoded packet.
     }
 
     const uint64_t max_buffer = session->encoded_bytes_per_second * 2ULL;
@@ -1475,7 +1475,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
     packet_bytes.reserve(kPacketsPerUrb);
     while (true) {
         const auto control_result = honor_encoded_write_control(session, &failure);
-        if (control_result == EncodedControlResult::Stopped) return byte_count;
+        if (control_result == EncodedControlResult::Stopped) return -2; // Stop cancels this encoded packet.
         if (control_result == EncodedControlResult::Failed) break;
         reap_completed(session, &failure);
         if (failure.failed) break;
@@ -1533,7 +1533,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         throw_transport_failure(env, session, failure);
         return -1;
     }
-    return byte_count;
+    return -2; // Stop cancels this encoded packet.
 }
 
 // Submits any staged partial service interval as a short final packet and waits
