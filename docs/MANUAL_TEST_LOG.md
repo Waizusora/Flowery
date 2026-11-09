@@ -964,3 +964,12 @@ Validation scope:
 - The compiler identified three stale references to the removed `closed` field in `UsbEncodedPlaybackPipeline.seekTo()`, `drainTransport()`, and `drain()`.
 - Replaced all three checks with the new lifecycle gate's `checkOpen()` method so every playback operation consistently rejects calls after teardown begins.
 - CI #1587 was triggered for the correction. No hardware validation was performed; Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — Step-aware encoded USB teardown retries
+
+- A follow-up audit of retryable pipeline teardown found that a failed final USB-session close caused the pipeline to repeat producer stop/destruction and queue close/destruction on every retry. Those operations were expected to tolerate stale handles, but repeating destructive cleanup was unnecessary and made ownership harder to reason about.
+- EncodedPipelineLifecycle now records each successful teardown step independently. A step that throws remains eligible for retry; steps that returned successfully are skipped on subsequent close attempts.
+- UsbEncodedPlaybackPipeline.close() now performs producer stop, producer destruction, queue close, queue destruction, and USB-session close through the step tracker. The USB session remains the final retryable step because its native handle and Android connection must remain owned until libusb confirms transfer reclamation.
+- Added Kotlin unit tests verifying that completed cleanup steps are not repeated and that a failed step is retried until it succeeds.
+- Validation scope: deterministic lifecycle unit tests and CI compilation/test execution. This does not simulate libusb or prove controller-side transfer ownership. Direct USB Safety Hold remains active; no physical DAC test was performed.
