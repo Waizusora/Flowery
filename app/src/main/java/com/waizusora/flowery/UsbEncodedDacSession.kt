@@ -21,6 +21,9 @@ class UsbEncodedDacSession private constructor(
     private var nativeClosed = false
 
     @Volatile
+    private var connectionClosed = false
+
+    @Volatile
     private var closed = false
 
     @Synchronized
@@ -95,8 +98,9 @@ class UsbEncodedDacSession private constructor(
             }
         }
 
-        try {
+        if (!connectionClosed) try {
             connection.close()
+            connectionClosed = true
         } catch (error: Throwable) {
             // Native ownership is already released. Keep the session object so
             // a later retry releases only the Android connection, not the stale
