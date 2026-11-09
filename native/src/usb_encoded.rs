@@ -765,40 +765,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncodedProducer(
-    mut env: JNIEnv, _class: JClass, handle: jlong, position_ms: jlong,
-) -> jlong {
-    if handle <= 0 || position_ms < 0 {
-        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid encoded seek request");
-        return -1;
-    }
-    let Some(producer) = producer_ref(handle) else { return -1; };
-    let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
-    if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) { return -1; }
-    let decoder_owner = Arc::clone(&state.decoder);
-    let mut decoder = decoder_owner.lock().unwrap_or_else(|error| error.into_inner());
-    if let Err(error) = decoder.begin_encoded_stream() {
-        let _ = env.throw_new("java/lang/IllegalStateException", error);
-        return -1;
-    }
-    let seek_result = decoder.seek_to(position_ms as u64);
-    drop(decoder);
-    match seek_result {
-        Ok(actual_position) => {
-            state.pending = None;
-            state.ended = false;
-            state.queue.clear();
-            state.epoch = state.session.epoch.load(Ordering::Acquire);
-            actual_position as jlong
-        }
-        Err(error) => {
-            let _ = env.throw_new("java/lang/IllegalStateException", error);
-            -1
-        }
-    }
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeDestroyUsbEncodedProducer(
     _env: JNIEnv, _class: JClass, handle: jlong,
 ) {
