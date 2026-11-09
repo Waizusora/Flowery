@@ -737,6 +737,25 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
     return true;
 }
 
+enum class PcmSubmitResult { Submitted, ControlChanged, Failed };
+
+// Linearize PCM submission against Pause/Stop publication, just like the
+// encoded path. A control request cannot slip between the final check and
+// libusb_submit_transfer().
+PcmSubmitResult submit_pcm_urb_if_running(
+    UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
+    size_t total_bytes, uint64_t frame_phase_before, uint64_t frame_phase_after,
+    TransportFailure* failure) {
+    std::lock_guard<std::mutex> control_lock(session->event_mutex);
+    if (session->control.load() != kSessionControlRun) {
+        return PcmSubmitResult::ControlChanged;
+    }
+    return submit_urb(session, packet_bytes, total_bytes, frame_phase_before,
+                      frame_phase_after, failure)
+        ? PcmSubmitResult::Submitted
+        : PcmSubmitResult::Failed;
+}
+
 // Queues encoded bytes on a dedicated path. Encoded payloads are split only
 // at USB service-interval boundaries; they never enter pending_pcm or submit_urb.
 bool submit_encoded_urb(UsbAudioSession* session,
@@ -1273,8 +1292,11 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             continue;
         }
 
-        if (!submit_urb(session, packet_bytes, planned_frames * bytes_per_frame,
-                        session->frame_phase, phase, &failure)) break;
+        const auto submit_result = submit_pcm_urb_if_running(
+            session, packet_bytes, planned_frames * bytes_per_frame,
+            session->frame_phase, phase, &failure);
+        if (submit_result == PcmSubmitResult::ControlChanged) continue;
+        if (submit_result == PcmSubmitResult::Failed) break;
         session->frame_phase = phase;
         session->feedback_phase = feedback_phase;
     }
@@ -1599,27 +1621,50 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         session->feedback_phase = 0;
         return -2;
     };
+    auto pause_pcm_writer = [&]() -> jint {
+        while (!failure.failed && !session->in_flight.empty()) {
+            if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
+            if (!wait_for_progress(session, &failure)) break;
+        }
+        if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
+        if (failure.failed) {
+            snapshot_transport_failure(session, &failure);
+            abort_in_flight(session);
+            throw_transport_failure(env, session, failure);
+            return -1;
+        }
+        return 0; // Preserve the staged PCM suffix and packet phase for Resume.
+    };
     if (session->control.load() == kSessionControlStop) {
         return stop_pcm_writer();
     }
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
-            if (session->control.load() == kSessionControlStop) {
-                return stop_pcm_writer();
-            }
+            const int control = session->control.load();
+            if (control == kSessionControlStop) return stop_pcm_writer();
+            if (control == kSessionControlPause) return pause_pcm_writer();
             if (!wait_for_progress(session, &failure)) break;
         }
-        if (session->control.load() == kSessionControlStop) {
-            return stop_pcm_writer();
-        }
+        if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
+        if (session->control.load() == kSessionControlPause) return pause_pcm_writer();
         if (!failure.failed) {
-            const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
-            if (remaining <= session->max_packet_bytes) {
-                submit_urb(session, tail, remaining, session->frame_phase,
-                           session->frame_phase, &failure);
-            } else {
+            if (remaining > session->max_packet_bytes) {
                 record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
+            } else {
+                const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
+                for (;;) {
+                    const auto submit_result = submit_pcm_urb_if_running(
+                        session, tail, remaining, session->frame_phase,
+                        session->frame_phase, &failure);
+                    if (submit_result == PcmSubmitResult::Submitted ||
+                        submit_result == PcmSubmitResult::Failed) break;
+                    const int control = session->control.load();
+                    if (control == kSessionControlStop) return stop_pcm_writer();
+                    if (control == kSessionControlPause) return pause_pcm_writer();
+                    // A concurrent Resume may have won immediately after the
+                    // Pause request; retry under the same submission gate.
+                }
             }
         }
     }
