@@ -747,7 +747,7 @@ PcmSubmitResult submit_pcm_urb_if_running(
     size_t total_bytes, uint64_t frame_phase_before, uint64_t frame_phase_after,
     TransportFailure* failure) {
     std::lock_guard<std::mutex> control_lock(session->event_mutex);
-    if (session->control.load() != kSessionControlRun) {
+    if (!flowery::usb::submission_allowed(session->control)) {
         return PcmSubmitResult::ControlChanged;
     }
     return submit_urb(session, packet_bytes, total_bytes, frame_phase_before,
@@ -803,7 +803,7 @@ EncodedSubmitResult submit_encoded_urb_if_running(
     UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
     size_t total_bytes, TransportFailure* failure) {
     std::lock_guard<std::mutex> control_lock(session->event_mutex);
-    if (!flowery::usb::encoded_submit_allowed(session->control)) {
+    if (!flowery::usb::submission_allowed(session->control)) {
         return EncodedSubmitResult::ControlChanged;
     }
     return submit_encoded_urb(session, packet_bytes, total_bytes, failure)
