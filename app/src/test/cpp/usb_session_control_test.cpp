@@ -178,6 +178,16 @@ void test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership() {
  assert(!flowery::usb::failed_dispatcher_teardown_pump_allowed(true, -1, 0));
  assert(!flowery::usb::failed_dispatcher_teardown_pump_allowed(false, 0, 0));
 }
+void test_feedback_initial_submission_state_is_published_before_callback_can_run() {
+ // The event dispatcher may invoke the callback as soon as submission is
+ // accepted. Model that ordering: the callback clears in-flight after a
+ // failed resubmit, and the submitter must not overwrite that result later.
+ std::atomic<bool> in_flight{false};
+ in_flight.store(true, std::memory_order_release); // before libusb_submit_transfer
+ assert(in_flight.load(std::memory_order_acquire));
+ in_flight.store(false, std::memory_order_release); // callback: resubmit failed
+ assert(!in_flight.load(std::memory_order_acquire));
+}
 void test_transfer_reclaim_waits_until_callback_dispatch_returns() {
  using flowery::usb::transfer_reclaimable;
  // Not completed: never reclaim, even if the dispatcher has advanced.
