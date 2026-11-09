@@ -18,6 +18,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     private var closed = false
     private var expectedSequence = 0L
     @Volatile private var lastPositionMs = 0L
+    @Volatile private var stopRequested = false
 
     init {
         check(NativeAudio.nativeStartUsbEncodedProducerWorker(producerHandle) == 0) {
@@ -30,7 +31,11 @@ internal class UsbEncodedPlaybackPipeline private constructor(
 
     fun requestPause(): Boolean = session.requestPause()
     fun requestResume(): Boolean = session.requestResume()
-    fun requestStop(): Boolean = session.requestStop()
+    fun requestStop(): Boolean {
+        val accepted = session.requestStop()
+        if (accepted) stopRequested = true
+        return accepted
+    }
 
     /**
      * Pumps source frames into the bounded Rust queue and submits available
@@ -40,6 +45,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     fun pump(maxPackets: Int = 32): Int {
         check(!closed) { "Encoded playback pipeline is closed" }
         require(maxPackets > 0)
+        if (stopRequested) return USB_ENCODED_WRITE_STOPPED
         val result = NativeAudio.nativePumpUsbEncodedTransport(
             queueHandle,
             producerHandle,
@@ -55,6 +61,11 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         expectedSequence = result[1]
         lastPositionMs = result[2]
         ended = result[3] != 0L
+        if (submitted == USB_ENCODED_WRITE_STOPPED) {
+            stopRequested = true
+            ended = false
+            return USB_ENCODED_WRITE_STOPPED
+        }
         check(submitted >= 0) { "Native encoded transport scheduler failed" }
         return submitted
     }
@@ -90,6 +101,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         segmentEndMs: Long?,
         onSeek: (boundedPositionMs: Long, actualPositionMs: Long) -> Unit,
     ) {
+        var stopped = false
         while (playbackActive()) {
             if (isPaused()) {
                 // The native encoded writer owns Pause at frame/URB boundaries.
@@ -106,11 +118,15 @@ internal class UsbEncodedPlaybackPipeline private constructor(
             }
 
             val submitted = pump(maxPackets = 1)
+            if (submitted == USB_ENCODED_WRITE_STOPPED) {
+                stopped = true
+                break
+            }
             if (segmentEndMs != null && positionMs() >= segmentEndMs) break
             if (isEnded) break
             if (submitted == 0) Thread.sleep(2)
         }
-        if (playbackActive()) drainTransport()
+        if (playbackActive() && !stopped) drainTransport()
     }
 
     /** Pumps remaining source packets, then waits for the encoded endpoint to drain. */
@@ -119,6 +135,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         check(!closed) { "Encoded playback pipeline is closed" }
         while (!ended) {
             val submitted = pump()
+            if (submitted == USB_ENCODED_WRITE_STOPPED) return
             if (submitted == 0 && !ended) Thread.yield()
         }
         drainTransport()
