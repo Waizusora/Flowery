@@ -32,6 +32,7 @@ struct UsbPcmProducer {
     state: Mutex<ProducerState>,
     worker: Mutex<Option<JoinHandle<()>>>,
     worker_cancelled: AtomicBool,
+    destroying: AtomicBool,
     target_gain_bits: AtomicU32,
     worker_error: Mutex<Option<String>>,
 }
@@ -65,6 +66,7 @@ fn register_producer(producer: UsbPcmProducer) -> jlong {
 fn destroy_producer(handle: jlong) {
     if handle > 0 {
         if let Some(producer) = producer_registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle) {
+            producer.destroying.store(true, Ordering::Release);
             producer.worker_cancelled.store(true, Ordering::Release);
             let _ = stop_producer_worker(&producer);
             // Synchronize with any in-flight manual pump before releasing producer state.
@@ -168,6 +170,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbPcm
         }),
         worker: Mutex::new(None),
         worker_cancelled: AtomicBool::new(false),
+        destroying: AtomicBool::new(false),
         target_gain_bits: AtomicU32::new(1.0_f32.to_bits()),
         worker_error: Mutex::new(None),
     };
@@ -303,6 +306,9 @@ fn pump_once(producer: &UsbPcmProducer, target_gain: f32) -> Result<jint, String
 
 fn start_producer_worker(producer: Arc<UsbPcmProducer>) -> Result<(), String> {
     let mut worker = producer.worker.lock().unwrap_or_else(|error| error.into_inner());
+    if producer.destroying.load(Ordering::Acquire) {
+        return Err("USB PCM producer is being destroyed".into());
+    }
     if worker.is_some() { return Err("USB PCM producer worker is already started".into()); }
     producer.worker_cancelled.store(false, Ordering::Release);
     *producer.worker_error.lock().unwrap_or_else(|error| error.into_inner()) = None;
@@ -331,13 +337,21 @@ fn start_producer_worker(producer: Arc<UsbPcmProducer>) -> Result<(), String> {
     Ok(())
 }
 
-fn stop_producer_worker(producer: &UsbPcmProducer) -> Result<(), String> {
-    producer.worker_cancelled.store(true, Ordering::Release);
-    let handle = producer.worker.lock().unwrap_or_else(|error| error.into_inner()).take();
-    if let Some(handle) = handle {
+fn join_worker_under_lock(
+    worker: &Mutex<Option<JoinHandle<()>>>,
+) -> Result<(), String> {
+    // Keep the worker slot locked until join completes. Otherwise a concurrent
+    // start could reset cancellation and revive the worker being stopped.
+    let mut worker = worker.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(handle) = worker.take() {
         handle.join().map_err(|_| "USB PCM producer worker panicked during shutdown".to_string())?;
     }
     Ok(())
+}
+
+fn stop_producer_worker(producer: &UsbPcmProducer) -> Result<(), String> {
+    producer.worker_cancelled.store(true, Ordering::Release);
+    join_worker_under_lock(&producer.worker)
 }
 
 #[no_mangle]
@@ -457,5 +471,47 @@ mod handle_tests {
         assert!(producer_ref(i64::MAX).is_none());
         destroy_producer(0);
         destroy_producer(-1);
+    }
+}
+
+
+#[cfg(test)]
+mod worker_lifecycle_tests {
+    use super::join_worker_under_lock;
+    use std::sync::{mpsc, Arc, Mutex};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn stop_holds_worker_slot_until_join_completes() {
+        let slot = Arc::new(Mutex::new(None));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+        *slot.lock().unwrap() = Some(worker);
+        let stopping_slot = Arc::clone(&slot);
+        let stopper = thread::spawn(move || join_worker_under_lock(&stopping_slot));
+
+        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let mut observed_locked = false;
+        while Instant::now() < deadline {
+            match slot.try_lock() {
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    observed_locked = true;
+                    break;
+                }
+                Ok(guard) => drop(guard),
+                Err(std::sync::TryLockError::Poisoned(error)) => drop(error.into_inner()),
+            }
+            thread::yield_now();
+        }
+        assert!(observed_locked, "stop must hold the worker slot while joining");
+        release_tx.send(()).unwrap();
+        stopper.join().unwrap().unwrap();
+        assert!(slot.try_lock().is_ok());
     }
 }

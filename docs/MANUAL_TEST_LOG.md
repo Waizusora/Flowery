@@ -1117,3 +1117,12 @@ Validation scope:
 - The workflow uploaded the `flowery-apks` artifact. The GitHub release publication step was skipped by the workflow; no release publication is claimed.
 - This run verifies the host-side build and automated test gates for the encoded producer teardown correction. It does not validate physical USB transfer cancellation, DAC mute behavior, or hardware playback safety.
 - No physical USB DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — PCM producer worker start/stop serialization audit
+
+- CI #1650 completed successfully, including native unit tests, USB session control tests, JNI contract checks, Android unit tests, native Android library builds, and debug/release APK packaging.
+- A source audit found a race in the Rust PCM producer lifecycle: stop removed the worker handle and released the worker mutex before joining. A concurrent start could observe an empty slot, reset the cancellation flag, and start another worker while the previous worker was still exiting.
+- Updated stop/join to retain the worker-slot mutex until the join completes. Worker start now rejects producers already marked for destruction, and destruction publishes that terminal state before stopping the worker.
+- Added a deterministic regression test that verifies the worker slot remains locked while join is waiting for the worker to finish.
+- CI verification for this correction is pending. No physical USB DAC test was performed; Direct USB Safety Hold remains active.
