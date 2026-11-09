@@ -35,7 +35,8 @@ class UsbEncodedDacSession private constructor(
     @Synchronized
     fun drain() {
         check(!closed) { "Encoded USB session is closed" }
-        check(UsbDacNative.nativeDrain(nativeHandle) == 0) {
+        val result = UsbDacNative.nativeDrain(nativeHandle)
+        check(result == 0 || result == WRITE_STOPPED) {
             "Encoded USB transport drain failed"
         }
     }
@@ -74,6 +75,8 @@ class UsbEncodedDacSession private constructor(
     }
 
     companion object {
+        private const val WRITE_STOPPED = -2
+
         fun open(
             connection: UsbDeviceConnection,
             interfaceNumber: Int,
