@@ -731,14 +731,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         return -1;
     }
 
-    {
-        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
-        if crate::playback_session::advance_epoch(&session.epoch, &session.cancelled).is_none() {
-            let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback seek epoch is exhausted or cancelled");
-            return -1;
-        }
-    }
-
+    // Complete decoder validation and seek before publishing a new session
+    // epoch. A decoder failure must not make the producer appear to have
+    // crossed into a new playback generation.
     let actual = {
         let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
         let decoder_owner = Arc::clone(&state.decoder);
@@ -750,19 +745,33 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbEncod
         let seek_result = decoder.seek_to(position_ms as u64);
         drop(decoder);
         match seek_result {
-            Ok(actual_position) => {
-                state.pending = None;
-                state.ended = false;
-                state.queue.clear();
-                state.epoch = session.epoch.load(Ordering::Acquire);
-                actual_position as jlong
-            }
+            Ok(actual_position) => actual_position as jlong,
             Err(error) => {
                 let _ = env.throw_new("java/lang/IllegalStateException", error);
                 return -1;
             }
         }
     };
+
+    // The transport is flushed and the decoder seek has succeeded. Only now
+    // publish the new epoch and discard stale producer/queue state.
+    let new_epoch = {
+        let _gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
+        match crate::playback_session::advance_epoch(&session.epoch, &session.cancelled) {
+            Some(epoch) => epoch,
+            None => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "Encoded playback seek epoch is exhausted or cancelled");
+                return -1;
+            }
+        }
+    };
+    {
+        let mut state = producer.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.pending = None;
+        state.ended = false;
+        state.queue.clear();
+        state.epoch = new_epoch;
+    }
 
     match spawn_encoded_producer_worker(handle) {
         Ok(worker) => {
