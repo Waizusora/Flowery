@@ -178,6 +178,20 @@ void test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership() {
  assert(!flowery::usb::failed_dispatcher_teardown_pump_allowed(true, -1, 0));
  assert(!flowery::usb::failed_dispatcher_teardown_pump_allowed(false, 0, 0));
 }
+void test_transfer_reclaim_waits_until_callback_dispatch_returns() {
+ using flowery::usb::transfer_reclaimable;
+ // Not completed: never reclaim, even if the dispatcher has advanced.
+ assert(!transfer_reclaimable(false, 4, 10));
+ // Callback published completion inside event iteration 4; iteration 4
+ // itself is not sufficient because libusb has not returned from dispatch.
+ assert(!transfer_reclaimable(true, 5, 4));
+ assert(!transfer_reclaimable(true, 5, 4));
+ // Once libusb_handle_events returns and iteration 5 is published, reclaim is safe.
+ assert(transfer_reclaimable(true, 5, 5));
+ assert(transfer_reclaimable(true, 5, 6));
+ // A missing callback barrier must never be treated as proof of ownership.
+ assert(!transfer_reclaimable(true, 0, 100));
+}
 int main() {
  test_pause_wakes_blocked_writer_without_submitting(); test_resume_wakes_paused_writer();
  test_repeated_stop_is_idempotent_and_terminal(); test_close_waits_for_active_lease_and_rejects_new_ones();
@@ -188,5 +202,6 @@ int main() {
  test_pause_request_is_serialized_with_encoded_submission();
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
- std::cout<<"USB session control tests passed (11 scenarios).\n"; return 0;
+ test_transfer_reclaim_waits_until_callback_dispatch_returns();
+ std::cout<<"USB session control tests passed (12 scenarios).\n"; return 0;
 }
