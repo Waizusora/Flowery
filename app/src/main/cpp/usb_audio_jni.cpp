@@ -1450,7 +1450,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         session->encoded_offset = 0;
         session->next_encoded_frame_due = frame_start + std::chrono::microseconds(effective_duration_us);
         session->encoded_frame_deadline_valid = true;
-        return -2; // Stop cancels this encoded packet.
+        return byte_count;
     }
 
     const uint64_t max_buffer = session->encoded_bytes_per_second * 2ULL;
@@ -1533,7 +1533,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         throw_transport_failure(env, session, failure);
         return -1;
     }
-    return -2; // Stop cancels this encoded packet.
+    return byte_count;
 }
 
 // Submits any staged partial service interval as a short final packet and waits
