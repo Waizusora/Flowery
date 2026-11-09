@@ -923,3 +923,18 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - Added explicit move construction and move assignment that transfer ownership and invalidate the source lease. The JNI wrapper now also clears the moved-from session pointer. Boolean lease validity additionally verifies that the underlying shared lock is still owned.
 - Added a host-native regression scenario covering move construction and move assignment, including source invalidation and destination validity. The USB session-control suite now contains 15 scenarios.
 - This is lifecycle-state correctness hardening. The host test exercises the production lease primitive but does not emulate libusb callbacks, a USB controller, or physical audio output. CI validation is required; Direct USB Safety Hold remains active and no physical DAC test was performed.
+
+
+### 2026-11-09 — Encoded USB Stop result contract
+
+Source audit found that the native encoded USB writer returned the accepted payload byte count at several Stop checkpoints, even after the writer had aborted in-flight transfers and discarded the staged encoded packet. This differed from the PCM writer contract, which reports the dedicated cancellation result `-2`. The Rust JNI packet scheduler consequently treated an intentional Stop as a short/failed write and raised an exception.
+
+Changes committed to `main`:
+- The UAC1 Type-II and IEC 61937 Type-III native encoded writer paths now return `-2` when Stop cancels the current packet. Successful writes continue to return the exact accepted byte count.
+- The Rust JNI scheduler distinguishes accepted, stopped, and rejected write results. A stopped result is returned to Kotlin as the explicit scheduler sentinel `-2`; it is not converted into a transport exception or a successful packet count.
+- Kotlin shares the encoded Stop sentinel across the transport session and playback pipeline. The pipeline records a local Stop request, stops pumping, exits its playback loop without starting a natural-end drain, and treats Stop during the final producer drain as normal cancellation.
+- A Rust unit test covers successful full writes, the Stop sentinel, negative failures, and short writes.
+
+Validation scope:
+- This is a source-level contract correction plus a host-side Rust policy test. It does not invoke libusb, emulate USB controller behavior, establish transfer cancellation completion, or demonstrate electrical/audio safety.
+- CI is required to validate compilation and the registered test suites. No physical DAC test is authorized or requested. Direct USB remains on Safety Hold pending independent root-cause and fail-safe review.
