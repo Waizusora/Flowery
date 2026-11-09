@@ -794,7 +794,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         } else if (activeWorker === Thread.currentThread()) {
             return true
         }
-        return retryPendingUsbEncodedClose()
+        val pipelineClosed = retryPendingUsbEncodedClose()
+        val retainedSessionsClosed = UsbEncodedDacSession.retryPendingCloseSessions()
+        return pipelineClosed && retainedSessionsClosed
     }
 
     /**
