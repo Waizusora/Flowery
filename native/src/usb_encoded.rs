@@ -253,6 +253,20 @@ struct EncodedProducer {
     cancelled: AtomicBool,
 }
 
+const ENCODED_WORKER_RUNNING: i32 = 0;
+const ENCODED_WORKER_EOF: i32 = 1;
+const ENCODED_WORKER_STOPPED: i32 = 2;
+const ENCODED_WORKER_FAILED: i32 = -2;
+const ENCODED_WORKER_PANICKED: i32 = -3;
+
+fn encoded_worker_transport_error(status: i32) -> Option<&'static str> {
+    match status {
+        ENCODED_WORKER_RUNNING | ENCODED_WORKER_EOF => None,
+        ENCODED_WORKER_STOPPED => Some("Encoded packet producer was cancelled"),
+        _ => Some("Encoded packet producer is unavailable"),
+    }
+}
+
 struct EncodedProducerWorker {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
@@ -296,22 +310,22 @@ fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProduc
                         Ok(1) => {}
                         Ok(0) => thread::sleep(Duration::from_millis(2)),
                         Ok(-1) => {
-                            thread_status.store(1, Ordering::Release);
+                            thread_status.store(ENCODED_WORKER_EOF, Ordering::Release);
                             break;
                         }
                         Ok(-3) => {
-                            thread_status.store(2, Ordering::Release);
+                            thread_status.store(ENCODED_WORKER_STOPPED, Ordering::Release);
                             break;
                         }
                         Ok(_) | Err(_) => {
-                            thread_status.store(-2, Ordering::Release);
+                            thread_status.store(ENCODED_WORKER_FAILED, Ordering::Release);
                             break;
                         }
                     }
                 }
             }));
             if outcome.is_err() {
-                thread_status.store(-3, Ordering::Release);
+                thread_status.store(ENCODED_WORKER_PANICKED, Ordering::Release);
             } else if thread_stop.load(Ordering::Acquire) {
                 thread_status.store(2, Ordering::Release);
             }
@@ -371,11 +385,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         .get(&producer_handle)
         .map(|worker| worker.status.load(Ordering::Acquire))
         .unwrap_or(-1);
-    if producer_status != 0 && producer_status != 1 {
-        let _ = env.throw_new(
-            "java/lang/IllegalStateException",
-            if producer_status == 2 { "Encoded packet producer was cancelled" } else { "Encoded packet producer is unavailable" },
-        );
+    if let Some(message) = encoded_worker_transport_error(producer_status) {
+        let _ = env.throw_new("java/lang/IllegalStateException", message);
         return std::ptr::null_mut();
     }
     let mut submitted = 0_i64;
@@ -830,6 +841,25 @@ mod tests {
             framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
             bytes: bytes.to_vec(),
         }
+    }
+
+    #[test]
+    fn encoded_worker_status_preserves_eof_drain_and_rejects_terminal_failures() {
+        assert_eq!(super::encoded_worker_transport_error(super::ENCODED_WORKER_RUNNING), None);
+        assert_eq!(super::encoded_worker_transport_error(super::ENCODED_WORKER_EOF), None);
+        assert_eq!(
+            super::encoded_worker_transport_error(super::ENCODED_WORKER_STOPPED),
+            Some("Encoded packet producer was cancelled")
+        );
+        assert_eq!(
+            super::encoded_worker_transport_error(super::ENCODED_WORKER_FAILED),
+            Some("Encoded packet producer is unavailable")
+        );
+        assert_eq!(
+            super::encoded_worker_transport_error(super::ENCODED_WORKER_PANICKED),
+            Some("Encoded packet producer is unavailable")
+        );
+        assert_eq!(super::encoded_worker_transport_error(-1), Some("Encoded packet producer is unavailable"));
     }
 
     #[test]
