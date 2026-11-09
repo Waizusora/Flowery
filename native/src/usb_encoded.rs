@@ -274,7 +274,17 @@ fn encoded_worker_transport_error(status: i32) -> Option<&'static str> {
 struct EncodedProducerWorker {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
+    submission_gate: Arc<Mutex<()>>,
     thread: JoinHandle<()>,
+}
+
+fn publish_encoded_worker_status(
+    submission_gate: &Mutex<()>,
+    status: &AtomicI32,
+    next_status: i32,
+) {
+    let _gate = submission_gate.lock().unwrap_or_else(|error| error.into_inner());
+    status.store(next_status, Ordering::Release);
 }
 
 static ENCODED_PRODUCER_WORKERS: OnceLock<Mutex<HashMap<i64, EncodedProducerWorker>>> = OnceLock::new();
@@ -302,17 +312,31 @@ fn stop_encoded_producer_worker(handle: jlong) {
 
 fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProducerWorker> {
     let stop = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(AtomicI32::new(0));
+    let status = Arc::new(AtomicI32::new(ENCODED_WORKER_RUNNING));
+    let submission_gate = Arc::new(Mutex::new(()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
+    let thread_submission_gate = Arc::clone(&submission_gate);
     let thread = thread::Builder::new()
         .name("flowery-usb-encoded-producer".into())
         .spawn(move || {
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 while !thread_stop.load(Ordering::Acquire) {
+                    // Serialize producer progress and terminal-state publication
+                    // with packet submission. Once a failure is observable, no
+                    // later queued packet may cross the transport boundary.
+                    let submission = thread_submission_gate
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    if thread_stop.load(Ordering::Acquire) {
+                        break;
+                    }
                     match pump_encoded_producer(handle) {
                         Ok(1) => {}
-                        Ok(0) => thread::sleep(Duration::from_millis(2)),
+                        Ok(0) => {
+                            drop(submission);
+                            thread::sleep(Duration::from_millis(2));
+                        }
                         Ok(-1) => {
                             thread_status.store(ENCODED_WORKER_EOF, Ordering::Release);
                             break;
@@ -329,12 +353,12 @@ fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProduc
                 }
             }));
             if outcome.is_err() {
-                thread_status.store(ENCODED_WORKER_PANICKED, Ordering::Release);
+                publish_encoded_worker_status(&thread_submission_gate, &thread_status, ENCODED_WORKER_PANICKED);
             } else if thread_stop.load(Ordering::Acquire) {
-                thread_status.store(ENCODED_WORKER_STOPPED, Ordering::Release);
+                publish_encoded_worker_status(&thread_submission_gate, &thread_status, ENCODED_WORKER_STOPPED);
             }
         })?;
-    Ok(EncodedProducerWorker { stop, status, thread })
+    Ok(EncodedProducerWorker { stop, status, submission_gate, thread })
 }
 
 
@@ -384,12 +408,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet queue is no longer valid");
         return std::ptr::null_mut();
     };
-    let producer_status = encoded_worker_registry()
+    let worker = encoded_worker_registry()
         .lock().unwrap_or_else(|error| error.into_inner())
         .get(&producer_handle)
-        .map(|worker| worker.status.load(Ordering::Acquire))
-        .unwrap_or(-1);
-    if let Some(message) = encoded_worker_transport_error(producer_status) {
+        .map(|worker| (Arc::clone(&worker.status), Arc::clone(&worker.submission_gate)));
+    let Some((producer_status, submission_gate)) = worker else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Encoded packet producer is unavailable");
+        return std::ptr::null_mut();
+    };
+    let initial_status = producer_status.load(Ordering::Acquire);
+    if let Some(message) = encoded_worker_transport_error(initial_status) {
         let _ = env.throw_new("java/lang/IllegalStateException", message);
         return std::ptr::null_mut();
     }
@@ -398,6 +426,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     let mut position_ms = last_position_ms;
     let mut stopped = false;
     while submitted < max_packets as i64 {
+        // Hold the shared gate through writePacket. The producer cannot publish
+        // EOF, cancellation, failure, or panic between this check and submission.
+        let _submission = submission_gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let current_status = producer_status.load(Ordering::Acquire);
+        if let Some(message) = encoded_worker_transport_error(current_status) {
+            let _ = env.throw_new("java/lang/IllegalStateException", message);
+            return std::ptr::null_mut();
+        }
         let Some(packet) = queue.poll(Duration::ZERO) else { break; };
         let framing_matches = match packet.framing {
             EncodedFraming::Uac1TypeIi { format_tag } => framing_kind == 1 && format_code == format_tag as jint,
@@ -458,7 +496,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         }
         submitted += 1;
     }
-    let ended = !stopped && producer_status == 1 && queue.is_empty();
+    let final_status = producer_status.load(Ordering::Acquire);
+    if let Some(message) = encoded_worker_transport_error(final_status) {
+        let _ = env.throw_new("java/lang/IllegalStateException", message);
+        return std::ptr::null_mut();
+    }
+    let ended = !stopped && final_status == ENCODED_WORKER_EOF && queue.is_empty();
     let result = match env.new_long_array(4) {
         Ok(array) => array,
         Err(error) => {
@@ -856,6 +899,33 @@ mod tests {
             super::next_encoded_sequence(u64::MAX),
             Err("Encoded packet sequence exhausted")
         );
+    }
+
+    #[test]
+    fn worker_failure_publication_waits_for_in_flight_packet_submission() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        let gate = Arc::new(Mutex::new(()));
+        let status = Arc::new(AtomicI32::new(super::ENCODED_WORKER_RUNNING));
+        let held = gate.lock().unwrap();
+        let thread_gate = Arc::clone(&gate);
+        let thread_status = Arc::clone(&status);
+        let publisher = thread::spawn(move || {
+            super::publish_encoded_worker_status(
+                &thread_gate,
+                &thread_status,
+                super::ENCODED_WORKER_FAILED,
+            );
+        });
+
+        thread::yield_now();
+        assert_eq!(status.load(Ordering::Acquire), super::ENCODED_WORKER_RUNNING);
+        drop(held);
+        publisher.join().unwrap();
+        assert_eq!(status.load(Ordering::Acquire), super::ENCODED_WORKER_FAILED);
+        assert!(super::encoded_worker_transport_error(status.load(Ordering::Acquire)).is_some());
     }
 
     #[test]
