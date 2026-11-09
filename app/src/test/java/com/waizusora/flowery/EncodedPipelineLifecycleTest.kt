@@ -32,4 +32,52 @@ class EncodedPipelineLifecycleTest {
 
         assertFalse(lifecycle.beginClose())
     }
+
+    @Test
+    fun retrySkipsCompletedStepsAndRetriesOnlyTheFailedStep() {
+        val lifecycle = EncodedPipelineLifecycle()
+        var producerStopCalls = 0
+        var producerDestroyCalls = 0
+        var queueCloseCalls = 0
+
+        assertTrue(lifecycle.beginClose())
+        lifecycle.runCloseStep("stop-producer") { producerStopCalls++ }
+        assertThrows(IllegalStateException::class.java) {
+            lifecycle.runCloseStep("destroy-producer") {
+                producerDestroyCalls++
+                throw IllegalStateException("simulated native teardown failure")
+            }
+        }
+
+        assertTrue(lifecycle.beginClose())
+        lifecycle.runCloseStep("stop-producer") { producerStopCalls++ }
+        lifecycle.runCloseStep("destroy-producer") { producerDestroyCalls++ }
+        lifecycle.runCloseStep("close-queue") { queueCloseCalls++ }
+        lifecycle.completeClose()
+
+        assertTrue(lifecycle.beginClose().not())
+        assertTrue(producerStopCalls == 1)
+        assertTrue(producerDestroyCalls == 2)
+        assertTrue(queueCloseCalls == 1)
+    }
+
+    @Test
+    fun failedCloseStepIsNotMarkedComplete() {
+        val lifecycle = EncodedPipelineLifecycle()
+        var attempts = 0
+
+        assertTrue(lifecycle.beginClose())
+        assertThrows(IllegalStateException::class.java) {
+            lifecycle.runCloseStep("close-usb") {
+                attempts++
+                throw IllegalStateException("temporary close failure")
+            }
+        }
+
+        lifecycle.runCloseStep("close-usb") { attempts++ }
+        lifecycle.runCloseStep("close-usb") { attempts++ }
+
+        assertTrue(attempts == 2)
+    }
+
 }
