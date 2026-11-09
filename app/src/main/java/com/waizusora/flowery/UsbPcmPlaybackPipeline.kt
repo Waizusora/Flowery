@@ -62,7 +62,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
     val dacSession: UsbDacSession,
     private val playbackSessionHandle: Long,
 ) : AutoCloseable {
-    private var closed = false
+    private val lifecycle = EncodedPipelineLifecycle()
     private var activeEpoch = 0
 
     val queueSize: Int
@@ -78,7 +78,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         get() = NativeAudio.nativeIsUsbPcmProducerBitPerfect(producerHandle)
 
     fun pollAndWrite(timeoutMs: Int): UsbPcmWriteResult? {
-        check(!closed) { "USB PCM playback pipeline is closed" }
+        lifecycle.checkOpen()
         val pollStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
         val encoded = NativeAudio.nativePollUsbPcmBlock(queueHandle, timeoutMs) ?: return null
         val queueWaitMs = (android.os.SystemClock.elapsedRealtimeNanos() - pollStartedNs).coerceAtLeast(0L) / 1_000_000.0
@@ -148,6 +148,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         onHardwareVolume: (volume: Float) -> Unit,
         onEndOfStream: (chunks: Long, totalFrames: Long) -> Unit,
     ): UsbPcmPlaybackSummary {
+        lifecycle.checkOpen()
         val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
         while (playbackActive() && workerError.isBlank() &&
             !isAtEnd && queueSize < PREBUFFER_BLOCKS) {
@@ -226,25 +227,23 @@ internal class UsbPcmPlaybackPipeline private constructor(
     }
 
     override fun close() {
-        if (closed) return
-        closed = true
-        try {
+        if (!lifecycle.beginClose()) return
+        lifecycle.runCloseStep("stop-producer") {
             NativeAudio.nativeStopUsbPcmProducerWorker(producerHandle)
-        } finally {
-            try {
-                NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
-            } finally {
-                try {
-                    NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
-                } finally {
-                    try {
-                        NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
-                    } finally {
-                        dacSession.close()
-                    }
-                }
-            }
         }
+        lifecycle.runCloseStep("close-queue") {
+            NativeAudio.nativeCloseUsbPcmQueue(queueHandle)
+        }
+        lifecycle.runCloseStep("destroy-producer") {
+            NativeAudio.nativeDestroyUsbPcmProducer(producerHandle)
+        }
+        lifecycle.runCloseStep("destroy-queue") {
+            NativeAudio.nativeDestroyUsbPcmQueue(queueHandle)
+        }
+        lifecycle.runCloseStep("close-usb-session") {
+            dacSession.close()
+        }
+        lifecycle.completeClose()
     }
 
     companion object {
