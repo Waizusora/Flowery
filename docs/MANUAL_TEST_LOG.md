@@ -947,3 +947,12 @@ Validation scope:
 - Producer and queue cleanup operations are safe to repeat through their existing stale-handle/no-op behavior; the session retains its handle and connection when native close has not succeeded.
 - Added Kotlin unit tests for retry after an incomplete close attempt, rejection of playback/control while closing, and idempotent successful close.
 - Validation scope: the tests cover the lifecycle gate, not actual libusb cancellation or controller ownership. CI validation is required. Direct USB remains under Safety Hold; no physical DAC test was performed.
+
+
+### 2026-11-09 — Retain and retry failed encoded USB teardown at the playback owner
+
+- A further ownership audit found that the encoded pipeline's retryable close state alone was insufficient: `FloweryPlayer.playUsbEncodedDirect()` cleared its active pipeline reference before closing it. If close exhausted its bounded native retries, the pipeline became unreachable to the playback owner.
+- The player now retains the active pipeline reference when close fails and retries it from `stopAndJoin()` after the playback worker has terminated. The reference is cleared only after a successful close.
+- `PlaybackCoordinator` now checks the teardown result. USB release and controller shutdown remain pending and retry at a bounded interval while native teardown is unconfirmed; the playback controller is not destroyed and completion callbacks are not issued prematurely.
+- This is fail-closed resource ownership behavior: it may intentionally keep cleanup pending if libusb cannot confirm transfer reclamation. It does not force-free transfers or claim that hardware has stopped producing audio.
+- Validation scope: source-level lifecycle behavior and Kotlin tests for the retryable state gate; CI is required. No libusb controller simulation or physical DAC test was performed. Direct USB Safety Hold remains active.
