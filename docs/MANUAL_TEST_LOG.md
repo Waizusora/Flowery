@@ -956,3 +956,11 @@ Validation scope:
 - `PlaybackCoordinator` now checks the teardown result. USB release and controller shutdown remain pending and retry at a bounded interval while native teardown is unconfirmed; the playback controller is not destroyed and completion callbacks are not issued prematurely.
 - This is fail-closed resource ownership behavior: it may intentionally keep cleanup pending if libusb cannot confirm transfer reclamation. It does not force-free transfers or claim that hardware has stopped producing audio.
 - Validation scope: source-level lifecycle behavior and Kotlin tests for the retryable state gate; CI is required. No libusb controller simulation or physical DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — CI #1586 Kotlin compilation correction
+
+- CI #1586 passed native unit tests, USB session-control tests, and Kotlin/JNI declaration verification, then failed at Android unit-test compilation.
+- The compiler identified three stale references to the removed `closed` field in `UsbEncodedPlaybackPipeline.seekTo()`, `drainTransport()`, and `drain()`.
+- Replaced all three checks with the new lifecycle gate's `checkOpen()` method so every playback operation consistently rejects calls after teardown begins.
+- CI #1587 was triggered for the correction. No hardware validation was performed; Direct USB Safety Hold remains active.
