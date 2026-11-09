@@ -938,3 +938,12 @@ Changes committed to `main`:
 Validation scope:
 - This is a source-level contract correction plus a host-side Rust policy test. It does not invoke libusb, emulate USB controller behavior, establish transfer cancellation completion, or demonstrate electrical/audio safety.
 - CI is required to validate compilation and the registered test suites. No physical DAC test is authorized or requested. Direct USB remains on Safety Hold pending independent root-cause and fail-safe review.
+
+
+### 2026-11-09 — Retryable encoded USB pipeline teardown
+
+- The encoded pipeline previously marked itself closed before calling `UsbEncodedDacSession.close()`. If native teardown could not confirm that every libusb transfer had been reaped, the session intentionally remained open for a safe retry, but the pipeline's early closed flag caused subsequent `close()` calls to return without retrying.
+- Added an explicit lifecycle gate. Playback and control requests are rejected as soon as teardown starts, while repeated `close()` calls remain permitted until native session teardown succeeds. The gate becomes terminal only after producer, queue, and USB session cleanup complete.
+- Producer and queue cleanup operations are safe to repeat through their existing stale-handle/no-op behavior; the session retains its handle and connection when native close has not succeeded.
+- Added Kotlin unit tests for retry after an incomplete close attempt, rejection of playback/control while closing, and idempotent successful close.
+- Validation scope: the tests cover the lifecycle gate, not actual libusb cancellation or controller ownership. CI validation is required. Direct USB remains under Safety Hold; no physical DAC test was performed.
