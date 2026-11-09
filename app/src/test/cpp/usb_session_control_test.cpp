@@ -18,7 +18,13 @@ void test_pause_wakes_blocked_writer_without_submitting() {
   wake.wait(lock,[&]{return control.load()!=static_cast<int>(ControlRequest::Run);});
   if(control.load()==static_cast<int>(ControlRequest::Run)) ++submitted;
  });
- waiting.get_future().wait(); assert(control.request(ControlRequest::Pause,wake)); writer.join();
+ waiting.get_future().wait();
+ // Acquiring the mutex proves the writer entered condition_variable::wait()
+ // and released the mutex before the Pause request is issued.
+ std::unique_lock<std::mutex> barrier(mutex);
+ assert(control.request(ControlRequest::Pause,wake));
+ barrier.unlock();
+ writer.join();
  assert(control.load()==static_cast<int>(ControlRequest::Pause)); assert(submitted.load()==0);
 }
 void test_resume_wakes_paused_writer() {
@@ -28,7 +34,12 @@ void test_resume_wakes_paused_writer() {
   wake.wait(lock,[&]{return control.load()!=static_cast<int>(ControlRequest::Pause);});
   if(control.load()==static_cast<int>(ControlRequest::Run)) ++submitted;
  });
- waiting.get_future().wait(); assert(control.request(ControlRequest::Run,wake)); writer.join();
+ waiting.get_future().wait();
+ // The writer releases this mutex only after entering condition_variable::wait().
+ std::unique_lock<std::mutex> barrier(mutex);
+ assert(control.request(ControlRequest::Run,wake));
+ barrier.unlock();
+ writer.join();
  assert(submitted.load()==1);
 }
 void test_repeated_stop_is_idempotent_and_terminal() {
