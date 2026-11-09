@@ -898,3 +898,11 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - Added a host-native policy test covering incomplete callbacks, completion before dispatch return, completion after dispatch return, and missing callback barriers. The native control suite now reports 12 scenarios.
 - This narrows the callback/teardown race window and prevents reclamation based solely on a completion flag published from inside a callback. The test validates the reclamation predicate, not libusb's real callback delivery or USB controller behavior.
 - CI verification is pending. Direct USB playback remains under the existing safety hold; no physical DAC test was performed.
+
+
+## 2026-11-09 — Initial asynchronous feedback submission ownership ordering
+
+- A follow-up lifecycle audit found a race during session initialization: the dedicated event thread is already running when the initial feedback transfer is submitted. The callback could run and clear `feedback_in_flight` after a failed resubmission before the opening thread performed its old post-submit `true` store. That late store could leave a completed transfer falsely marked in flight and make teardown wait until timeout.
+- The initial submission path now publishes `feedback_in_flight=true` before calling `libusb_submit_transfer()`, then rolls it back if submission fails. It no longer writes the in-flight flag after a successful submit, so it cannot overwrite a callback's state transition.
+- Added a host-native ordering scenario to the USB session control test suite. The suite now reports 13 scenarios. This test models the state ordering; it does not invoke libusb or reproduce scheduler/controller timing.
+- CI validation is pending. Direct USB remains under the existing Safety Hold; no physical DAC test was performed.
