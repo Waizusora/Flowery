@@ -167,6 +167,12 @@ void test_close_requests_stop_before_waiting_for_encoded_writer_lease() {
  closer.join();
  assert(done.wait_for(0ms)==std::future_status::ready);
 }
+void test_feedback_transfer_is_not_resubmitted_after_event_loop_failure() {
+ assert(flowery::usb::feedback_resubmit_allowed(false, true, 0, 0));
+ assert(!flowery::usb::feedback_resubmit_allowed(true, true, 0, 0));
+ assert(!flowery::usb::feedback_resubmit_allowed(false, false, 0, 0));
+ assert(!flowery::usb::feedback_resubmit_allowed(false, true, -1, 0));
+}
 int main() {
  test_pause_wakes_blocked_writer_without_submitting(); test_resume_wakes_paused_writer();
  test_repeated_stop_is_idempotent_and_terminal(); test_close_waits_for_active_lease_and_rejects_new_ones();
@@ -175,5 +181,6 @@ int main() {
  test_encoded_stop_takes_priority_over_pause_and_aborts();
  test_close_requests_stop_before_waiting_for_encoded_writer_lease();
  test_pause_request_is_serialized_with_encoded_submission();
- std::cout<<"USB session control tests passed (9 scenarios).\n"; return 0;
+ test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
+ std::cout<<"USB session control tests passed (10 scenarios).\n"; return 0;
 }
