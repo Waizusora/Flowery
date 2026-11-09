@@ -154,17 +154,24 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
         })
     }).collect();
 
-    let tracks = valid.iter().enumerate().map(|(index, track)| {
-        let next = valid.get(index + 1).filter(|next| next.file_name == track.file_name);
-        CueTrack {
+    // A CUE sheet may switch between FILE entries and later return to a
+    // previously referenced file. Resolve each track's end against the next
+    // later INDEX 01 for that same file, not merely the next list entry.
+    let mut next_start_by_file = HashMap::<String, i64>::new();
+    let mut tracks = Vec::with_capacity(valid.len());
+    for track in valid.iter().rev() {
+        let end_frame = next_start_by_file.get(&track.file_name).copied();
+        tracks.push(CueTrack {
             number: track.number,
             title: track.title.clone(),
             performer: track.performer.clone(),
             file_name: track.file_name.clone(),
             start_frame: track.start_frame,
-            end_frame: next.map(|next| next.start_frame),
-        }
-    }).collect();
+            end_frame,
+        });
+        next_start_by_file.insert(track.file_name.clone(), track.start_frame);
+    }
+    tracks.reverse();
 
     CueSheet { title: album_title, performer: album_performer, tracks }
 }
@@ -290,6 +297,33 @@ mod tests {
         assert_eq!(parsed.tracks[0].file_name, "disc one.flac");
         assert_eq!(parsed.tracks[0].end_frame, Some(14_437));
         assert_eq!(parsed.tracks[1].start_frame, 14_437);
+    }
+
+    #[test]
+    fn cue_track_end_uses_next_index_for_same_file_across_file_switches() {
+        let cue = r#"FILE "disc-a.flac" WAVE
+TRACK 01 AUDIO
+TITLE "A1"
+INDEX 01 00:00:00
+FILE "disc-b.flac" WAVE
+TRACK 02 AUDIO
+TITLE "B1"
+INDEX 01 00:00:00
+FILE "disc-a.flac" WAVE
+TRACK 03 AUDIO
+TITLE "A2"
+INDEX 01 01:00:00
+FILE "disc-b.flac" WAVE
+TRACK 04 AUDIO
+TITLE "B2"
+INDEX 01 02:00:00
+"#;
+        let parsed = parse_cue(cue);
+        assert_eq!(parsed.tracks.len(), 4);
+        assert_eq!(parsed.tracks[0].end_frame, Some(4_500));
+        assert_eq!(parsed.tracks[1].end_frame, Some(9_000));
+        assert_eq!(parsed.tracks[2].end_frame, None);
+        assert_eq!(parsed.tracks[3].end_frame, None);
     }
 
     #[test]

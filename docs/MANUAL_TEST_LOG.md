@@ -1210,3 +1210,11 @@ Validation scope:
 - Added native tests for frame positions 0, 1, 2, 74, and 75, plus negative and maximum-range inputs.
 - This is a conservative millisecond-boundary improvement, not sample-frame-exact CUE seeking. The playback API still accepts milliseconds; a future frame-native seek contract is required to eliminate sub-millisecond quantization entirely.
 - Validation is pending CI. No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Resolve CUE segment ends across FILE switches
+
+- A CUE range audit found that track end positions were assigned only when the immediately following parsed track referenced the same audio file. A valid sheet that switches FILE entries and later returns to an earlier file could therefore leave the earlier track without its correct end boundary.
+- CUE track ranges are now resolved in reverse order using the next later INDEX 01 position for each individual file. Playlist display order remains unchanged, and tracks without a later boundary for the same file remain open-ended.
+- Added a native regression test with interleaved references to two audio files. It verifies that each track receives the next timestamp belonging to its own file, even when another file's track appears between them.
+- CI validation is pending. This is parser/range metadata coverage only; it does not change millisecond-based playback seek precision or validate physical audio output. Direct USB Safety Hold remains active.
