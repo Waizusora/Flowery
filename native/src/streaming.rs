@@ -1654,3 +1654,95 @@ mod usb_seek_regression_tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+
+#[cfg(test)]
+mod eof_boundary_regression_tests {
+    use super::StreamDecoder;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    fn write_stereo_pcm_wav(path: &std::path::Path, sample_rate: u32, frames: u32) {
+        let data_bytes = frames * 4;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&sample_rate.to_le_bytes()).unwrap();
+        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
+        file.write_all(&4_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&data_bytes.to_le_bytes()).unwrap();
+        for frame in 0..frames {
+            let sample = (frame % 30_000) as i16;
+            file.write_all(&sample.to_le_bytes()).unwrap();
+            file.write_all(&sample.to_le_bytes()).unwrap();
+        }
+    }
+
+    #[test]
+    fn resampled_short_stream_emits_exact_converted_frame_count_at_eof() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-resampled-eof-{}.wav",
+            std::process::id()
+        ));
+        write_stereo_pcm_wav(&path, 44_100, 441);
+
+        let source = std::fs::File::open(&path).unwrap();
+        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
+        decoder.configure(48_000, &[0.0; 31]).unwrap();
+
+        let mut total_frames = 0_usize;
+        loop {
+            let chunk = decoder.read_frames(17).unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+            assert_eq!(chunk.len() % 2, 0, "decoder emitted a partial stereo frame");
+            total_frames += chunk.len() / 2;
+        }
+        assert_eq!(total_frames, 480, "resampler truncated or extended the final stream");
+        assert!(decoder.read_frames(17).unwrap().is_empty(), "EOF must remain stable on repeated reads");
+
+        drop(decoder);
+        drop(source);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn native_pcm_usb_reader_drains_final_partial_chunk_once_then_stays_at_eof() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-native-usb-eof-{}.wav",
+            std::process::id()
+        ));
+        write_stereo_pcm_wav(&path, 48_000, 6);
+
+        let source = std::fs::File::open(&path).unwrap();
+        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
+        decoder.configure(48_000, &[0.0; 31]).unwrap();
+        let format = crate::usb_pcm::PcmFormat {
+            encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
+            sample_rate: 48_000,
+            channels: 2,
+            valid_bits: 16,
+            subslot_bytes: 2,
+            signed: true,
+            little_endian: true,
+        };
+
+        let first = decoder.read_usb_pcm(4, 1.0, format).unwrap();
+        let final_chunk = decoder.read_usb_pcm(4, 1.0, format).unwrap();
+        let after_eof = decoder.read_usb_pcm(4, 1.0, format).unwrap();
+        assert_eq!(first.len(), 4 * format.bytes_per_frame());
+        assert_eq!(final_chunk.len(), 2 * format.bytes_per_frame());
+        assert!(after_eof.is_empty(), "native PCM EOF must not repeat or synthesize samples");
+
+        drop(decoder);
+        drop(source);
+        std::fs::remove_file(path).unwrap();
+    }
+}

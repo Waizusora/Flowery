@@ -1135,3 +1135,12 @@ Validation scope:
 - Pause requests are published through the native event mutex/control gate. The isochronous submission path checks the control state under the same gate immediately before submitting a URB; Pause stops new submissions, waits for outstanding transfers to complete, and preserves staged PCM for Resume. The playback loop continues to process seek requests while paused, without implicitly resuming transport.
 - Added a native regression test that first reads bit-preserving integer PCM, seeks to 1 ms, and verifies the next USB PCM block begins at the exact requested source frame with native PCM mode re-established.
 - Validation is pending CI. Source review and the new decoder test do not simulate Android thread scheduling, libusb callback delivery, DAC behavior, or electrical/audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — EOF and segment-boundary regression coverage
+
+- Confirmed the AAudio segment worker limits output to the remaining frame count and signals EOF only after that limit is reached; the output scheduler waits until the ring is drained before completing playback.
+- Reviewed seek clamping against the active segment and frame-based remaining-duration calculation.
+- Added native regression coverage for a short 44.1 kHz stream resampled to 48 kHz, asserting the exact 480-frame output count and stable repeated EOF reads.
+- Added a direct USB native-PCM EOF regression asserting the final partial read is emitted once and subsequent reads remain empty.
+- CI validation is pending. These host-side tests do not emulate real-time Android scheduling, output-device latency, libusb transport, or DAC hardware. Direct USB Safety Hold remains active; no physical DAC test was performed.
