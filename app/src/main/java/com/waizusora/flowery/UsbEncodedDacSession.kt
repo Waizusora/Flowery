@@ -18,6 +18,9 @@ class UsbEncodedDacSession private constructor(
     private val nativeHandle: Long
 ) : AutoCloseable {
     @Volatile
+    private var nativeClosed = false
+
+    @Volatile
     private var closed = false
 
     @Synchronized
@@ -31,9 +34,9 @@ class UsbEncodedDacSession private constructor(
     }
 
     // Deliberately unsynchronized so control requests can wake a JNI writer.
-    fun requestPause(): Boolean = !closed && UsbDacNative.nativeRequestPause(nativeHandle)
-    fun requestResume(): Boolean = !closed && UsbDacNative.nativeRequestResume(nativeHandle)
-    fun requestStop(): Boolean = !closed && UsbDacNative.nativeRequestStop(nativeHandle)
+    fun requestPause(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestPause(nativeHandle)
+    fun requestResume(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestResume(nativeHandle)
+    fun requestStop(): Boolean = !closed && !nativeClosed && UsbDacNative.nativeRequestStop(nativeHandle)
 
     /** Waits until every staged encoded service interval has completed. */
     @Synchronized
@@ -57,35 +60,53 @@ class UsbEncodedDacSession private constructor(
     @Synchronized
     override fun close() {
         if (closed) return
-        requestStop()
-        for (attempt in 0 until 3) {
-            if (UsbDacNative.nativeClose(nativeHandle)) {
-                try {
-                    connection.close()
-                    closed = true
-                    forgetPendingClose()
-                    return
-                } catch (error: Throwable) {
-                    // The native session is already gone, but retain the Android
-                    // connection so a later retry can complete its release.
-                    rememberPendingClose()
-                    throw error
+
+        // Native and Android ownership have separate completion points. Once
+        // nativeClose succeeds, never call it again with the now-stale handle,
+        // even if releasing the Android connection subsequently fails.
+        if (!nativeClosed) {
+            requestStop()
+            var nativeCloseConfirmed = false
+            for (attempt in 0 until 3) {
+                if (UsbDacNative.nativeClose(nativeHandle)) {
+                    nativeClosed = true
+                    nativeCloseConfirmed = true
+                    break
+                }
+                if (attempt < 2) {
+                    try {
+                        Thread.sleep(50L)
+                    } catch (interrupted: InterruptedException) {
+                        rememberPendingClose()
+                        Thread.currentThread().interrupt()
+                        throw IllegalStateException(
+                            "Interrupted while waiting for encoded USB transfers to finish teardown",
+                            interrupted
+                        )
+                    }
                 }
             }
-            if (attempt < 2) {
-                try {
-                    Thread.sleep(50L)
-                } catch (interrupted: InterruptedException) {
-                    rememberPendingClose()
-                    Thread.currentThread().interrupt()
-                    throw IllegalStateException("Interrupted while waiting for encoded USB transfers to finish teardown", interrupted)
-                }
+            if (!nativeCloseConfirmed) {
+                rememberPendingClose()
+                throw IllegalStateException(
+                    "libusb could not confirm that all encoded transfers were reaped; " +
+                        "the USB connection remains open for a safe retry"
+                )
             }
         }
-        rememberPendingClose()
-        throw IllegalStateException(
-            "libusb could not confirm that all encoded transfers were reaped; the USB connection remains open for a safe retry"
-        )
+
+        try {
+            connection.close()
+        } catch (error: Throwable) {
+            // Native ownership is already released. Keep the session object so
+            // a later retry releases only the Android connection, not the stale
+            // native handle.
+            rememberPendingClose()
+            throw error
+        }
+
+        closed = true
+        forgetPendingClose()
     }
 
     private fun rememberPendingClose() {
@@ -130,6 +151,9 @@ class UsbEncodedDacSession private constructor(
             feedbackEndpoint: Int,
             feedbackMaxPacketBytes: Int
         ): UsbEncodedDacSession {
+            check(retryPendingCloseSessions()) {
+                "A previous encoded USB session is still awaiting confirmed teardown"
+            }
             require(interfaceNumber >= 0 && alternateSetting > 0)
             require(endpoint in 1..0x7f)
             require(maxPacketBytes > 0 && interval in 1..16)
