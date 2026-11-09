@@ -1,6 +1,6 @@
 #pragma once
 #include <atomic>
-#include <cstddef>
+#include <cstddef>\n#include <cstdint>
 #include <condition_variable>
 #include <mutex>
 #include <shared_mutex>
@@ -37,6 +37,12 @@ inline bool feedback_resubmit_allowed(bool stopped, bool event_thread_running,
 inline bool failed_dispatcher_teardown_pump_allowed(
     bool event_thread_running, int event_loop_error, int success_code) noexcept {
  return !event_thread_running && event_loop_error != success_code;
+}
+inline bool transfer_reclaimable(bool callback_completed,
+                                 std::uint64_t callback_return_iteration,
+                                 std::uint64_t completed_event_iteration) noexcept {
+ return callback_completed && callback_return_iteration != 0 &&
+        completed_event_iteration >= callback_return_iteration;
 }
 enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
 
