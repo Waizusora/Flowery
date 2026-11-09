@@ -1408,18 +1408,45 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     TransportFailure failure;
     reap_completed(session, &failure);
 
+    auto stop_encoded_writer = [&]() -> jint {
+        if (!abort_in_flight(session)) return -1;
+        session->pending_encoded.clear();
+        session->encoded_offset = 0;
+        session->encoded_rate_phase = 0;
+        session->encoded_feedback_phase = 0;
+        session->encoded_frame_deadline_valid = false;
+        return -2;
+    };
+    auto drain_encoded_window = [&]() -> bool {
+        while (!failure.failed && !session->in_flight.empty()) {
+            if (session->control.load() == kSessionControlStop) return false;
+            if (!wait_for_progress(session, &failure)) return false;
+        }
+        return !failure.failed;
+    };
     if (session->encoded_mode == 1) {
-        while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
-        if (failure.failed) {
+        if (!drain_encoded_window()) {
+            if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
             snapshot_transport_failure(session, &failure);
             abort_in_flight(session);
             throw_transport_failure(env, session, failure);
             return -1;
         }
+        if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
         return 0;
     }
     if (session->encoded_mode == 2) {
         while (!failure.failed) {
+            const int control = session->control.load();
+            if (control == kSessionControlStop) return stop_encoded_writer();
+            if (control == kSessionControlPause) {
+                if (!drain_encoded_window()) {
+                    if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
+                    break;
+                }
+                if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
+                return 0;
+            }
             const size_t remaining_encoded = session->pending_encoded.size() - session->encoded_offset;
             if (remaining_encoded == 0) break;
             if (session->in_flight.size() >= max_urbs_in_flight(session)) {
@@ -1434,13 +1461,15 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
             const std::vector<unsigned int> final_packet{static_cast<unsigned int>(tail)};
             if (!submit_encoded_urb(session, final_packet, tail, &failure)) break;
         }
-        while (!failure.failed && !session->in_flight.empty()) wait_for_progress(session, &failure);
-        if (failure.failed) {
+        if (!drain_encoded_window()) {
+            if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
             snapshot_transport_failure(session, &failure);
             abort_in_flight(session);
             throw_transport_failure(env, session, failure);
             return -1;
         }
+        if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
+        if (session->control.load() == kSessionControlPause) return 0;
         compact_encoded(session);
         return 0;
     }
