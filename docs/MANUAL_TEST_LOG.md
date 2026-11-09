@@ -1075,3 +1075,12 @@ Validation scope:
 - Stop now publishes STOPPED while holding the same submission gate used by packet writes, preserving FAILED/PANICKED terminal states. The worker is then joined and the result is checked. An unexpected join panic publishes PANICKED, closes the encoded queue, and causes start/seek/stop callers to fail closed; encoded seek still attempts transport flush before returning a join failure.
 - Added a native regression test for stop-state publication. The test verifies the status transition policy, not a real libusb cancellation or transfer-reclamation event.
 - No physical DAC test was performed. Direct USB Safety Hold remains active. Worker join success and queue closure do not establish that the device has physically stopped producing sound; transport teardown still requires independent native and hardware-level evidence.
+
+
+### 2026-11-09 — Make PCM USB teardown retryable across native and Android ownership
+
+- The PCM teardown audit found two lifecycle defects. UsbPcmPlaybackPipeline marked itself closed before native teardown completed, preventing retries after a failed release step. UsbDacSession also marked the entire session closed before UsbDeviceConnection.close() succeeded, so an Android connection-release exception could not be retried independently after native close had already succeeded.
+- PCM pipeline teardown now records each completed release step and retries only the first incomplete step. FloweryPlayer retains a failed PCM pipeline/session, retries it after worker join and before opening a subsequent playback session, and includes it in stopAndJoin completion reporting.
+- UsbDacSession now tracks native-handle release and Android connection release separately. It never calls nativeClose again after native ownership has been released, and it can retry Android connection close without reusing the stale native handle.
+- Existing EncodedPipelineLifecycle unit tests exercise the step-recording and retry semantics now reused by the PCM pipeline. This is source-level lifecycle coverage; no libusb callback, device controller, or hardware behavior is simulated.
+- No physical DAC test was performed. Direct USB Safety Hold remains active. A successful host-side close path is not evidence that the earlier high-pitched noise has been resolved or that Direct USB playback is safe.
