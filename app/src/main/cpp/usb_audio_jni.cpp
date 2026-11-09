@@ -757,6 +757,43 @@ bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
 }
 
 // Drops the consumed prefix of the pending PCM region.
+
+// Encoded writes are controlled only by their writer thread. Pause waits for the
+// current frame/URB window to complete before blocking for Resume; Stop aborts
+// and clears staged encoded data on this same thread.
+enum class EncodedControlResult { Running, Stopped, Failed };
+
+EncodedControlResult honor_encoded_write_control(
+    UsbAudioSession* session, TransportFailure* failure) {
+    for (;;) {
+        const int control = session->control.load();
+        if (control == kSessionControlStop) {
+            if (!abort_in_flight(session)) {
+                record_failure(failure, "encoded_stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
+                return EncodedControlResult::Failed;
+            }
+            session->pending_encoded.clear();
+            session->encoded_offset = 0;
+            session->encoded_rate_phase = 0;
+            session->encoded_feedback_phase = 0;
+            session->encoded_frame_deadline_valid = false;
+            return EncodedControlResult::Stopped;
+        }
+        if (control != kSessionControlPause) return EncodedControlResult::Running;
+
+        while (!session->in_flight.empty()) {
+            if (session->control.load() == kSessionControlStop) break;
+            if (!wait_for_progress(session, failure)) return EncodedControlResult::Failed;
+        }
+        if (session->control.load() == kSessionControlStop) continue;
+
+        std::unique_lock<std::mutex> lock(session->event_mutex);
+        session->event_condition.wait(lock, [&]() {
+            return session->control.load() != kSessionControlPause;
+        });
+    }
+}
+
 void compact_pending(UsbAudioSession* session) {
     if (session->pending_offset == 0) return;
     session->pending_pcm.erase(
@@ -1212,22 +1249,41 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (exception != nullptr) env->ThrowNew(exception, "UAC1 Type-II encoded frame duration is invalid");
             return -1;
         }
-        if (session->encoded_frame_deadline_valid &&
-            std::chrono::steady_clock::now() < session->next_encoded_frame_due) {
-            std::this_thread::sleep_until(session->next_encoded_frame_due);
-        }
-        const auto frame_start = std::chrono::steady_clock::now();
         compact_encoded(session);
         session->pending_encoded.resize(frame_bytes);
         env->GetByteArrayRegion(encoded, payload_offset, byte_count,
             reinterpret_cast<jbyte*>(session->pending_encoded.data()));
         if (env->ExceptionCheck()) { session->pending_encoded.clear(); return -1; }
+
+        TransportFailure frame_failure;
+        const auto control_result = honor_encoded_write_control(session, &frame_failure);
+        if (control_result == EncodedControlResult::Stopped) return byte_count;
+        if (control_result == EncodedControlResult::Failed) {
+            snapshot_transport_failure(session, &frame_failure);
+            throw_transport_failure(env, session, frame_failure);
+            return -1;
+        }
+        if (session->encoded_frame_deadline_valid &&
+            std::chrono::steady_clock::now() < session->next_encoded_frame_due) {
+            std::unique_lock<std::mutex> lock(session->event_mutex);
+            session->event_condition.wait_until(lock, session->next_encoded_frame_due, [&]() {
+                return session->control.load() != kSessionControlRun;
+            });
+            lock.unlock();
+            const auto deadline_control = honor_encoded_write_control(session, &frame_failure);
+            if (deadline_control == EncodedControlResult::Stopped) return byte_count;
+            if (deadline_control == EncodedControlResult::Failed) {
+                snapshot_transport_failure(session, &frame_failure);
+                throw_transport_failure(env, session, frame_failure);
+                return -1;
+            }
+        }
+        const auto frame_start = std::chrono::steady_clock::now();
         std::vector<unsigned int> frame_packets;
         frame_packets.reserve(packet_count);
         for (size_t i = 0; i < full_packets; ++i) frame_packets.push_back(session->max_packet_bytes);
         if (remainder != 0) frame_packets.push_back(static_cast<unsigned int>(remainder));
         frame_packets.push_back(0); // UAC1 transfer delimiter between encoded frames
-        TransportFailure frame_failure;
         if (!submit_encoded_urb(session, frame_packets, frame_bytes, &frame_failure)) {
             snapshot_transport_failure(session, &frame_failure);
             throw_transport_failure(env, session, frame_failure);
@@ -1235,10 +1291,20 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         }
         while (!frame_failure.failed && !session->in_flight.empty()) {
             if (!wait_for_progress(session, &frame_failure)) break;
+            const auto control_result = honor_encoded_write_control(session, &frame_failure);
+            if (control_result == EncodedControlResult::Stopped) return byte_count;
+            if (control_result == EncodedControlResult::Failed) break;
         }
         if (frame_failure.failed) {
             snapshot_transport_failure(session, &frame_failure);
             abort_in_flight(session);
+            throw_transport_failure(env, session, frame_failure);
+            return -1;
+        }
+        const auto after_frame_control = honor_encoded_write_control(session, &frame_failure);
+        if (after_frame_control == EncodedControlResult::Stopped) return byte_count;
+        if (after_frame_control == EncodedControlResult::Failed) {
+            snapshot_transport_failure(session, &frame_failure);
             throw_transport_failure(env, session, frame_failure);
             return -1;
         }
@@ -1270,6 +1336,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
     std::vector<unsigned int> packet_bytes;
     packet_bytes.reserve(kPacketsPerUrb);
     while (true) {
+        const auto control_result = honor_encoded_write_control(session, &failure);
+        if (control_result == EncodedControlResult::Stopped) return byte_count;
+        if (control_result == EncodedControlResult::Failed) break;
         reap_completed(session, &failure);
         if (failure.failed) break;
         uint64_t phase = session->encoded_rate_phase;
