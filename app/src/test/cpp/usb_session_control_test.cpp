@@ -213,5 +213,6 @@ int main() {
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
- std::cout<<"USB session control tests passed (12 scenarios).\n"; return 0;
+ test_feedback_initial_submission_state_is_published_before_callback_can_run();
+ std::cout<<"USB session control tests passed (13 scenarios).\n"; return 0;
 }
