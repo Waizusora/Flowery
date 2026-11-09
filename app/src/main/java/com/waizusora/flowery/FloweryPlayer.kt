@@ -628,7 +628,22 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 isPaused = { paused },
                 takePendingSeekMs = { pendingSeekMs.take() },
                 onSeek = { requested ->
-                    diagnostics.record("USB_PCM_SEEK requestedMs=${requested} epochAdvanced=true transportFlushed=true")
+                    val boundedPosition = if (outputDurationMs > 0L) {
+                        requested.coerceAtMost(outputDurationMs)
+                    } else {
+                        requested.coerceAtLeast(0L)
+                    }
+                    if (outputSampleRate > 0) {
+                        // Publish the committed seek target immediately, including while
+                        // paused; the first post-seek PCM block may not be polled until Resume.
+                        usbPositionFrames = NativeAudio.nativeFramesAtMilliseconds(
+                            boundedPosition, outputSampleRate
+                        )
+                    }
+                    diagnostics.record(
+                        "USB_PCM_SEEK requestedMs=${requested} positionFrames=${usbPositionFrames} " +
+                            "epochAdvanced=true transportFlushed=true"
+                    )
                     onState("Seeking…")
                 },
                 onPrebufferReady = { queuedBlocks, endReached, waitMs ->

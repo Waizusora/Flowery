@@ -1153,3 +1153,10 @@ Validation scope:
 - Found a lifecycle synchronization defect: pause/resume requests could be rejected by the native AAudio session or USB transport while Kotlin still advanced the coordinator/service state as though the request had succeeded.
 - Changed playback engine and coordinator pause/resume methods to return acceptance status. The service now publishes PAUSED/PLAYING only after the underlying control request succeeds; failed requests preserve the prior playback state. USB control failures also roll back the local paused flag and attempt to restore the previous transport direction.
 - Automated CI validation is pending. This audit does not measure physical output latency or verify DAC presentation timestamps. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — USB PCM seek-position publication while paused
+
+- Found that a USB PCM seek could be committed by the producer while the writer remained paused, but the Kotlin progress counter was only replaced when the first new-epoch PCM block was later polled. This left the visible position stale until Resume.
+- Updated the seek-commit callback to publish the bounded, segment-relative target in output frames immediately. The first new-epoch block still replaces the estimate with its authoritative producer frame position.
+- CI validation is pending. This change updates UI progress only; it does not resume the USB transport or relax Direct USB Safety Hold.
