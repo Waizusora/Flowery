@@ -1126,3 +1126,12 @@ Validation scope:
 - Updated stop/join to retain the worker-slot mutex through cancellation publication and thread join. Publishing cancellation under the same lock prevents a concurrent start from resetting the flag while stop waits. Worker start also rejects producers already marked for destruction, and destruction publishes that terminal state before stopping the worker.
 - Added a deterministic regression test that interleaves start and stop and verifies cancellation remains terminal after the worker has been joined.
 - CI verification for this correction is pending. No physical USB DAC test was performed; Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — Audit PCM seek, pause, and decoder/transport synchronization
+
+- Reviewed the PCM writer boundary, Rust producer state lock, shared playback epoch, decoder mutex, and native USB submission-control gate.
+- PCM seek is consumed by the single transport-writer thread. The writer advances the epoch, publishes the producer seek, clears stale queued PCM, and flushes the endpoint before polling/submitting the new position. Kotlin synchronizes PCM write and flush on the same USB session monitor; the producer serializes decoder seek against its own decode operation with its state mutex and decoder mutex.
+- Pause requests are published through the native event mutex/control gate. The isochronous submission path checks the control state under the same gate immediately before submitting a URB; Pause stops new submissions, waits for outstanding transfers to complete, and preserves staged PCM for Resume. The playback loop continues to process seek requests while paused, without implicitly resuming transport.
+- Added a native regression test that first reads bit-preserving integer PCM, seeks to 1 ms, and verifies the next USB PCM block begins at the exact requested source frame with native PCM mode re-established.
+- Validation is pending CI. Source review and the new decoder test do not simulate Android thread scheduling, libusb callback delivery, DAC behavior, or electrical/audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.

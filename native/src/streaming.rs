@@ -1580,3 +1580,77 @@ mod tests {
     }
 
 }
+
+
+#[cfg(test)]
+mod usb_seek_regression_tests {
+    use super::StreamDecoder;
+    use crate::usb_pcm::{PcmEncoding, PcmFormat};
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn usb_pcm_seek_after_native_decode_resumes_at_requested_frame() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-usb-seek-regression-{}.wav",
+            std::process::id()
+        ));
+        let samples: Vec<(i16, i16)> = (0..256)
+            .map(|frame| (frame as i16, -(frame as i16)))
+            .collect();
+        let data_bytes = (samples.len() * 4) as u32;
+        {
+            let mut file = std::fs::File::create(&path).unwrap();
+            file.write_all(b"RIFF").unwrap();
+            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+            file.write_all(b"WAVEfmt ").unwrap();
+            file.write_all(&16_u32.to_le_bytes()).unwrap();
+            file.write_all(&1_u16.to_le_bytes()).unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
+            file.write_all(&(48_000_u32 * 4).to_le_bytes()).unwrap();
+            file.write_all(&4_u16.to_le_bytes()).unwrap();
+            file.write_all(&16_u16.to_le_bytes()).unwrap();
+            file.write_all(b"data").unwrap();
+            file.write_all(&data_bytes.to_le_bytes()).unwrap();
+            for (left, right) in &samples {
+                file.write_all(&left.to_le_bytes()).unwrap();
+                file.write_all(&right.to_le_bytes()).unwrap();
+            }
+        }
+
+        let source = std::fs::File::open(&path).unwrap();
+        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
+        decoder.configure(48_000, &[0.0; 31]).unwrap();
+        let format = PcmFormat {
+            encoding: PcmEncoding::SignedInteger,
+            sample_rate: 48_000,
+            channels: 2,
+            valid_bits: 16,
+            subslot_bytes: 2,
+            signed: true,
+            little_endian: true,
+        };
+
+        let first = decoder.read_usb_pcm(4, 1.0, format).unwrap();
+        let expected_first: Vec<u8> = samples[..4]
+            .iter()
+            .flat_map(|(left, right)| left.to_le_bytes().into_iter().chain(right.to_le_bytes()))
+            .collect();
+        assert_eq!(first, expected_first);
+        assert!(decoder.native_pcm_active());
+
+        assert_eq!(decoder.seek_to(1).unwrap(), 1);
+        let after_seek = decoder.read_usb_pcm(4, 1.0, format).unwrap();
+        let expected_after_seek: Vec<u8> = samples[48..52]
+            .iter()
+            .flat_map(|(left, right)| left.to_le_bytes().into_iter().chain(right.to_le_bytes()))
+            .collect();
+        assert_eq!(after_seek, expected_after_seek);
+        assert!(decoder.native_pcm_active());
+
+        drop(decoder);
+        drop(source);
+        std::fs::remove_file(path).unwrap();
+    }
+}
