@@ -980,3 +980,11 @@ Validation scope:
 - `UsbEncodedDacSession` now keeps failed-close instances in an identity-based process-lifetime pending-close registry. The session remains strongly referenced, including its Android connection, until both native close and connection close succeed.
 - Pending closes are retried during engine teardown and before opening another encoded USB transport. A new encoded USB session is rejected while any prior retained session remains unclosed. Interrupted close attempts are retained as well. Failed retries remain retained and are reported as incomplete teardown; they are not treated as successful release.
 - This change addresses Kotlin-side ownership retention only. It does not prove libusb/controller behavior, force-free resources, or establish physical audio safety. CI validation is required. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — Separate native and Android encoded-session close state
+
+- A follow-up review found that UsbEncodedDacSession.close() could successfully destroy the native handle, then fail while closing the Android UsbDeviceConnection. The old retry path left the session marked open and could call nativeClose() again with a stale native handle.
+- Native teardown and Android connection release now have distinct completion state. A confirmed native close is recorded immediately; retries then skip all native calls and retry only Android connection release. Control requests are also rejected after native ownership ends, preventing requests against a stale handle.
+- The pending-session registry continues to retain the Kotlin session and Android connection until the full close sequence succeeds. open() also retries pending sessions and fails closed if any remain unresolved.
+- Validation scope: source-level state/ownership correction plus CI compilation and unit tests. This does not simulate libusb callback behavior or establish physical audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.
