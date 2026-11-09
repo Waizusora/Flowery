@@ -831,3 +831,12 @@ This retest covers the completion-cleanup path associated with the previously ob
 **Build:** CI #1513 — https://github.com/Waizusora/Flowery/actions/runs/42546444838  
 **Safety note:** Direct USB DAC playback was not tested. The Direct USB Safety Hold remains active.
 
+Native session-control test synchronization hardening (2026-11-09; source change):
+
+- Tightened the host-native Pause and Resume tests so the requesting thread must acquire the writer's mutex before issuing the control request. Since the writer holds that mutex until entering its condition-variable wait, this handshake proves the writer has actually entered the wait and released the mutex; the earlier promise-only handshake could signal readiness immediately before the wait began.
+- The tests continue to exercise the production ControlState and SessionLifetimeGate primitives. They remain host-native synchronization tests, not libusb-controller or physical-output tests.
+- Source audit also confirmed that the current native Stop handling is implemented in the PCM write/drain paths; encoded transport has not yet been brought under the same Pause/Stop control contract. This is retained as a follow-up scope item rather than being represented as covered by the PCM tests.
+- CI validation is pending. No USB DAC was connected or physically tested. Direct USB Safety Hold remains active.
+
+**Status: PAUSE/RESUME TEST HANDSHAKE MADE DETERMINISTIC AT THE CONDITION-VARIABLE BOUNDARY; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
