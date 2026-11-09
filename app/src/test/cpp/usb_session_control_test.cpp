@@ -4,6 +4,7 @@
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <future>
 #include <iostream>
 #include <mutex>
