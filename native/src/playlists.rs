@@ -2,7 +2,7 @@ use jni::objects::{JClass, JString};
 use jni::sys::jstring;
 use jni::JNIEnv;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -41,6 +41,16 @@ struct PendingCueTrack {
 fn unquote(value: &str) -> String {
     value.trim().strip_prefix('"').and_then(|v| v.strip_suffix('"'))
         .unwrap_or(value.trim()).to_owned()
+}
+
+fn parse_cue_file_name(value: &str) -> Option<String> {
+    let value = value.trim();
+    if let Some(quoted) = value.strip_prefix('"') {
+        let closing_quote = quoted.find('"')?;
+        Some(quoted[..closing_quote].to_owned())
+    } else {
+        value.split_whitespace().next().map(str::to_owned)
+    }
 }
 
 fn parse_cue_time(value: &str) -> Option<i64> {
@@ -82,8 +92,9 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
                 }
             }
             "FILE" => {
-                let file_name = value.rsplit_once(' ').map(|(name, _)| name).unwrap_or(value);
-                current_file = unquote(file_name);
+                if let Some(file_name) = parse_cue_file_name(value) {
+                    current_file = file_name;
+                }
             }
             "TRACK" => {
                 if let Some(number) = value.split_whitespace().next()
@@ -111,7 +122,24 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
         }
     }
 
+    let mut previous_start_by_file = HashMap::new();
+    let mut invalid_files = HashSet::new();
+    for track in &parsed {
+        if let Some(start_frame) = track.start_frame {
+            if previous_start_by_file
+                .get(&track.file_name)
+                .is_some_and(|previous| start_frame <= *previous)
+            {
+                invalid_files.insert(track.file_name.clone());
+            }
+            previous_start_by_file.insert(track.file_name.clone(), start_frame);
+        }
+    }
+
     let valid: Vec<CueTrack> = parsed.into_iter().filter_map(|track| {
+        if invalid_files.contains(&track.file_name) {
+            return None;
+        }
         let start_frame = track.start_frame?;
         Some(CueTrack {
             number: track.number,
@@ -252,7 +280,7 @@ mod tests {
 
     #[test]
     fn parses_cue_directives_with_tabs_and_repeated_whitespace() {
-        let cue = "TITLE   \"Album\"\nFILE   \"disc one.flac\"   WAVE\nTRACK   01   AUDIO\nTITLE   \"First track\"\nINDEX   01   00:00:00\nTRACK\t02\tAUDIO\nINDEX\t01\t03:12:37\n";
+        let cue = "TITLE   \"Album\"\nFILE\t\"disc one.flac\"\tWAVE\nTRACK   01   AUDIO\nTITLE   \"First track\"\nINDEX   01   00:00:00\nTRACK\t02\tAUDIO\nINDEX\t01\t03:12:37\n";
         let parsed = parse_cue(cue);
         assert_eq!(parsed.title.as_deref(), Some("Album"));
         assert_eq!(parsed.tracks.len(), 2);
@@ -267,6 +295,12 @@ mod tests {
         assert_eq!(super::parse_cue_time("9223372036854775807:00:00"), None);
         assert_eq!(super::parse_cue_time("00:60:00"), None);
         let cue = "FILE \"disc.flac\" WAVE\nTRACK 00 AUDIO\nINDEX 01 00:00:00\nTRACK 100 AUDIO\nINDEX 01 00:01:00\nTRACK 01 AUDIO\nINDEX 01 -1:00:00\n";
+        assert!(parse_cue(cue).tracks.is_empty());
+    }
+
+    #[test]
+    fn rejects_non_monotonic_cue_indexes_for_the_affected_file() {
+        let cue = "FILE \"disc.flac\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:10\nTRACK 02 AUDIO\nINDEX 01 00:00:20\nTRACK 03 AUDIO\nINDEX 01 00:00:15\n";
         assert!(parse_cue(cue).tracks.is_empty());
     }
 

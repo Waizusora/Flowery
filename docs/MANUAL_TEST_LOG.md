@@ -1169,3 +1169,12 @@ Validation scope:
 - Restricted parsed track numbers to the CUE-defined 1–99 range.
 - Added native regression coverage for tab/repeated-whitespace directives, quoted filenames containing spaces, track range boundaries, invalid track numbers, negative timestamps, and overflow.
 - CI validation is pending. No physical audio output or DAC test was performed.
+
+### 2026-11-10 — Enable demuxer gapless metadata and validate CUE track ordering
+
+- Enabled Symphonia demuxer gapless support explicitly. Its format-reader default is disabled; without this option, packet trim metadata and presentation-relative timestamps are not supplied even though the decoder's own default enables gapless trimming.
+- Added a regression test that verifies the stream probe uses gapless-enabled format options. This checks configuration, not end-to-end MP3/AAC encoder-delay or padding behavior against a real encoded fixture.
+- Updated CUE FILE parsing to recognize quoted filenames separated by tabs as well as spaces.
+- Reject all tracks associated with a FILE entry when its valid INDEX 01 positions are non-increasing, preventing invalid zero-length or reversed track ranges from being exposed.
+- Added native regression coverage for tab-separated quoted FILE directives and non-monotonic CUE indexes.
+- No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.

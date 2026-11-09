@@ -147,6 +147,13 @@ pub(super) struct StreamDecoder {
     native_pcm_active: bool,
 }
 
+fn gapless_format_options() -> FormatOptions {
+    FormatOptions {
+        enable_gapless: true,
+        ..FormatOptions::default()
+    }
+}
+
 impl StreamDecoder {
     fn new(fd: i32, extension: &str) -> Result<Self,String> {
         let duplicate = unsafe { libc::dup(fd) };
@@ -155,7 +162,7 @@ impl StreamDecoder {
         let source = MediaSourceStream::new(Box::new(file), Default::default());
         let mut hint = Hint::new();
         if !extension.is_empty() { hint.with_extension(extension.trim_start_matches('.')); }
-        let probed = symphonia::default::get_probe().format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+        let probed = symphonia::default::get_probe().format(&hint, source, &gapless_format_options(), &MetadataOptions::default())
             .map_err(|e| format!("Unable to open audio stream: {e}"))?;
         let format = probed.format;
         let track = format.default_track().ok_or("No default audio track found")?;
@@ -1209,6 +1216,11 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::fd::AsRawFd;
+
+    #[test]
+    fn stream_format_enables_gapless_packet_trimming() {
+        assert!(gapless_format_options().enable_gapless);
+    }
 
     #[test]
     fn alac_channel_count_reads_mandatory_magic_cookie_configuration() {
