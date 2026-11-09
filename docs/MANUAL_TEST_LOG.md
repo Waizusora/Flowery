@@ -805,3 +805,12 @@ Playback completion cleanup crash analysis and native command fix (2026-11-09):
 - This is a source-level correction for the observed crash. CI validation and an updated APK are still required before considering the crash fixed in a build. No DAC connection or physical USB playback test was performed; Direct USB Safety Hold remains active.
 
 **Status: COMPLETION-CLEANUP CRASH FIX IMPLEMENTED IN SOURCE; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
+
+CI #1511 compile correction (2026-11-09):
+
+- CI confirmed all Rust unit tests (127), host-native USB session-control tests, and Kotlin/native JNI declaration checks passed. The Android arm64-v8a C++ build then failed because encoded-session setup attempted to call `unlock()` on the `SessionLease::lock` wrapper, while the underlying `std::shared_lock` is intentionally private inside `SessionLifetimeGate::Lease`.
+- Added an explicit `Lease::release()` operation that releases its shared lifecycle lock and invalidates the lease, then updated both encoded-session setup failure paths to use it before closing the registered session. This preserves the required lock-release-before-close ordering without exposing the internal mutex lock.
+- CI must be rerun to validate the correction. No USB DAC was connected or physically tested; Direct USB Safety Hold remains active.
+
+**Status: CI #1511 FAILURE DIAGNOSED; LEASE RELEASE API CORRECTION COMMITTED; VALIDATION PENDING.**

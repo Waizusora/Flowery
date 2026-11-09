@@ -969,7 +969,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
     if (sampling_frequency_control == JNI_TRUE) {
         int frequency_error = LIBUSB_SUCCESS;
         if (!set_and_verify_uac1_frequency(session, source_sample_rate, &frequency_error)) {
-            lease.lock.unlock();
+            lease.lock.release();
             lease.session = nullptr;
             close_registered_session(handle);
             return throw_usb_error(env, "UAC1 encoded endpoint sampling-frequency SET_CUR/GET_CUR verification", frequency_error);
@@ -982,7 +982,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpenEncoded(
         : ((static_cast<uint64_t>(encoded_bytes_per_second) * session->interval_us + 999999ULL) /
            1000000ULL);
     if (bytes_per_interval == 0 || bytes_per_interval > session->max_packet_bytes) {
-        lease.lock.unlock();
+        lease.lock.release();
         lease.session = nullptr;
         close_registered_session(handle);
         jclass exception = env->FindClass("java/lang/IllegalArgumentException");
