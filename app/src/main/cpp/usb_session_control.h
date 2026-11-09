@@ -27,6 +27,7 @@ public:
   Lease()=default; Lease(Lease&&) noexcept=default; Lease& operator=(Lease&&) noexcept=default;
   Lease(const Lease&)=delete; Lease& operator=(const Lease&)=delete;
   explicit operator bool() const noexcept{return valid_;}
+  void release() noexcept { if (lock_.owns_lock()) lock_.unlock(); valid_=false; }
  private:
   friend class SessionLifetimeGate;
   Lease(std::shared_lock<std::shared_mutex>&& lock,bool valid):lock_(std::move(lock)),valid_(valid){}
