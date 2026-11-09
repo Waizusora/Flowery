@@ -1010,3 +1010,11 @@ Validation scope:
 - The producer API audit found an obsolete JNI seek entry point that changed the decoder and queue directly without stopping the registered producer worker, flushing the USB transport, or using the session epoch transition. That path could leave already-submitted transport data from the previous position in flight and did not provide the same lifecycle guarantees as `nativeSeekUsbEncodedSession`.
 - Repository-wide code search found no callers beyond the Kotlin external declaration and its native implementation. The unused declaration and JNI entry point have been removed. Encoded playback now exposes the transport-aware session seek path as its only seek operation.
 - Validation scope: repository code search, source/API removal, and CI JNI/native/Android checks. This does not simulate libusb callback delivery or USB controller behavior. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+### 2026-11-09 — Stop encoded producer when its queue is closed
+
+- The producer lifecycle audit found that explicitly closing an encoded packet queue while its producer worker was still registered could leave the worker retrying the same pending packet indefinitely. The queue correctly rejected new offers, but the producer treated every rejection as temporary backpressure.
+- Queue closure now discards buffered packets and resets byte accounting. The producer checks the queue's terminal closed state and exits through its cancellation status rather than spinning against a queue that cannot accept data.
+- Added native tests for the closed-state signal, buffered-packet discard, zeroed capacity accounting, waiter wake-up, and rejection of new packets.
+- Registry removal still preserves already-cloned Arc references; this change applies to explicit queue closure and does not invalidate memory that an in-flight native caller still owns.
+- Validation scope: native unit tests and CI. This does not simulate Android scheduling, libusb callback delivery, USB controller behavior, or electrical/audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.
