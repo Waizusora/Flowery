@@ -21,6 +21,15 @@ public:
  }
 private: std::atomic<int> state_{static_cast<int>(ControlRequest::Run)};
 };
+inline bool request_control_serialized(
+ ControlState& control, ControlRequest requested, std::mutex& mutex,
+ std::condition_variable& wake) noexcept {
+ std::lock_guard<std::mutex> lock(mutex);
+ return control.request(requested,wake);
+}
+inline bool encoded_submit_allowed(const ControlState& control) noexcept {
+ return control.load()==static_cast<int>(ControlRequest::Run);
+}
 enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
 
 inline EncodedControlAction encoded_control_action(int control, std::size_t in_flight) noexcept {
