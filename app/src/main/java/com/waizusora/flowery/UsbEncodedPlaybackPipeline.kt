@@ -198,7 +198,9 @@ internal class UsbEncodedPlaybackPipeline private constructor(
         ): UsbEncodedPlaybackPipeline {
             // Retry previously retained sessions before opening another direct
             // USB transport. Failed retries remain strongly referenced.
-            UsbEncodedDacSession.retryPendingCloseSessions()
+            check(UsbEncodedDacSession.retryPendingCloseSessions()) {
+                "A previous encoded USB session is still awaiting confirmed teardown"
+            }
             require(decoderHandle != 0L && sessionHandle != 0L)
             require(queuePackets > 0 && queueBytes >= 6144) {
                 "Encoded queue must hold at least one complete IEC 61937 AC-3 burst"
