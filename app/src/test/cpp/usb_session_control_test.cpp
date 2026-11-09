@@ -18,7 +18,9 @@ void test_pause_wakes_blocked_writer_without_submitting() {
   wake.wait(lock,[&]{return control.load()!=static_cast<int>(ControlRequest::Run);});
   if(control.load()==static_cast<int>(ControlRequest::Run)) ++submitted;
  });
- waiting.get_future().wait(); assert(control.request(ControlRequest::Pause,wake)); writer.join();
+ waiting.get_future().wait();
+ { std::lock_guard<std::mutex> lock(mutex); assert(control.request(ControlRequest::Pause,wake)); }
+ writer.join();
  assert(control.load()==static_cast<int>(ControlRequest::Pause)); assert(submitted.load()==0);
 }
 void test_resume_wakes_paused_writer() {
@@ -28,7 +30,9 @@ void test_resume_wakes_paused_writer() {
   wake.wait(lock,[&]{return control.load()!=static_cast<int>(ControlRequest::Pause);});
   if(control.load()==static_cast<int>(ControlRequest::Run)) ++submitted;
  });
- waiting.get_future().wait(); assert(control.request(ControlRequest::Run,wake)); writer.join();
+ waiting.get_future().wait();
+ { std::lock_guard<std::mutex> lock(mutex); assert(control.request(ControlRequest::Run,wake)); }
+ writer.join();
  assert(submitted.load()==1);
 }
 void test_repeated_stop_is_idempotent_and_terminal() {
