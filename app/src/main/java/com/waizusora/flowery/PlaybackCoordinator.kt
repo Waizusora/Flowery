@@ -89,10 +89,6 @@ internal class PlaybackCoordinator(
     }
 
     /**
-     * Stops playback and waits for the USB worker to close its session and release
-     * claimed interfaces before notifying the caller.
-     */
-    /**
      * Retries retained USB teardown until the engine confirms that its worker
      * and native USB resources have been released. A failed close must not be
      * reported as a completed playback shutdown.
