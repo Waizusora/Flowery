@@ -866,3 +866,14 @@ Encoded USB boundary-policy tests (2026-11-09; source change):
 - CI validation is pending for the current main revision. Direct USB remains under Safety Hold; no physical DAC test was performed.
 
 **Status: ENCODED CONTROL POLICY TESTS ADDED; CI VALIDATION PENDING; LIBUSB CONTROLLER-LEVEL COVERAGE AND DIRECT USB SAFETY REVIEW STILL REQUIRED.**
+
+
+libusb event-loop failure handling hardening (2026-11-09; source change):
+
+- Source audit found that a fatal return from `libusb_handle_events_timeout_completed()` ended the event thread but left `event_thread_running=true`. A feedback completion callback could therefore still satisfy the old resubmission guard and queue another feedback transfer after the dispatcher had terminated.
+- The event thread now publishes `event_thread_running=false` on every exit and marks feedback stopped on fatal libusb errors. The feedback callback uses a shared, host-testable predicate that also requires `event_loop_error==LIBUSB_SUCCESS` before resubmitting.
+- Added a host-native test for the feedback-resubmission guard across normal operation, teardown, stopped dispatcher, and fatal event-loop states. This validates the policy predicate only; it does not emulate libusb callback delivery or prove that outstanding transfers can always be reaped after a fatal dispatcher error.
+- A fatal event-loop error can still prevent cancellation callbacks from being serviced. The existing bounded teardown therefore retains the session and transfer buffers rather than freeing memory still potentially owned by libusb/the host controller. Recovery/reaping after dispatcher failure remains an explicit unresolved audit item.
+- CI validation is pending. No DAC was connected or physically tested. Direct USB Safety Hold remains active.
+
+**Status: FATAL EVENT-LOOP FEEDBACK RESUBMISSION GUARD HARDENED IN SOURCE; CI VALIDATION PENDING; POST-FAILURE TRANSFER REAP RECOVERY STILL UNDER REVIEW; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
