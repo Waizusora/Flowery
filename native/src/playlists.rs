@@ -252,7 +252,7 @@ mod tests {
 
     #[test]
     fn parses_cue_directives_with_tabs_and_repeated_whitespace() {
-        let cue = "TITLE   \"Album\"\nFILE   \"disc one.flac\"   WAVE\nTRACK   01   AUDIO\nTITLE   \"First track\"\nINDEX   01   00:00:00\nTRACK\\t02\\tAUDIO\nINDEX\\t01\\t03:12:37\n";
+        let cue = "TITLE   \"Album\"\nFILE   \"disc one.flac\"   WAVE\nTRACK   01   AUDIO\nTITLE   \"First track\"\nINDEX   01   00:00:00\nTRACK\t02\tAUDIO\nINDEX\t01\t03:12:37\n";
         let parsed = parse_cue(cue);
         assert_eq!(parsed.title.as_deref(), Some("Album"));
         assert_eq!(parsed.tracks.len(), 2);
