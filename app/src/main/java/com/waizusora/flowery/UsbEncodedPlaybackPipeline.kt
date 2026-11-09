@@ -104,18 +104,20 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     ) {
         var stopped = false
         while (playbackActive()) {
-            if (isPaused()) {
-                // The native encoded writer owns Pause at frame/URB boundaries.
-                // Do not flush: that would discard an already-dequeued packet.
-                Thread.sleep(10)
-                continue
-            }
-
+            // A seek remains actionable while paused. The transactional seek
+            // flushes the previous position but does not resume the writer.
             takePendingSeekMs()?.let { requested ->
                 val bounded = segmentEndMs?.let { requested.coerceIn(segmentStartMs, it) }
                     ?: requested.coerceAtLeast(0L)
                 val actual = seekTo(bounded)
                 onSeek(bounded, actual)
+            }
+
+            if (isPaused()) {
+                // The native encoded writer owns Pause at frame/URB boundaries.
+                // Do not flush unless a seek transaction explicitly requires it.
+                Thread.sleep(10)
+                continue
             }
 
             val submitted = pump(maxPackets = 1)
