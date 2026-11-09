@@ -15,7 +15,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     private val formatCode: Int
 ) : AutoCloseable {
     private var ended = false
-    private var closed = false
+    private val lifecycle = EncodedPipelineLifecycle()
     private var expectedSequence = 0L
     @Volatile private var lastPositionMs = 0L
     @Volatile private var stopRequested = false
@@ -29,9 +29,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
-    fun requestPause(): Boolean = session.requestPause()
-    fun requestResume(): Boolean = session.requestResume()
+    fun requestPause(): Boolean = lifecycle.acceptsControlRequests() && session.requestPause()
+    fun requestResume(): Boolean = lifecycle.acceptsControlRequests() && session.requestResume()
     fun requestStop(): Boolean {
+        if (!lifecycle.acceptsControlRequests()) return false
         val accepted = session.requestStop()
         if (accepted) stopRequested = true
         return accepted
@@ -43,7 +44,7 @@ internal class UsbEncodedPlaybackPipeline private constructor(
      */
     @Synchronized
     fun pump(maxPackets: Int = 32): Int {
-        check(!closed) { "Encoded playback pipeline is closed" }
+        lifecycle.checkOpen()
         require(maxPackets > 0)
         if (stopRequested) return USB_ENCODED_WRITE_STOPPED
         val result = NativeAudio.nativePumpUsbEncodedTransport(
@@ -143,16 +144,14 @@ internal class UsbEncodedPlaybackPipeline private constructor(
 
     @Synchronized
     override fun close() {
-        if (closed) return
-        closed = true
-        try {
-            NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
-            NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
-            NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
-            NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
-        } finally {
-            session.close()
-        }
+        if (!lifecycle.beginClose()) return
+        NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
+        NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
+        NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
+        NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
+        // Keep the lifecycle retryable until libusb confirms session teardown.
+        session.close()
+        lifecycle.completeClose()
     }
 
     companion object {
