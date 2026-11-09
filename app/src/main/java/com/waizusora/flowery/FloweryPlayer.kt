@@ -23,6 +23,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var activeUsbDeviceKey: String? = null
     @Volatile private var activeUsbSession: UsbDacSession? = null
     @Volatile private var activeUsbEncodedPipeline: UsbEncodedPlaybackPipeline? = null
+    @Volatile private var activeUsbPcmPipeline: UsbPcmPlaybackPipeline? = null
     // True while a direct USB route permits per-DAC software volume. Non-unity gain
     // changes PCM samples and is therefore not source-bit-perfect.
     @Volatile private var usbSoftwareGainEnabled = false
@@ -152,6 +153,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 previousWorker?.join(4_000L)
                 check(previousWorker?.isAlive != true) {
                     "The previous playback session did not release its output device in time."
+                }
+                check(retryPendingUsbEncodedClose()) {
+                    "A previous encoded USB session is still awaiting confirmed teardown."
+                }
+                check(retryPendingUsbPcmClose()) {
+                    "A previous PCM USB session is still awaiting confirmed teardown."
                 }
                 onState("Opening audio stream…")
                 val openedSourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
@@ -612,6 +619,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 encoding = if (outputEncoding == "ieee_float32") 1 else 0,
             )
             pipeline = writer
+            activeUsbPcmPipeline = writer
             synchronized(usbSeekLock) {
                 activeUsbPcmProducerHandle = writer.producerHandle
                 pendingSeekMs.getAndSet(null)?.let { requested ->
@@ -694,9 +702,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (activeUsbPcmProducerHandle == writerHandle) activeUsbPcmProducerHandle = 0L
             }
             usbSoftwareGainEnabled = false
-            activeUsbSession = null
+            if (session != null) activeUsbSession = session
             try {
-                pipeline?.close() ?: session?.close()
+                if (pipeline != null) {
+                    pipeline.close()
+                    if (activeUsbPcmPipeline === pipeline) activeUsbPcmPipeline = null
+                } else {
+                    session?.close()
+                }
+                if (session != null && activeUsbSession === session) activeUsbSession = null
             } finally {
                 usbPlaybackMode = false
                 activeUsbDeviceKey = null
@@ -814,9 +828,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         } else if (activeWorker === Thread.currentThread()) {
             return true
         }
-        val pipelineClosed = retryPendingUsbEncodedClose()
+        val encodedPipelineClosed = retryPendingUsbEncodedClose()
+        val pcmPipelineClosed = retryPendingUsbPcmClose()
         val retainedSessionsClosed = UsbEncodedDacSession.retryPendingCloseSessions()
-        return pipelineClosed && retainedSessionsClosed
+        return encodedPipelineClosed && pcmPipelineClosed && retainedSessionsClosed
     }
 
     /**
@@ -832,6 +847,41 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         } catch (error: Throwable) {
             diagnostics.record(
                 "ENCODED_USB_CLOSE_RETRY_FAILED type=${error.javaClass.simpleName} " +
+                    "message=${error.message ?: "no message"}"
+            )
+            false
+        }
+    }
+
+    /**
+     * Retries a PCM USB teardown that previously failed to confirm native
+     * transfer reclamation or Android connection release.
+     */
+    private fun retryPendingUsbPcmClose(): Boolean {
+        val pendingPipeline = activeUsbPcmPipeline
+        if (pendingPipeline != null) {
+            return try {
+                pendingPipeline.close()
+                if (activeUsbPcmPipeline === pendingPipeline) activeUsbPcmPipeline = null
+                if (activeUsbSession === pendingPipeline.dacSession) activeUsbSession = null
+                true
+            } catch (error: Throwable) {
+                diagnostics.record(
+                    "PCM_USB_CLOSE_RETRY_FAILED type=${error.javaClass.simpleName} " +
+                        "message=${error.message ?: "no message"}"
+                )
+                false
+            }
+        }
+
+        val pendingSession = activeUsbSession ?: return true
+        return try {
+            pendingSession.close()
+            if (activeUsbSession === pendingSession) activeUsbSession = null
+            true
+        } catch (error: Throwable) {
+            diagnostics.record(
+                "PCM_USB_SESSION_CLOSE_RETRY_FAILED type=${error.javaClass.simpleName} " +
                     "message=${error.message ?: "no message"}"
             )
             false
