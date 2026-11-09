@@ -1099,3 +1099,12 @@ Validation scope:
 
 - The writer-owned seek change was extended to keep pending seek requests actionable during Pause. Both PCM and encoded playback now consume pending seek requests before entering their paused wait path. The seek transaction flushes the previous position while leaving the output session paused; it does not implicitly Resume playback.
 - This aligns Pause → Seek → Resume behavior across the two direct USB pipelines at the source-control level. No device playback was performed, and no claim is made about physical DAC mute behavior during Pause or Stop.
+
+
+### 2026-11-09 — CI #1647 failure analysis and correction
+
+- GitHub Actions run #1647 failed in the `Run native unit tests` step before Kotlin tests, JNI declaration checks, native Android builds, or APK packaging could execute.
+- The compiler reported `error[E0609]: no field queue on type Arc<EncodedProducer>` at `native/src/usb_encoded.rs`. The encoded queue is owned by `EncodedProducerState`, protected by `EncodedProducer.state`; the panic teardown path incorrectly attempted to access it directly on `EncodedProducer`.
+- Corrected the teardown path to acquire the producer state mutex (recovering a poisoned mutex consistently with the surrounding lifecycle code) and close `state.queue` after the worker join reports panic. This preserves the intended fail-closed queue behavior without changing the producer architecture.
+- The fix is committed as `f5a374138832e955b77b692d1ff550d122c71edf`. CI verification for this correction is pending; no test result is claimed here.
+- No physical USB DAC test was performed. Direct USB Safety Hold remains active.
