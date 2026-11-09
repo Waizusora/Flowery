@@ -915,3 +915,11 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - Applied the gate to normal PCM writes and the final staged PCM packet submitted by drain. If drain observes Pause before the tail submission, it drains only already-submitted URBs and preserves the unsent PCM suffix and phase for Resume. Stop retains its existing abort-and-clear behavior.
 - Added a host-native concurrency scenario for PCM submission versus Pause publication. The USB session control suite now reports 14 scenarios. The host test exercises the shared policy/lock ordering; it does not call libusb or model hardware scheduling.
 - CI validation is pending. Direct USB remains under the existing Safety Hold; no physical DAC test was performed.
+
+
+## 2026-11-09 — Session lease move-state hardening
+
+- The native session lifetime lease used default move operations. Moving its shared lock transferred mutex ownership, but the source object's separate validity flag remained set; the JNI SessionLease wrapper also retained its raw session pointer after a move.
+- Added explicit move construction and move assignment that transfer ownership and invalidate the source lease. The JNI wrapper now also clears the moved-from session pointer. Boolean lease validity additionally verifies that the underlying shared lock is still owned.
+- Added a host-native regression scenario covering move construction and move assignment, including source invalidation and destination validity. The USB session-control suite now contains 15 scenarios.
+- This is lifecycle-state correctness hardening. The host test exercises the production lease primitive but does not emulate libusb callbacks, a USB controller, or physical audio output. CI validation is required; Direct USB Safety Hold remains active and no physical DAC test was performed.
