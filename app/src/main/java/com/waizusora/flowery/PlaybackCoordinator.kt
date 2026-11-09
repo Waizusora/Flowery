@@ -92,11 +92,28 @@ internal class PlaybackCoordinator(
      * Stops playback and waits for the USB worker to close its session and release
      * claimed interfaces before notifying the caller.
      */
+    /**
+     * Retries retained USB teardown until the engine confirms that its worker
+     * and native USB resources have been released. A failed close must not be
+     * reported as a completed playback shutdown.
+     */
+    private fun awaitEngineTeardown(): Boolean {
+        while (true) {
+            if (engine.stopAndJoin(Long.MAX_VALUE)) return true
+            try {
+                Thread.sleep(250L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
+        }
+    }
+
     @Synchronized
     fun releaseUsb(onReleased: () -> Unit) {
         transition(EVENT_STOP)
         thread(name = "FloweryUsbRelease") {
-            engine.stopAndJoin(Long.MAX_VALUE)
+            if (!awaitEngineTeardown()) return@thread
             transition(EVENT_FINISH)
             onReleased()
         }
@@ -106,9 +123,9 @@ internal class PlaybackCoordinator(
         if (!closed.compareAndSet(false, true)) return
         transition(EVENT_STOP)
         // Do not block Android's service lifecycle thread while the worker releases native handles.
-        // stopAndJoin captures the active worker before interrupting it, then waits for native cleanup.
+        // The cleanup thread retries fail-closed USB teardown before destroying the controller.
         thread(name = "FloweryPlaybackControllerCleanup") {
-            engine.stopAndJoin(Long.MAX_VALUE)
+            if (!awaitEngineTeardown()) return@thread
             transition(EVENT_FINISH)
             NativeAudio.nativeDestroyPlaybackController(nativeController)
             onClosed()
