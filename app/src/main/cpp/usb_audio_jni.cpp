@@ -186,8 +186,10 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
     session->event_condition.notify_all();
     {
         std::lock_guard<std::mutex> lock(session->event_mutex);
-        if (!session->feedback_stopped.load(std::memory_order_acquire) &&
-            session->event_thread_running.load(std::memory_order_acquire)) {
+        if (flowery::usb::feedback_resubmit_allowed(
+                session->feedback_stopped.load(std::memory_order_acquire),
+                session->event_thread_running.load(std::memory_order_acquire),
+                session->event_loop_error.load(std::memory_order_acquire), LIBUSB_SUCCESS)) {
             const int result = libusb_submit_transfer(transfer);
             if (result == LIBUSB_SUCCESS) {
                 session->feedback_in_flight.store(true, std::memory_order_release);
@@ -251,10 +253,15 @@ void event_loop_main(UsbAudioSession* session) {
             std::memory_order_release);
         if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
             session->event_loop_error.store(result, std::memory_order_release);
+            session->event_thread_running.store(false, std::memory_order_release);
+            session->feedback_stopped.store(true, std::memory_order_release);
             session->event_condition.notify_all();
             break;
         }
     }
+    // Publish dispatcher termination on every exit path.
+    session->event_thread_running.store(false, std::memory_order_release);
+    session->event_condition.notify_all();
 }
 
 bool stop_event_thread(UsbAudioSession* session) {
