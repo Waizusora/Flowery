@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstddef>
 #include <condition_variable>
 #include <mutex>
 #include <shared_mutex>
