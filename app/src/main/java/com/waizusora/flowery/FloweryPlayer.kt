@@ -628,7 +628,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 isPaused = { paused },
                 takePendingSeekMs = { pendingSeekMs.take() },
                 onSeek = { requested ->
-                    diagnostics.record("USB_PCM_SEEK requestedMs=${requested} epochCommitted=true")
+                    diagnostics.record("USB_PCM_SEEK requestedMs=${requested} epochAdvanced=true transportFlushed=true")
                     onState("Seeking…")
                 },
                 onPrebufferReady = { queuedBlocks, endReached, waitMs ->
