@@ -259,6 +259,10 @@ const ENCODED_WORKER_STOPPED: i32 = 2;
 const ENCODED_WORKER_FAILED: i32 = -2;
 const ENCODED_WORKER_PANICKED: i32 = -3;
 
+fn next_encoded_sequence(sequence: u64) -> Result<u64, &'static str> {
+    sequence.checked_add(1).ok_or("Encoded packet sequence exhausted")
+}
+
 fn encoded_worker_transport_error(status: i32) -> Option<&'static str> {
     match status {
         ENCODED_WORKER_RUNNING | ENCODED_WORKER_EOF => None,
@@ -327,7 +331,7 @@ fn spawn_encoded_producer_worker(handle: jlong) -> std::io::Result<EncodedProduc
             if outcome.is_err() {
                 thread_status.store(ENCODED_WORKER_PANICKED, Ordering::Release);
             } else if thread_stop.load(Ordering::Acquire) {
-                thread_status.store(2, Ordering::Release);
+                thread_status.store(ENCODED_WORKER_STOPPED, Ordering::Release);
             }
         })?;
     Ok(EncodedProducerWorker { stop, status, thread })
@@ -613,6 +617,7 @@ fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
                     }
                     EncodedFraming::Iec61937 { .. } => return Err("Unsupported IEC 61937 data type".into()),
                 };
+                let next_sequence = next_encoded_sequence(state.sequence)?;
                 let packet = EncodedPacket {
                     sequence: state.sequence,
                     presentation_time_us: Some(timestamp_us),
@@ -620,7 +625,7 @@ fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
                     framing: state.framing,
                     bytes,
                 };
-                state.sequence = state.sequence.wrapping_add(1);
+                state.sequence = next_sequence;
                 state.pending = Some(packet);
             }
             None => {
@@ -841,6 +846,16 @@ mod tests {
             framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
             bytes: bytes.to_vec(),
         }
+    }
+
+    #[test]
+    fn encoded_packet_sequence_fails_closed_instead_of_wrapping() {
+        assert_eq!(super::next_encoded_sequence(0), Ok(1));
+        assert_eq!(super::next_encoded_sequence(u64::MAX - 1), Ok(u64::MAX));
+        assert_eq!(
+            super::next_encoded_sequence(u64::MAX),
+            Err("Encoded packet sequence exhausted")
+        );
     }
 
     #[test]
