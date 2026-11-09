@@ -309,7 +309,13 @@ mod tests {
 
     #[test]
     fn malformed_file_directive_does_not_reuse_the_previous_file() {
-        let cue = "FILE \\"valid.flac\\" WAVE\\nTRACK 01 AUDIO\\nINDEX 01 00:00:00\\nFILE \\"unterminated WAVE\\nTRACK 02 AUDIO\\nINDEX 01 00:01:00\\n";
+        let cue = r#"FILE "valid.flac" WAVE
+TRACK 01 AUDIO
+INDEX 01 00:00:00
+FILE "unterminated WAVE
+TRACK 02 AUDIO
+INDEX 01 00:01:00
+"#;
         let parsed = parse_cue(cue);
         assert_eq!(parsed.tracks.len(), 1);
         assert_eq!(parsed.tracks[0].file_name, "valid.flac");
@@ -317,7 +323,9 @@ mod tests {
 
     #[test]
     fn cue_tracks_without_a_valid_file_reference_are_ignored() {
-        let cue = "TRACK 01 AUDIO\\nINDEX 01 00:00:00\\n";
+        let cue = r#"TRACK 01 AUDIO
+INDEX 01 00:00:00
+"#;
         assert!(parse_cue(cue).tracks.is_empty());
     }
 

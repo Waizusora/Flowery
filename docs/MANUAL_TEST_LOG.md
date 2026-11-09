@@ -1185,3 +1185,11 @@ Validation scope:
 - FILE parsing now clears the active filename when the directive is malformed or empty, and tracks without a valid file reference are excluded.
 - Added native regression tests for malformed quoted filenames and tracks declared before any valid FILE directive.
 - CI validation is pending. No physical audio output or DAC test was performed; Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Correct malformed CUE regression-test string literals
+
+- CI run #1660 failed during native unit-test compilation in `native/src/playlists.rs`. The two recently added CUE tests contained over-escaped quote and newline sequences, which made their Rust string literals syntactically invalid.
+- Rewrote both fixtures as Rust raw string literals with actual line breaks. The malformed FILE test still verifies that an unterminated quoted filename clears the active file reference; the missing-FILE test still verifies that a track without a valid file reference is ignored.
+- The failure occurred before the native test binary could run; this correction addresses compilation only. CI must complete successfully before the change is considered verified.
+- No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
