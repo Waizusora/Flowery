@@ -1,5 +1,6 @@
 #include <jni.h>
 #include <libusb.h>
+#include "usb_session_control.h"
 
 #include <algorithm>
 #include <atomic>
@@ -108,9 +109,9 @@ struct UsbAudioSession {
     bool control_claimed = false;
     int control_interface = -1;
     // Shared JNI leases keep the session alive while an operation is in progress.
-    std::shared_mutex lifecycle_mutex;
+    flowery::usb::SessionLifetimeGate lifecycle;
     // 0=running, 1=pause requested, 2=stop requested. Only the writer mutates URB queues.
-    std::atomic<int> control_request{0};
+    flowery::usb::ControlState control;
 };
 
 // Describes the first failure observed on the transport.
@@ -400,10 +401,11 @@ std::atomic<jlong> g_next_session_handle{1};
 
 struct SessionLease {
     UsbAudioSession* session = nullptr;
-    std::shared_lock<std::shared_mutex> lock;
+    flowery::usb::SessionLifetimeGate::Lease lock;
     SessionLease() = default;
-    explicit SessionLease(UsbAudioSession* value)
-        : session(value), lock(value->lifecycle_mutex) {}
+    explicit SessionLease(UsbAudioSession* value) : lock(value->lifecycle.acquire()) {
+        if (lock) session = value;
+    }
     SessionLease(SessionLease&&) noexcept = default;
     SessionLease& operator=(SessionLease&&) noexcept = default;
     SessionLease(const SessionLease&) = delete;
@@ -433,7 +435,7 @@ bool close_registered_session(jlong handle) {
     const auto found = g_session_registry.find(handle);
     if (found == g_session_registry.end()) return true;
     UsbAudioSession* session = found->second;
-    std::unique_lock<std::shared_mutex> session_lock(session->lifecycle_mutex);
+    auto session_lock = session->lifecycle.begin_close();
     if (!close_session_resources(session)) return false;
     g_session_registry.erase(found);
     session_lock.unlock();
@@ -449,16 +451,9 @@ constexpr int kSessionControlStop = 2;
 bool request_session_control(jlong handle, int requested) {
     auto lease = acquire_session(handle);
     UsbAudioSession* session = lease.session;
-    if (session == nullptr) return false;
-    int current = session->control_request.load(std::memory_order_acquire);
-    while (true) {
-        if (current == kSessionControlStop && requested != kSessionControlStop) return false;
-        if (session->control_request.compare_exchange_weak(
-                current, requested, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            session->event_condition.notify_all();
-            return true;
-        }
-    }
+    if (session == nullptr || requested < kSessionControlRun || requested > kSessionControlStop) return false;
+    return session->control.request(
+        static_cast<flowery::usb::ControlRequest>(requested), session->event_condition);
 }
 
 jlong throw_usb_error(JNIEnv* env, const char* operation, int code) {
@@ -1023,7 +1018,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         return -1;
     }
 
-    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+    if (session->control.load() == kSessionControlStop) {
         return -2; // Stop was requested before this block was accepted.
     }
 
@@ -1052,7 +1047,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     packet_bytes.reserve(kPacketsPerUrb);
 
     while (true) {
-        const int control = session->control_request.load(std::memory_order_acquire);
+        const int control = session->control.load();
         if (control == kSessionControlStop) {
             if (!abort_in_flight(session)) {
                 record_failure(&failure, "stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
@@ -1068,10 +1063,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
             // Stop submitting new URBs, but let the already-submitted bounded
             // window complete. Preserve the unsent PCM suffix and packet phase.
             while (!session->in_flight.empty() && !failure.failed) {
-                if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) break;
+                if (session->control.load() == kSessionControlStop) break;
                 if (!wait_for_progress(session, &failure)) break;
             }
-            if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+            if (session->control.load() == kSessionControlStop) {
                 if (!abort_in_flight(session)) {
                     record_failure(&failure, "stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
                     break;
@@ -1136,7 +1131,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         if (failure.failed || packet_bytes.empty()) break;
 
         // Back-pressure: block until the window has room for another URB.
-        if (session->control_request.load(std::memory_order_acquire) != kSessionControlRun) {
+        if (session->control.load() != kSessionControlRun) {
             continue;
         }
         if (session->in_flight.size() >= max_urbs_in_flight(session)) {
@@ -1389,18 +1384,18 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         session->feedback_phase = 0;
         return -2;
     };
-    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+    if (session->control.load() == kSessionControlStop) {
         return stop_pcm_writer();
     }
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
-            if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+            if (session->control.load() == kSessionControlStop) {
                 return stop_pcm_writer();
             }
             if (!wait_for_progress(session, &failure)) break;
         }
-        if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        if (session->control.load() == kSessionControlStop) {
             return stop_pcm_writer();
         }
         if (!failure.failed) {
@@ -1414,12 +1409,12 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         }
     }
     while (!failure.failed && !session->in_flight.empty()) {
-        if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        if (session->control.load() == kSessionControlStop) {
             return stop_pcm_writer();
         }
         wait_for_progress(session, &failure);
     }
-    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+    if (session->control.load() == kSessionControlStop) {
         return stop_pcm_writer();
     }
 

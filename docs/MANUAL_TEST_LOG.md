@@ -775,3 +775,14 @@ Stage 2 integration correction (2026-11-09):
 - The PCM pipeline recognizes the native Stop control result and exits its current poll/write iteration without treating it as a partial-write transport failure.
 - This correction preserves both native drain cancellation and Kotlin control dispatch in the final branch tree.
 - CI validation is pending. No physical USB DAC test was performed; Direct USB Safety Hold remains active.
+
+
+Native USB session-control unit tests (2026-11-09; source change):
+
+- Extracted the production cross-thread control state and session lifetime gate into the header-only usb_session_control.h, shared by the JNI implementation and a host-native C++ test executable.
+- Added host-native tests for a writer blocked on its condition variable receiving Pause without submitting more work, Resume waking a paused writer, repeated Stop requests remaining idempotent and terminal, and Close waiting for an active lease while rejecting new leases.
+- The production JNI session now uses the same ControlState and SessionLifetimeGate primitives exercised by these tests. The native writer continues to own all libusb transfer queue operations.
+- Added the C++ test executable to GitHub Actions with strict compiler warnings (-Wall -Wextra -Werror).
+- These tests cover host-native control/lifetime primitives. They do not emulate a libusb controller, validate acoustic output, or resolve the observed packet-size and drain defects. No DAC was connected or physically tested; Direct USB Safety Hold remains active.
+
+**Status: FOUR HOST-NATIVE CONTROL/LIFETIME TESTS ADDED; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**

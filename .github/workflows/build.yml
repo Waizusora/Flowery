@@ -70,6 +70,11 @@ jobs:
         working-directory: native
         run: cargo test --locked
 
+      - name: Run native USB session control tests
+        run: |
+          c++ -std=c++17 -Wall -Wextra -Werror -pthread -I app/src/main/cpp app/src/test/cpp/usb_session_control_test.cpp -o "$RUNNER_TEMP/usb_session_control_test"
+          "$RUNNER_TEMP/usb_session_control_test"
+
       - name: Verify Kotlin and native JNI declarations
         run: python3 scripts/check_jni_contract.py
 
