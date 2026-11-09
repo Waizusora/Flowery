@@ -264,6 +264,35 @@ void event_loop_main(UsbAudioSession* session) {
     session->event_condition.notify_all();
 }
 
+// After a fatal dispatcher error, the dedicated event thread is no longer
+// able to deliver cancellation callbacks. Once it has exited and been joined,
+// teardown may temporarily take exclusive ownership of libusb event handling.
+// This is bounded: if libusb still cannot return ownership, callers retain the
+// session and all callback-referenced memory rather than freeing it.
+template <typename Pending>
+bool pump_failed_event_loop_for_teardown(UsbAudioSession* session, Pending pending) {
+    if (session->event_loop_error.load(std::memory_order_acquire) == LIBUSB_SUCCESS ||
+        session->event_thread_running.load(std::memory_order_acquire)) {
+        return false;
+    }
+    if (session->event_thread.joinable()) {
+        session->event_thread.join();
+    }
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(kTeardownTimeoutMs);
+    while (pending() && std::chrono::steady_clock::now() < deadline) {
+        timeval timeout{0, 10000};
+        const int result = libusb_handle_events_timeout_completed(
+            session->context, &timeout, nullptr);
+        if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_INTERRUPTED) {
+            // Retry only within the same teardown deadline. A persistent
+            // dispatcher failure must not turn into an unbounded cleanup wait.
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    return !pending();
+}
+
 bool stop_event_thread(UsbAudioSession* session) {
     {
         std::lock_guard<std::mutex> lock(session->event_mutex);
@@ -281,9 +310,12 @@ bool stop_event_thread(UsbAudioSession* session) {
             std::unique_lock<std::mutex> lock(session->event_mutex);
             session->event_condition.wait_for(lock, std::chrono::milliseconds(10));
         }
-        if (session->feedback_in_flight.load(std::memory_order_acquire)) {
-            // Keep the session, transfer buffer, and event loop alive rather than
-            // freeing memory that the USB controller may still reference.
+        if (session->feedback_in_flight.load(std::memory_order_acquire) &&
+            !pump_failed_event_loop_for_teardown(session, [&]() {
+                return session->feedback_in_flight.load(std::memory_order_acquire);
+            })) {
+            // Keep the session, transfer buffer, and callback context alive if
+            // the controller's ownership cannot be returned within the bound.
             return false;
         }
     }
@@ -361,6 +393,13 @@ bool abort_in_flight(UsbAudioSession* session) {
     TransportFailure ignored;
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(kTeardownTimeoutMs);
+    if (!session->in_flight.empty() &&
+        session->event_loop_error.load(std::memory_order_acquire) != LIBUSB_SUCCESS) {
+        pump_failed_event_loop_for_teardown(session, [&]() {
+            reap_completed(session, &ignored);
+            return !session->in_flight.empty();
+        });
+    }
     while (!session->in_flight.empty() && std::chrono::steady_clock::now() < deadline) {
         reap_completed(session, &ignored);
         if (session->in_flight.empty()) break;
