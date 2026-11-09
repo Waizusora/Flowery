@@ -145,9 +145,15 @@ impl EncodedPacketQueue {
         self.changed.notify_all();
     }
 
+    pub(super) fn is_closed(&self) -> bool {
+        self.state.lock().unwrap_or_else(|error| error.into_inner()).closed
+    }
+
     pub(super) fn close(&self) {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.closed = true;
+        state.packets.clear();
+        state.queued_bytes = 0;
         self.changed.notify_all();
     }
 
@@ -563,6 +569,12 @@ fn pump_encoded_producer(handle: jlong) -> Result<jint, String> {
     if producer.cancelled.load(Ordering::Acquire) || state.session.cancelled.load(Ordering::Acquire) {
         return Ok(-3);
     }
+    // A queue may be explicitly closed before its producer is destroyed.
+    // Treat that as terminal instead of retaining a pending packet and
+    // repeatedly waking the worker against a queue that can never accept it.
+    if state.queue.is_closed() {
+        return Ok(-3);
+    }
     let session_epoch = state.session.epoch.load(Ordering::Acquire);
     let queue = Arc::clone(&state.queue);
     let epoch_changed = {
@@ -928,6 +940,7 @@ mod handle_tests {
         std::thread::sleep(Duration::from_millis(10));
         queue.close();
         assert!(waiter.join().unwrap().is_none());
+        assert!(queue.is_closed());
         assert!(queue.offer(EncodedPacket {
             sequence: 0,
             presentation_time_us: None,
@@ -935,6 +948,24 @@ mod handle_tests {
             framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
             bytes: vec![1],
         }).is_err());
+    }
+
+    #[test]
+    fn closing_encoded_queue_discards_buffered_packets_and_releases_capacity() {
+        let queue = EncodedPacketQueue::new(2, 64).unwrap();
+        queue.offer(EncodedPacket {
+            sequence: 0,
+            presentation_time_us: Some(0),
+            duration_us: 1,
+            framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
+            bytes: vec![1, 2, 3, 4],
+        }).unwrap();
+
+        queue.close();
+
+        assert!(queue.is_closed());
+        assert_eq!(queue.usage(), (0, 0));
+        assert!(queue.poll(Duration::ZERO).is_none());
     }
 
     #[test]
