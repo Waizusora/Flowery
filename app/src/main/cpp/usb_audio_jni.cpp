@@ -452,6 +452,7 @@ bool request_session_control(jlong handle, int requested) {
     auto lease = acquire_session(handle);
     UsbAudioSession* session = lease.session;
     if (session == nullptr || requested < kSessionControlRun || requested > kSessionControlStop) return false;
+    std::lock_guard<std::mutex> control_lock(session->event_mutex);
     return session->control.request(
         static_cast<flowery::usb::ControlRequest>(requested), session->event_condition);
 }
@@ -695,6 +696,22 @@ bool submit_encoded_urb(UsbAudioSession* session,
     session->in_flight.push_back(std::move(entry));
     session->submitted_transfer_count.fetch_add(1, std::memory_order_relaxed);
     return true;
+}
+
+enum class EncodedSubmitResult { Submitted, ControlChanged, Failed };
+
+// Serialize the final control check with request_session_control(). A Pause or
+// Stop request cannot be published between this check and libusb submission.
+EncodedSubmitResult submit_encoded_urb_if_running(
+    UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
+    size_t total_bytes, TransportFailure* failure) {
+    std::lock_guard<std::mutex> control_lock(session->event_mutex);
+    if (session->control.load() != static_cast<int>(flowery::usb::ControlRequest::Run)) {
+        return EncodedSubmitResult::ControlChanged;
+    }
+    return submit_encoded_urb(session, packet_bytes, total_bytes, failure)
+        ? EncodedSubmitResult::Submitted
+        : EncodedSubmitResult::Failed;
 }
 
 void compact_encoded(UsbAudioSession* session) {
@@ -1283,10 +1300,22 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
         for (size_t i = 0; i < full_packets; ++i) frame_packets.push_back(session->max_packet_bytes);
         if (remainder != 0) frame_packets.push_back(static_cast<unsigned int>(remainder));
         frame_packets.push_back(0); // UAC1 transfer delimiter between encoded frames
-        if (!submit_encoded_urb(session, frame_packets, frame_bytes, &frame_failure)) {
-            snapshot_transport_failure(session, &frame_failure);
-            throw_transport_failure(env, session, frame_failure);
-            return -1;
+        for (;;) {
+            const auto submit_result = submit_encoded_urb_if_running(
+                session, frame_packets, frame_bytes, &frame_failure);
+            if (submit_result == EncodedSubmitResult::Submitted) break;
+            if (submit_result == EncodedSubmitResult::Failed) {
+                snapshot_transport_failure(session, &frame_failure);
+                throw_transport_failure(env, session, frame_failure);
+                return -1;
+            }
+            const auto changed_control = honor_encoded_write_control(session, &frame_failure);
+            if (changed_control == EncodedControlResult::Stopped) return byte_count;
+            if (changed_control == EncodedControlResult::Failed) {
+                snapshot_transport_failure(session, &frame_failure);
+                throw_transport_failure(env, session, frame_failure);
+                return -1;
+            }
         }
         while (!frame_failure.failed && !session->in_flight.empty()) {
             if (!wait_for_progress(session, &frame_failure)) break;
@@ -1381,7 +1410,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
             if (!wait_for_progress(session, &failure)) break;
             continue;
         }
-        if (!submit_encoded_urb(session, packet_bytes, total, &failure)) break;
+        const auto submit_result = submit_encoded_urb_if_running(
+            session, packet_bytes, total, &failure);
+        if (submit_result == EncodedSubmitResult::ControlChanged) continue;
+        if (submit_result == EncodedSubmitResult::Failed) break;
         session->encoded_rate_phase = phase;
         session->encoded_feedback_phase = feedback_phase;
     }
@@ -1460,7 +1492,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
                 break;
             }
             const std::vector<unsigned int> final_packet{static_cast<unsigned int>(tail)};
-            if (!submit_encoded_urb(session, final_packet, tail, &failure)) break;
+            const auto submit_result = submit_encoded_urb_if_running(
+                session, final_packet, tail, &failure);
+            if (submit_result == EncodedSubmitResult::ControlChanged) continue;
+            if (submit_result == EncodedSubmitResult::Failed) break;
         }
         if (!drain_encoded_window()) {
             if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
