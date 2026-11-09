@@ -44,6 +44,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var usbPositionFrames = 0L
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicReference<Long?>(null)
+    private val usbSeekLock = Any()
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
 
@@ -611,7 +612,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 encoding = if (outputEncoding == "ieee_float32") 1 else 0,
             )
             pipeline = writer
-            activeUsbPcmProducerHandle = writer.producerHandle
+            synchronized(usbSeekLock) {
+                activeUsbPcmProducerHandle = writer.producerHandle
+                pendingSeekMs.getAndSet(null)?.let { requested ->
+                    check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 8) >= 0L) {
+                        "The native USB PCM session rejected the queued startup seek epoch"
+                    }
+                    NativeAudio.nativeRequestUsbPcmProducerSeek(writer.producerHandle, requested)
+                }
+            }
 
             fun playbackActive() = !stopped.get() && playbackGeneration.get() == generation &&
                 !NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)
@@ -681,7 +690,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             throw error
         } finally {
             val writerHandle = pipeline?.producerHandle ?: 0L
-            if (activeUsbPcmProducerHandle == writerHandle) activeUsbPcmProducerHandle = 0L
+            synchronized(usbSeekLock) {
+                if (activeUsbPcmProducerHandle == writerHandle) activeUsbPcmProducerHandle = 0L
+            }
             usbSoftwareGainEnabled = false
             activeUsbSession = null
             try {
@@ -737,15 +748,21 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(epoch >= 0L) { "The native AAudio session rejected the seek request" }
             onState("Seeking…")
         } else {
-            val producer = activeUsbPcmProducerHandle
-            val encodedPipelineActive = activeUsbEncodedPipeline != null
-            if (shouldAdvanceUsbSessionEpochBeforeSeek(encodedPipelineActive, producer)) {
-                if (session != 0L) NativeAudio.nativePlaybackSessionCommand(session, 8)
-                NativeAudio.nativeRequestUsbPcmProducerSeek(producer, boundedPosition)
-            } else {
-                // Encoded playback commits its epoch only after transport flush and
-                // decoder seek succeed. Startup seeks likewise wait for their owner.
-                pendingSeekMs.set(boundedPosition)
+            synchronized(usbSeekLock) {
+                val producer = activeUsbPcmProducerHandle
+                val encodedPipelineActive = activeUsbEncodedPipeline != null
+                if (shouldAdvanceUsbSessionEpochBeforeSeek(encodedPipelineActive, producer)) {
+                    if (session != 0L) {
+                        check(NativeAudio.nativePlaybackSessionCommand(session, 8) >= 0L) {
+                            "The native USB PCM session rejected the seek epoch"
+                        }
+                    }
+                    NativeAudio.nativeRequestUsbPcmProducerSeek(producer, boundedPosition)
+                } else {
+                    // Encoded playback commits its epoch only after transport flush and
+                    // decoder seek succeed. Startup seeks wait for their producer owner.
+                    pendingSeekMs.set(boundedPosition)
+                }
             }
         }
     }
