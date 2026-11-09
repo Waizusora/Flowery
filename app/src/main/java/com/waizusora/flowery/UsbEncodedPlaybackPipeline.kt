@@ -145,12 +145,26 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     @Synchronized
     override fun close() {
         if (!lifecycle.beginClose()) return
-        NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
-        NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
-        NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
-        NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
-        // Keep the lifecycle retryable until libusb confirms session teardown.
-        session.close()
+        // Record each successful release independently. If libusb teardown
+        // must be retried, already-released producer and queue handles are not
+        // passed through destructive cleanup a second time.
+        lifecycle.runCloseStep("stop-producer") {
+            NativeAudio.nativeStopUsbEncodedProducerWorker(producerHandle)
+        }
+        lifecycle.runCloseStep("destroy-producer") {
+            NativeAudio.nativeDestroyUsbEncodedProducer(producerHandle)
+        }
+        lifecycle.runCloseStep("close-queue") {
+            NativeAudio.nativeCloseUsbEncodedQueue(queueHandle)
+        }
+        lifecycle.runCloseStep("destroy-queue") {
+            NativeAudio.nativeDestroyUsbEncodedQueue(queueHandle)
+        }
+        // UsbEncodedDacSession retains its native handle and Android connection
+        // until libusb confirms teardown, so this final step remains retryable.
+        lifecycle.runCloseStep("close-usb-session") {
+            session.close()
+        }
         lifecycle.completeClose()
     }
 
