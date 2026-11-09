@@ -452,9 +452,9 @@ bool request_session_control(jlong handle, int requested) {
     auto lease = acquire_session(handle);
     UsbAudioSession* session = lease.session;
     if (session == nullptr || requested < kSessionControlRun || requested > kSessionControlStop) return false;
-    std::lock_guard<std::mutex> control_lock(session->event_mutex);
-    return session->control.request(
-        static_cast<flowery::usb::ControlRequest>(requested), session->event_condition);
+    return flowery::usb::request_control_serialized(
+        session->control, static_cast<flowery::usb::ControlRequest>(requested),
+        session->event_mutex, session->event_condition);
 }
 
 jlong throw_usb_error(JNIEnv* env, const char* operation, int code) {
@@ -706,7 +706,7 @@ EncodedSubmitResult submit_encoded_urb_if_running(
     UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
     size_t total_bytes, TransportFailure* failure) {
     std::lock_guard<std::mutex> control_lock(session->event_mutex);
-    if (session->control.load() != static_cast<int>(flowery::usb::ControlRequest::Run)) {
+    if (!flowery::usb::encoded_submit_allowed(session->control)) {
         return EncodedSubmitResult::ControlChanged;
     }
     return submit_encoded_urb(session, packet_bytes, total_bytes, failure)
