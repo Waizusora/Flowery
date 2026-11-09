@@ -840,3 +840,8 @@ Native session-control test synchronization hardening (2026-11-09; source change
 
 **Status: PAUSE/RESUME TEST HANDSHAKE MADE DETERMINISTIC AT THE CONDITION-VARIABLE BOUNDARY; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
 
+USB session contract documentation correction (2026-11-09):
+
+- Corrected the UsbDacSession API documentation: Pause is a non-destructive control request and does not call native flush; flush is reserved for playback-position changes such as seek. This aligns the KDoc with the current PCM implementation and avoids documenting a destructive Pause operation.
+- This is a documentation-only correction. It does not extend Pause/Stop handling to encoded transport or change native runtime behavior. Direct USB Safety Hold remains active.
+
