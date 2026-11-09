@@ -30,6 +30,10 @@ inline bool request_control_serialized(
 inline bool encoded_submit_allowed(const ControlState& control) noexcept {
  return control.load()==static_cast<int>(ControlRequest::Run);
 }
+inline bool feedback_resubmit_allowed(bool stopped, bool event_thread_running,
+                                      int event_loop_error, int success_code) noexcept {
+ return !stopped && event_thread_running && event_loop_error == success_code;
+}
 enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
 
 inline EncodedControlAction encoded_control_action(int control, std::size_t in_flight) noexcept {
