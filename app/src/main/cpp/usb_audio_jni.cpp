@@ -1041,12 +1041,15 @@ Java_com_waizusora_flowery_UsbDacNative_nativeOpen(
             1, on_feedback_complete, session, 0);
         libusb_set_iso_packet_lengths(
             session->feedback_transfer, static_cast<unsigned int>(session->feedback_buffer.size()));
+        // Publish ownership before submission: the event thread may dispatch
+        // the first callback immediately after libusb accepts the transfer.
+        session->feedback_in_flight.store(true, std::memory_order_release);
         const int feedback_result = libusb_submit_transfer(session->feedback_transfer);
         if (feedback_result != LIBUSB_SUCCESS) {
+            session->feedback_in_flight.store(false, std::memory_order_release);
             close_session(session);
             return throw_usb_error(env, "Submitting asynchronous endpoint feedback transfer", feedback_result);
         }
-        session->feedback_in_flight.store(true, std::memory_order_release);
         const auto feedback_deadline = std::chrono::steady_clock::now() +
                                        std::chrono::milliseconds(500);
         while (!session->feedback_valid.load(std::memory_order_acquire) &&
