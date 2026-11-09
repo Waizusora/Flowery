@@ -73,6 +73,10 @@ fn register_session(session: SessionState) -> jlong {
 
 fn valid_route(route: i32) -> bool { (0..=3).contains(&route) }
 
+fn is_completed_stop_noop(current: i32, command: i32) -> bool {
+    current == SessionPhase::Completed as i32 && command == SessionPhase::Cancelled as i32
+}
+
 fn valid_phase_transition(current: i32, next: i32) -> bool {
     if current == next { return true; }
     match current {
@@ -264,6 +268,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         return -1;
     }
     let current = session.phase.load(Ordering::Acquire) as i32;
+    // Queue completion may be followed by the service's ordinary Stop cleanup.
+    // Preserve Completed as the terminal outcome instead of throwing on that duplicate cleanup.
+    if is_completed_stop_noop(current, command) {
+        return 0;
+    }
     if !valid_phase_transition(current, command) {
         let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
         return -1;
@@ -533,6 +542,16 @@ mod tests {
         assert!(!valid_phase_transition(5, 2));
         assert!(!valid_phase_transition(6, 2));
         assert!(!valid_phase_transition(7, 2));
+    }
+
+    #[test]
+    fn stop_after_completion_is_a_noop_and_preserves_terminal_phase() {
+        let completed = SessionPhase::Completed as i32;
+        let cancelled = SessionPhase::Cancelled as i32;
+        assert!(is_completed_stop_noop(completed, cancelled));
+        assert!(!is_completed_stop_noop(cancelled, cancelled));
+        assert!(!is_completed_stop_noop(completed, SessionPhase::Running as i32));
+        assert!(!valid_phase_transition(completed, cancelled));
     }
 
     #[test]

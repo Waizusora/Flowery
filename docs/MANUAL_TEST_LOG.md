@@ -794,3 +794,14 @@ Native session close-gate test hardening (2026-11-09):
 - Updated SessionLifetimeGate::acquire() to reject immediately when the closing flag is already set, while retaining the post-lock check to close the race with a concurrent begin_close().
 - Recompiled and ran the four host-native tests locally with C++17, pthreads, and -Wall -Wextra -Werror; all four scenarios passed.
 - GitHub Actions validation for this correction is pending. No USB DAC was connected or physically tested; Direct USB Safety Hold remains active.
+
+
+Playback completion cleanup crash analysis and native command fix (2026-11-09):
+
+- The supplied `logcat.txt` records a fatal `IllegalStateException` from `nativePlaybackSessionCommand` during `FloweryPlayer.stop()`, called by `PlaybackService.handleCompletion()` immediately after `TRACK_COMPLETION`.
+- Source inspection confirms the playback worker can move the native session to `Completed` (phase 5) before the service performs ordinary queue cleanup. That cleanup then sends `Cancelled` (command 6), which was rejected as an invalid terminal transition and escaped on the main thread.
+- Updated the native command handler to treat `Cancelled` issued after `Completed` as a successful no-op. The session remains `Completed`; other invalid terminal transitions remain rejected.
+- Added a Rust unit test for the completed-then-stop case and preservation of the terminal phase.
+- This is a source-level correction for the observed crash. CI validation and an updated APK are still required before considering the crash fixed in a build. No DAC connection or physical USB playback test was performed; Direct USB Safety Hold remains active.
+
+**Status: COMPLETION-CLEANUP CRASH FIX IMPLEMENTED IN SOURCE; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
