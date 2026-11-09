@@ -104,9 +104,13 @@ class UsbEncodedDacSession private constructor(
          * Retries sessions retained after an earlier close could not confirm
          * native transfer reclamation or Android connection release.
          */
-        internal fun retryPendingCloseSessions() {
+        internal fun retryPendingCloseSessions(): Boolean {
             val pending = synchronized(pendingCloseLock) { pendingCloseSessions.toList() }
-            pending.forEach { session -> runCatching { session.close() } }
+            var allClosed = true
+            pending.forEach { session ->
+                if (runCatching { session.close() }.isFailure) allClosed = false
+            }
+            return allClosed
         }
 
         fun open(
