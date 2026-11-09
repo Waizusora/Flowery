@@ -1,4 +1,5 @@
 #include "usb_session_control.h"
+#include <cstddef>
 #include <atomic>
 #include <cassert>
 #include <chrono>
@@ -58,8 +59,85 @@ void test_close_waits_for_active_lease_and_rejects_new_ones() {
  auto rejected=gate.acquire(); assert(!static_cast<bool>(rejected));
  active=SessionLifetimeGate::Lease{}; closer.join(); assert(done.wait_for(0ms)==std::future_status::ready);
 }
+
+void test_encoded_uac1_pause_finishes_frame_before_waiting() {
+ ControlState control; std::condition_variable wake;
+ std::size_t in_flight=1; int submitted_frames=1; bool frame_completed=false;
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::Submit);
+ assert(control.request(ControlRequest::Pause,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::DrainInFlight);
+ // The already-submitted frame is allowed to complete; no next frame may start.
+ assert(submitted_frames==1 && !frame_completed);
+ --in_flight; frame_completed=true;
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::WaitForResume);
+ assert(submitted_frames==1 && frame_completed);
+ assert(control.request(ControlRequest::Run,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::Submit);
+ ++submitted_frames;
+ assert(submitted_frames==2);
+}
+void test_encoded_type_iii_pause_preserves_packet_cursor_and_phase() {
+ ControlState control; std::condition_variable wake;
+ std::size_t in_flight=2, encoded_offset=384;
+ uint64_t rate_phase=17, feedback_phase=29;
+ assert(control.request(ControlRequest::Pause,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::DrainInFlight);
+ // Pause must not advance the unsent suffix or either packet pacing phase.
+ assert(encoded_offset==384 && rate_phase==17 && feedback_phase==29);
+ --in_flight;
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::DrainInFlight);
+ --in_flight;
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::WaitForResume);
+ assert(encoded_offset==384 && rate_phase==17 && feedback_phase==29);
+ assert(control.request(ControlRequest::Run,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),in_flight)==
+        flowery::usb::EncodedControlAction::Submit);
+}
+void test_encoded_stop_takes_priority_over_pause_and_aborts() {
+ ControlState control; std::condition_variable wake;
+ assert(control.request(ControlRequest::Pause,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),3)==
+        flowery::usb::EncodedControlAction::DrainInFlight);
+ assert(control.request(ControlRequest::Stop,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),3)==
+        flowery::usb::EncodedControlAction::Abort);
+ assert(!control.request(ControlRequest::Run,wake));
+}
+void test_close_waits_for_active_encoded_writer_lease_after_stop_request() {
+ ControlState control; std::condition_variable wake;
+ SessionLifetimeGate gate; auto writer_lease=gate.acquire();
+ assert(static_cast<bool>(writer_lease));
+ std::promise<void> close_started,close_finished; auto done=close_finished.get_future();
+ std::thread closer([&]{
+  close_started.set_value();
+  auto exclusive=gate.begin_close();
+  close_finished.set_value();
+ });
+ close_started.get_future().wait();
+ auto deadline=std::chrono::steady_clock::now()+1s;
+ while(!gate.is_closing() && std::chrono::steady_clock::now()<deadline) std::this_thread::yield();
+ assert(gate.is_closing());
+ assert(control.request(ControlRequest::Stop,wake));
+ assert(flowery::usb::encoded_control_action(control.load(),1)==
+        flowery::usb::EncodedControlAction::Abort);
+ assert(done.wait_for(40ms)==std::future_status::timeout);
+ writer_lease=SessionLifetimeGate::Lease{};
+ closer.join();
+ assert(done.wait_for(0ms)==std::future_status::ready);
+}
 int main() {
  test_pause_wakes_blocked_writer_without_submitting(); test_resume_wakes_paused_writer();
  test_repeated_stop_is_idempotent_and_terminal(); test_close_waits_for_active_lease_and_rejects_new_ones();
- std::cout<<"USB session control tests passed (4 scenarios).\n"; return 0;
+ test_encoded_uac1_pause_finishes_frame_before_waiting();
+ test_encoded_type_iii_pause_preserves_packet_cursor_and_phase();
+ test_encoded_stop_takes_priority_over_pause_and_aborts();
+ test_close_waits_for_active_encoded_writer_lease_after_stop_request();
+ std::cout<<"USB session control tests passed (8 scenarios).\n"; return 0;
 }
