@@ -1,8 +1,8 @@
 package com.waizusora.flowery
 
-internal const val USB_ENCODED_WRITE_STOPPED = -2
-
 import android.hardware.usb.UsbDeviceConnection
+
+internal const val USB_ENCODED_WRITE_STOPPED = -2
 
 /**
  * Owns a dedicated compressed-stream libusb session.
