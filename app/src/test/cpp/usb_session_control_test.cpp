@@ -104,17 +104,28 @@ void test_encoded_type_iii_pause_preserves_packet_cursor_and_phase() {
 
 void test_pause_request_is_serialized_with_encoded_submission() {
  ControlState control; std::mutex mutex; std::condition_variable wake;
- std::promise<void> submit_lock_acquired; std::atomic<int> submitted{0};
+ std::promise<void> submit_lock_acquired, release_submit;
+ auto release=release_submit.get_future();
+ std::atomic<int> submitted{0};
  std::thread writer([&]{
   std::unique_lock<std::mutex> lock(mutex);
   submit_lock_acquired.set_value();
+  release.wait();
   if(flowery::usb::encoded_submit_allowed(control)) ++submitted;
  });
  submit_lock_acquired.get_future().wait();
- // Pause is published under the same mutex as the production submit gate.
- assert(flowery::usb::request_control_serialized(
-     control,ControlRequest::Pause,mutex,wake));
+ std::promise<void> request_finished;
+ auto request_done=request_finished.get_future();
+ std::thread requester([&]{
+  assert(flowery::usb::request_control_serialized(
+      control,ControlRequest::Pause,mutex,wake));
+  request_finished.set_value();
+ });
+ // The request must wait while the writer owns the submission gate.
+ assert(request_done.wait_for(40ms)==std::future_status::timeout);
+ release_submit.set_value();
  writer.join();
+ requester.join();
  {
   std::lock_guard<std::mutex> lock(mutex);
   assert(!flowery::usb::encoded_submit_allowed(control));
