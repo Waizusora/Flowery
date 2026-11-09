@@ -767,3 +767,11 @@ Stage 2 follow-up correction (2026-11-09):
 - Extended Stop handling into the PCM nativeDrain path so a Stop request also wakes and cancels a writer that is finishing the final drain, rather than only interrupting nativeWriteIsochronous.
 - The stop result is distinct from a transport failure; transfer-reap failure still returns an error and retains native resources according to the existing teardown policy.
 - CI validation is pending. No DAC was connected or physically tested. Direct USB Safety Hold remains active.
+
+
+Stage 2 integration correction (2026-11-09):
+
+- Re-applied the PCM pipeline and FloweryPlayer call-site integration on top of the follow-up native drain commit. Pause no longer flushes the PCM transport; the player forwards non-blocking Pause/Resume/Stop requests to the active PCM DAC session.
+- The PCM pipeline recognizes the native Stop control result and exits its current poll/write iteration without treating it as a partial-write transport failure.
+- This correction preserves both native drain cancellation and Kotlin control dispatch in the final branch tree.
+- CI validation is pending. No physical USB DAC test was performed; Direct USB Safety Hold remains active.
