@@ -191,6 +191,7 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
             }
         }
     }
+    bool resubmitted = false;
     {
         std::lock_guard<std::mutex> lock(session->event_mutex);
         if (flowery::usb::feedback_resubmit_allowed(
@@ -199,16 +200,20 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
                 session->event_loop_error.load(std::memory_order_acquire), LIBUSB_SUCCESS)) {
             const int result = libusb_submit_transfer(transfer);
             if (result == LIBUSB_SUCCESS) {
+                resubmitted = true;
                 session->feedback_in_flight.store(true, std::memory_order_release);
             } else {
                 session->event_loop_error.store(result, std::memory_order_release);
             }
         }
     }
-    if (!session->feedback_in_flight.load(std::memory_order_acquire)) {
+    if (!resubmitted) {
+        // Publish the event-loop barrier before reporting that the feedback
+        // transfer is no longer in flight; teardown waits for both conditions.
         session->feedback_callback_return_iteration.store(
             session->event_loop_iteration_count.load(std::memory_order_acquire) + 1,
             std::memory_order_release);
+        session->feedback_in_flight.store(false, std::memory_order_release);
     }
     session->event_condition.notify_all();
 }
