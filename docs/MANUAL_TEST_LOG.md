@@ -1018,3 +1018,11 @@ Validation scope:
 - Added native tests for the closed-state signal, buffered-packet discard, zeroed capacity accounting, waiter wake-up, and rejection of new packets.
 - Registry removal still preserves already-cloned Arc references; this change applies to explicit queue closure and does not invalidate memory that an in-flight native caller still owns.
 - Validation scope: native unit tests and CI. This does not simulate Android scheduling, libusb callback delivery, USB controller behavior, or electrical/audio safety. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — Commit encoded seek epoch after decoder success
+
+- A seek-order review found that the native encoded seek path advanced the shared playback epoch immediately after the USB transport flush, before calling the decoder's stream initialization and seek operations. If either decoder operation failed, the old worker had already been stopped and the epoch had changed even though the decoder had not committed to the requested position.
+- Reordered the transition: stop and join the producer worker, flush the USB transport, initialize and seek the decoder, then advance the session epoch and clear pending/queued packets. The replacement worker is spawned only after this sequence succeeds.
+- A decoder initialization or seek error now leaves the session epoch unchanged. The producer worker remains stopped and the JNI call reports failure; the playback owner must treat this as a failed seek and proceed through normal teardown rather than assuming playback resumed.
+- Validation scope: source-level transaction ordering plus CI native/Kotlin/Android checks. This does not simulate libusb callback delivery, USB controller behavior, or physical output. Direct USB Safety Hold remains active; no physical DAC test was performed.
