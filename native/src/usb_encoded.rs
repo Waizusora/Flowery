@@ -278,6 +278,23 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateUsbEnc
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EncodedWriteOutcome {
+    Accepted,
+    Stopped,
+    Rejected,
+}
+
+fn classify_encoded_write_result(written: jint, expected: jint) -> EncodedWriteOutcome {
+    if written == -2 {
+        EncodedWriteOutcome::Stopped
+    } else if written == expected {
+        EncodedWriteOutcome::Accepted
+    } else {
+        EncodedWriteOutcome::Rejected
+    }
+}
+
 /// Drains a bounded batch of encoded packets from Rust and submits each packet
 /// through the already-open Android USB session. Kotlin supplies the transport
 /// object only as an Android/libusb bridge; packet scheduling stays native.
@@ -311,6 +328,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
     let mut submitted = 0_i64;
     let mut sequence = expected_sequence as u64;
     let mut position_ms = last_position_ms;
+    let mut stopped = false;
     while submitted < max_packets as i64 {
         let Some(packet) = queue.poll(Duration::ZERO) else { break; };
         let framing_matches = match packet.framing {
@@ -349,9 +367,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
                 return std::ptr::null_mut();
             }
         };
-        if written != packet.bytes.len() as jint {
-            let _ = env.throw_new("java/lang/IllegalStateException", "USB transport did not accept a complete encoded packet");
-            return std::ptr::null_mut();
+        match classify_encoded_write_result(written, packet.bytes.len() as jint) {
+            EncodedWriteOutcome::Accepted => {}
+            EncodedWriteOutcome::Stopped => {
+                stopped = true;
+                break;
+            }
+            EncodedWriteOutcome::Rejected => {
+                let _ = env.throw_new("java/lang/IllegalStateException", "USB transport did not accept a complete encoded packet");
+                return std::ptr::null_mut();
+            }
         }
         sequence = match sequence.checked_add(1) {
             Some(next) => next,
@@ -365,7 +390,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
         }
         submitted += 1;
     }
-    let ended = producer_status == 1 && queue.is_empty();
+    let ended = !stopped && producer_status == 1 && queue.is_empty();
     let result = match env.new_long_array(4) {
         Ok(array) => array,
         Err(error) => {
@@ -373,7 +398,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePumpUsbEncod
             return std::ptr::null_mut();
         }
     };
-    let values = [submitted, sequence as jlong, position_ms, if ended { 1 } else { 0 }];
+    let values = [if stopped { -2 } else { submitted }, sequence as jlong, position_ms, if ended { 1 } else { 0 }];
     if let Err(error) = env.set_long_array_region(&result, 0, &values) {
         let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
         return std::ptr::null_mut();
@@ -809,6 +834,14 @@ mod tests {
             framing: EncodedFraming::Uac1TypeIi { format_tag: 0x1002 },
             bytes: bytes.to_vec(),
         }
+    }
+
+    #[test]
+    fn encoded_write_result_distinguishes_stop_from_rejection() {
+        assert_eq!(super::classify_encoded_write_result(128, 128), super::EncodedWriteOutcome::Accepted);
+        assert_eq!(super::classify_encoded_write_result(-2, 128), super::EncodedWriteOutcome::Stopped);
+        assert_eq!(super::classify_encoded_write_result(-1, 128), super::EncodedWriteOutcome::Rejected);
+        assert_eq!(super::classify_encoded_write_result(64, 128), super::EncodedWriteOutcome::Rejected);
     }
 
     #[test]
