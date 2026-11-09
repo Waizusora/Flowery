@@ -877,3 +877,14 @@ libusb event-loop failure handling hardening (2026-11-09; source change):
 - CI validation is pending. No DAC was connected or physically tested. Direct USB Safety Hold remains active.
 
 **Status: FATAL EVENT-LOOP FEEDBACK RESUBMISSION GUARD HARDENED IN SOURCE; CI VALIDATION PENDING; POST-FAILURE TRANSFER REAP RECOVERY STILL UNDER REVIEW; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
+
+## 2026-11-09 — Bounded libusb teardown event pumping after dispatcher failure
+
+- Added a teardown-only event-pump fallback for the case where the dedicated libusb event thread has exited after a fatal event-handler error.
+- The fallback first verifies that the dispatcher is no longer running, joins the thread, and only then calls libusb event handling from the teardown caller. This prevents concurrent event dispatchers from owning the same context.
+- Pending audio transfers are cancelled and reaped through their normal completion callbacks. The feedback transfer is also allowed to complete its cancellation callback; feedback resubmission remains disabled after the recorded event-loop error.
+- The fallback is bounded by the existing teardown timeout. If libusb does not return all transfer ownership, teardown still fails closed and retains the session, transfer objects, buffers, and callback contexts. It does not force-free possibly active transfers.
+- Added a host-native policy test for the exclusive-event-ownership precondition. The native test suite now reports 11 policy scenarios.
+- Scope limitation: this host test validates the eligibility predicate only. It does not simulate libusb callbacks, kernel/controller ownership, or prove that every platform will recover after a fatal event-handler error. CI verification is pending.
+- Direct USB playback remains under the existing safety hold. No physical DAC test was performed or requested.
