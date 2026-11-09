@@ -859,8 +859,8 @@ Encoded USB lifecycle control implementation (2026-11-09; source change):
 
 Encoded USB boundary-policy tests (2026-11-09; source change):
 
-- Extracted the encoded writer's control decision into the shared native encoded_control_action policy used by the production encoded writer and encoded drain: Run permits submission; Pause drains outstanding URBs and then waits for Resume; Stop takes priority and requests abort.
-- Added host-native scenarios for UAC1 Type-II frame completion before Pause, IEC 61937 Type-III URB-window drain while preserving the unsent cursor and rate/feedback phase, Stop priority over Pause, and Close waiting for an active encoded-writer lease after Stop.
+- Extracted the encoded writer's control decision into the shared native encoded_control_action policy used by the production encoded writer and encoded drain: Run permits submission; Pause drains outstanding URBs and then waits for Resume; Stop takes priority and requests abort. The final encoded submit check and control-request publication now share event_mutex, serializing Pause/Stop against libusb submission so a request cannot slip between the check and submit.
+- Added host-native scenarios for UAC1 Type-II frame completion before Pause, IEC 61937 Type-III URB-window drain while preserving the unsent cursor and rate/feedback phase, Stop priority over Pause, Close waiting for an active encoded-writer lease after Stop, and serialization of Pause publication with encoded submission.
 - These tests exercise the production control-decision policy and lifetime gate with deterministic in-memory transfer counts. They do not invoke libusb, emulate USB controller completion/error behavior, or prove endpoint electrical/audio safety.
 - CI validation is pending for the current main revision. Direct USB remains under Safety Hold; no physical DAC test was performed.
 
