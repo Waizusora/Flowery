@@ -746,3 +746,16 @@ Direct USB native session-handle registry implementation (2026-11-09; source cha
 - CI and native compilation are pending. Do not treat source-level changes as validated until CI completes.
 
 **Status: REGISTRY-BACKED JNI SESSION HANDLES IMPLEMENTED; VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
+
+
+Direct USB PCM cancellation implementation — Stage 2 (2026-11-09; source change):
+
+- Added registry-leased JNI control requests for Pause, Resume, and Stop. The request path only updates an atomic session control state and notifies the event condition variable; it does not access or mutate the in-flight URB queue.
+- The PCM writer remains the sole owner of packet submission, completion reaping, URB cancellation, and pending-PCM mutation.
+- Pause stops further URB submissions, waits for the already-submitted bounded window to complete, and returns with the unsent PCM suffix and fractional packet phase retained. Resume clears the pause request; the next PCM write continues from the retained suffix before appending later data.
+- Stop wakes a blocked PCM writer. The writer thread cancels/reaps its own in-flight transfers, clears pending PCM and packet phase, and returns a distinct control result rather than reporting a transport exception. Session close still waits for the JNI lease before releasing native resources.
+- The Kotlin PCM pipeline no longer calls destructive nativeFlush() for Pause. nativeFlush() remains reserved for seek/epoch changes. FloweryPlayer forwards Pause/Resume/Stop requests through the active PCM USB session.
+- Encoded USB transport was intentionally not modified in this stage.
+- Automated validation is pending. No DAC was connected and no physical playback test was performed. This change does not fix the independent 16-bit/44.1 kHz short-packet issue, the 24-bit/96 kHz drain timeout, or establish acoustic safety. Direct USB Safety Hold remains active.
+
+**Status: PCM PAUSE/RESUME/STOP REQUEST PATH IMPLEMENTED; CI VALIDATION PENDING; DIRECT USB SAFETY HOLD REMAINS IN FORCE.**

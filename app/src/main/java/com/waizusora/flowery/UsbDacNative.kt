@@ -52,7 +52,10 @@ internal object UsbDacNative {
     external fun nativeWriteIsochronous(handle: Long, pcm: ByteArray, frameCount: Int): Int
     external fun nativeDrain(handle: Long): Int
     external fun nativeFlush(handle: Long): Int
-    external fun nativeClose(handle: Long): Boolean
+    external fun nativeRequestPause(handle: Long): Boolean
+    external fun nativeRequestResume(handle: Long): Boolean
+    external fun nativeRequestStop(handle: Long): Boolean
+    external fun nativeClose(handle: Long)
 }
 
 /**
@@ -70,6 +73,8 @@ internal class UsbDacSession internal constructor(
     val sampleRate: Int,
     private val volumeUnit: UsbFeatureUnit? = null
 ) : AutoCloseable {
+    companion object { const val WRITE_STOPPED = -2 }
+
     val hardwareVolumeAvailable: Boolean get() = volumeUnit != null
 
     private fun volumeControl(request: Int, data: ByteArray): Int {
@@ -133,6 +138,11 @@ internal class UsbDacSession internal constructor(
         }
         return UsbDacNative.nativeWriteIsochronous(nativeHandle, pcmLittleEndian, frameCount)
     }
+
+    // Deliberately unsynchronized: these requests must wake a writer blocked inside JNI.
+    fun requestPause(): Boolean = !closed && UsbDacNative.nativeRequestPause(nativeHandle)
+    fun requestResume(): Boolean = !closed && UsbDacNative.nativeRequestResume(nativeHandle)
+    fun requestStop(): Boolean = !closed && UsbDacNative.nativeRequestStop(nativeHandle)
 
     /** Blocks until all queued audio, including a trailing partial packet, has been transmitted. */
     @Synchronized

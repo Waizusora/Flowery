@@ -109,6 +109,8 @@ struct UsbAudioSession {
     int control_interface = -1;
     // Shared JNI leases keep the session alive while an operation is in progress.
     std::shared_mutex lifecycle_mutex;
+    // 0=running, 1=pause requested, 2=stop requested. Only the writer mutates URB queues.
+    std::atomic<int> control_request{0};
 };
 
 // Describes the first failure observed on the transport.
@@ -438,6 +440,25 @@ bool close_registered_session(jlong handle) {
     registry_lock.unlock();
     delete session;
     return true;
+}
+
+constexpr int kSessionControlRun = 0;
+constexpr int kSessionControlPause = 1;
+constexpr int kSessionControlStop = 2;
+
+bool request_session_control(jlong handle, int requested) {
+    auto lease = acquire_session(handle);
+    UsbAudioSession* session = lease.session;
+    if (session == nullptr) return false;
+    int current = session->control_request.load(std::memory_order_acquire);
+    while (true) {
+        if (current == kSessionControlStop && requested != kSessionControlStop) return false;
+        if (session->control_request.compare_exchange_weak(
+                current, requested, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            session->event_condition.notify_all();
+            return true;
+        }
+    }
 }
 
 jlong throw_usb_error(JNIEnv* env, const char* operation, int code) {
@@ -1002,6 +1023,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         return -1;
     }
 
+    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        return -2; // Stop was requested before this block was accepted.
+    }
+
     const size_t maximum_pending_bytes =
         static_cast<size_t>(session->sample_rate) * 2U * bytes_per_frame;
     const size_t live_pending = session->pending_pcm.size() - session->pending_offset;
@@ -1027,6 +1052,40 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
     packet_bytes.reserve(kPacketsPerUrb);
 
     while (true) {
+        const int control = session->control_request.load(std::memory_order_acquire);
+        if (control == kSessionControlStop) {
+            if (!abort_in_flight(session)) {
+                record_failure(&failure, "stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
+                break;
+            }
+            session->pending_pcm.clear();
+            session->pending_offset = 0;
+            session->frame_phase = 0;
+            session->feedback_phase = 0;
+            return -2;
+        }
+        if (control == kSessionControlPause) {
+            // Stop submitting new URBs, but let the already-submitted bounded
+            // window complete. Preserve the unsent PCM suffix and packet phase.
+            while (!session->in_flight.empty() && !failure.failed) {
+                if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) break;
+                if (!wait_for_progress(session, &failure)) break;
+            }
+            if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+                if (!abort_in_flight(session)) {
+                    record_failure(&failure, "stop_reap_failed", LIBUSB_ERROR_TIMEOUT);
+                    break;
+                }
+                session->pending_pcm.clear();
+                session->pending_offset = 0;
+                session->frame_phase = 0;
+                session->feedback_phase = 0;
+                return -2;
+            }
+            if (failure.failed) break;
+            return frame_count;
+        }
+
         reap_completed(session, &failure);
         if (failure.failed) break;
 
@@ -1077,6 +1136,9 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         if (failure.failed || packet_bytes.empty()) break;
 
         // Back-pressure: block until the window has room for another URB.
+        if (session->control_request.load(std::memory_order_acquire) != kSessionControlRun) {
+            continue;
+        }
         if (session->in_flight.size() >= max_urbs_in_flight(session)) {
             if (!wait_for_progress(session, &failure)) break;
             continue;
@@ -1319,6 +1381,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         return 0;
     }
 
+    if (session->control_request.load(std::memory_order_acquire) == kSessionControlStop) {
+        if (!abort_in_flight(session)) return -1;
+        session->pending_pcm.clear();
+        session->pending_offset = 0;
+        session->frame_phase = 0;
+        session->feedback_phase = 0;
+        return -2;
+    }
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
@@ -1367,6 +1437,24 @@ Java_com_waizusora_flowery_UsbDacNative_nativeFlush(
     session->frame_phase = 0;
     session->feedback_phase = 0;
     return 0;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeRequestPause(
+    JNIEnv*, jobject, jlong handle) {
+    return request_session_control(handle, kSessionControlPause) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeRequestResume(
+    JNIEnv*, jobject, jlong handle) {
+    return request_session_control(handle, kSessionControlRun) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_waizusora_flowery_UsbDacNative_nativeRequestStop(
+    JNIEnv*, jobject, jlong handle) {
+    return request_session_control(handle, kSessionControlStop) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
