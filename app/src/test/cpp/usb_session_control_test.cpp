@@ -142,12 +142,14 @@ void test_encoded_stop_takes_priority_over_pause_and_aborts() {
         flowery::usb::EncodedControlAction::Abort);
  assert(!control.request(ControlRequest::Run,wake));
 }
-void test_close_waits_for_active_encoded_writer_lease_after_stop_request() {
- ControlState control; std::condition_variable wake;
+void test_close_requests_stop_before_waiting_for_encoded_writer_lease() {
+ ControlState control; std::mutex mutex; std::condition_variable wake;
  SessionLifetimeGate gate; auto writer_lease=gate.acquire();
  assert(static_cast<bool>(writer_lease));
  std::promise<void> close_started,close_finished; auto done=close_finished.get_future();
  std::thread closer([&]{
+  assert(flowery::usb::request_control_serialized(
+      control,ControlRequest::Stop,mutex,wake));
   close_started.set_value();
   auto exclusive=gate.begin_close();
   close_finished.set_value();
@@ -156,7 +158,6 @@ void test_close_waits_for_active_encoded_writer_lease_after_stop_request() {
  auto deadline=std::chrono::steady_clock::now()+1s;
  while(!gate.is_closing() && std::chrono::steady_clock::now()<deadline) std::this_thread::yield();
  assert(gate.is_closing());
- assert(control.request(ControlRequest::Stop,wake));
  assert(flowery::usb::encoded_control_action(control.load(),1)==
         flowery::usb::EncodedControlAction::Abort);
  assert(done.wait_for(40ms)==std::future_status::timeout);
@@ -170,7 +171,7 @@ int main() {
  test_encoded_uac1_pause_finishes_frame_before_waiting();
  test_encoded_type_iii_pause_preserves_packet_cursor_and_phase();
  test_encoded_stop_takes_priority_over_pause_and_aborts();
- test_close_waits_for_active_encoded_writer_lease_after_stop_request();
+ test_close_requests_stop_before_waiting_for_encoded_writer_lease();
  test_pause_request_is_serialized_with_encoded_submission();
  std::cout<<"USB session control tests passed (9 scenarios).\n"; return 0;
 }
