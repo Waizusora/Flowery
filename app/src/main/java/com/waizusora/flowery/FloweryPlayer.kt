@@ -751,6 +751,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbPlaybackMode) {
             paused = true
             activeUsbSession?.requestPause()
+            activeUsbEncodedPipeline?.requestPause()
             if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 3).toInt()
             onState("Paused · USB exclusive")
         } else {
@@ -765,6 +766,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun resume() {
         if (usbPlaybackMode) {
             activeUsbSession?.requestResume()
+            activeUsbEncodedPipeline?.requestResume()
             paused = false
             if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 2).toInt()
             onState("Playing · USB exclusive")
@@ -794,6 +796,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         activeUsbSession?.requestStop()
+        activeUsbEncodedPipeline?.requestStop()
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
