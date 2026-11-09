@@ -139,6 +139,8 @@ internal class UsbPcmPlaybackPipeline private constructor(
     fun playUntil(
         playbackActive: () -> Boolean,
         isPaused: () -> Boolean,
+        takePendingSeekMs: () -> Long?,
+        onSeek: (requestedMs: Long) -> Unit,
         onPrebufferReady: (queuedBlocks: Int, endReached: Boolean, waitMs: Double) -> Unit,
         onFirstTransfer: (frames: Int) -> Unit,
         onEpochChanged: (startFrames: Long) -> Unit,
@@ -149,9 +151,23 @@ internal class UsbPcmPlaybackPipeline private constructor(
         onEndOfStream: (chunks: Long, totalFrames: Long) -> Unit,
     ): UsbPcmPlaybackSummary {
         lifecycle.checkOpen()
+        fun applyPendingSeek() {
+            val requested = takePendingSeekMs() ?: return
+            check(NativeAudio.nativePlaybackSessionCommand(playbackSessionHandle, 8) >= 0L) {
+                "The native USB PCM session rejected the seek epoch"
+            }
+            NativeAudio.nativeRequestUsbPcmProducerSeek(producerHandle, requested)
+            // The playback loop owns all writes, so no PCM write can overlap this
+            // flush. It cancels transfers from the previous decoder position.
+            dacSession.flush()
+            activeEpoch = NativeAudio.nativePlaybackSessionEpoch(playbackSessionHandle).toInt()
+            onSeek(requested)
+        }
+
         val prebufferStartedNs = android.os.SystemClock.elapsedRealtimeNanos()
-        while (playbackActive() && workerError.isBlank() &&
-            !isAtEnd && queueSize < PREBUFFER_BLOCKS) {
+        while (playbackActive()) {
+            applyPendingSeek()
+            if (!workerError.isBlank() || isAtEnd || queueSize >= PREBUFFER_BLOCKS) break
             Thread.sleep(5)
         }
         onPrebufferReady(
@@ -169,6 +185,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         var lastBitPerfect: Boolean? = null
 
         while (playbackActive()) {
+            applyPendingSeek()
             if (isPaused()) {
                 dacSession.requestPause()
                 Thread.sleep(10)
