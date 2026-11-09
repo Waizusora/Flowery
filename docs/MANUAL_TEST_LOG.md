@@ -1042,3 +1042,12 @@ Validation scope:
 - Reused the named stopped-worker status constant for the worker's explicit stop path; no raw status literal remains in that lifecycle transition.
 - Added a native boundary test for normal increment, the final valid increment, and exhaustion at the maximum sequence value.
 - Validation is source/unit-test/CI only. This does not simulate USB controller behavior or prove physical output safety; Direct USB Safety Hold remains active.
+
+
+### 2026-11-09 — Serialize encoded producer terminal failures with packet submission
+
+- The encoded transport audit found a race in which the JNI scheduler sampled the producer status once, then continued draining queued packets. The producer could subsequently enter a failed or panicked terminal state while the scheduler still submitted packets from that queue.
+- Added a per-worker submission gate shared by the producer worker and JNI packet scheduler. Producer progress and terminal-state publication are serialized against the complete packet submission call; the scheduler rechecks worker status under the same gate before dequeuing each packet. Failed, panicked, stopped, and unknown states therefore reject remaining queued packets rather than allowing a previously sampled RUNNING state to authorize later writes.
+- EOF remains a distinct drainable state so packets successfully queued before normal end-of-stream can complete. The gate is not a hardware-level emergency stop and does not establish that already-submitted USB transfers have been cancelled or reaped.
+- Added a native concurrency regression test proving terminal failure publication cannot pass an active submission gate and is observable as a terminal transport error after the gate is released.
+- Validation scope: native synchronization policy and regression test, followed by CI. No physical DAC test was performed. Direct USB Safety Hold remains active; no claim of hardware safety or resolution of the prior high-pitched noise is made.
