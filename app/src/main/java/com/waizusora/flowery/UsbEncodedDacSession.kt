@@ -76,6 +76,7 @@ class UsbEncodedDacSession private constructor(
                 try {
                     Thread.sleep(50L)
                 } catch (interrupted: InterruptedException) {
+                    rememberPendingClose()
                     Thread.currentThread().interrupt()
                     throw IllegalStateException("Interrupted while waiting for encoded USB transfers to finish teardown", interrupted)
                 }
