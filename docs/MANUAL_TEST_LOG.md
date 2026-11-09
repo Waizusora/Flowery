@@ -1026,3 +1026,11 @@ Validation scope:
 - Reordered the transition: stop and join the producer worker, flush the USB transport, initialize and seek the decoder, then advance the session epoch and clear pending/queued packets. The replacement worker is spawned only after this sequence succeeds.
 - A decoder initialization or seek error now leaves the session epoch unchanged. The producer worker remains stopped and the JNI call reports failure; the playback owner must treat this as a failed seek and proceed through normal teardown rather than assuming playback resumed.
 - Validation scope: source-level transaction ordering plus CI native/Kotlin/Android checks. This does not simulate libusb callback delivery, USB controller behavior, or physical output. Direct USB Safety Hold remains active; no physical DAC test was performed.
+
+
+### 2026-11-09 — Make encoded producer terminal-state handling explicit
+
+- The worker lifecycle review confirmed that end-of-stream must remain distinct from cancellation, worker failure, and a contained panic. The transport scheduler must continue draining packets already queued at EOF, while rejecting a stopped or failed worker.
+- Replaced numeric worker-state literals with named constants and centralized the transport-availability mapping. Running and EOF permit queue draining; cancellation produces the cancellation error; panic, worker failure, and unknown states fail closed as unavailable.
+- Added a native unit test covering running, EOF, cancellation, ordinary failure, panic, and unknown status values. This verifies the scheduler's state policy; it does not simulate thread scheduling, libusb callbacks, USB controller behavior, or physical output.
+- CI validation is required. Direct USB Safety Hold remains active; no physical DAC test was performed.
