@@ -1084,3 +1084,12 @@ Validation scope:
 - UsbDacSession now tracks native-handle release and Android connection release separately. It never calls nativeClose again after native ownership has been released, and it can retry Android connection close without reusing the stale native handle.
 - Existing EncodedPipelineLifecycle unit tests exercise the step-recording and retry semantics now reused by the PCM pipeline. This is source-level lifecycle coverage; no libusb callback, device controller, or hardware behavior is simulated.
 - No physical DAC test was performed. Direct USB Safety Hold remains active. A successful host-side close path is not evidence that the earlier high-pitched noise has been resolved or that Direct USB playback is safe.
+
+
+### 2026-11-09 — Serialize PCM USB seek with the transport writer
+
+- A cross-thread race remained in the PCM path: FloweryPlayer could advance the shared session epoch while UsbPcmPlaybackPipeline.pollAndWrite() had already validated an older block but had not yet entered writePcm(). The subsequent epoch check would eventually flush the old queue, but one stale block could cross the writer boundary first.
+- PCM and encoded USB seeks are now submitted through a single pending-seek mailbox. The active pipeline writer consumes the request, advances the session epoch, updates the Rust producer seek, and flushes the USB transport on the same thread that performs packet submission. A seek therefore cannot commit its epoch between the PCM writer's block validation and native write call.
+- The PCM pipeline applies pending seeks during prebuffer and playback, including while paused. Startup seeks use the same path. Added Kotlin mailbox tests for latest-request coalescing, single consumption, clearing, and invalid negative positions.
+- This establishes a source-level serialization boundary for seek versus PCM packet submission. It does not prove that libusb cancellation always reaps every controller-owned transfer; native teardown still retains resources when transfer reclamation cannot be confirmed.
+- No physical DAC test was performed. Direct USB Safety Hold remains active; no hardware-safety claim is made.
