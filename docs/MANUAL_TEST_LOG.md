@@ -1235,3 +1235,12 @@ Validation scope:
 - Added a native regression test proving that directives after TRACK 100 cannot mutate TRACK 01 and that the following valid TRACK 02 is parsed with the expected boundary.
 - The parser correction is committed as `162bdb4cd818e8b82b591e29c19dece2d615e594`. Automated validation is pending CI; no test pass is claimed yet.
 - No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Playback session cancellation-state consistency
+
+- Native lifecycle review found that `nativePlaybackSessionSetPhase` could set the terminal `Cancelled` phase without setting the session cancellation flag, unlike the command and worker transition paths.
+- Centralized phase storage so entering `Cancelled` updates both the phase and cancellation flag with release ordering. Other phases retain the existing cancellation semantics.
+- Added a native regression test covering a non-terminal phase update followed by cancellation and asserting both atomic values.
+- Implementation commit: `efb47537f849d80aa4f0ce1ad688a4ad0a73cb51`. CI validation is pending; no test pass is claimed until the workflow completes.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
