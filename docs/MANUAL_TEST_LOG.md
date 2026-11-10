@@ -1252,3 +1252,10 @@ Validation scope:
 - Added EOF coverage proving the callback continues after consuming the final queued frame and returns the stop result only on the subsequent callback after the ring is drained. EOF silence is not counted as an underrun.
 - These tests invoke the callback against an in-memory output buffer. They do not create an Android AAudio stream, emulate real-time scheduling, or validate device behavior. CI validation is pending.
 - No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
+
+### 2026-11-10 — Serialize AAudio decode-worker replacement and teardown
+
+- A lifecycle audit found that `start_stream_pump_worker()` stopped the previous worker before creating a replacement, but the remove/join and spawn/insert sequence was not protected by one shared lifecycle lock. Two concurrent starts could both observe an empty registry slot; the later insertion could replace and detach the earlier worker's `JoinHandle` while that worker was still running.
+- Added a dedicated AAudio stream-pump lifecycle mutex around the complete replacement transaction and around external stop/join operations. The worker registry mutex is not held while joining, so status readers are not blocked for the duration of worker shutdown.
+- The lifecycle lock serializes worker replacement and teardown while preserving the existing worker-owned stop flag and join behavior. Android-target compilation and the full CI workflow are required to validate this change.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
