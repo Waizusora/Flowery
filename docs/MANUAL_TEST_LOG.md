@@ -1280,3 +1280,10 @@ Validation scope:
 - Added a deterministic native WAV regression test that primes a non-flat 31-band EQ with pre-seek audio, seeks to 500 ms, and compares the resumed samples against a fresh decoder independently configured and sought to the same timestamp.
 - The comparison checks that the seek path does not retain prior EQ filter history or stale pending PCM from the previous playback position.
 - This covers same-rate decoded PCM seek behavior. Resampled seek preroll and physical output remain separate validation areas; no DAC or USB Direct hardware testing was performed.
+
+## Seek recovery after end of stream regression (2026-11-10)
+
+- Extended the native seek-state regression to seek to the exact presentation duration, verify that no samples are emitted beyond EOF, then seek backward and compare the resumed PCM against a fresh decoder at the same timestamp.
+- This covers repeated seek behavior and verifies that a prior EOF state does not prevent playback from resuming after a backward seek.
+- The test exercises the decoder/DSP layer only. AAudio callback timing, Android output behavior, USB transport, and physical DAC behavior remain outside this test.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
