@@ -524,3 +524,93 @@ pub(crate) fn stop_output_for_session() {
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let mut v=[0i64;39];if let Some(o)=e.output.as_ref(){v[0]=o.underruns.load(Ordering::Acquire) as i64;v[2]=o.write.load(Ordering::Acquire) as i64-o.read.load(Ordering::Acquire) as i64;v[3]=o.capacity as i64;v[19]=e.last_open[4];v[23]=o.rate as i64;v[31]=e.last_open[1];v[32]=e.last_open[6];v[33]=e.last_open[0];}if !e.stream.is_null(){unsafe{v[1]=AAudioStream_getXRunCount(e.stream) as i64;v[4]=AAudioStream_getBufferSizeInFrames(e.stream) as i64;v[5]=AAudioStream_getFramesPerBurst(e.stream) as i64;v[6]=AAudioStream_getState(e.stream) as i64;v[7]=AAudioStream_getSampleRate(e.stream) as i64;v[8]=AAudioStream_getDeviceId(e.stream) as i64;v[9]=AAudioStream_getSharingMode(e.stream) as i64;v[10]=AAudioStream_getFormat(e.stream) as i64;v[11]=AAudioStream_getChannelCount(e.stream) as i64;v[12]=AAudioStream_getPerformanceMode(e.stream) as i64;v[26]=AAudioStream_getBufferCapacityInFrames(e.stream) as i64;}}let a=env.new_long_array(39).unwrap();let _=env.set_long_array_region(&a,0,&v);a.into_raw()}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null()||e.output.is_none(){return INVALID_STATE;}unsafe{let x=AAudioStream_getXRunCount(e.stream);if x<0{return x;}let cap=AAudioStream_getBufferCapacityInFrames(e.stream);let cur=AAudioStream_getBufferSizeInFrames(e.stream);let burst=AAudioStream_getFramesPerBurst(e.stream).max(1);if x>0&&cur>0&&cap>cur{let _=AAudioStream_setBufferSizeInFrames(e.stream,(cur+burst).min(cap));}OK}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(_:JNIEnv,_:JClass,rate:jint,channels:jint,device:jint,format:jint,exact:jboolean)->jint{if rate<=0||!(channels==1||channels==2)||![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}let mut out=Output{ring:vec![0.0;2048*channels as usize],capacity:2048,mask:2047,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(1f32.to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)};let mut result=0;for sharing in [SHARING_EXCLUSIVE,SHARING_SHARED]{let r=unsafe{e.open(&mut out,rate,sharing,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();break;}}if result==0&&exact!=JNI_TRUE{let r=unsafe{e.open(&mut out,0,SHARING_SHARED,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();}}if result>0{result}else{UNAVAILABLE}}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_output(capacity: usize, channels: usize) -> Output {
+        Output {
+            ring: vec![0.0; capacity * channels],
+            capacity: capacity as u64,
+            mask: capacity as u64 - 1,
+            channels,
+            format: FMT_FLOAT,
+            rate: 48_000,
+            read: AtomicU64::new(0),
+            write: AtomicU64::new(0),
+            played: AtomicU64::new(0),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            active: AtomicBool::new(true),
+            eof: AtomicBool::new(false),
+            underruns: AtomicU64::new(0),
+            error: AtomicI32::new(0),
+        }
+    }
+
+    #[test]
+    fn data_callback_drains_wrapped_ring_and_zero_fills_underrun() {
+        let mut output = test_output(4, 2);
+        output.read.store(3, Ordering::Relaxed);
+        output.write.store(6, Ordering::Relaxed);
+        output.played.store(100, Ordering::Relaxed);
+
+        // Three queued stereo frames occupy ring slots 3, 0, and 1.
+        output.ring[6..8].copy_from_slice(&[0.1, -0.1]);
+        output.ring[0..2].copy_from_slice(&[0.2, -0.2]);
+        output.ring[2..4].copy_from_slice(&[0.3, -0.3]);
+
+        let mut audio = [9.0_f32; 8];
+        let result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                (&mut output as *mut Output).cast::<c_void>(),
+                audio.as_mut_ptr().cast::<c_void>(),
+                4,
+            )
+        };
+
+        assert_eq!(result, 0);
+        assert_eq!(&audio[..6], &[0.1, -0.1, 0.2, -0.2, 0.3, -0.3]);
+        assert_eq!(&audio[6..], &[0.0, 0.0]);
+        assert_eq!(output.read.load(Ordering::Acquire), 6);
+        assert_eq!(output.played.load(Ordering::Acquire), 103);
+        assert_eq!(output.underruns.load(Ordering::Acquire), 1);
+        assert!(output.active.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn data_callback_stops_only_after_eof_ring_is_drained() {
+        let mut output = test_output(4, 1);
+        output.ring[0] = 0.25;
+        output.write.store(1, Ordering::Relaxed);
+        output.eof.store(true, Ordering::Relaxed);
+
+        let mut final_frame = [0.0_f32; 1];
+        let first_result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                (&mut output as *mut Output).cast::<c_void>(),
+                final_frame.as_mut_ptr().cast::<c_void>(),
+                1,
+            )
+        };
+        assert_eq!(first_result, 0);
+        assert_eq!(final_frame, [0.25]);
+        assert!(output.active.load(Ordering::Acquire));
+
+        let mut silence = [9.0_f32; 1];
+        let second_result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                (&mut output as *mut Output).cast::<c_void>(),
+                silence.as_mut_ptr().cast::<c_void>(),
+                1,
+            )
+        };
+        assert_eq!(second_result, 1);
+        assert_eq!(silence, [0.0]);
+        assert!(!output.active.load(Ordering::Acquire));
+        assert_eq!(output.underruns.load(Ordering::Acquire), 0);
+    }
+}
