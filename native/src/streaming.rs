@@ -2116,15 +2116,22 @@ mod seek_dsp_state_regression_tests {
         }
     }
 
-    fn configured_decoder(path: &std::path::Path) -> (std::fs::File, StreamDecoder) {
+    fn configured_decoder_at_rate(
+        path: &std::path::Path,
+        output_rate: usize,
+    ) -> (std::fs::File, StreamDecoder) {
         let source = std::fs::File::open(path).unwrap();
         let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
         let mut gains = [0.0_f32; 31];
         gains[8] = 5.0;
         gains[17] = -4.0;
         gains[24] = 3.0;
-        decoder.configure(48_000, &gains).unwrap();
+        decoder.configure(output_rate, &gains).unwrap();
         (source, decoder)
+    }
+
+    fn configured_decoder(path: &std::path::Path) -> (std::fs::File, StreamDecoder) {
+        configured_decoder_at_rate(path, 48_000)
     }
 
     #[test]
@@ -2156,6 +2163,50 @@ mod seek_dsp_state_regression_tests {
         assert_eq!(after_playback.seek_to(500).unwrap(), 500);
         assert_eq!(after_playback.read_frames(256).unwrap(), resumed_fresh,
             "a backward seek after EOF must reset EOF and DSP state");
+
+        drop(after_playback);
+        drop(fresh);
+        drop(source_after_playback);
+        drop(source_fresh);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn resampled_seek_rebuilds_rubato_and_eq_state() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-resampled-seek-state-{}.wav",
+            std::process::id()
+        ));
+        write_seek_signal(&path);
+
+        let (source_after_playback, mut after_playback) =
+            configured_decoder_at_rate(&path, 44_100);
+        let priming = after_playback.read_frames(4_096).unwrap();
+        assert_eq!(priming.len(), 8_192);
+        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
+        let resumed_after_seek = after_playback.read_frames(256).unwrap();
+
+        let (source_fresh, mut fresh) = configured_decoder_at_rate(&path, 44_100);
+        assert_eq!(fresh.seek_to(500).unwrap(), 500);
+        let resumed_fresh = fresh.read_frames(256).unwrap();
+
+        assert_eq!(resumed_after_seek.len(), 512);
+        assert_eq!(
+            resumed_after_seek, resumed_fresh,
+            "resampled seek retained prior Rubato or EQ state"
+        );
+
+        assert_eq!(after_playback.seek_to(1_000).unwrap(), 1_000);
+        assert!(
+            after_playback.read_frames(256).unwrap().is_empty(),
+            "resampled seek to the presentation duration must not emit samples beyond EOF"
+        );
+        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
+        assert_eq!(
+            after_playback.read_frames(256).unwrap(),
+            resumed_fresh,
+            "resampled backward seek after EOF must rebuild Rubato and EQ state"
+        );
 
         drop(after_playback);
         drop(fresh);
