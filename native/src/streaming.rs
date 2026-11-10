@@ -959,9 +959,16 @@ pub(super) fn process_aaudio_seek(
     ) {
         return Ok(-1);
     }
-    let actual = {
+    let seek_result = {
         let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
-        guard.seek_to(target_ms as u64).map_err(|error| error.to_string())? as i64
+        guard.seek_to(target_ms as u64).map_err(|error| error.to_string())
+    };
+    let actual = match seek_result {
+        Ok(position) => position as i64,
+        Err(_) if !aaudio_seek_request_is_current(
+            &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+        ) => return Ok(-1),
+        Err(error) => return Err(error),
     };
     if !aaudio_seek_request_is_current(
         &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
@@ -982,6 +989,11 @@ pub(super) fn process_aaudio_seek(
     let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
     let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
     if flush_result != 0 {
+        if !aaudio_seek_request_is_current(
+            &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+        ) {
+            return Ok(-1);
+        }
         return Err(format!("Unable to flush AAudio output for seek (error {flush_result})"));
     }
     if !aaudio_seek_request_is_current(
@@ -989,9 +1001,16 @@ pub(super) fn process_aaudio_seek(
     ) {
         return Ok(-1);
     }
-    start_stream_pump_worker(
+    if let Err(error) = start_stream_pump_worker(
         decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
-    )?;
+    ) {
+        if !aaudio_seek_request_is_current(
+            &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+        ) {
+            return Ok(-1);
+        }
+        return Err(error);
+    }
     let position_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     if !aaudio_seek_request_is_current(
         &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
