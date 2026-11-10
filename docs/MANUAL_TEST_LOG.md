@@ -1273,3 +1273,10 @@ Validation scope:
 - Added a deterministic native regression test that decodes the same stereo WAV source at 44.1 kHz, resamples to 48 kHz, and applies non-flat 31-band EQ settings.
 - The test renders the complete stream with consumer read sizes of 7, 127, and 1,024 frames, then compares output lengths and every output sample. This verifies that caller-visible chunk boundaries do not reset or otherwise alter persistent Rubato/EQ processing state.
 - This is a native software regression test. It does not validate audible quality, device output, USB transport, or physical DAC behavior.
+
+
+## DSP seek-state reset regression (2026-11-10)
+
+- Added a deterministic native WAV regression test that primes a non-flat 31-band EQ with pre-seek audio, seeks to 500 ms, and compares the resumed samples against a fresh decoder independently configured and sought to the same timestamp.
+- The comparison checks that the seek path does not retain prior EQ filter history or stale pending PCM from the previous playback position.
+- This covers same-rate decoded PCM seek behavior. Resampled seek preroll and physical output remain separate validation areas; no DAC or USB Direct hardware testing was performed.
