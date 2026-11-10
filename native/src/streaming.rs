@@ -922,6 +922,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+fn aaudio_seek_request_is_current(
+    request: &crate::playback_session::AAudioSeekRequest,
+    current_epoch: u64,
+    cancelled: bool,
+) -> bool {
+    !cancelled && request.epoch == current_epoch
+}
+
 fn clamp_aaudio_seek_target(request: &crate::playback_session::AAudioSeekRequest) -> i64 {
     request.position_ms.max(request.segment_start_ms)
         .min(if request.segment_end_ms >= 0 { request.segment_end_ms } else { i64::MAX })
@@ -933,8 +941,10 @@ pub(super) fn process_aaudio_seek(
     session: Arc<crate::playback_session::SessionState>,
     request: crate::playback_session::AAudioSeekRequest,
 ) -> Result<i64, String> {
-    if session.route != 0 || session.cancelled.load(Ordering::Acquire) {
-        return Err("AAudio playback session is no longer active".into());
+    if session.route != 0 || !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        return Ok(-1);
     }
     let decoder_handle = session.decoder_handle;
     let decoder = Arc::clone(&session.decoder);
@@ -944,27 +954,50 @@ pub(super) fn process_aaudio_seek(
     }
     let target_ms = clamp_aaudio_seek_target(&request);
     stop_stream_pump_worker(decoder_handle);
-    if session.cancelled.load(Ordering::Acquire) {
-        return Err("AAudio playback session was cancelled during seek".into());
+    if !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        return Ok(-1);
     }
     let actual = {
         let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.seek_to(target_ms as u64).map_err(|error| error.to_string())? as i64
     };
+    if !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        return Ok(-1);
+    }
     let (target_frame, remaining_frames) = aaudio_seek_frame_window(
         actual.max(0) as u64,
         request.segment_start_ms as u64,
         (request.segment_end_ms >= 0).then_some(request.segment_end_ms as u64),
         output_rate,
     );
+    if !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        return Ok(-1);
+    }
     let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
     let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
     if flush_result != 0 {
         return Err(format!("Unable to flush AAudio output for seek (error {flush_result})"));
     }
+    if !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        return Ok(-1);
+    }
     start_stream_pump_worker(
         decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
     )?;
+    if !aaudio_seek_request_is_current(
+        &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
+    ) {
+        stop_stream_pump_worker(decoder_handle);
+        return Ok(-1);
+    }
     session.last_seek_position_ms.store(actual, Ordering::Release);
     Ok(actual)
 }
@@ -1311,6 +1344,32 @@ mod handle_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aaudio_seek_requests_enforce_latest_epoch_and_cancellation() {
+        use crate::playback_session::AAudioSeekRequest;
+        let older = AAudioSeekRequest { epoch: 7, max_frames: 128, position_ms: 100,
+            segment_start_ms: 0, segment_end_ms: -1 };
+        let latest = AAudioSeekRequest { epoch: 8, max_frames: 128, position_ms: 900,
+            segment_start_ms: 0, segment_end_ms: -1 };
+        assert!(aaudio_seek_request_is_current(&older, 7, false));
+        assert!(!aaudio_seek_request_is_current(&older, 8, false));
+        assert!(aaudio_seek_request_is_current(&latest, 8, false));
+        assert!(!aaudio_seek_request_is_current(&latest, 8, true));
+    }
+
+    #[test]
+    fn aaudio_seek_race_discards_old_request_after_new_epoch_is_published() {
+        use crate::playback_session::AAudioSeekRequest;
+        let epoch = AtomicU64::new(11);
+        let in_flight = AAudioSeekRequest { epoch: 11, max_frames: 64, position_ms: 250,
+            segment_start_ms: 0, segment_end_ms: -1 };
+        epoch.store(12, Ordering::Release);
+        let newest = AAudioSeekRequest { epoch: 12, max_frames: 64, position_ms: 1_250,
+            segment_start_ms: 0, segment_end_ms: -1 };
+        assert!(!aaudio_seek_request_is_current(&in_flight, epoch.load(Ordering::Acquire), false));
+        assert!(aaudio_seek_request_is_current(&newest, epoch.load(Ordering::Acquire), false));
+    }
     use std::io::Write;
     use std::os::fd::AsRawFd;
 
