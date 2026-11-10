@@ -992,13 +992,16 @@ pub(super) fn process_aaudio_seek(
     start_stream_pump_worker(
         decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
     )?;
+    let position_gate = session.gate.lock().unwrap_or_else(|error| error.into_inner());
     if !aaudio_seek_request_is_current(
         &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
     ) {
+        drop(position_gate);
         stop_stream_pump_worker(decoder_handle);
         return Ok(-1);
     }
     session.last_seek_position_ms.store(actual, Ordering::Release);
+    drop(position_gate);
     Ok(actual)
 }
 
