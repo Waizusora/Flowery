@@ -1932,3 +1932,76 @@ mod chunk_boundary_continuity_tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+
+#[cfg(test)]
+mod seek_dsp_state_regression_tests {
+    use super::StreamDecoder;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    fn write_seek_signal(path: &std::path::Path) {
+        let frames = 48_000_u32;
+        let sample_rate = 48_000_u32;
+        let data_bytes = frames * 4;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&sample_rate.to_le_bytes()).unwrap();
+        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
+        file.write_all(&4_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&data_bytes.to_le_bytes()).unwrap();
+        for frame in 0..frames {
+            let phase = frame as f32 * 0.031;
+            let left = (phase.sin() * 24_000.0) as i16;
+            let right = ((phase * 0.73).sin() * 20_000.0) as i16;
+            file.write_all(&left.to_le_bytes()).unwrap();
+            file.write_all(&right.to_le_bytes()).unwrap();
+        }
+    }
+
+    fn configured_decoder(path: &std::path::Path) -> (std::fs::File, StreamDecoder) {
+        let source = std::fs::File::open(path).unwrap();
+        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
+        let mut gains = [0.0_f32; 31];
+        gains[8] = 5.0;
+        gains[17] = -4.0;
+        gains[24] = 3.0;
+        decoder.configure(48_000, &gains).unwrap();
+        (source, decoder)
+    }
+
+    #[test]
+    fn seek_resets_eq_history_and_discards_pre_seek_pcm_state() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-seek-eq-state-{}.wav",
+            std::process::id()
+        ));
+        write_seek_signal(&path);
+
+        let (source_after_playback, mut after_playback) = configured_decoder(&path);
+        let priming = after_playback.read_frames(4_096).unwrap();
+        assert_eq!(priming.len(), 8_192);
+        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
+        let resumed_after_seek = after_playback.read_frames(256).unwrap();
+
+        let (source_fresh, mut fresh) = configured_decoder(&path);
+        assert_eq!(fresh.seek_to(500).unwrap(), 500);
+        let resumed_fresh = fresh.read_frames(256).unwrap();
+
+        assert_eq!(resumed_after_seek, resumed_fresh,
+            "seek output retained EQ history or pending PCM from the previous playback position");
+
+        drop(after_playback);
+        drop(fresh);
+        drop(source_after_playback);
+        drop(source_fresh);
+        std::fs::remove_file(path).unwrap();
+    }
+}
