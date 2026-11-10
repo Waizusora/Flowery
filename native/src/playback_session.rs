@@ -90,6 +90,14 @@ fn valid_phase_transition(current: i32, next: i32) -> bool {
     }
 }
 
+/// Keeps the cancellation flag consistent with the terminal Cancelled phase.
+fn store_session_phase(phase: &AtomicI64, cancelled: &AtomicBool, next: i32) {
+    phase.store(next as i64, Ordering::Release);
+    if next == SessionPhase::Cancelled as i32 {
+        cancelled.store(true, Ordering::Release);
+    }
+}
+
 pub(super) fn advance_epoch(epoch: &AtomicU64, cancelled: &AtomicBool) -> Option<u64> {
     loop {
         if cancelled.load(Ordering::Acquire) { return None; }
@@ -111,10 +119,7 @@ pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> boo
     }
     let current = session.phase.load(Ordering::Acquire) as i32;
     if !valid_phase_transition(current, next) { return false; }
-    session.phase.store(next as i64, Ordering::Release);
-    if next == SessionPhase::Cancelled as i32 {
-        session.cancelled.store(true, Ordering::Release);
-    }
+    store_session_phase(&session.phase, &session.cancelled, next);
     true
 }
 
@@ -237,7 +242,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session phase transition");
         return -1;
     }
-    session.phase.store(phase as i64, Ordering::Release);
+    store_session_phase(&session.phase, &session.cancelled, phase);
     0
 }
 
@@ -277,10 +282,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
         let _ = env.throw_new("java/lang/IllegalStateException", "Invalid playback session command transition");
         return -1;
     }
-    session.phase.store(command as i64, Ordering::Release);
-    if command == SessionPhase::Cancelled as jint {
-        session.cancelled.store(true, Ordering::Release);
-    }
+    store_session_phase(&session.phase, &session.cancelled, command);
     #[cfg(target_os = "android")]
     let apply_pause = session.route == 0 && command == SessionPhase::Paused as jint;
     #[cfg(target_os = "android")]
@@ -565,6 +567,20 @@ mod tests {
         assert!(!valid_phase_transition(5, 2));
         assert!(!valid_phase_transition(6, 2));
         assert!(!valid_phase_transition(7, 2));
+    }
+
+    #[test]
+    fn every_phase_update_path_sets_the_cancellation_flag_for_cancelled_phase() {
+        let phase = AtomicI64::new(SessionPhase::Running as i64);
+        let cancelled = AtomicBool::new(false);
+
+        store_session_phase(&phase, &cancelled, SessionPhase::Paused as i32);
+        assert_eq!(phase.load(Ordering::Acquire), SessionPhase::Paused as i64);
+        assert!(!cancelled.load(Ordering::Acquire));
+
+        store_session_phase(&phase, &cancelled, SessionPhase::Cancelled as i32);
+        assert_eq!(phase.load(Ordering::Acquire), SessionPhase::Cancelled as i64);
+        assert!(cancelled.load(Ordering::Acquire));
     }
 
     #[test]
