@@ -23,6 +23,8 @@ enum SessionPhase {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AAudioSeekRequest {
+    /// Session epoch assigned when this request becomes the latest seek.
+    pub(crate) epoch: u64,
     #[cfg_attr(not(target_os = "android"), allow(dead_code))]
     pub(crate) max_frames: usize,
     pub(crate) position_ms: i64,
@@ -351,6 +353,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRequestPlayb
     *session.seek_error.lock().unwrap_or_else(|error| error.into_inner()) = String::new();
     *session.seek_request.lock().unwrap_or_else(|error| error.into_inner()) =
         Some(AAudioSeekRequest {
+            epoch,
             max_frames: max_frames as usize,
             position_ms,
             segment_start_ms,
@@ -476,6 +479,17 @@ mod tests {
         assert!(session_ref(0).is_none());
         assert!(session_ref(-1).is_none());
         assert!(session_ref(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn aaudio_seek_request_is_bound_to_its_publication_epoch() {
+        let epoch = AtomicU64::new(4);
+        let cancelled = AtomicBool::new(false);
+        let published = advance_epoch(&epoch, &cancelled).unwrap();
+        let request = AAudioSeekRequest { epoch: published, max_frames: 256, position_ms: 900,
+            segment_start_ms: 0, segment_end_ms: -1 };
+        assert_eq!(request.epoch, 5);
+        assert_eq!(epoch.load(Ordering::Acquire), request.epoch);
     }
 
     #[test]
