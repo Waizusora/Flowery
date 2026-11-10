@@ -818,8 +818,16 @@ struct StreamPumpWorker {
 static STREAM_PUMP_WORKERS: OnceLock<Mutex<HashMap<i64, StreamPumpWorker>>> = OnceLock::new();
 
 #[cfg(target_os = "android")]
+static STREAM_PUMP_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
 fn stream_pump_workers() -> &'static Mutex<HashMap<i64, StreamPumpWorker>> {
     STREAM_PUMP_WORKERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(target_os = "android")]
+fn stream_pump_lifecycle() -> &'static Mutex<()> {
+    STREAM_PUMP_LIFECYCLE.get_or_init(|| Mutex::new(()))
 }
 
 #[cfg(target_os = "android")]
@@ -832,12 +840,23 @@ pub(super) fn stream_pump_status(handle: jlong) -> Option<(i32, u64)> {
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn stop_stream_pump_worker(handle: jlong) {
-    let worker = stream_pump_workers().lock().unwrap_or_else(|error| error.into_inner()).remove(&handle);
+fn stop_stream_pump_worker_locked(handle: jlong) {
+    let worker = stream_pump_workers()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .remove(&handle);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
         let _ = worker.thread.join();
     }
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn stop_stream_pump_worker(handle: jlong) {
+    let _lifecycle = stream_pump_lifecycle()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    stop_stream_pump_worker_locked(handle);
 }
 
 fn register_decoder(decoder: StreamDecoder) -> jlong {
@@ -1008,7 +1027,13 @@ fn start_stream_pump_worker(
     chunk_frames: usize,
     frame_limit: Option<u64>,
 ) -> Result<(), String> {
-    stop_stream_pump_worker(handle);
+    // Serialize the complete replace operation, not just map removal. Without
+    // this gate, concurrent starts can both observe an empty slot and one can
+    // detach the other worker by replacing its JoinHandle before it is joined.
+    let _lifecycle = stream_pump_lifecycle()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    stop_stream_pump_worker_locked(handle);
     if session.cancelled.load(Ordering::Acquire) {
         return Err("Playback session is cancelled".into());
     }
