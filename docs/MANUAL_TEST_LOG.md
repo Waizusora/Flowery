@@ -1259,3 +1259,10 @@ Validation scope:
 - Added a dedicated AAudio stream-pump lifecycle mutex around the complete replacement transaction and around external stop/join operations. The worker registry mutex is not held while joining, so status readers are not blocked for the duration of worker shutdown.
 - The lifecycle lock serializes worker replacement and teardown while preserving the existing worker-owned stop flag and join behavior. Android-target compilation and the full CI workflow are required to validate this change.
 - No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
+
+### 2026-11-10 — Serialize AAudio output-scheduler replacement and teardown
+
+- The seek/stop audit found that the global output scheduler had the same replacement race previously corrected for the decode worker: concurrent scheduler starts could both observe an empty registry and one insertion could overwrite a live scheduler's `JoinHandle`. A concurrent stop could also finish before a not-yet-registered scheduler was inserted.
+- Added a dedicated scheduler lifecycle mutex held across stopping/joining the previous scheduler, spawning the replacement, and registering its handle. External stop paths use the same mutex, so a stop cannot pass between spawn and registration.
+- The registry mutex is released before joining the scheduler thread. The lifecycle mutex serializes lifecycle operations without being held by the scheduler thread itself.
+- Android-target CI is required to validate this change. No physical AAudio device, DAC, or USB Direct hardware test was performed. USB Direct Safety Hold remains active.
