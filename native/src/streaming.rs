@@ -67,6 +67,25 @@ fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
+/// Converts an absolute seek timestamp into the output-frame window of a segment.
+fn aaudio_seek_frame_window(
+    actual_ms: u64,
+    segment_start_ms: u64,
+    segment_end_ms: Option<u64>,
+    output_rate: usize,
+) -> (u64, Option<u64>) {
+    let relative_target_ms = actual_ms.saturating_sub(segment_start_ms);
+    let target_frame = milliseconds_to_frames(relative_target_ms, output_rate);
+    let remaining_frames = segment_end_ms.map(|end_ms| {
+        let segment_end_frame = milliseconds_to_frames(
+            end_ms.saturating_sub(segment_start_ms),
+            output_rate,
+        );
+        segment_end_frame.saturating_sub(target_frame)
+    });
+    (target_frame, remaining_frames)
+}
+
 fn presentation_frame_count(
     decoded_frames: Option<u64>,
     encoder_delay: Option<u32>,
@@ -913,20 +932,17 @@ pub(super) fn process_aaudio_seek(
         let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.seek_to(target_ms as u64).map_err(|error| error.to_string())? as i64
     };
-    let target_frame = milliseconds_to_frames(
-        (actual - request.segment_start_ms).max(0) as u64, output_rate,
+    let (target_frame, remaining_frames) = aaudio_seek_frame_window(
+        actual.max(0) as u64,
+        request.segment_start_ms as u64,
+        (request.segment_end_ms >= 0).then_some(request.segment_end_ms as u64),
+        output_rate,
     );
     let flush_position = i64::try_from(target_frame).unwrap_or(i64::MAX);
     let flush_result = crate::aaudio::flush_output_for_seek(flush_position);
     if flush_result != 0 {
         return Err(format!("Unable to flush AAudio output for seek (error {flush_result})"));
     }
-    let remaining_frames = if request.segment_end_ms >= 0 {
-        let end_frame = milliseconds_to_frames(
-            (request.segment_end_ms - request.segment_start_ms) as u64, output_rate,
-        );
-        Some(end_frame.saturating_sub(target_frame))
-    } else { None };
     start_stream_pump_worker(
         decoder_handle, decoder, Arc::clone(&session), request.max_frames, remaining_frames,
     )?;
@@ -1520,6 +1536,26 @@ mod tests {
     fn seek_frame_conversion_saturates_instead_of_wrapping() {
         assert_eq!(milliseconds_to_frames(u64::MAX, 192_000), u64::MAX);
         assert_eq!(milliseconds_to_frames(1_000, 48_000), 48_000);
+    }
+
+    #[test]
+    fn aaudio_segment_seek_window_stays_relative_and_stops_at_segment_end() {
+        assert_eq!(
+            aaudio_seek_frame_window(2_500, 2_000, Some(5_000), 48_000),
+            (24_000, Some(120_000)),
+        );
+        assert_eq!(
+            aaudio_seek_frame_window(5_000, 2_000, Some(5_000), 48_000),
+            (144_000, Some(0)),
+        );
+        assert_eq!(
+            aaudio_seek_frame_window(1_000, 2_000, Some(5_000), 48_000),
+            (0, Some(144_000)),
+        );
+        assert_eq!(
+            aaudio_seek_frame_window(2_500, 2_000, None, 44_100),
+            (22_050, None),
+        );
     }
     #[test]
     fn uncompressed_wav_pcm_reaches_usb_bytes_bit_exact_without_float_conversion() {
