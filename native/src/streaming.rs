@@ -1366,6 +1366,7 @@ mod handle_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
     fn aaudio_seek_requests_enforce_latest_epoch_and_cancellation() {
@@ -1612,6 +1613,7 @@ mod tests {
     #[test]
     fn aaudio_seek_target_is_clamped_to_the_active_segment() {
         let bounded = crate::playback_session::AAudioSeekRequest {
+            epoch: 0,
             max_frames: 8192,
             position_ms: 900,
             segment_start_ms: 1_000,
