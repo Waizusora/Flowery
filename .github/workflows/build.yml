@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: flowery-${{ github.workflow }}-${{ github.ref }}
@@ -18,10 +18,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      KEYSTORE_BASE64: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEYSTORE_BASE64 || '' }}
+      KEYSTORE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEYSTORE_PASSWORD || '' }}
+      KEY_ALIAS: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_ALIAS || '' }}
+      KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_PASSWORD || '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -89,6 +89,7 @@ jobs:
         run: cargo ndk --platform 26 -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
 
       - name: Configure release signing
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
           if [[ -n "$KEYSTORE_BASE64" ]]; then
@@ -108,8 +109,20 @@ jobs:
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
 
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: flowery-apks
+          path: release-apks
+
       - name: Publish GitHub release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/*.apk
+          files: release-apks/**/*.apk
