@@ -1266,3 +1266,10 @@ Validation scope:
 - Added a dedicated scheduler lifecycle mutex held across stopping/joining the previous scheduler, spawning the replacement, and registering its handle. External stop paths use the same mutex, so a stop cannot pass between spawn and registration.
 - The registry mutex is released before joining the scheduler thread. The lifecycle mutex serializes lifecycle operations without being held by the scheduler thread itself.
 - Android-target CI is required to validate this change. No physical AAudio device, DAC, or USB Direct hardware test was performed. USB Direct Safety Hold remains active.
+
+
+## DSP chunk-boundary continuity audit (2026-11-10)
+
+- Added a deterministic native regression test that decodes the same stereo WAV source at 44.1 kHz, resamples to 48 kHz, and applies non-flat 31-band EQ settings.
+- The test renders the complete stream with consumer read sizes of 7, 127, and 1,024 frames, then compares output lengths and every output sample. This verifies that caller-visible chunk boundaries do not reset or otherwise alter persistent Rubato/EQ processing state.
+- This is a native software regression test. It does not validate audible quality, device output, USB transport, or physical DAC behavior.
