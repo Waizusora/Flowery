@@ -1244,3 +1244,11 @@ Validation scope:
 - Added a native regression test covering a non-terminal phase update followed by cancellation and asserting both atomic values.
 - Implementation commit: `efb47537f849d80aa4f0ce1ad688a4ad0a73cb51`. CI validation is pending; no test pass is claimed until the workflow completes.
 - No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
+
+### 2026-11-10 — AAudio callback ring-buffer regression coverage
+
+- Audited the AAudio callback's single-producer/single-consumer ring contract: the producer publishes completed frames with release ordering, the callback acquires the published write index, and the producer acquires the callback's released read index before reusing ring slots.
+- Added deterministic native callback tests for stereo ring wraparound, partial-buffer underrun zero-fill, consumed-frame accounting, and underrun accounting.
+- Added EOF coverage proving the callback continues after consuming the final queued frame and returns the stop result only on the subsequent callback after the ring is drained. EOF silence is not counted as an underrun.
+- These tests invoke the callback against an in-memory output buffer. They do not create an Android AAudio stream, emulate real-time scheduling, or validate device behavior. CI validation is pending.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
