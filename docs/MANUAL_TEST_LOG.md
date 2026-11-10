@@ -1287,3 +1287,11 @@ Validation scope:
 - This covers repeated seek behavior and verifies that a prior EOF state does not prevent playback from resuming after a backward seek.
 - The test exercises the decoder/DSP layer only. AAudio callback timing, Android output behavior, USB transport, and physical DAC behavior remain outside this test.
 - No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
+
+## AAudio CUE-segment seek frame-window regression (2026-11-10)
+
+- Extracted the segment-relative output-frame calculation used by the AAudio seek path into a deterministic helper shared by production code and native tests.
+- Added coverage for seeks inside a segment, exactly at the segment end, before the segment start, and for unbounded segments at both 48 kHz and 44.1 kHz.
+- The tests verify that ring-buffer playback position is relative to the segment start and that the remaining frame budget reaches zero at the segment end, preventing decode beyond the active CUE track boundary.
+- This is a native arithmetic/regression test. It does not validate AAudio device timing, audible output, USB transport, or physical DAC behavior.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
