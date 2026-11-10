@@ -16,16 +16,24 @@ internal object UsbPcmBlockDecoder {
         // Keep this layout in sync with native/src/usb_pcm.rs: flag + epoch + frames + start frame.
         require(encoded.size >= 17) { "Rust USB PCM block header is truncated." }
         val header = ByteBuffer.wrap(encoded, 0, 17).order(ByteOrder.LITTLE_ENDIAN)
-        val endOfStream = header.get().toInt() != 0
+        val endOfStreamFlag = header.get().toInt()
+        require(endOfStreamFlag == 0 || endOfStreamFlag == 1) {
+            "Rust USB PCM block contains an invalid end-of-stream flag."
+        }
+        val endOfStream = endOfStreamFlag == 1
         val epoch = header.int
         val frames = header.int
         val startFrames = header.long
-        require(frames >= 0 && startFrames >= 0L) { "Rust USB PCM block contains invalid frame metadata." }
+        require(epoch >= 0 && frames >= 0 && startFrames >= 0L) {
+            "Rust USB PCM block contains invalid frame metadata."
+        }
         val payload = encoded.copyOfRange(17, encoded.size)
         require(!endOfStream || (frames == 0 && payload.isEmpty())) {
             "Rust USB PCM end-of-stream block must not contain audio payload."
         }
-        require(endOfStream || frames > 0) { "Rust USB PCM data block must contain at least one frame." }
+        require(endOfStream || (frames > 0 && payload.isNotEmpty())) {
+            "Rust USB PCM data block must contain frames and a non-empty payload."
+        }
         return UsbPcmBlock(endOfStream, epoch, frames, startFrames, payload)
     }
 }
