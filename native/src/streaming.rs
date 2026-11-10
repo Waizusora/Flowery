@@ -1853,3 +1853,82 @@ mod eof_boundary_regression_tests {
         std::fs::remove_file(path).unwrap();
     }
 }
+
+
+#[cfg(test)]
+mod chunk_boundary_continuity_tests {
+    use super::StreamDecoder;
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+
+    fn write_test_wav(path: &std::path::Path) {
+        let frames = 8_192_u32;
+        let sample_rate = 44_100_u32;
+        let data_bytes = frames * 4;
+        let mut file = std::fs::File::create(path).unwrap();
+        file.write_all(b"RIFF").unwrap();
+        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
+        file.write_all(b"WAVEfmt ").unwrap();
+        file.write_all(&16_u32.to_le_bytes()).unwrap();
+        file.write_all(&1_u16.to_le_bytes()).unwrap();
+        file.write_all(&2_u16.to_le_bytes()).unwrap();
+        file.write_all(&sample_rate.to_le_bytes()).unwrap();
+        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
+        file.write_all(&4_u16.to_le_bytes()).unwrap();
+        file.write_all(&16_u16.to_le_bytes()).unwrap();
+        file.write_all(b"data").unwrap();
+        file.write_all(&data_bytes.to_le_bytes()).unwrap();
+        for frame in 0..frames {
+            let left = ((frame * 97) % 30_000) as i16 - 15_000;
+            let right = ((frame * 193) % 28_000) as i16 - 14_000;
+            file.write_all(&left.to_le_bytes()).unwrap();
+            file.write_all(&right.to_le_bytes()).unwrap();
+        }
+    }
+
+    fn render(path: &std::path::Path, request_frames: usize) -> Vec<f32> {
+        let source = std::fs::File::open(path).unwrap();
+        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
+        let mut gains = [0.0_f32; 31];
+        gains[10] = 3.0;
+        gains[20] = -2.0;
+        decoder.configure(48_000, &gains).unwrap();
+
+        let mut rendered = Vec::new();
+        loop {
+            let chunk = decoder.read_frames(request_frames).unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+            assert_eq!(chunk.len() % 2, 0, "decoder split an interleaved stereo frame");
+            rendered.extend(chunk);
+        }
+        rendered
+    }
+
+    #[test]
+    fn resampler_and_equalizer_output_is_independent_of_consumer_chunk_size() {
+        let path = std::env::temp_dir().join(format!(
+            "flowery-chunk-continuity-{}.wav",
+            std::process::id()
+        ));
+        write_test_wav(&path);
+
+        let small_reads = render(&path, 7);
+        let irregular_reads = render(&path, 127);
+        let large_reads = render(&path, 1_024);
+
+        assert!(!small_reads.is_empty());
+        assert_eq!(small_reads.len(), irregular_reads.len());
+        assert_eq!(small_reads.len(), large_reads.len());
+        assert_eq!(small_reads, irregular_reads,
+            "resampler/EQ state changed with irregular consumer chunk boundaries");
+        assert_eq!(small_reads, large_reads,
+            "resampler/EQ state changed with large consumer chunk boundaries");
+
+        drop(small_reads);
+        drop(irregular_reads);
+        drop(large_reads);
+        std::fs::remove_file(path).unwrap();
+    }
+}
