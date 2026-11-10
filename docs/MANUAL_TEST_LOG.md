@@ -1303,3 +1303,13 @@ Validation scope:
 - Added native regression tests for request-to-epoch binding, latest-request-wins behavior, cancellation rejection, and an interleaving where a newer epoch is published while an older seek is in flight.
 - These tests validate request-generation and state-publication logic. They do not simulate an actual Android AAudio callback/device race, prove pause/resume timing on hardware, or validate USB PCM transport. Playback-position behavior across pause/resume and real CUE boundary output still require device-level/manual verification.
 - CI validation for these changes is pending. No physical AAudio or USB DAC test was performed. USB Direct Safety Hold remains active.
+
+
+## Resampled seek-state regression coverage (2026-11-10)
+
+- Added a deterministic native WAV regression that configures a 48 kHz stereo source for 44.1 kHz output with non-flat 31-band EQ.
+- The test primes the decoder, seeks to 500 ms, and compares the resumed output sample-for-sample with a fresh decoder configured and sought to the same position. This checks that the seek rebuilds Rubato filter state and EQ history consistently.
+- The test also seeks to the presentation duration, verifies that no output is emitted beyond EOF, then seeks backward and compares the resumed samples again.
+- This validates the resampled decoder/DSP path in host-native tests. It does not emulate Android AAudio scheduling, USB transport, physical DAC output, or actual audible playback.
+- Implementation commit: `bf3801072bb2a77a15b2b84f00847c588381eb07`. CI validation is pending; no test pass is claimed until the workflow completes.
+- No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
