@@ -1998,6 +1998,15 @@ mod seek_dsp_state_regression_tests {
         assert_eq!(resumed_after_seek, resumed_fresh,
             "seek output retained EQ history or pending PCM from the previous playback position");
 
+        // Seeking to the presentation end must drain immediately, and a later
+        // backward seek must clear the decoder's EOF state and resume normally.
+        assert_eq!(after_playback.seek_to(1_000).unwrap(), 1_000);
+        assert!(after_playback.read_frames(256).unwrap().is_empty(),
+            "seeking to the track duration must not emit samples beyond EOF");
+        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
+        assert_eq!(after_playback.read_frames(256).unwrap(), resumed_fresh,
+            "a backward seek after EOF must reset EOF and DSP state");
+
         drop(after_playback);
         drop(fresh);
         drop(source_after_playback);
