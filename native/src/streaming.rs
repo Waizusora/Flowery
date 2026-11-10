@@ -67,6 +67,25 @@ fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
         .min(u64::MAX as u128) as u64
 }
 
+/// Converts a container timestamp to milliseconds without floating-point rounding.
+fn timestamp_to_milliseconds(
+    timestamp: u64,
+    time_base: Option<symphonia::core::units::TimeBase>,
+    fallback_ms: u64,
+) -> u64 {
+    let Some(time_base) = time_base else {
+        return fallback_ms;
+    };
+    if time_base.denom == 0 {
+        return fallback_ms;
+    }
+    (u128::from(timestamp)
+        .saturating_mul(u128::from(time_base.numer))
+        .saturating_mul(1_000)
+        / u128::from(time_base.denom))
+        .min(u128::from(u64::MAX)) as u64
+}
+
 /// Converts an absolute seek timestamp into the output-frame window of a segment.
 fn aaudio_seek_frame_window(
     actual_ms: u64,
@@ -291,15 +310,15 @@ impl StreamDecoder {
         self.native_pcm_active = false;
         self.eof = false;
         self.consecutive_decode_errors = 0;
-        let actual_time = self.time_base.map(|tb| tb.calc_time(seeked.actual_ts));
-        let actual_ms = actual_time
-            .map(|t| (t.seconds as f64 + t.frac) * 1000.0)
-            .unwrap_or(requested_ms as f64)
-            .max(0.0);
-        let actual_source_frames = milliseconds_to_frames(actual_ms as u64, self.source_rate);
+        let actual_ms = timestamp_to_milliseconds(
+            seeked.actual_ts,
+            self.time_base,
+            requested_ms,
+        );
+        let actual_source_frames = milliseconds_to_frames(actual_ms, self.source_rate);
         let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
         let requested_output_frames = milliseconds_to_frames(requested_ms, self.output_rate);
-        let actual_output_frames = milliseconds_to_frames(actual_ms as u64, self.output_rate);
+        let actual_output_frames = milliseconds_to_frames(actual_ms, self.output_rate);
         self.source_frames_decoded = actual_source_frames;
 
         if self.source_mode == StreamSourceMode::EncodedPackets {
@@ -310,7 +329,7 @@ impl StreamDecoder {
             self.discard_output_frames = 0;
             self.resampler = None;
             self.resampler_delay_frames = 0;
-            return Ok(actual_ms as u64);
+            return Ok(actual_ms);
         }
 
         let rate = self.output_rate;
@@ -1536,6 +1555,18 @@ mod tests {
     fn seek_frame_conversion_saturates_instead_of_wrapping() {
         assert_eq!(milliseconds_to_frames(u64::MAX, 192_000), u64::MAX);
         assert_eq!(milliseconds_to_frames(1_000, 48_000), 48_000);
+    }
+
+    #[test]
+    fn container_timestamp_conversion_uses_exact_rational_time_base_arithmetic() {
+        use symphonia::core::units::TimeBase;
+
+        assert_eq!(timestamp_to_milliseconds(48_000, Some(TimeBase::new(1, 48_000)), 0), 1_000);
+        assert_eq!(timestamp_to_milliseconds(90_000, Some(TimeBase::new(1, 90_000)), 0), 1_000);
+        assert_eq!(timestamp_to_milliseconds(1_001, Some(TimeBase::new(1, 3)), 0), 333_666);
+        assert_eq!(timestamp_to_milliseconds(u64::MAX, Some(TimeBase::new(1, 1)), 0), u64::MAX);
+        assert_eq!(timestamp_to_milliseconds(10, None, 123), 123);
+        assert_eq!(timestamp_to_milliseconds(10, Some(TimeBase::default()), 123), 123);
     }
 
     #[test]
