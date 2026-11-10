@@ -69,6 +69,9 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
     let mut album_performer = None;
     let mut current_file = String::new();
     let mut parsed: Vec<PendingCueTrack> = Vec::new();
+    // A malformed TRACK declaration must not let following directives mutate
+    // the previously accepted track.
+    let mut current_track_valid = false;
 
     for raw in text.lines() {
         let line = raw.trim().trim_start_matches('﻿');
@@ -77,26 +80,32 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
         match command.to_ascii_uppercase().as_str() {
             "TITLE" => {
                 let title = unquote(value);
-                if parsed.is_empty() {
+                if current_track_valid {
+                    if let Some(track) = parsed.last_mut() {
+                        track.title = Some(title);
+                    }
+                } else if parsed.is_empty() {
                     album_title = Some(title);
-                } else if let Some(track) = parsed.last_mut() {
-                    track.title = Some(title);
                 }
             }
             "PERFORMER" => {
                 let performer = unquote(value);
-                if parsed.is_empty() {
+                if current_track_valid {
+                    if let Some(track) = parsed.last_mut() {
+                        track.performer = Some(performer);
+                    }
+                } else if parsed.is_empty() {
                     album_performer = Some(performer);
-                } else if let Some(track) = parsed.last_mut() {
-                    track.performer = Some(performer);
                 }
             }
             "FILE" => {
+                current_track_valid = false;
                 current_file = parse_cue_file_name(value)
                     .filter(|file_name| !file_name.trim().is_empty())
                     .unwrap_or_default();
             }
             "TRACK" => {
+                current_track_valid = false;
                 if let Some(number) = value.split_whitespace().next()
                     .and_then(|value| value.parse::<i64>().ok())
                     .filter(|number| (1..=99).contains(number))
@@ -106,11 +115,12 @@ pub(super) fn parse_cue(text: &str) -> CueSheet {
                         file_name: current_file.clone(),
                         ..PendingCueTrack::default()
                     });
+                    current_track_valid = true;
                 }
             }
             "INDEX" => {
                 let mut fields = value.split_whitespace();
-                if fields.next() == Some("01") {
+                if fields.next() == Some("01") && current_track_valid {
                     if let (Some(time), None, Some(track)) =
                         (fields.next(), fields.next(), parsed.last_mut())
                     {
@@ -339,6 +349,32 @@ INDEX 01 02:00:00
     fn rejects_non_monotonic_cue_indexes_for_the_affected_file() {
         let cue = "FILE \"disc.flac\" WAVE\nTRACK 01 AUDIO\nINDEX 01 00:00:10\nTRACK 02 AUDIO\nINDEX 01 00:00:20\nTRACK 03 AUDIO\nINDEX 01 00:00:15\n";
         assert!(parse_cue(cue).tracks.is_empty());
+    }
+
+    #[test]
+    fn invalid_track_declaration_does_not_modify_previous_track() {
+        let cue = r#"FILE "disc.flac" WAVE
+TRACK 01 AUDIO
+TITLE "First"
+INDEX 01 00:00:00
+TRACK 100 AUDIO
+TITLE "Must be ignored"
+PERFORMER "Must be ignored"
+INDEX 01 00:05:00
+TRACK 02 AUDIO
+TITLE "Second"
+INDEX 01 00:10:00
+"#;
+        let parsed = parse_cue(cue);
+        assert_eq!(parsed.tracks.len(), 2);
+        assert_eq!(parsed.tracks[0].number, 1);
+        assert_eq!(parsed.tracks[0].title, "First");
+        assert_eq!(parsed.tracks[0].performer, None);
+        assert_eq!(parsed.tracks[0].start_frame, 0);
+        assert_eq!(parsed.tracks[0].end_frame, Some(750));
+        assert_eq!(parsed.tracks[1].number, 2);
+        assert_eq!(parsed.tracks[1].title, "Second");
+        assert_eq!(parsed.tracks[1].start_frame, 750);
     }
 
     #[test]
