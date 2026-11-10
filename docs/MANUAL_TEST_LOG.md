@@ -1226,3 +1226,12 @@ Validation scope:
 - Centralized Kotlin CUE frame conversion and added saturation for both the whole-second and fractional components. Start boundaries still round upward and end boundaries still round downward; negative values remain clamped to zero.
 - Added Android unit tests for normal rounding, negative inputs, and Long.MAX_VALUE saturation.
 - CI validation is pending. This protects metadata conversion arithmetic and does not add sample-frame-native seeking or validate physical audio output. Direct USB Safety Hold remains active.
+
+
+### 2026-11-10 — Isolate directives following invalid CUE TRACK declarations
+
+- A parser-state audit found that an invalid TRACK number was ignored without changing the active directive target. Subsequent TITLE, PERFORMER, or INDEX 01 directives could therefore be applied to the previously accepted track, potentially changing its metadata or start position.
+- The Rust parser now tracks whether the current TRACK declaration was accepted. FILE and TRACK directives reset that state; only a valid track accepts track-level TITLE, PERFORMER, and INDEX 01 directives. Album-level metadata remains accepted before the first parsed track.
+- Added a native regression test proving that directives after TRACK 100 cannot mutate TRACK 01 and that the following valid TRACK 02 is parsed with the expected boundary.
+- The parser correction is committed as `162bdb4cd818e8b82b591e29c19dece2d615e594`. Automated validation is pending CI; no test pass is claimed yet.
+- No physical audio output or DAC test was performed. Direct USB Safety Hold remains active.
