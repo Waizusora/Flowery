@@ -203,11 +203,17 @@ struct OutputScheduler {
     thread: JoinHandle<()>,
 }
 static OUTPUT_SCHEDULER: OnceLock<Mutex<Option<OutputScheduler>>> = OnceLock::new();
+static OUTPUT_SCHEDULER_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
+
 fn output_scheduler() -> &'static Mutex<Option<OutputScheduler>> {
     OUTPUT_SCHEDULER.get_or_init(|| Mutex::new(None))
 }
 
-fn stop_output_scheduler() {
+fn output_scheduler_lifecycle() -> &'static Mutex<()> {
+    OUTPUT_SCHEDULER_LIFECYCLE.get_or_init(|| Mutex::new(()))
+}
+
+fn stop_output_scheduler_locked() {
     let worker = output_scheduler().lock().unwrap_or_else(|p| p.into_inner()).take();
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
@@ -215,6 +221,13 @@ fn stop_output_scheduler() {
             let _ = worker.thread.join();
         }
     }
+}
+
+fn stop_output_scheduler() {
+    let _lifecycle = output_scheduler_lifecycle()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    stop_output_scheduler_locked();
 }
 
 fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut bool) -> Result<bool, i32> {
@@ -271,7 +284,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is not an active AAudio route");
         return -1;
     }
-    stop_output_scheduler();
+    // Serialize replacement through registry insertion so concurrent starts
+    // cannot detach a live scheduler's JoinHandle or leave duplicate schedulers.
+    let _lifecycle = output_scheduler_lifecycle()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    stop_output_scheduler_locked();
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let thread_stop = Arc::clone(&stop);
