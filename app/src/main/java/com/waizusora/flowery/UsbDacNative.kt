@@ -103,12 +103,54 @@ internal class UsbDacSession internal constructor(
 
     val hardwareVolumeAvailable: Boolean get() = volumeUnit != null
 
+    @Volatile
+    private var lastVolumeControlDiagnostic: String = "not_run"
+
+    /** Last raw UAC control-transfer result, including setup packet and response bytes. */
+    @Synchronized
+    fun hardwareVolumeDiagnostic(): String {
+        val unit = volumeUnit
+        return buildString {
+            append("feature_unit=")
+            append(unit?.unitId ?: "none")
+            append(" control_interface=")
+            append(unit?.controlInterface ?: "none")
+            append(" protocol=")
+            append(unit?.protocol?.let { "0x%02X".format(it) } ?: "none")
+            append(" range=")
+            append(cachedVolumeRange?.let { "${it.first}..${it.second}" } ?: "unavailable")
+            append(" last_control={")
+            append(lastVolumeControlDiagnostic)
+            append("}")
+        }
+    }
+
     private fun volumeControl(request: Int, data: ByteArray): Int {
-        val unit = volumeUnit ?: return -1
+        val unit = volumeUnit ?: run {
+            lastVolumeControlDiagnostic = "error=no_feature_unit"
+            return -1
+        }
         val value = 0x0200
         val index = (unit.unitId shl 8) or unit.controlInterface
         val requestType = if (request == 0x01) 0x21 else 0xA1
-        return connection.controlTransfer(requestType, request, value, index, data, data.size, 500)
+        val payloadBefore = data.joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        val transferred = try {
+            connection.controlTransfer(requestType, request, value, index, data, data.size, 500)
+        } catch (error: Throwable) {
+            lastVolumeControlDiagnostic =
+                ("bmRequestType=0x%02X bRequest=0x%02X wValue=0x%04X wIndex=0x%04X " +
+                    "requestedLength=${data.size} timeoutMs=500 payloadBefore=$payloadBefore " +
+                    "exception=${error.javaClass.simpleName}:${error.message}")
+                    .format(requestType, request, value, index)
+            throw error
+        }
+        val response = data.joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        lastVolumeControlDiagnostic =
+            ("bmRequestType=0x%02X bRequest=0x%02X wValue=0x%04X wIndex=0x%04X " +
+                "requestedLength=${data.size} transferred=$transferred timeoutMs=500 " +
+                "payloadBefore=$payloadBefore responseHex=$response")
+                .format(requestType, request, value, index)
+        return transferred
     }
 
     private fun volumeRange(): Pair<Int, Int>? {
