@@ -51,7 +51,9 @@ internal class UsbPlaybackVolumePolicy(
                 maximumSafeFraction = SAFE_HARDWARE_READBACK_FRACTION,
             )
             checkNotNull(confirmed) {
-                "USB DAC startup volume could not be set to its minimum and confirmed by GET_CUR; playback is blocked for safety."
+                "USB DAC startup volume safety check failed: setAccepted=$setAccepted " +
+                    "readBackFraction=$readBack; ${session.hardwareVolumeDiagnostic()}. " +
+                    "Playback is blocked for safety."
             }
             preferences.setUsbVolume(deviceKey, confirmed)
             return UsbPlaybackVolumeState(
