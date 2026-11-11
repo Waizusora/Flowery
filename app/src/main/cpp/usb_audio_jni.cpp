@@ -1650,6 +1650,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
     if (session->control.load() == kSessionControlStop) {
         return stop_pcm_writer();
     }
+    const size_t bytes_per_frame =
+        static_cast<size_t>(session->channels) * static_cast<size_t>(session->subslot_bytes);
     const size_t remaining = session->pending_pcm.size() - session->pending_offset;
     if (!failure.failed && remaining > 0) {
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
