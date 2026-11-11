@@ -72,8 +72,8 @@ internal class UsbPlaybackVolumePolicy(
             }
         }
         // A Feature Unit that is merely advertised, but cannot confirm GET_CUR,
-        // must not be treated as a working hardware volume control.
-        if (!softwareGainEnabled) return null
+        // must not be treated as a working hardware volume control. Fall back to
+        // the software gain path even if this session initially read hardware volume.
         preferences.setUsbVolume(deviceKey, normalized)
         return UsbPlaybackVolumeState(
             softwareVolume = normalized,
