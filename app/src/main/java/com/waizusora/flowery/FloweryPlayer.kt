@@ -65,6 +65,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setVolume(value: Float) {
         val normalized = value.coerceIn(0f, 1f)
         if (usbPlaybackMode) {
+            onState("USB Direct test mode · software volume disabled · unity PCM gain")
+            return
             val usbKey = activeUsbDeviceKey
             val session = activeUsbSession
             diagnostics.record(
@@ -124,7 +126,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setDucked(ducked: Boolean) {
-        if (usbPlaybackMode && usbBitPerfectActive) {
+        if (usbPlaybackMode) {
             outputDucked = false
             publishUsbPlaybackModeStatus()
             return
@@ -537,7 +539,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val ieeeFloatSource = NativeAudio.nativeIsIeeeFloat32Source(handle)
             val equalizerFlat = bandGainsDb.all { it == 0f }
             var ieeeFloatCandidate = ieeeFloatSource && equalizerFlat
-            var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32 && equalizerFlat
+            var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32
             onState(
                 if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…"
                 else if (nativeCandidate) "USB exclusive: requiring exact ${sourceBits}-bit/${sourceRate} Hz ${channels}-channel PCM match…"
@@ -551,7 +553,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     sourceRate = sourceRate,
                     channels = channels,
                     ieeeFloatSource = ieeeFloatSource,
-                    equalizerFlat = equalizerFlat,
+                    equalizerFlat = true,
                     onFallback = { error ->
                         if (ieeeFloatCandidate) {
                             ieeeFloatCandidate = false
@@ -570,11 +572,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             ieeeFloatCandidate = negotiation.ieeeFloatCandidate
             nativeCandidate = negotiation.nativeCandidate
-            if (!nativeCandidate && !ieeeFloatCandidate) {
-                throw UsbDirectRouteUnavailableException(
-                    "No exact source-preserving USB profile is available; float32 USB processing is disabled in strict Bit-Perfect mode.",
-                )
-            }
             val outputEncoding = negotiation.outputEncoding
             val selectedDevice = negotiation.device
             val usbSession = negotiation.session
@@ -596,7 +593,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val outputRate = usbSession.sampleRate
             val outputBits = usbSession.profile.bitResolution
             onState(if (nativeCandidate) "USB exclusive: preparing native integer PCM…" else "USB exclusive: preparing float32 PCM decoding…")
-            val initialGains = if (nativeCandidate || ieeeFloatCandidate) FloatArray(31) { 0f } else bandGainsDb.copyOf()
+            val initialGains = FloatArray(31) { 0f }
             val decoderConfigResult = NativeAudio.nativeConfigureStreamDecoder(handle, outputRate, initialGains)
             diagnostics.record("DECODER_CONFIG result=${decoderConfigResult} sourceRate=${sourceRate} outputRate=${outputRate} eqActive=${initialGains.any { it != 0f }} gain=1.0 ducking=false resampling=${outputRate != sourceRate}")
             check(decoderConfigResult == 0) {
