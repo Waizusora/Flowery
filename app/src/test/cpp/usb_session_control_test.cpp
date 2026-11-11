@@ -74,6 +74,22 @@ void test_close_waits_for_active_lease_and_rejects_new_ones() {
  active=SessionLifetimeGate::Lease{}; closer.join(); assert(done.wait_for(0ms)==std::future_status::ready);
 }
 
+void test_pcm_drain_pause_waits_for_resume_before_submitting_tail() {
+ ControlState control; std::condition_variable wake;
+ using Action = flowery::usb::PcmDrainControlAction;
+ // Run permits the staged final packet to be submitted.
+ assert(flowery::usb::pcm_drain_control_action(control.load(),0)==Action::SubmitTail);
+ assert(control.request(ControlRequest::Pause,wake));
+ // Existing transfers must finish before the drain waits; no tail is submitted.
+ assert(flowery::usb::pcm_drain_control_action(control.load(),2)==Action::DrainInFlight);
+ assert(flowery::usb::pcm_drain_control_action(control.load(),0)==Action::WaitForResume);
+ // A paused drain must not report completion while its tail remains staged.
+ assert(control.request(ControlRequest::Run,wake));
+ assert(flowery::usb::pcm_drain_control_action(control.load(),0)==Action::SubmitTail);
+ assert(control.request(ControlRequest::Pause,wake));
+ assert(control.request(ControlRequest::Stop,wake));
+ assert(flowery::usb::pcm_drain_control_action(control.load(),0)==Action::Abort);
+}
 void test_encoded_uac1_pause_finishes_frame_before_waiting() {
  ControlState control; std::condition_variable wake;
  std::size_t in_flight=1; int submitted_frames=1; bool frame_completed=false;
@@ -372,6 +388,7 @@ int main() {
  test_pause_wakes_blocked_writer_without_submitting(); test_resume_wakes_paused_writer();
  test_repeated_stop_is_idempotent_and_terminal(); test_close_waits_for_active_lease_and_rejects_new_ones();
  test_moving_a_session_lease_invalidates_the_source();
+ test_pcm_drain_pause_waits_for_resume_before_submitting_tail();
  test_encoded_uac1_pause_finishes_frame_before_waiting();
  test_encoded_type_iii_pause_preserves_packet_cursor_and_phase();
  test_encoded_stop_takes_priority_over_pause_and_aborts();
@@ -391,5 +408,5 @@ int main() {
  test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
  test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (24 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (25 scenarios).\n"; return 0;
 }
