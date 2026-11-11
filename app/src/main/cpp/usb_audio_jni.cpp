@@ -157,6 +157,7 @@ struct TransportFailure {
     uint64_t callbacks_at_failure = 0;
     uint64_t event_loops_at_failure = 0;
     int event_loop_error_at_failure = LIBUSB_SUCCESS;
+    bool event_thread_running_at_failure = false;
     long long event_loop_idle_ms_at_failure = -1;
     bool snapshot_captured = false;
 };
@@ -255,6 +256,8 @@ void snapshot_transport_failure(const UsbAudioSession* session, TransportFailure
     failure->callbacks_at_failure = session->completed_transfer_callback_count.load(std::memory_order_acquire);
     failure->event_loops_at_failure = session->event_loop_iteration_count.load(std::memory_order_acquire);
     failure->event_loop_error_at_failure = session->event_loop_error.load(std::memory_order_acquire);
+    failure->event_thread_running_at_failure =
+        session->event_thread_running.load(std::memory_order_acquire);
     const int64_t last_ns = session->last_event_loop_ns.load(std::memory_order_acquire);
     if (last_ns > 0) {
         const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -720,7 +723,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "transfer_flags=%u; device_speed=%d; "
         "interval_us=%u; sample_rate=%d; channels=%d; subslot_bytes=%d; bytes_per_frame=%zu; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
-        "event_loop_error=%d; event_loop_idle_ms=%lld; "
+        "event_loop_error=%d; event_thread_running=%d; event_loop_idle_ms=%lld; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
         "queue_target_us=%llu; max_urbs_actual=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
@@ -743,6 +746,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.callbacks_at_failure),
         static_cast<unsigned long long>(failure.event_loops_at_failure),
         failure.event_loop_error_at_failure,
+         failure.event_thread_running_at_failure ? 1 : 0,
         failure.event_loop_idle_ms_at_failure,
         failure.pending_pcm_remaining_at_failure,
         failure.pending_encoded_remaining_at_failure,
