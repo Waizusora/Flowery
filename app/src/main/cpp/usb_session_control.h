@@ -62,6 +62,30 @@ inline bool transfer_reclaimable(bool callback_completed,
  return callback_completed && callback_return_iteration != 0 &&
         completed_event_iteration >= callback_return_iteration;
 }
+// Convert a UAC asynchronous feedback sample into frames for one service
+// interval. interval_us must be an integer multiple of the feedback base
+// interval (1 ms full-speed or 125 us high-speed).
+inline bool next_feedback_packet_frames(std::uint32_t feedback_value,
+                                        std::uint8_t fraction_bits,
+                                        std::uint32_t interval_us,
+                                        std::uint32_t base_interval_us,
+                                        std::uint64_t phase_before,
+                                        std::uint32_t& frames,
+                                        std::uint64_t& phase_after) noexcept {
+ if (feedback_value == 0 || (fraction_bits != 14 && fraction_bits != 16) ||
+     interval_us == 0 || base_interval_us == 0 ||
+     interval_us % base_interval_us != 0) return false;
+ const std::uint64_t denominator = 1ULL << fraction_bits;
+ if (phase_before >= denominator) return false;
+ const std::uint64_t interval_count = interval_us / base_interval_us;
+ const std::uint64_t accumulated =
+     static_cast<std::uint64_t>(feedback_value) * interval_count + phase_before;
+ const std::uint64_t frame_count = accumulated >> fraction_bits;
+ if (frame_count > 0xffffffffULL) return false;
+ frames = static_cast<std::uint32_t>(frame_count);
+ phase_after = accumulated & (denominator - 1ULL);
+ return true;
+}
 // Advance the nominal PCM service-interval accumulator without losing its
 // fractional frame remainder between packets or URB boundaries.
 inline bool next_pcm_packet_frames(std::uint32_t sample_rate,
