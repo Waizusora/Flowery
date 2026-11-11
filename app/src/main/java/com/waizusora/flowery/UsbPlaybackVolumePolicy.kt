@@ -39,6 +39,43 @@ internal class UsbPlaybackVolumePolicy(
         private const val SAFE_HARDWARE_READBACK_FRACTION = 0.02f
     }
 
+    /**
+     * USB Direct test mode: use only the DAC Feature Unit. Never fall back to
+     * software attenuation because that would change the integer PCM payload.
+     */
+    fun attachDirect(deviceKey: String, session: UsbDacSession): UsbPlaybackVolumeState {
+        preferences.usbProfile(deviceKey, session.hardwareVolumeAvailable)
+        if (session.hardwareVolumeAvailable) {
+            val setAccepted = runCatching {
+                session.setHardwareVolumeFraction(0f)
+            }.getOrDefault(false)
+            val readBack = if (setAccepted) {
+                runCatching { session.readHardwareVolumeFraction() }.getOrNull()
+            } else null
+            val confirmed = UsbHardwareVolumeReadback.confirmedFraction(
+                setAccepted = setAccepted,
+                readBack = readBack,
+                maximumSafeFraction = SAFE_HARDWARE_READBACK_FRACTION,
+            )
+            if (confirmed != null) {
+                preferences.setUsbVolume(deviceKey, confirmed)
+                return UsbPlaybackVolumeState(
+                    softwareVolume = confirmed,
+                    hardwareVolumeAvailable = true,
+                    softwareGainEnabled = false,
+                    bitPerfectActive = true,
+                )
+            }
+        }
+        // Keep the PCM producer at unity when the DAC volume cannot be verified.
+        return UsbPlaybackVolumeState(
+            softwareVolume = 1f,
+            hardwareVolumeAvailable = false,
+            softwareGainEnabled = false,
+            bitPerfectActive = false,
+        )
+    }
+
     fun attach(deviceKey: String, session: UsbDacSession): UsbPlaybackVolumeState {
         preferences.usbProfile(deviceKey, session.hardwareVolumeAvailable)
         if (session.hardwareVolumeAvailable) {
@@ -106,9 +143,8 @@ internal class UsbPlaybackVolumePolicy(
                 )
             }
         }
-        // A Feature Unit that is merely advertised, but cannot confirm GET_CUR,
-        // must not be treated as a working hardware volume control. Fall back to
-        // the software gain path even if this session initially read hardware volume.
+        // USB Direct test mode must not silently switch to software gain.
+        if (!softwareGainEnabled) return null
         preferences.setUsbVolume(deviceKey, normalized)
         return UsbPlaybackVolumeState(
             softwareVolume = normalized,
