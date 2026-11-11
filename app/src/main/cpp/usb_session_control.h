@@ -45,6 +45,12 @@ inline bool transfer_reclaimable(bool callback_completed,
  return callback_completed && callback_return_iteration != 0 &&
         completed_event_iteration >= callback_return_iteration;
 }
+inline bool iso_packet_completed_exactly(unsigned int packet_status,
+                                          unsigned int completed_status,
+                                          unsigned int actual_length,
+                                          unsigned int requested_length) noexcept {
+ return packet_status == completed_status && actual_length == requested_length;
+}
 enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
 
 inline EncodedControlAction encoded_control_action(int control, std::size_t in_flight) noexcept {
