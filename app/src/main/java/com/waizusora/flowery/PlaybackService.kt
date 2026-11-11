@@ -504,6 +504,24 @@ class PlaybackService : Service() {
         stopSelf()
     }
 
+    /**
+     * Completes the current queue without terminating the playback service.
+     * The media session and player UI remain available for replay or selection
+     * of another track; explicit user stop continues to use stopPlayback().
+     */
+    private fun finishQueuePlayback() {
+        Log.i("FloweryDiagnostics", "QUEUE_FINISHED index=$queueIndex queueSize=${queue.size}; service_retained=true")
+        player.stop()
+        resumeAfterFocus = false
+        hasAudioFocus = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
+        else abandonLegacyAudioFocus()
+        focusRequest = null
+        focusListener = null
+        playbackState = PlaybackStateCompat.STATE_STOPPED
+        publishState("Playback finished · end of queue")
+    }
+
     @Suppress("DEPRECATION")
     private fun abandonLegacyAudioFocus() {
         focusListener?.let { audioManager.abandonAudioFocus(it) }
@@ -534,7 +552,7 @@ class PlaybackService : Service() {
                 player.stop()
                 playCurrent()
             }
-            -1 -> stopPlayback()
+            -1 -> finishQueuePlayback()
             else -> {
                 queueIndex = nextIndex
                 player.stop()
