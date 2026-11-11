@@ -35,6 +35,23 @@ inline bool feedback_resubmit_allowed(bool stopped, bool event_thread_running,
                                       int event_loop_error, int success_code) noexcept {
  return !stopped && event_thread_running && event_loop_error == success_code;
 }
+inline bool decode_feedback_sample(const unsigned char* data,
+                                    unsigned int actual_length,
+                                    std::uint8_t fraction_bits,
+                                    std::uint32_t& value) noexcept {
+ const unsigned int expected_length = fraction_bits == 14 ? 3U :
+                                      fraction_bits == 16 ? 4U : 0U;
+ if (data == nullptr || expected_length == 0 || actual_length != expected_length) return false;
+ std::uint32_t decoded = static_cast<std::uint32_t>(data[0]) |
+                         (static_cast<std::uint32_t>(data[1]) << 8) |
+                         (static_cast<std::uint32_t>(data[2]) << 16);
+ if (expected_length == 4U) {
+  decoded |= static_cast<std::uint32_t>(data[3]) << 24;
+ }
+ if (decoded == 0) return false;
+ value = decoded;
+ return true;
+}
 inline bool failed_dispatcher_teardown_pump_allowed(
     bool event_thread_running, int event_loop_error, int success_code) noexcept {
  return !event_thread_running && event_loop_error != success_code;
