@@ -52,7 +52,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setEqualizerGains(gains: FloatArray) {
         require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
         bandGainsDb = gains.copyOf()
-        if (usbPlaybackMode) usbNativeBitPerfectConfirmed = false
+        if (usbPlaybackMode) {
+            usbNativeBitPerfectConfirmed = false
+            diagnostics.record("USB_EQ_REQUEST ignored=true reason=USB_Direct_integer_PCM_test_mode")
+            publishUsbPlaybackModeStatus()
+            return
+        }
         equalizerRevision++
         val producer = activeUsbPcmProducerHandle
         if (producer != 0L) {
