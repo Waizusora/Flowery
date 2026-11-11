@@ -1730,7 +1730,15 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
             const auto control_action = flowery::usb::encoded_control_action(
                 session->control.load(), session->in_flight.size());
             if (control_action == flowery::usb::EncodedControlAction::Abort) return stop_encoded_writer();
-            if (control_action == flowery::usb::EncodedControlAction::WaitForResume) return 0;
+            if (control_action == flowery::usb::EncodedControlAction::WaitForResume) {
+                // A paused drain may still own an unsent encoded tail. Do not
+                // report success until Resume lets this loop submit and drain it.
+                std::unique_lock<std::mutex> lock(session->event_mutex);
+                session->event_condition.wait(lock, [&]() {
+                    return session->control.load() != kSessionControlPause;
+                });
+                continue;
+            }
             if (control_action == flowery::usb::EncodedControlAction::DrainInFlight) {
                 if (!drain_encoded_window()) {
                     if (session->control.load() == kSessionControlStop) return stop_encoded_writer();
