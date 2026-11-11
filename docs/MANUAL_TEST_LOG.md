@@ -1392,3 +1392,12 @@ Validation scope:
 - The existing 32 ms queue target / eight-URB cap did not prevent the stall. Do not make another queue-depth-only change, extend or disable the watchdog, or report drain success while transfers remain outstanding.
 - Current evidence does not isolate whether the outstanding URBs stop completing because of the DAC/endpoint, Android host-controller/libusb delivery, or transfer scheduling. A device-backed capture that preserves per-URB callback state and packet status before cancellation is still needed.
 - No production transport behavior was changed in this audit. Physical KTMicro KT-384/32 DAC validation remains outstanding; Direct USB Safety Hold remains active.
+
+
+### 2026-11-11 — Harden 96 kHz stalled-URB diagnostics
+
+- The previous stall snapshot read libusb isochronous packet status and actual-length fields for every outstanding URB, including transfers whose completion callback had not run. Those result fields are only meaningful after completion; reading them earlier could produce misleading evidence and race with libusb's completion path.
+- Updated the snapshot to read transfer/packet result fields only after the callback has published completion with release/acquire ordering. Incomplete URBs are now explicitly marked `valid=0`, rather than presenting pre-completion descriptor contents as transport results.
+- Added a monotonic callback-entry timestamp, callback age, and callback-return event-loop iteration to each URB summary. This distinguishes URBs for which no callback began from callbacks that began but have not yet published completion, and from completed callbacks awaiting the event-loop iteration barrier.
+- Expanded the compact in-flight summary buffer to retain useful state across the full eight-URB queue.
+- This is diagnostic hardening only: no packet scheduling, queue depth, watchdog threshold, cancellation, or completion acceptance behavior changed. CI must validate the native build; device-backed capture is still required to determine the 96 kHz stall cause. Direct USB Safety Hold remains active.
