@@ -1259,12 +1259,14 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
                     record_failure(&failure, "feedback_timeout", LIBUSB_ERROR_TIMEOUT);
                     break;
                 }
-                const uint64_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
-                const uint64_t scaled = feedback * session->interval_us /
-                                        session->feedback_base_interval_us;
-                const uint64_t accumulated = feedback_phase + scaled;
-                frames = static_cast<unsigned int>(accumulated >> session->feedback_fraction_bits);
-                next_feedback_phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+                const uint32_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
+                if (!flowery::usb::next_feedback_packet_frames(
+                        feedback, session->feedback_fraction_bits, session->interval_us,
+                        session->feedback_base_interval_us, feedback_phase,
+                        frames, next_feedback_phase)) {
+                    record_failure(&failure, "invalid_feedback_packet_schedule", LIBUSB_ERROR_INVALID_PARAM);
+                    break;
+                }
             } else {
                 if (!flowery::usb::next_pcm_packet_frames(
                         static_cast<uint32_t>(session->sample_rate), session->interval_us,
