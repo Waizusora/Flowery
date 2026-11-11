@@ -9,7 +9,7 @@ class UsbPlaybackVolumePolicyTest {
     fun confirmsMinimumHardwareVolumeAfterAcceptedSet() {
         assertEquals(
             0.01f,
-            UsbHardwareVolumeReadback.confirmedFraction(true, 0.01f),
+            checkNotNull(UsbHardwareVolumeReadback.confirmedFraction(true, 0.01f)),
             0.0001f,
         )
     }
@@ -36,7 +36,7 @@ class UsbPlaybackVolumePolicyTest {
     fun clampsSmallNegativeReadbackToMinimum() {
         assertEquals(
             0f,
-            UsbHardwareVolumeReadback.confirmedFraction(true, -0.01f),
+            checkNotNull(UsbHardwareVolumeReadback.confirmedFraction(true, -0.01f)),
             0.0001f,
         )
     }
