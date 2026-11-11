@@ -122,6 +122,17 @@ inline bool iso_packet_completed_exactly(unsigned int packet_status,
 }
 enum class EncodedControlAction { Submit, DrainInFlight, WaitForResume, Abort };
 
+enum class PcmDrainControlAction { SubmitTail, DrainInFlight, WaitForResume, Abort };
+
+inline PcmDrainControlAction pcm_drain_control_action(int control, std::size_t in_flight) noexcept {
+ if (control == static_cast<int>(ControlRequest::Stop)) return PcmDrainControlAction::Abort;
+ if (control == static_cast<int>(ControlRequest::Pause)) {
+  return in_flight == 0 ? PcmDrainControlAction::WaitForResume
+                        : PcmDrainControlAction::DrainInFlight;
+ }
+ return PcmDrainControlAction::SubmitTail;
+}
+
 inline EncodedControlAction encoded_control_action(int control, std::size_t in_flight) noexcept {
  if (control == static_cast<int>(ControlRequest::Stop)) return EncodedControlAction::Abort;
  if (control == static_cast<int>(ControlRequest::Pause)) {
