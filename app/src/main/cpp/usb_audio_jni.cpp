@@ -897,10 +897,32 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
             ? 0U : entry->requested_packet_lengths.front();
         const unsigned int last_packet = entry->requested_packet_lengths.empty()
             ? 0U : entry->requested_packet_lengths.back();
+        unsigned int packets_with_completion = 0;
+        unsigned int packets_with_error = 0;
+        unsigned int first_actual = 0;
+        unsigned int last_actual = 0;
+        unsigned int first_packet_status = LIBUSB_TRANSFER_ERROR;
+        unsigned int last_packet_status = LIBUSB_TRANSFER_ERROR;
+        const libusb_transfer* transfer = entry->transfer;
+        if (transfer != nullptr) {
+            for (int packet_index = 0; packet_index < transfer->num_iso_packets; ++packet_index) {
+                const auto& packet = transfer->iso_packet_desc[packet_index];
+                if (packet_index == 0) {
+                    first_actual = packet.actual_length;
+                    first_packet_status = static_cast<unsigned int>(packet.status);
+                }
+                if (packet_index == transfer->num_iso_packets - 1) {
+                    last_actual = packet.actual_length;
+                    last_packet_status = static_cast<unsigned int>(packet.status);
+                }
+                if (packet.status == LIBUSB_TRANSFER_COMPLETED) ++packets_with_completion;
+                else if (packet.status != LIBUSB_TRANSFER_ERROR) ++packets_with_error;
+            }
+        }
         const int written = std::snprintf(
             failure->in_flight_summary + used,
             sizeof(failure->in_flight_summary) - used,
-            "%s#%llu/%zu/f%llu-%llu/b%llu-%llu/%llu/%u-%u",
+            "%s#%llu/%zu/f%llu-%llu/b%llu-%llu/%llu/%u-%u/cb%d/ts%u/pc%u/pe%u/a%u-%u/ps%u-%u",
             used == 0 ? "" : ";",
             static_cast<unsigned long long>(entry->sequence),
             entry->requested_packet_lengths.size(),
@@ -909,7 +931,11 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
             static_cast<unsigned long long>(entry->feedback_phase_before),
             static_cast<unsigned long long>(entry->feedback_phase_after),
             static_cast<unsigned long long>(requested_bytes),
-            first_packet, last_packet);
+            first_packet, last_packet,
+            entry->completed.load(std::memory_order_acquire) ? 1 : 0,
+            transfer == nullptr ? LIBUSB_TRANSFER_ERROR : static_cast<unsigned int>(transfer->status),
+            packets_with_completion, packets_with_error, first_actual, last_actual,
+            first_packet_status, last_packet_status);
         if (written < 0) break;
         const size_t remaining = sizeof(failure->in_flight_summary) - used;
         used += std::min(static_cast<size_t>(written), remaining);
