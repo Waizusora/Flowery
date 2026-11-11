@@ -1440,3 +1440,21 @@ Validation scope:
   6. Share the logcat file, dumpsys output, build fingerprint, app commit SHA, and run notes together. Redact serial numbers or other device identifiers before sharing publicly.
 - Do not infer the root cause from one counter alone. In particular, callbacks continuing while valid samples stop suggests a feedback-data/packet issue; no callbacks with a live event thread suggests a lower-level completion-delivery or endpoint stall; a nonzero resubmit error identifies a host-side submission failure. These are diagnostic clues, not conclusive attribution to DAC versus Android host controller/libusb.
 - No playback, feedback parsing, transfer scheduling, timeout, cancellation, or completion acceptance behavior changed. CI validation is required. Direct USB Safety Hold remains active until physical evidence is reviewed.
+
+### USB DAC startup-volume control-transfer diagnostics
+
+The USB startup-volume Safety Hold remains mandatory. If startup is blocked, the playback error now includes the most recent raw Feature Unit control-transfer diagnostic:
+
+- bmRequestType, bRequest, wValue, and wIndex from the USB setup packet.
+- Requested data length, actual transferred byte count, and the fixed 500 ms timeout.
+- Payload bytes before the transfer and response bytes after the transfer (hex).
+- Feature Unit ID, control interface, UAC protocol, and parsed volume range when available.
+- Whether SET_CUR was accepted and the normalized GET_CUR readback fraction.
+
+Interpretation:
+- bRequest=0x01 is SET_CUR; bmRequestType=0x21 is the class/interface OUT request.
+- bRequest=0x81 is GET_CUR; bmRequestType=0xA1 is the class/interface IN request.
+- A negative transfer result indicates the Android USB control transfer failed; a positive short result is not accepted as a complete two-byte volume transfer.
+- A successful SET_CUR is not sufficient. Playback remains blocked unless GET_CUR confirms a value within the existing 2% startup safety window.
+
+Do not disable Safety Hold, change volume policy, or proceed to 96 kHz based only on diagnostics. Capture one controlled 44.1 kHz attempt with the updated build and share the playback error/diagnostic export. This instrumentation does not alter USB request parameters, timeouts, PCM scheduling, transfer handling, or playback behavior.
