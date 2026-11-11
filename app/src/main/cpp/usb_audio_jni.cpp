@@ -660,9 +660,23 @@ uint32_t service_interval_us(int speed, uint8_t b_interval) {
     return 1000U << exponent;
 }
 
+size_t packets_per_urb(const UsbAudioSession* session) {
+    // At 44.1 kHz / 125 us, 400 intervals span exactly 50 ms = 2,205
+    // frames. Keeping this rational period intact makes every URB boundary
+    // return to the same 20/24-byte packet phase instead of alternating the
+    // first packet size at each 128-interval boundary.
+    if (session->encoded_mode == 0 &&
+        session->device_speed == LIBUSB_SPEED_HIGH &&
+        session->interval_us == 125 &&
+        session->sample_rate == 44100) {
+        return 400;
+    }
+    return kPacketsPerUrb;
+}
+
 size_t max_urbs_in_flight(const UsbAudioSession* session) {
     const uint64_t urb_duration_us =
-        static_cast<uint64_t>(kPacketsPerUrb) * session->interval_us;
+        static_cast<uint64_t>(packets_per_urb(session)) * session->interval_us;
     if (urb_duration_us == 0) return 1;
     const uint64_t target =
         (kTargetQueuedAudioUs + urb_duration_us - 1ULL) / urb_duration_us;
