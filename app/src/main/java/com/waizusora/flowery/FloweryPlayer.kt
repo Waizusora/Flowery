@@ -70,7 +70,31 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun setVolume(value: Float) {
         val normalized = value.coerceIn(0f, 1f)
         if (usbPlaybackMode) {
-            onState("USB Direct test mode · software volume disabled · unity PCM gain")
+            val deviceKey = activeUsbDeviceKey
+            val volumeState = deviceKey?.let {
+                usbVolumePolicy.setVolume(
+                    deviceKey = it,
+                    session = activeUsbSession,
+                    fraction = normalized,
+                    softwareGainEnabled = usbSoftwareGainEnabled,
+                )
+            }
+            if (volumeState == null) {
+                diagnostics.record(
+                    "USB_VOLUME_REQUEST requested=${normalized} applied=false " +
+                        "reason=hardware_volume_unavailable softwareGain=disabled pcmGain=1.0"
+                )
+                onState("USB Direct · DAC hardware volume unavailable · PCM unchanged")
+                return
+            }
+            softwareVolume = volumeState.softwareVolume
+            usbSoftwareGainEnabled = volumeState.softwareGainEnabled
+            diagnostics.record(
+                "USB_VOLUME_APPLIED requested=${normalized} applied=${softwareVolume} " +
+                    "hardware=${volumeState.hardwareVolumeAvailable} softwareGain=${usbSoftwareGainEnabled} " +
+                    "pcmGain=${currentUsbGain()}"
+            )
+            publishUsbPlaybackModeStatus()
             return
         }
         volumeController.setSystemVolume(normalized)
@@ -574,15 +598,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             activeUsbDeviceKey = controller.deviceIdentity(device)
             activeUsbSession = usbSession
             usbNativeBitPerfectConfirmed = false
-            // Test baseline: bypass both DAC/software volume control and ducking.
-            // Keep the decoded integer PCM samples at unity gain before libusb.
-            softwareVolume = 1f
+            // Hardware-only volume: never alter decoded PCM samples in USB Direct.
+            val volumeState = usbVolumePolicy.attachDirect(activeUsbDeviceKey!!, usbSession)
+            softwareVolume = volumeState.softwareVolume
             usbBitPerfectActive = false
             usbSoftwareGainEnabled = false
             outputDucked = false
             diagnostics.record(
-                "USB_VOLUME_PROFILE deviceKey=${activeUsbDeviceKey} policy=disabled " +
-                    "hardwareVolumeControl=not_touched softwareVolume=disabled"
+                "USB_VOLUME_PROFILE deviceKey=${activeUsbDeviceKey} policy=hardware_only " +
+                    "featureUnitAdvertised=${usbSession.hardwareVolumeAvailable} " +
+                    "hardwareVolumeActive=${volumeState.hardwareVolumeAvailable} " +
+                    "softwareVolume=disabled diagnostic=${usbSession.hardwareVolumeDiagnostic()}"
             )
             diagnostics.record("USB_PCM_GAIN gainBypass=true producerGain=1.0 softwareVolumeEnabled=false ducking=false nativeBitPerfect=diagnostic_only queueDepthBlocks=${UsbPcmPlaybackPipeline.QUEUE_DEPTH_BLOCKS} prebufferBlocks=${UsbPcmPlaybackPipeline.PREBUFFER_BLOCKS}")
 
