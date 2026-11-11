@@ -1382,3 +1382,13 @@ Validation scope:
 - Corrected the transport failure diagnostic format: removed a duplicate packet-length field and added channel count, subslot width, and bytes per frame. This makes a future 20-versus-24-byte failure capture interpretable against the negotiated PCM frame geometry.
 - No packet completion is relaxed: a successful isochronous OUT packet must still report the exact requested byte count. Accepting a short completion would silently drop PCM bytes and corrupt frame alignment.
 - **Status: ARITHMETIC/DIAGNOSTIC COVERAGE ADDED; ROOT CAUSE OF THE HISTORICAL SHORT COMPLETION NOT YET PROVEN.** The nominal scheduler test does not emulate the Android USB host controller or KTMicro DAC. A fresh diagnostic capture from the DAC is still required before changing URB timing, endpoint interval, or short-completion policy. Direct USB Safety Hold remains active.
+
+
+### 2026-11-11 — 96 kHz USB PCM final-drain source audit
+
+- Re-examined the 96,000 Hz / 125 us stereo 24-bit capture: 20,397,862 submitted frames leave a ten-frame remainder when divided into 12-frame service intervals. At six bytes per stereo frame, the final frame-aligned PCM tail is 60 bytes.
+- Added a native regression for the exact 60-byte drain-tail geometry. This validates frame alignment and endpoint-capacity checks only; it does not emulate libusb completion or prove the hardware accepts the final transfer.
+- The reported failure remains a transport no-progress timeout: three URBs were outstanding, the event dispatcher was still iterating, and no transport progress was reaped for about 1.5 seconds. The playback queue-advance failure is downstream of this drain error.
+- The existing 32 ms queue target / eight-URB cap did not prevent the stall. Do not make another queue-depth-only change, extend or disable the watchdog, or report drain success while transfers remain outstanding.
+- Current evidence does not isolate whether the outstanding URBs stop completing because of the DAC/endpoint, Android host-controller/libusb delivery, or transfer scheduling. A device-backed capture that preserves per-URB callback state and packet status before cancellation is still needed.
+- No production transport behavior was changed in this audit. Physical KTMicro KT-384/32 DAC validation remains outstanding; Direct USB Safety Hold remains active.
