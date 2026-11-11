@@ -106,6 +106,9 @@ internal class UsbDacSession internal constructor(
     @Volatile
     private var lastVolumeControlDiagnostic: String = "not_run"
 
+    @Volatile
+    private var controlInterfaceClaimedBySession = false
+
     /** Last raw UAC control-transfer result, including setup packet and response bytes. */
     @Synchronized
     fun hardwareVolumeDiagnostic(): String {
@@ -119,10 +122,45 @@ internal class UsbDacSession internal constructor(
             append(unit?.protocol?.let { "0x%02X".format(it) } ?: "none")
             append(" range=")
             append(cachedVolumeRange?.let { "${it.first}..${it.second}" } ?: "unavailable")
+            append(" control_claimed=")
+            append(controlInterfaceClaimedBySession)
             append(" last_control={")
             append(lastVolumeControlDiagnostic)
             append("}")
         }
+    }
+
+    /**
+     * Ensures the Audio Control interface is claimed before class-specific
+     * Feature Unit requests. Some UAC2 DACs stall GET_RANGE/GET_CUR until the
+     * control interface is explicitly claimed by the host process.
+     */
+    private fun ensureControlInterfaceClaimed(): Boolean {
+        val unit = volumeUnit ?: return false
+        if (controlInterfaceClaimedBySession) return true
+        return try {
+            val claimed = connection.claimInterface(
+                connection.device.getInterface(unit.controlInterface),
+                true,
+            )
+            if (claimed) {
+                controlInterfaceClaimedBySession = true
+            }
+            claimed
+        } catch (error: Throwable) {
+            lastVolumeControlDiagnostic =
+                "claim_control_interface failed: ${error.javaClass.simpleName}:${error.message}"
+            false
+        }
+    }
+
+    private fun releaseControlInterfaceIfClaimed() {
+        if (!controlInterfaceClaimedBySession) return
+        val unit = volumeUnit ?: return
+        runCatching {
+            connection.releaseInterface(connection.device.getInterface(unit.controlInterface))
+        }
+        controlInterfaceClaimedBySession = false
     }
 
     private fun volumeControl(request: Int, data: ByteArray): Int {
@@ -130,6 +168,7 @@ internal class UsbDacSession internal constructor(
             lastVolumeControlDiagnostic = "error=no_feature_unit"
             return -1
         }
+        ensureControlInterfaceClaimed()
         val value = 0x0200
         val index = (unit.unitId shl 8) or unit.controlInterface
         val requestType = if (request == 0x01) 0x21 else 0xA1
@@ -153,26 +192,67 @@ internal class UsbDacSession internal constructor(
         return transferred
     }
 
+    /**
+     * Discovers the Feature Unit volume range using several strategies.
+     *
+     * Order of attempts:
+     * 1. UAC2 GET_RANGE with a buffer large enough for 16 subranges (standard path).
+     * 2. UAC2 GET_RANGE with a single-subrange buffer (some devices stall oversized reads).
+     * 3. UAC1-style GET_MIN + GET_MAX even when the descriptor reports UAC2 protocol.
+     *
+     * A null result means no readable range was obtained; the session must not
+     * treat the Feature Unit as a working hardware volume control.
+     */
     private fun volumeRange(): Pair<Int, Int>? {
         if (volumeRangeLoaded) return cachedVolumeRange
         val unit = volumeUnit ?: return null
-        val minimum = ByteArray(2)
-        val maximum = ByteArray(2)
-        val parsed = if (unit.protocol == 0x20) {
-            // UAC2 returns wNumSubRanges followed by signed MIN/MAX/RES triplets.
-            // Read all advertised subranges instead of silently using only the first.
-            val range = ByteArray(2 + 6 * 16)
-            val transferred = volumeControl(0x82, range)
-            UsbFeatureUnitVolumeRange.parseUac2(range, transferred)
-        } else {
-            if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) {
-                null
-            } else {
-                UsbFeatureUnitVolumeRange.parseUac1(minimum, maximum)
+
+        val attempts = mutableListOf<String>()
+        var parsed: Pair<Int, Int>? = null
+
+        if (unit.protocol == 0x20) {
+            // Strategy 1: full UAC2 GET_RANGE buffer (wNumSubRanges + up to 16 triplets).
+            val fullRange = ByteArray(2 + 6 * 16)
+            val fullTransferred = volumeControl(0x82, fullRange)
+            attempts += "uac2_full(transferred=$fullTransferred)"
+            parsed = UsbFeatureUnitVolumeRange.parseUac2(fullRange, fullTransferred)
+
+            // Strategy 2: single-subrange buffer. Some firmware stalls large reads.
+            if (parsed == null) {
+                val singleRange = ByteArray(2 + 6)
+                val singleTransferred = volumeControl(0x82, singleRange)
+                attempts += "uac2_single(transferred=$singleTransferred)"
+                parsed = UsbFeatureUnitVolumeRange.parseUac2(singleRange, singleTransferred)
             }
         }
+
+        // Strategy 3: UAC1-style GET_MIN (0x82) / GET_MAX (0x83). Applied for UAC1
+        // and as a fallback when UAC2 GET_RANGE is non-responsive.
+        if (parsed == null) {
+            val minimum = ByteArray(2)
+            val maximum = ByteArray(2)
+            val minTransferred = volumeControl(0x82, minimum)
+            val maxTransferred = volumeControl(0x83, maximum)
+            attempts += "uac1_minmax(min=$minTransferred,max=$maxTransferred)"
+            if (minTransferred == 2 && maxTransferred == 2) {
+                parsed = UsbFeatureUnitVolumeRange.parseUac1(minimum, maximum)
+            }
+        }
+
+        // Optional liveness probe: record GET_CUR outcome for diagnostics even if
+        // range discovery failed. Does not affect the cached range result.
+        if (parsed == null) {
+            val current = ByteArray(2)
+            val curTransferred = volumeControl(0x81, current)
+            attempts += "get_cur_probe(transferred=$curTransferred)"
+        }
+
         volumeRangeLoaded = true
         cachedVolumeRange = parsed
+        if (parsed == null) {
+            lastVolumeControlDiagnostic =
+                lastVolumeControlDiagnostic + "; range_attempts=${attempts.joinToString("|")}"
+        }
         return parsed
     }
 
@@ -275,6 +355,8 @@ internal class UsbDacSession internal constructor(
                 )
             }
         }
+
+        releaseControlInterfaceIfClaimed()
 
         if (!connectionClosed) try {
             connection.close()
