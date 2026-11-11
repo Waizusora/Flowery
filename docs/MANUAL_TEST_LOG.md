@@ -1383,3 +1383,5 @@ Next work:
 1. Run Android/native CI and inspect the built APK.
 2. Audit and test the transport's exact packet completion behavior at 44.1 kHz and 96 kHz; do not change URB scheduling constants without a reproducing trace.
 3. Perform controlled first-use hardware validation at minimum output level, then validate pause/resume, seek, stop, disconnect, and natural drain for PCM and encoded routes.
+
+- Follow-up: the encoded route exposes verified hardware volume readback to the player state, and the existing output-volume slider writes through the encoded DAC session with SET_CUR/GET_CUR verification. If a live update cannot be verified, the session attempts to restore -40 dB and requests Stop if that cannot be confirmed.
