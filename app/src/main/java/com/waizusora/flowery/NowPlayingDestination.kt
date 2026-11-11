@@ -93,16 +93,21 @@ internal fun NowPlayingDestination(
                                     ) {
                                     itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
                                         val active = index == activeLyricIndex
-                                        Text(
-                                            line.text.ifBlank { "♪" },
-                                            color = if (active) Color.White else Color(0xFF91AAB8),
-                                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                                            fontSize = if (active) 23.sp else 18.sp,
-                                            lineHeight = if (active) 32.sp else 27.sp,
-                                            textAlign = TextAlign.Center,
-                                            modifier = Modifier.fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 19.dp)
-                                        )
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth().height(88.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                line.text.ifBlank { "♪" },
+                                                color = if (active) Color.White else Color.White.copy(alpha = 0.58f),
+                                                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                                fontSize = if (active) 23.sp else 18.sp,
+                                                lineHeight = if (active) 30.sp else 25.sp,
+                                                textAlign = TextAlign.Center,
+                                                maxLines = 2,
+                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                                            )
+                                        }
                                     }
                                 }
                                 }
