@@ -102,6 +102,18 @@ inline bool next_pcm_packet_frames(std::uint32_t sample_rate,
  phase_after = accumulated % 1000000ULL;
  return true;
 }
+inline bool pcm_drain_tail_packet_bytes(std::uint64_t remaining_bytes,
+                                           std::uint32_t bytes_per_frame,
+                                           std::uint32_t max_packet_bytes,
+                                           std::uint32_t& tail_packet_bytes) noexcept {
+ if (remaining_bytes == 0 || bytes_per_frame == 0 || max_packet_bytes == 0 ||
+     remaining_bytes > max_packet_bytes || remaining_bytes % bytes_per_frame != 0) {
+  return false;
+ }
+ tail_packet_bytes = static_cast<std::uint32_t>(remaining_bytes);
+ return true;
+}
+
 inline bool iso_packet_completed_exactly(unsigned int packet_status,
                                           unsigned int completed_status,
                                           unsigned int actual_length,
