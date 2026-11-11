@@ -245,15 +245,19 @@ void test_pcm_packet_scheduler_preserves_16khz_interval_count() {
 }
 void test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries() {
  std::uint64_t phase = 0;
+ std::uint64_t total_frames = 0;
  const std::uint32_t expected_prefix[] = {5, 6, 5, 6};
  for (std::size_t packet = 0; packet < 8000; ++packet) {
   std::uint32_t frames = 0;
   std::uint64_t next_phase = 0;
   assert(flowery::usb::next_pcm_packet_frames(44100, 125, phase, frames, next_phase));
-  assert(frames == expected_prefix[packet % 4]);
+  if (packet < 4) assert(frames == expected_prefix[packet]);
+  total_frames += frames;
   phase = next_phase;
  }
  // 8,000 service intervals at 125 us are exactly one second of audio.
+ // The fractional accumulator must distribute 5/6-frame packets without drift.
+ assert(total_frames == 44100);
  assert(phase == 0);
 }
 void test_pcm_packet_scheduler_rejects_invalid_phase_and_rate() {
