@@ -47,6 +47,32 @@ class UsbEncodedDacSession private constructor(
         return parsed
     }
 
+    /** Applies an encoded-route hardware level and verifies it with GET_CUR. */
+    @Synchronized
+    fun setHardwareVolumeFraction(fraction: Float): Float? {
+        check(!closed) { "Encoded USB session is closed" }
+        val range = volumeRange() ?: return null
+        val requestedRaw = (range.first +
+            (range.second - range.first) * fraction.coerceIn(0f, 1f)).toInt()
+        val requested = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN)
+            .putShort(requestedRaw.toShort()).array()
+        val setAccepted = volumeControl(0x01, requested) == 2
+        val current = ByteArray(2)
+        val transferred = if (setAccepted) volumeControl(0x81, current) else -1
+        if (transferred != 2) {
+            if (!armSafeStartupVolume()) requestStop()
+            return null
+        }
+        val readBackRaw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
+        return if (readBackRaw in range.first..range.second) {
+            ((readBackRaw - range.first).toFloat() /
+                (range.second - range.first).toFloat()).coerceIn(0f, 1f)
+        } else {
+            if (!armSafeStartupVolume()) requestStop()
+            null
+        }
+    }
+
     /** Must complete before the encoded producer worker can submit its first packet. */
     @Synchronized
     fun armSafeStartupVolume(): Boolean {
