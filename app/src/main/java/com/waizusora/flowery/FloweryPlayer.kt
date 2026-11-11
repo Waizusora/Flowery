@@ -7,6 +7,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
+class UsbDirectRouteUnavailableException(message: String, cause: Throwable? = null) : IllegalStateException(message, cause)
+
 class FloweryPlayer(private val context: Context, private val onState: (String) -> Unit) {
     companion object {
         private const val DECODE_CHUNK_FRAMES = 8_192
@@ -205,29 +207,51 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "The native playback session could not enter the running state"
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
+                var usbFallbackReason: String? = null
                 when (playbackRoute) {
                     1 -> {
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
                         usbPlaybackMode = true
                         onState("Playing · USB exclusive · preparing encoded output…")
-                        playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                        return@thread
+                        try {
+                            playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs, sessionHandle)
+                            return@thread
+                        } catch (error: UsbDirectRouteUnavailableException) {
+                            usbFallbackReason = error.message ?: "USB Direct route is unavailable."
+                            diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                            usbPlaybackMode = false
+                            onState("USB Direct unavailable · falling back to AAudio")
+                        }
                     }
                     2 -> {
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=true")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_SOURCE_PRESERVING_CANDIDATE sourceBits=${sourceBits}")
                         usbPlaybackMode = true
                         onState("Playing · USB exclusive · preparing decoded PCM output…")
-                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                        return@thread
+                        try {
+                            playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
+                            return@thread
+                        } catch (error: UsbDirectRouteUnavailableException) {
+                            usbFallbackReason = error.message ?: "USB Direct route is unavailable."
+                            diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                            usbPlaybackMode = false
+                            onState("USB Direct unavailable · falling back to AAudio")
+                        }
                     }
                     3 -> {
                         diagnostics.record("BIT_PERFECT_SOURCE codecClassLossless=${losslessSource} sourceBits=${sourceBits} sampleRate=${sourceRate} eligible=false")
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
                         usbPlaybackMode = true
                         onState("Playing · USB exclusive · preparing decoded PCM output…")
-                        playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                        return@thread
+                        try {
+                            playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
+                            return@thread
+                        } catch (error: UsbDirectRouteUnavailableException) {
+                            usbFallbackReason = error.message ?: "USB Direct route is unavailable."
+                            diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                            usbPlaybackMode = false
+                            onState("USB Direct unavailable · falling back to AAudio")
+                        }
                     }
                     0 -> Unit
                     else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
@@ -319,7 +343,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     else -> "unknown sharing mode"
                 }
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
-                onState("Playing · Rust AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
+                val fallbackLabel = usbFallbackReason?.let { " · USB fallback: $it" } ?: ""
+                onState("Playing · Rust AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)$fallbackLabel")
 
                 // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
@@ -437,8 +462,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val controller = UsbDacController(context)
             val devices = controller.audioDevices()
             onState("USB exclusive: finding a matching UAC1 AC-3 encoded profile…")
-            val (device, openedPipeline) =
+            val (device, openedPipeline) = try {
                 controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sessionHandle, sourceRate)
+            } catch (error: Throwable) {
+                throw UsbDirectRouteUnavailableException(
+                    "USB encoded profile negotiation failed: ${error.message ?: error.javaClass.simpleName}",
+                    error,
+                )
+            }
             pipeline = openedPipeline
             activeUsbEncodedPipeline = openedPipeline
             activeUsbSession = null
@@ -526,23 +557,30 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 else "USB exclusive: selecting a ${channels}-channel DAC profile for float32 decoding…"
             )
             diagnostics.record("SESSION_OPEN_BEGIN bitDepth=${if (ieeeFloatCandidate) 32 else if (nativeCandidate) sourceBits else "automatic"} encoding=${if (ieeeFloatCandidate) "ieee_float32" else "signed_integer"} sampleRate=${sourceRate} channels=${channels} nativeCandidate=${nativeCandidate} ieeeFloatCandidate=${ieeeFloatCandidate}")
-            val negotiation = UsbPcmRouteNegotiator(controller).open(
-                devices = discovered,
-                sourceBits = sourceBits,
-                sourceRate = sourceRate,
-                channels = channels,
-                ieeeFloatSource = ieeeFloatSource,
-                equalizerFlat = equalizerFlat,
-                onFallback = { error ->
-                    if (ieeeFloatCandidate) {
-                        ieeeFloatCandidate = false
-                        diagnostics.record("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=signed_integer_pcm")
-                    } else if (nativeCandidate) {
-                        nativeCandidate = false
-                        diagnostics.record("NATIVE_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=float32")
-                    }
-                },
-            )
+            val negotiation = try {
+                UsbPcmRouteNegotiator(controller).open(
+                    devices = discovered,
+                    sourceBits = sourceBits,
+                    sourceRate = sourceRate,
+                    channels = channels,
+                    ieeeFloatSource = ieeeFloatSource,
+                    equalizerFlat = equalizerFlat,
+                    onFallback = { error ->
+                        if (ieeeFloatCandidate) {
+                            ieeeFloatCandidate = false
+                            diagnostics.record("IEEE_FLOAT_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=signed_integer_pcm")
+                        } else if (nativeCandidate) {
+                            nativeCandidate = false
+                            diagnostics.record("NATIVE_PROFILE_UNAVAILABLE reason=${error.message ?: error.javaClass.simpleName} fallback=float32")
+                        }
+                    },
+                )
+            } catch (error: Throwable) {
+                throw UsbDirectRouteUnavailableException(
+                    "USB DAC negotiation failed: ${error.message ?: error.javaClass.simpleName}",
+                    error,
+                )
+            }
             ieeeFloatCandidate = negotiation.ieeeFloatCandidate
             nativeCandidate = negotiation.nativeCandidate
             val outputEncoding = negotiation.outputEncoding
