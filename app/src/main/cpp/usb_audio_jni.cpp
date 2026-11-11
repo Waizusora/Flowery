@@ -80,6 +80,15 @@ struct UsbAudioSession {
     std::atomic<bool> feedback_valid{false};
     std::atomic<uint32_t> feedback_rate_fp{0};
     std::atomic<int64_t> feedback_last_update_ns{0};
+    std::atomic<uint64_t> feedback_callback_count{0};
+    std::atomic<uint64_t> feedback_valid_sample_count{0};
+    std::atomic<uint64_t> feedback_invalid_sample_count{0};
+    std::atomic<int64_t> feedback_last_callback_ns{0};
+    std::atomic<unsigned int> feedback_last_transfer_status{0};
+    std::atomic<unsigned int> feedback_last_packet_status{0};
+    std::atomic<unsigned int> feedback_last_actual_length{0};
+    std::atomic<unsigned int> feedback_last_requested_length{0};
+    std::atomic<int> feedback_resubmit_error{LIBUSB_SUCCESS};
     uint8_t feedback_fraction_bits = 0;
     uint32_t feedback_base_interval_us = 0;
     uint64_t feedback_phase = 0;
@@ -160,6 +169,15 @@ struct TransportFailure {
     uint64_t event_loops_at_failure = 0;
     int event_loop_error_at_failure = LIBUSB_SUCCESS;
     bool event_thread_running_at_failure = false;
+    uint64_t feedback_callbacks_at_failure = 0;
+    uint64_t feedback_valid_samples_at_failure = 0;
+    uint64_t feedback_invalid_samples_at_failure = 0;
+    long long feedback_callback_age_ms_at_failure = -1;
+    unsigned int feedback_transfer_status_at_failure = 0;
+    unsigned int feedback_packet_status_at_failure = 0;
+    unsigned int feedback_actual_length_at_failure = 0;
+    unsigned int feedback_requested_length_at_failure = 0;
+    int feedback_resubmit_error_at_failure = LIBUSB_SUCCESS;
     long long event_loop_idle_ms_at_failure = -1;
     bool snapshot_captured = false;
 };
@@ -188,6 +206,20 @@ void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
 void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
     auto* session = static_cast<UsbAudioSession*>(transfer->user_data);
     if (session == nullptr) return;
+    const auto callback_now = std::chrono::steady_clock::now().time_since_epoch();
+    session->feedback_callback_count.fetch_add(1, std::memory_order_relaxed);
+    session->feedback_last_callback_ns.store(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(callback_now).count(),
+        std::memory_order_release);
+    session->feedback_last_transfer_status.store(
+        static_cast<unsigned int>(transfer->status), std::memory_order_release);
+    if (transfer->num_iso_packets > 0) {
+        const auto& observed_packet = transfer->iso_packet_desc[0];
+        session->feedback_last_packet_status.store(
+            static_cast<unsigned int>(observed_packet.status), std::memory_order_release);
+        session->feedback_last_actual_length.store(observed_packet.actual_length, std::memory_order_release);
+        session->feedback_last_requested_length.store(observed_packet.length, std::memory_order_release);
+    }
     if (transfer->status == LIBUSB_TRANSFER_COMPLETED && transfer->num_iso_packets > 0) {
         const auto& packet = transfer->iso_packet_desc[0];
         const unsigned char* data = libusb_get_iso_packet_buffer_simple(transfer, 0);
@@ -200,9 +232,16 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
                 session->feedback_last_update_ns.store(
                     std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(),
                     std::memory_order_release);
+                session->feedback_valid_sample_count.fetch_add(1, std::memory_order_relaxed);
                 session->feedback_valid.store(true, std::memory_order_release);
+            } else {
+                session->feedback_invalid_sample_count.fetch_add(1, std::memory_order_relaxed);
             }
+        } else {
+            session->feedback_invalid_sample_count.fetch_add(1, std::memory_order_relaxed);
         }
+    } else {
+        session->feedback_invalid_sample_count.fetch_add(1, std::memory_order_relaxed);
     }
     bool resubmitted = false;
     {
@@ -216,6 +255,7 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
                 resubmitted = true;
                 session->feedback_in_flight.store(true, std::memory_order_release);
             } else {
+                session->feedback_resubmit_error.store(result, std::memory_order_release);
                 session->event_loop_error.store(result, std::memory_order_release);
             }
         }
@@ -260,6 +300,21 @@ void snapshot_transport_failure(const UsbAudioSession* session, TransportFailure
     failure->event_loop_error_at_failure = session->event_loop_error.load(std::memory_order_acquire);
     failure->event_thread_running_at_failure =
         session->event_thread_running.load(std::memory_order_acquire);
+    failure->feedback_callbacks_at_failure = session->feedback_callback_count.load(std::memory_order_acquire);
+    failure->feedback_valid_samples_at_failure = session->feedback_valid_sample_count.load(std::memory_order_acquire);
+    failure->feedback_invalid_samples_at_failure = session->feedback_invalid_sample_count.load(std::memory_order_acquire);
+    failure->feedback_transfer_status_at_failure = session->feedback_last_transfer_status.load(std::memory_order_acquire);
+    failure->feedback_packet_status_at_failure = session->feedback_last_packet_status.load(std::memory_order_acquire);
+    failure->feedback_actual_length_at_failure = session->feedback_last_actual_length.load(std::memory_order_acquire);
+    failure->feedback_requested_length_at_failure = session->feedback_last_requested_length.load(std::memory_order_acquire);
+    failure->feedback_resubmit_error_at_failure = session->feedback_resubmit_error.load(std::memory_order_acquire);
+    const int64_t feedback_callback_ns = session->feedback_last_callback_ns.load(std::memory_order_acquire);
+    if (feedback_callback_ns > 0) {
+        const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        failure->feedback_callback_age_ms_at_failure =
+            std::max<int64_t>(0, (now_ns - feedback_callback_ns) / 1000000LL);
+    }
     const int64_t last_ns = session->last_event_loop_ns.load(std::memory_order_acquire);
     if (last_ns > 0) {
         const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -713,7 +768,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
     }
     const size_t max_urbs = failure.max_urbs_at_failure != 0
         ? failure.max_urbs_at_failure : max_urbs_in_flight(session);
-    char message[1536];
+    char message[2048];
     std::snprintf(
         message, sizeof(message),
         "USB isochronous transfer failed: reason=%s; %s (%d); "
@@ -727,6 +782,9 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_thread_running=%d; event_loop_idle_ms=%lld; "
         "callback_entered_urbs=%u; callback_pending_urbs=%u; "
+        "feedback_callbacks=%llu; feedback_valid_samples=%llu; feedback_invalid_samples=%llu; "
+        "feedback_callback_age_ms=%lld; feedback_transfer_status=%u; feedback_packet_status=%u; "
+        "feedback_actual_length=%u; feedback_requested_length=%u; feedback_resubmit_error=%d; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
         "queue_target_us=%llu; max_urbs_actual=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
@@ -753,6 +811,15 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.event_loop_idle_ms_at_failure,
         failure.callback_entered_urbs_at_failure,
         failure.callback_pending_urbs_at_failure,
+        static_cast<unsigned long long>(failure.feedback_callbacks_at_failure),
+        static_cast<unsigned long long>(failure.feedback_valid_samples_at_failure),
+        static_cast<unsigned long long>(failure.feedback_invalid_samples_at_failure),
+        failure.feedback_callback_age_ms_at_failure,
+        failure.feedback_transfer_status_at_failure,
+        failure.feedback_packet_status_at_failure,
+        failure.feedback_actual_length_at_failure,
+        failure.feedback_requested_length_at_failure,
+        failure.feedback_resubmit_error_at_failure,
         failure.pending_pcm_remaining_at_failure,
         failure.pending_encoded_remaining_at_failure,
         failure.in_flight_summary,
