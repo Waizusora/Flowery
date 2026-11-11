@@ -1313,3 +1313,14 @@ Validation scope:
 - This validates the resampled decoder/DSP path in host-native tests. It does not emulate Android AAudio scheduling, USB transport, physical DAC output, or actual audible playback.
 - Implementation commit: `bf3801072bb2a77a15b2b84f00847c588381eb07`. CI validation is pending; no test pass is claimed until the workflow completes.
 - No physical DAC or USB Direct hardware testing was performed. USB Direct Safety Hold remains active.
+
+
+### 2026-11-11 — USB isochronous in-flight stall diagnostics
+
+- Audited the native libusb event loop, isochronous transfer ownership/reaping, PCM packet planner, feedback scheduling, and PCM/encoded final-drain paths.
+- Confirmed the existing 1.5-second watchdog is based on time since the last reclaimed transfer, not simply the time since the last event-loop iteration. The event loop can remain active while the endpoint stops completing URBs; the watchdog must remain enabled.
+- Confirmed the KTMicro capture's prior 32 ms / 8-URB mitigation did not resolve the stall. Its log showed the event loop still running, while three transfers remained outstanding at final drain. This does not yet identify whether the endpoint/controller stopped completing transfers or whether packet scheduling/device behavior caused the stall.
+- Expanded the in-flight snapshot emitted at a stall to include each queued transfer's callback-completed flag, transfer status, count of completed and unfinished isochronous packets, first/last packet actual lengths, and first/last packet status. These values are captured before cancellation callbacks can mutate the transfer state.
+- Diagnostic-only change; no packet scheduling, watchdog, drain-success, or audio-volume behavior was changed. This deliberately avoids masking a real transport failure.
+- Implementation commits: `33dae9e789c2b7c75cb1bf0400fdf3796171d0ae` and follow-up counter correction `0e97a90248b55bd490ce0bbc4ab1fe317cfcee2b`.
+- **Status: DIAGNOSTIC BUILD/CI AND PHYSICAL DAC CAPTURE REQUIRED.** The next capture must be made on the KTMicro DAC at a safe verified volume, preferably including the final 10 seconds of a track. No claim is made that stutter or final-drain failure is fixed.
