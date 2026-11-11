@@ -47,6 +47,18 @@ class UsbEncodedDacSession private constructor(
         return parsed
     }
 
+    @Synchronized
+    fun readHardwareVolumeFraction(): Float? {
+        check(!closed) { "Encoded USB session is closed" }
+        val range = volumeRange() ?: return null
+        val current = ByteArray(2)
+        if (volumeControl(0x81, current) != 2) return null
+        val raw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
+        if (raw !in range.first..range.second) return null
+        return ((raw - range.first).toFloat() /
+            (range.second - range.first).toFloat()).coerceIn(0f, 1f)
+    }
+
     /** Applies an encoded-route hardware level and verifies it with GET_CUR. */
     @Synchronized
     fun setHardwareVolumeFraction(fraction: Float): Float? {
