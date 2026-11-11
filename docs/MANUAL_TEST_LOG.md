@@ -1343,3 +1343,11 @@ Validation scope:
 - The earlier, separately documented `ArithmeticException: divide by zero` in `FloweryPlayer.positionMs()` was already addressed in the current source by snapshotting `outputSampleRate` once and returning zero for a non-positive snapshot. The supplied capture does not contain the old stack trace, so it does not prove that this is the same failure.
 - Added phase markers to `PlaybackService.playCurrent()` around audio-focus request, metadata retrieval/publication, foreground startup, worker submission/entry, and `player.play()`. These are diagnostic-only and do not change playback or USB transport behavior.
 - **Status: INVESTIGATION REQUIRED.** Reproduce using an unfiltered full logcat capture including AndroidRuntime, libc, DEBUG, ActivityManager, and FloweryDiagnostics. Do not attribute this termination to the USB DAC or change transport scheduling based on the current evidence.
+
+
+### 2026-11-11 — User validation: AUX playback no longer crashes
+
+- The user confirmed that the previously crashing “Through Struggle” track now plays through the ordinary Android/AUX output path without terminating the Flowery process.
+- The Android status-bar/media notification now displays the Flowery icon instead of embedded album artwork. This is an accepted trade-off for keeping large embedded artwork out of Binder/MediaSession metadata; the in-app library artwork path is separate and was not revalidated in this report.
+- This confirms the reported AUX crash is resolved on the user's device for this reproduction. It does not validate other tracks/devices or the direct USB DAC path.
+- USB Direct remains a separate workstream. No physical USB DAC test was performed in this validation; the existing 44.1 kHz packet-completion and 96 kHz final-drain investigations remain open, and Direct USB Safety Hold remains active pending a diagnostic capture from the DAC.
