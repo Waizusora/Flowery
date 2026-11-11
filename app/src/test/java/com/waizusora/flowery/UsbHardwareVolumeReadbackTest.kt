@@ -7,12 +7,12 @@ import org.junit.Test
 class UsbHardwareVolumeReadbackTest {
     @Test
     fun acceptsOnlyConfirmedHardwareVolumeReadback() {
-        assertEquals(0.42f, UsbHardwareVolumeReadback.confirmedFraction(true, 0.42f)!!, 0.0001f)
+        assertEquals(0.01f, UsbHardwareVolumeReadback.confirmedFraction(true, 0.01f)!!, 0.0001f)
     }
 
     @Test
     fun rejectsSetRequestWhenDeviceDoesNotAcceptIt() {
-        assertNull(UsbHardwareVolumeReadback.confirmedFraction(false, 0.42f))
+        assertNull(UsbHardwareVolumeReadback.confirmedFraction(false, 0.01f))
     }
 
     @Test
@@ -21,9 +21,25 @@ class UsbHardwareVolumeReadbackTest {
     }
 
     @Test
-    fun clampsReadbackToNormalizedRange() {
-        assertEquals(1f, UsbHardwareVolumeReadback.confirmedFraction(true, 1.5f)!!, 0f)
-        assertEquals(0f, UsbHardwareVolumeReadback.confirmedFraction(true, -0.5f)!!, 0f)
+    fun clampsReadbackToNormalizedRangeWhenCallerAllowsFullRange() {
+        assertEquals(
+            1f,
+            UsbHardwareVolumeReadback.confirmedFraction(
+                true,
+                1.5f,
+                maximumSafeFraction = 1f,
+            )!!,
+            0f,
+        )
+        assertEquals(
+            0f,
+            UsbHardwareVolumeReadback.confirmedFraction(
+                true,
+                -0.5f,
+                maximumSafeFraction = 1f,
+            )!!,
+            0f,
+        )
     }
 
     @Test

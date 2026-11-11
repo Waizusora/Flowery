@@ -1363,3 +1363,13 @@ Validation scope:
 - Required design follow-up before removing Direct USB Safety Hold: define an explicit safe startup-volume policy for both hardware and software volume routes; require hardware SET_CUR followed by GET_CUR readback where supported; fail closed if a requested safe level cannot be confirmed; ensure the first PCM/encoded submission cannot race ahead of the volume gate; and define how users deliberately raise volume after the route is armed. IEC 61937 encoded passthrough needs a separately reviewed policy because PCM software gain is not available on that path.
 
 **Status: STARTUP VOLUME INHERITANCE GAP CONFIRMED BY SOURCE INSPECTION; NO FIX CLAIMED; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
+
+### 2026-11-11 — Gate decoded USB PCM startup on conservative volume
+
+- Changed the decoded PCM USB attach policy so a DAC that advertises a Feature Unit must accept SET_CUR at the minimum advertised volume and return a GET_CUR value within 2% of the advertised range minimum. Missing, non-finite, rejected, or unexpectedly high readback blocks PCM playback before the Rust PCM producer is opened.
+- DACs without a Feature Unit now start with a persisted software gain of 0.01 (1% linear amplitude, approximately -40 dB) instead of restoring a potentially high per-device preference or inheriting Android's media-stream volume. The player volume control can subsequently raise the level deliberately.
+- The volume gate runs before `UsbPcmPlaybackPipeline.open()`, so the producer cannot submit the first PCM block before the startup policy completes.
+- Added JVM regression tests for accepted minimum readback, rejected SET_CUR, missing/non-finite readback, out-of-window readback, and normalization.
+- This change covers decoded USB PCM only. UAC1 encoded AC-3/IEC 61937 passthrough still requires a separately reviewed startup-volume policy. It does not fix the 44.1 kHz short-packet or 96 kHz final-drain transport failures.
+- CI and physical DAC verification are pending. Direct USB Safety Hold remains active; do not perform loudness testing until the new build is installed and the DAC startup level is verified.
