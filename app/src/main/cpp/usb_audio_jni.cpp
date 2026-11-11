@@ -171,17 +171,8 @@ void LIBUSB_CALL on_feedback_complete(libusb_transfer* transfer) {
         const unsigned char* data = libusb_get_iso_packet_buffer_simple(transfer, 0);
         if (packet.status == LIBUSB_TRANSFER_COMPLETED && data != nullptr) {
             uint32_t value = 0;
-            if (session->feedback_fraction_bits == 14 && packet.actual_length >= 3) {
-                value = static_cast<uint32_t>(data[0]) |
-                        (static_cast<uint32_t>(data[1]) << 8) |
-                        (static_cast<uint32_t>(data[2]) << 16);
-            } else if (session->feedback_fraction_bits == 16 && packet.actual_length >= 4) {
-                value = static_cast<uint32_t>(data[0]) |
-                        (static_cast<uint32_t>(data[1]) << 8) |
-                        (static_cast<uint32_t>(data[2]) << 16) |
-                        (static_cast<uint32_t>(data[3]) << 24);
-            }
-            if (value != 0) {
+            if (flowery::usb::decode_feedback_sample(
+                    data, packet.actual_length, session->feedback_fraction_bits, value)) {
                 session->feedback_rate_fp.store(value, std::memory_order_release);
                 const auto now = std::chrono::steady_clock::now().time_since_epoch();
                 session->feedback_last_update_ns.store(
