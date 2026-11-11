@@ -24,14 +24,13 @@ namespace {
 
 // Isochronous transport tuning.
 //
-// Keep the scheduling horizon deliberately short. A 64-packet URB covers 8 ms
-// at a 125 us service interval; a 32 ms target therefore keeps roughly four
-// URBs queued instead of the previous 192 ms / 24-URB window. This bounds
-// endpoint/controller scheduling depth while retaining enough work to avoid
-// submitting one service interval at a time.
+// Keep a bounded but larger scheduling horizon. A 64-packet URB covers 8 ms
+// at a 125 us service interval; a 64 ms target allows up to eight URBs in flight.
+// This gives the high-rate adaptive endpoint more tolerance for Android host
+// scheduling jitter without restoring the previous 192 ms / 24-URB window.
 constexpr size_t kPacketsPerUrb = 64;
 constexpr size_t kMaxUrbsInFlight = 8;
-constexpr uint64_t kTargetQueuedAudioUs = 32000ULL;
+constexpr uint64_t kTargetQueuedAudioUs = 64000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
 // because it cancels queued isochronous URBs and breaks the scheduling chain.
