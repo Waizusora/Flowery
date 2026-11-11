@@ -137,6 +137,11 @@ struct TransportFailure {
     int device_speed = LIBUSB_SPEED_UNKNOWN;
     std::vector<unsigned int> requested_packet_lengths;
     size_t in_flight_at_failure = 0;
+    size_t max_urbs_at_failure = 0;
+    size_t pending_pcm_remaining_at_failure = 0;
+    size_t pending_encoded_remaining_at_failure = 0;
+    char in_flight_summary[512] = {};
+    bool stall_snapshot_captured = false;
     long long idle_ms_at_failure = 0;
     uint64_t submitted_at_failure = 0;
     uint64_t callbacks_at_failure = 0;
@@ -660,7 +665,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
             used += std::min(static_cast<size_t>(written), sizeof(packet_lengths) - used);
         }
     }
-    char message[1024];
+    char message[1536];
     std::snprintf(
         message, sizeof(message),
         "USB isochronous transfer failed: reason=%s; %s (%d); "
@@ -671,7 +676,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_loop_idle_ms=%lld; "
-        "queue_target_us=%llu; max_urbs=%zu",
+        "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
+        "queue_target_us=%llu; max_urbs_actual=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
         failure.transfer_status, transfer_name,
         static_cast<unsigned long long>(failure.sequence), failure.in_flight_at_failure,
@@ -688,7 +694,10 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.event_loops_at_failure),
         failure.event_loop_error_at_failure,
         failure.event_loop_idle_ms_at_failure,
-        static_cast<unsigned long long>(kTargetQueuedAudioUs), kMaxUrbsInFlight);
+        failure.pending_pcm_remaining_at_failure,
+        failure.pending_encoded_remaining_at_failure,
+        failure.in_flight_summary,
+        static_cast<unsigned long long>(kTargetQueuedAudioUs), failure.max_urbs_at_failure);
     jclass exception = env->FindClass("java/lang/IllegalStateException");
     if (exception != nullptr) env->ThrowNew(exception, message);
 }
@@ -820,6 +829,54 @@ void compact_encoded(UsbAudioSession* session) {
     session->encoded_offset = 0;
 }
 
+// Capture the queue shape before cancellation changes ownership or counters.
+// Each entry is sequence/packet-count/phase-range/byte-count/edge-packet-lengths.
+void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure* failure) {
+    if (failure->stall_snapshot_captured) return;
+    failure->max_urbs_at_failure = max_urbs_in_flight(session);
+    failure->pending_pcm_remaining_at_failure =
+        session->pending_pcm.size() - session->pending_offset;
+    failure->pending_encoded_remaining_at_failure =
+        session->pending_encoded.size() - session->encoded_offset;
+    size_t used = 0;
+    for (const auto& entry : session->in_flight) {
+        uint64_t requested_bytes = 0;
+        for (const unsigned int length : entry->requested_packet_lengths) {
+            requested_bytes += length;
+        }
+        const unsigned int first_packet = entry->requested_packet_lengths.empty()
+            ? 0U : entry->requested_packet_lengths.front();
+        const unsigned int last_packet = entry->requested_packet_lengths.empty()
+            ? 0U : entry->requested_packet_lengths.back();
+        const int written = std::snprintf(
+            failure->in_flight_summary + used,
+            sizeof(failure->in_flight_summary) - used,
+            "%s#%llu/%zu/%llu-%llu/%llu/%u-%u",
+            used == 0 ? "" : ";",
+            static_cast<unsigned long long>(entry->sequence),
+            entry->requested_packet_lengths.size(),
+            static_cast<unsigned long long>(entry->frame_phase_before),
+            static_cast<unsigned long long>(entry->frame_phase_after),
+            static_cast<unsigned long long>(requested_bytes),
+            first_packet, last_packet);
+        if (written < 0) break;
+        const size_t remaining = sizeof(failure->in_flight_summary) - used;
+        used += std::min(static_cast<size_t>(written), remaining);
+        if (used >= sizeof(failure->in_flight_summary)) break;
+    }
+    if (!session->in_flight.empty()) {
+        const auto& oldest = session->in_flight.front();
+        failure->packet_count = static_cast<unsigned int>(oldest->requested_packet_lengths.size());
+        failure->frame_phase_before = oldest->frame_phase_before;
+        failure->frame_phase_after = oldest->frame_phase_after;
+        if (oldest->transfer != nullptr) {
+            failure->transfer_flags = oldest->transfer->flags;
+        }
+        failure->device_speed = session->device_speed;
+    }
+    failure->stall_snapshot_captured = true;
+}
+
 // Waits for the dedicated event thread to publish completions and enforces
 // a progress watchdog against the oldest outstanding URB.
 bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
@@ -841,6 +898,7 @@ bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
             failure->in_flight_at_failure = session->in_flight.size();
             failure->idle_ms_at_failure =
                 std::chrono::duration_cast<std::chrono::milliseconds>(idle).count();
+            snapshot_stalled_transport(session, failure);
             return false;
         }
     }
