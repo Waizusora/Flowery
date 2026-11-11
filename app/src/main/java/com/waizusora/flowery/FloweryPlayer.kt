@@ -598,6 +598,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             }
             ieeeFloatCandidate = negotiation.ieeeFloatCandidate
             nativeCandidate = negotiation.nativeCandidate
+            if (!nativeCandidate && !ieeeFloatCandidate) {
+                throw UsbDirectRouteUnavailableException(
+                    "No exact source-preserving USB profile is available; float32 USB processing is disabled in strict Bit-Perfect mode.",
+                )
+            }
             val outputEncoding = negotiation.outputEncoding
             val selectedDevice = negotiation.device
             val usbSession = negotiation.session
