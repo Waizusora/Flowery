@@ -149,20 +149,15 @@ class UsbDacController(context: Context) {
                 500
             )
             val range = if (unit.protocol == 0x20) {
-                val response = ByteArray(8)
-                if (request(0x82, response) < 8) return null
-                val buffer = java.nio.ByteBuffer.wrap(response).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-                if (buffer.short.toInt() < 1) return null
-                buffer.short.toInt() to buffer.short.toInt()
+                val response = ByteArray(2 + 6 * 16)
+                val transferred = request(0x82, response)
+                UsbFeatureUnitVolumeRange.parseUac2(response, transferred) ?: return null
             } else {
                 val minimum = ByteArray(2)
                 val maximum = ByteArray(2)
                 if (request(0x82, minimum) != 2 || request(0x83, maximum) != 2) return null
-                val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-                val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-                min to max
+                UsbFeatureUnitVolumeRange.parseUac1(minimum, maximum) ?: return null
             }
-            if (range.second <= range.first) return null
             val current = ByteArray(2)
             if (request(0x81, current) != 2) return null
             val value = java.nio.ByteBuffer.wrap(current).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
