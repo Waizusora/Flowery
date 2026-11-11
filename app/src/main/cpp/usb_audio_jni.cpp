@@ -665,6 +665,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
             used += std::min(static_cast<size_t>(written), sizeof(packet_lengths) - used);
         }
     }
+    const size_t max_urbs = failure.max_urbs_at_failure != 0
+        ? failure.max_urbs_at_failure : max_urbs_in_flight(session);
     char message[1536];
     std::snprintf(
         message, sizeof(message),
@@ -697,7 +699,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.pending_pcm_remaining_at_failure,
         failure.pending_encoded_remaining_at_failure,
         failure.in_flight_summary,
-        static_cast<unsigned long long>(kTargetQueuedAudioUs), failure.max_urbs_at_failure);
+        static_cast<unsigned long long>(kTargetQueuedAudioUs), max_urbs);
     jclass exception = env->FindClass("java/lang/IllegalStateException");
     if (exception != nullptr) env->ThrowNew(exception, message);
 }
@@ -873,6 +875,7 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
             failure->transfer_flags = oldest->transfer->flags;
         }
         failure->device_speed = session->device_speed;
+        failure->scheduled_start_frame = -1;
     }
     failure->stall_snapshot_captured = true;
 }
