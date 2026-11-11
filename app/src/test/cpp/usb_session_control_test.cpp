@@ -232,6 +232,37 @@ void test_feedback_initial_submission_state_is_published_before_callback_can_run
  in_flight.store(false, std::memory_order_release); // callback: resubmit failed
  assert(!in_flight.load(std::memory_order_acquire));
 }
+void test_pcm_packet_scheduler_preserves_16khz_interval_count() {
+ std::uint64_t phase = 0;
+ for (int packet = 0; packet < 8000; ++packet) {
+  std::uint32_t frames = 0;
+  std::uint64_t next_phase = 0;
+  assert(flowery::usb::next_pcm_packet_frames(16000, 125, phase, frames, next_phase));
+  assert(frames == 2);
+  assert(next_phase == 0);
+  phase = next_phase;
+ }
+}
+void test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries() {
+ std::uint64_t phase = 0;
+ const std::uint32_t expected_prefix[] = {5, 6, 5, 6};
+ for (std::size_t packet = 0; packet < 8000; ++packet) {
+  std::uint32_t frames = 0;
+  std::uint64_t next_phase = 0;
+  assert(flowery::usb::next_pcm_packet_frames(44100, 125, phase, frames, next_phase));
+  assert(frames == expected_prefix[packet % 4]);
+  phase = next_phase;
+ }
+ // 8,000 service intervals at 125 us are exactly one second of audio.
+ assert(phase == 0);
+}
+void test_pcm_packet_scheduler_rejects_invalid_phase_and_rate() {
+ std::uint32_t frames = 0;
+ std::uint64_t next_phase = 0;
+ assert(!flowery::usb::next_pcm_packet_frames(0, 125, 0, frames, next_phase));
+ assert(!flowery::usb::next_pcm_packet_frames(44100, 0, 0, frames, next_phase));
+ assert(!flowery::usb::next_pcm_packet_frames(44100, 125, 1000000, frames, next_phase));
+}
 void test_isochronous_packet_requires_exact_completion() {
  using flowery::usb::iso_packet_completed_exactly;
  constexpr unsigned int completed = 0;
@@ -272,6 +303,9 @@ int main() {
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
  test_isochronous_packet_requires_exact_completion();
+ test_pcm_packet_scheduler_preserves_16khz_interval_count();
+ test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries();
+ test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (16 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (19 scenarios).\n"; return 0;
 }
