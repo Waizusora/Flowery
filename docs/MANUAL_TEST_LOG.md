@@ -1351,3 +1351,15 @@ Validation scope:
 - The Android status-bar/media notification now displays the Flowery icon instead of embedded album artwork. This is an accepted trade-off for keeping large embedded artwork out of Binder/MediaSession metadata; the in-app library artwork path is separate and was not revalidated in this report.
 - This confirms the reported AUX crash is resolved on the user's device for this reproduction. It does not validate other tracks/devices or the direct USB DAC path.
 - USB Direct remains a separate workstream. No physical USB DAC test was performed in this validation; the existing 44.1 kHz packet-completion and 96 kHz final-drain investigations remain open, and Direct USB Safety Hold remains active pending a diagnostic capture from the DAC.
+
+
+### 2026-11-11 — Direct USB startup-volume safety audit (source-only)
+
+- Reviewed the decoded PCM USB startup path from `FloweryPlayer` through `UsbPlaybackVolumePolicy.attach()` and `UsbPcmPlaybackPipeline.open()`.
+- When the DAC exposes a readable Feature Unit volume control, attach reads the current hardware volume and treats the route as hardware-synchronized/bit-perfect. It does not first command the DAC to a conservative startup level and verify that level with GET_CUR before the first PCM block can be submitted.
+- When no readable hardware volume control is available, attach restores the per-device software volume preference; if no preference exists, `OutputVolumeController.usbVolume()` inherits Android's current media-stream volume. This value can also be high and is passed as the initial Rust producer gain for the software-gain route.
+- Therefore, the current startup path can inherit a previously high DAC hardware setting or a high Android-derived software setting. This is a confirmed source-level safety gap, but it is not evidence that this gap caused the historical high-pitched noise. The high-pitched-noise root cause remains unverified and must not be conflated with the independent 44.1 kHz packet short-completion or 96 kHz final-drain failures.
+- No hardware volume command, attenuation policy, or playback behavior was changed in this audit. No DAC was connected and no physical playback test was performed.
+- Required design follow-up before removing Direct USB Safety Hold: define an explicit safe startup-volume policy for both hardware and software volume routes; require hardware SET_CUR followed by GET_CUR readback where supported; fail closed if a requested safe level cannot be confirmed; ensure the first PCM/encoded submission cannot race ahead of the volume gate; and define how users deliberately raise volume after the route is armed. IEC 61937 encoded passthrough needs a separately reviewed policy because PCM software gain is not available on that path.
+
+**Status: STARTUP VOLUME INHERITANCE GAP CONFIRMED BY SOURCE INSPECTION; NO FIX CLAIMED; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
