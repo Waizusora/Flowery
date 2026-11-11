@@ -106,10 +106,11 @@ internal fun DspDestination(
                 }
             }
             Text(
-                "Scroll horizontally to access all 31 independent ISO bands.",
+                "Geser untuk mengatur",
                 color = muted,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(horizontal = 16.dp)
+                fontSize = 10.sp,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center
             )
         }
     }
