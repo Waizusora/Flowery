@@ -1385,3 +1385,10 @@ Next work:
 3. Perform controlled first-use hardware validation at minimum output level, then validate pause/resume, seek, stop, disconnect, and natural drain for PCM and encoded routes.
 
 - Follow-up: the encoded route exposes verified hardware volume readback to the player state, and the existing output-volume slider writes through the encoded DAC session with SET_CUR/GET_CUR verification. If a live update cannot be verified, the session attempts to restore -40 dB and requests Stop if that cannot be confirmed.
+
+
+### 2026-11-11 — Extend short-packet failure context
+
+- Reviewed the existing failure formatter and found that the requested packet-length vector was emitted twice under the same field name. Replaced the duplicate with endpoint geometry: `max_packet_bytes`, `b_interval`, `channels`, and `subslot_bytes`, while retaining negotiated `interval_us`, sample rate, endpoint, packet lengths, frame phase, transfer flags, device speed, and completion counters.
+- The libusb public transfer structure does not expose the host-scheduled start frame; the diagnostic continues to report `start_frame=-1` rather than inventing a value. The libusb documentation also makes clear that isochronous completion status alone is insufficient: each packet's status and actual length must be inspected. The strict short-packet failure remains in place.
+- This is diagnostic-only. It does not change packet sizing, submission timing, completion acceptance, or the 96 kHz drain watchdog. No DAC was connected and no physical test was performed. Direct USB Safety Hold remains active.
