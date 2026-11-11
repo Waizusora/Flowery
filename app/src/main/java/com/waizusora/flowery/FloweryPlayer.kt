@@ -64,6 +64,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val normalized = value.coerceIn(0f, 1f)
         if (usbPlaybackMode) {
             val usbKey = activeUsbDeviceKey
+            if (usbKey == null) {
+                onState("USB DAC volume is unavailable until a device session is active.")
+                return
+            }
             val encodedPipeline = activeUsbEncodedPipeline
             if (encodedPipeline != null) {
                 val applied = runCatching {
