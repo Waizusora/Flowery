@@ -142,6 +142,7 @@ internal class UsbDacSession internal constructor(
         val current = ByteArray(2)
         if (volumeControl(0x81, current) != 2) return null
         val raw = java.nio.ByteBuffer.wrap(current).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
+        if (raw !in range.first..range.second) return null
         return ((raw - range.first).toFloat() / (range.second - range.first).toFloat()).coerceIn(0f, 1f)
     }
 
@@ -172,7 +173,7 @@ internal class UsbDacSession internal constructor(
         if (volumeControl(0x81, current) != 2) return null
         val confirmedRaw = java.nio.ByteBuffer.wrap(current)
             .order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        if (confirmedRaw > targetRaw) return null
+        if (confirmedRaw !in range.first..range.second || confirmedRaw > targetRaw) return null
         return ((confirmedRaw - range.first).toFloat() /
             (range.second - range.first).toFloat()).coerceIn(0f, 1f)
     }
