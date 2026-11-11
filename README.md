@@ -13,7 +13,7 @@ Flowery is an Android music player focused on local music, transparent audio rou
 - **Automatic Bit-perfect detection** — No manual toggle. Flowery evaluates the connected, permissioned USB DAC and reports Bit-perfect only after the native playback producer confirms source-preserving output. External digital capture is still needed for hardware verification.
 - **Three-band tone controls** — Bass, Mid, and Treble sliders mapped smoothly onto 31 ISO one-third-octave peaking filters, with ±12 dB gain range, explicit enable/bypass control, and bounded output-queue latency.
 - **Metadata and lyrics** — Read and edit supported tags with Lofty and display synchronized sidecar LRC lyrics.
-- **Playback controls** — Queue, seek, shuffle, repeat, and Android media-session controls.
+- **Playback controls** — Queue, seek, shuffle, repeat, and Android media-session controls. Natural end-of-queue completion stops playback while keeping the player available for replay or track selection.
 
 ## Technology
 
