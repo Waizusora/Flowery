@@ -24,11 +24,11 @@ namespace {
 
 // Isochronous transport tuning.
 //
-// Keep a bounded but larger scheduling horizon. A 64-packet URB covers 8 ms
-// at a 125 us service interval; a 64 ms target allows up to eight URBs in flight.
-// This gives the high-rate adaptive endpoint more tolerance for Android host
-// scheduling jitter without restoring the previous 192 ms / 24-URB window.
-constexpr size_t kPacketsPerUrb = 64;
+// Use 128 service intervals per URB to reduce completion/callback overhead.
+// At the DAC's 125 us high-speed interval, each URB covers 16 ms. The 64 ms
+// scheduling horizon therefore keeps four URBs in flight: the same bounded
+// audio depth as before, with half as many URB submissions and callbacks.
+constexpr size_t kPacketsPerUrb = 128;
 constexpr size_t kMaxUrbsInFlight = 8;
 constexpr uint64_t kTargetQueuedAudioUs = 64000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
@@ -754,7 +754,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
     // Preserve the complete URB packet-length schedule on failure. For
     // fractional rates such as 44.1 kHz, the position of each 5/6-frame packet
     // is needed to distinguish phase drift from a host-controller short packet.
-    char packet_lengths[512] = {};
+    char packet_lengths[1536] = {};
     if (!failure.requested_packet_lengths.empty()) {
         size_t used = 0;
         for (size_t index = 0; index < failure.requested_packet_lengths.size() &&
@@ -1067,6 +1067,11 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
     }
     if (!session->in_flight.empty()) {
         const auto& oldest = session->in_flight.front();
+        // The transfer is still owned by libusb, so actual packet lengths are
+        // not readable yet. Preserve the full requested schedule for this URB;
+        // it is essential for diagnosing fractional-rate (for example 44.1 kHz)
+        // packet phase when the host controller stops issuing callbacks.
+        failure->requested_packet_lengths = oldest->requested_packet_lengths;
         if (oldest->submitted_at_ns > 0) {
             const auto now = std::chrono::steady_clock::now().time_since_epoch();
             const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
