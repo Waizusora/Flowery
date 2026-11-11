@@ -251,6 +251,46 @@ void test_feedback_initial_submission_state_is_published_before_callback_can_run
  in_flight.store(false, std::memory_order_release); // callback: resubmit failed
  assert(!in_flight.load(std::memory_order_acquire));
 }
+void test_feedback_packet_scheduler_preserves_high_speed_44100hz_fraction() {
+ std::uint64_t phase = 0;
+ std::uint64_t total_frames = 0;
+ // 44.1 kHz expressed as frames per 125 us in 16.16 format.
+ constexpr std::uint32_t feedback = 361267;
+ for (int packet = 0; packet < 8000; ++packet) {
+  std::uint32_t frames = 0;
+  std::uint64_t next_phase = 0;
+  assert(flowery::usb::next_feedback_packet_frames(
+      feedback, 16, 125, 125, phase, frames, next_phase));
+  total_frames += frames;
+  phase = next_phase;
+ }
+ assert(total_frames == 44100);
+}
+void test_feedback_packet_scheduler_preserves_full_speed_44100hz_fraction() {
+ std::uint64_t phase = 0;
+ std::uint64_t total_frames = 0;
+ // 44.1 kHz expressed as frames per 1 ms in 10.14 format.
+ constexpr std::uint32_t feedback = 722534;
+ for (int packet = 0; packet < 1000; ++packet) {
+  std::uint32_t frames = 0;
+  std::uint64_t next_phase = 0;
+  assert(flowery::usb::next_feedback_packet_frames(
+      feedback, 14, 1000, 1000, phase, frames, next_phase));
+  total_frames += frames;
+  phase = next_phase;
+ }
+ assert(total_frames == 44100);
+}
+void test_feedback_packet_scheduler_rejects_invalid_parameters() {
+ std::uint32_t frames = 0;
+ std::uint64_t phase = 0;
+ assert(!flowery::usb::next_feedback_packet_frames(0, 16, 125, 125, 0, frames, phase));
+ assert(!flowery::usb::next_feedback_packet_frames(361267, 15, 125, 125, 0, frames, phase));
+ assert(!flowery::usb::next_feedback_packet_frames(361267, 16, 0, 125, 0, frames, phase));
+ assert(!flowery::usb::next_feedback_packet_frames(361267, 16, 125, 0, 0, frames, phase));
+ assert(!flowery::usb::next_feedback_packet_frames(361267, 16, 125, 1000, 0, frames, phase));
+ assert(!flowery::usb::next_feedback_packet_frames(361267, 16, 125, 125, 65536, frames, phase));
+}
 void test_pcm_packet_scheduler_preserves_16khz_interval_count() {
  std::uint64_t phase = 0;
  for (int packet = 0; packet < 8000; ++packet) {
@@ -327,9 +367,12 @@ int main() {
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
  test_isochronous_packet_requires_exact_completion();
- test_pcm_packet_scheduler_preserves_16khz_interval_count();
+ test_feedback_packet_scheduler_preserves_high_speed_44100hz_fraction();
+  test_feedback_packet_scheduler_preserves_full_speed_44100hz_fraction();
+  test_feedback_packet_scheduler_rejects_invalid_parameters();
+  test_pcm_packet_scheduler_preserves_16khz_interval_count();
  test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries();
  test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (20 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (23 scenarios).\n"; return 0;
 }
