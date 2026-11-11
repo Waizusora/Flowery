@@ -85,7 +85,8 @@ class UsbEncodedDacSession private constructor(
         val current = ByteArray(2)
         if (volumeControl(0x81, current) != 2) return false
         val readBackRaw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
-        return UsbStartupVolumePolicy.confirmsHardwareStartup(true, targetRaw, readBackRaw)
+        return readBackRaw in range.first..range.second &&
+            UsbStartupVolumePolicy.confirmsHardwareStartup(true, targetRaw, readBackRaw)
     }
     @Volatile
     private var nativeClosed = false
