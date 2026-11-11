@@ -90,7 +90,7 @@ internal fun NowPlayingDestination(
                                                 line.words.forEachIndexed { wordIndex, word ->
                                                     if (active && wordIndex == activeWordIndex) {
                                                         withStyle(SpanStyle(
-                                                            color = MaterialTheme.colorScheme.primary,
+                                                            color = Color(0xFFB76E87),
                                                             fontWeight = FontWeight.Bold
                                                         )) { append(word.text) }
                                                     } else append(word.text)
@@ -99,14 +99,14 @@ internal fun NowPlayingDestination(
                                         }
                                         Text(
                                             displayedText,
-                                            color = if (active && line.words.isEmpty()) MaterialTheme.colorScheme.primary else muted,
+                                            color = if (active && line.words.isEmpty()) Color(0xFFB76E87) else muted,
                                             fontWeight = if (active && line.words.isEmpty()) FontWeight.Bold else FontWeight.Normal,
                                             fontSize = if (active) 21.sp else 16.sp,
                                             textAlign = TextAlign.Center,
                                             modifier = Modifier.fillMaxWidth()
                                                 .padding(horizontal = 8.dp, vertical = 9.dp)
                                                 .then(if (active) Modifier.background(
-                                                    MaterialTheme.colorScheme.primary.copy(alpha = .13f), RoundedCornerShape(12.dp)
+                                                    Color(0xFFB76E87).copy(alpha = .18f), RoundedCornerShape(12.dp)
                                                 ) else Modifier)
                                                 .padding(horizontal = 10.dp, vertical = 7.dp)
                                         )
