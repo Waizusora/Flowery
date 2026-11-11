@@ -1275,10 +1275,12 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
                 frames = static_cast<unsigned int>(accumulated >> session->feedback_fraction_bits);
                 next_feedback_phase = accumulated & ((1ULL << session->feedback_fraction_bits) - 1ULL);
             } else {
-                const uint64_t accumulated =
-                    phase + static_cast<uint64_t>(session->sample_rate) * session->interval_us;
-                frames = static_cast<unsigned int>(accumulated / 1000000ULL);
-                next_phase = accumulated % 1000000ULL;
+                if (!flowery::usb::next_pcm_packet_frames(
+                        static_cast<uint32_t>(session->sample_rate), session->interval_us,
+                        phase, frames, next_phase)) {
+                    record_failure(&failure, "invalid_pcm_packet_schedule", LIBUSB_ERROR_INVALID_PARAM);
+                    break;
+                }
             }
             if (frames == 0 || planned_frames + frames > available_frames) break;
             const unsigned int packet_size = static_cast<unsigned int>(frames * bytes_per_frame);
