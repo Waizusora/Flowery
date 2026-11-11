@@ -1401,3 +1401,11 @@ Validation scope:
 - Added a monotonic callback-entry timestamp, callback age, and callback-return event-loop iteration to each URB summary. This distinguishes URBs for which no callback began from callbacks that began but have not yet published completion, and from completed callbacks awaiting the event-loop iteration barrier.
 - Expanded the compact in-flight summary buffer to retain useful state across the full eight-URB queue.
 - This is diagnostic hardening only: no packet scheduling, queue depth, watchdog threshold, cancellation, or completion acceptance behavior changed. CI must validate the native build; device-backed capture is still required to determine the 96 kHz stall cause. Direct USB Safety Hold remains active.
+
+
+### 2026-11-11 — Record event-dispatcher liveness in USB failure snapshots
+
+- Extended the transport failure snapshot with the event thread's published running state at the moment the failure is captured.
+- Added `event_thread_running=0|1` to the USB failure diagnostic beside the event-loop error, iteration count, and time since the last event-loop return. This makes it easier to distinguish a dispatcher that exited from one that is still returning from libusb event handling while URBs remain outstanding.
+- The value is a point-in-time atomic observation, not proof that the host controller is making USB progress. Interpret it together with `event_loops`, `event_loop_idle_ms`, callback counts, and per-URB callback state.
+- Diagnostic-only change. No event handling, transfer scheduling, watchdog, cancellation, or completion policy changed. Native/Android CI validation is required; a physical KTMicro KT-384/32 capture remains necessary. Direct USB Safety Hold remains active.
