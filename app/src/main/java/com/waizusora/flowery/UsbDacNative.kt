@@ -1,6 +1,8 @@
 package com.waizusora.flowery
 
 import android.hardware.usb.UsbDeviceConnection
+import java.util.Collections
+import java.util.IdentityHashMap
 
 /**
  * JNI bridge to the native libusb USB Audio Class transport.
@@ -73,7 +75,31 @@ internal class UsbDacSession internal constructor(
     val sampleRate: Int,
     private val volumeUnit: UsbFeatureUnit? = null
 ) : AutoCloseable {
-    companion object { const val WRITE_STOPPED = -2 }
+    companion object {
+        const val WRITE_STOPPED = -2
+
+        private val pendingCloseLock = Any()
+        private val pendingCloseSessions: MutableSet<UsbDacSession> =
+            Collections.newSetFromMap(IdentityHashMap())
+
+        /** Retries sessions retained after native or Android teardown failed. */
+        internal fun retryPendingCloseSessions(): Boolean {
+            val pending = synchronized(pendingCloseLock) { pendingCloseSessions.toList() }
+            var allClosed = true
+            pending.forEach { session ->
+                if (runCatching { session.close() }.isFailure) allClosed = false
+            }
+            return allClosed
+        }
+    }
+
+    private fun rememberPendingClose() {
+        synchronized(pendingCloseLock) { pendingCloseSessions.add(this) }
+    }
+
+    private fun forgetPendingClose() {
+        synchronized(pendingCloseLock) { pendingCloseSessions.remove(this) }
+    }
 
     val hardwareVolumeAvailable: Boolean get() = volumeUnit != null
 
@@ -186,6 +212,7 @@ internal class UsbDacSession internal constructor(
                     try {
                         Thread.sleep(50L)
                     } catch (interrupted: InterruptedException) {
+                        rememberPendingClose()
                         Thread.currentThread().interrupt()
                         throw IllegalStateException(
                             "Interrupted while waiting for USB transfers to finish teardown",
@@ -195,6 +222,7 @@ internal class UsbDacSession internal constructor(
                 }
             }
             if (!nativeCloseConfirmed) {
+                rememberPendingClose()
                 throw IllegalStateException(
                     "libusb could not confirm that all in-flight transfers were reaped; " +
                         "the USB connection remains open for a safe retry"
@@ -202,11 +230,15 @@ internal class UsbDacSession internal constructor(
             }
         }
 
-        if (!connectionClosed) {
+        if (!connectionClosed) try {
             connection.close()
             connectionClosed = true
+        } catch (error: Throwable) {
+            rememberPendingClose()
+            throw error
         }
         closed = true
+        forgetPendingClose()
     }
 }
 
