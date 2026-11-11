@@ -1216,7 +1216,7 @@ private fun FloweryApp(
                     }
                 }
                 Text(
-                    "Geser untuk mengatur",
+                    "Swipe to adjust",
                     color = Color.White.copy(alpha = 0.68f),
                     style = MaterialTheme.typography.labelSmall,
                     textAlign = TextAlign.Center,
