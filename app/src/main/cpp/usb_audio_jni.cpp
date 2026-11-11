@@ -49,6 +49,7 @@ struct InFlightTransfer {
     // that invoked its callback has returned.
     std::atomic<uint64_t> callback_return_iteration{0};
     uint64_t sequence = 0;
+    int64_t submitted_at_ns = 0;
     uint64_t frame_phase_before = 0;
     uint64_t frame_phase_after = 0;
     uint64_t feedback_phase_before = 0;
@@ -132,6 +133,8 @@ struct TransportFailure {
     unsigned int actual_length = 0;
     unsigned int requested_length = 0;
     unsigned int packet_count = 0;
+    std::vector<unsigned int> actual_packet_lengths;
+    long long transfer_age_ms = -1;
     uint64_t frame_phase_before = 0;
     uint64_t frame_phase_after = 0;
     uint64_t feedback_phase_before = 0;
@@ -402,6 +405,17 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
                         failure->transfer_flags = transfer->flags;
                         failure->device_speed = session->device_speed;
                         failure->requested_packet_lengths = entry->requested_packet_lengths;
+                        failure->actual_packet_lengths.reserve(
+                            static_cast<size_t>(transfer->num_iso_packets));
+                        for (int packet_index = 0; packet_index < transfer->num_iso_packets; ++packet_index) {
+                            failure->actual_packet_lengths.push_back(
+                                transfer->iso_packet_desc[packet_index].actual_length);
+                        }
+                        if (entry->submitted_at_ns > 0) {
+                            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+                            const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+                            failure->transfer_age_ms = std::max<int64_t>(0, now_ns - entry->submitted_at_ns) / 1000000LL;
+                        }
                         break;
                     }
                 }
@@ -671,6 +685,20 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
             used += std::min(static_cast<size_t>(written), sizeof(packet_lengths) - used);
         }
     }
+    char actual_packet_lengths[256] = {};
+    if (!failure.actual_packet_lengths.empty() && failure.failed_packet >= 0) {
+        const size_t failed = static_cast<size_t>(failure.failed_packet);
+        const size_t begin = failed > 4 ? failed - 4 : 0;
+        const size_t end = std::min(failure.actual_packet_lengths.size(), failed + 5);
+        size_t used = 0;
+        for (size_t index = begin; index < end && used < sizeof(actual_packet_lengths); ++index) {
+            const int written = std::snprintf(actual_packet_lengths + used,
+                sizeof(actual_packet_lengths) - used, "%s%zu:%u",
+                index == begin ? "" : ",", index, failure.actual_packet_lengths[index]);
+            if (written < 0) break;
+            used += std::min(static_cast<size_t>(written), sizeof(actual_packet_lengths) - used);
+        }
+    }
     const size_t max_urbs = failure.max_urbs_at_failure != 0
         ? failure.max_urbs_at_failure : max_urbs_in_flight(session);
     char message[1536];
@@ -679,7 +707,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "USB isochronous transfer failed: reason=%s; %s (%d); "
         "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
-        "packet_count=%u; phase_before=%llu; phase_after=%llu; "
+        "packet_count=%u; packet_lengths_near_failure=%s; actual_packet_lengths_near_failure=%s; "
+        "transfer_age_ms=%lld; phase_before=%llu; phase_after=%llu; "
         "feedback_phase_before=%llu; feedback_phase_after=%llu; start_frame=%d; "
         "transfer_flags=%u; device_speed=%d; packet_lengths_near_failure=%s; "
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
@@ -692,7 +721,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.sequence), failure.in_flight_at_failure,
         failure.idle_ms_at_failure, failure.failed_packet, failure.packet_status,
         packet_name, failure.actual_length,
-        failure.requested_length, failure.packet_count,
+        failure.requested_length, failure.packet_count, packet_lengths, actual_packet_lengths,
+        failure.transfer_age_ms,
         static_cast<unsigned long long>(failure.frame_phase_before),
         static_cast<unsigned long long>(failure.frame_phase_after),
         static_cast<unsigned long long>(failure.feedback_phase_before),
@@ -747,6 +777,8 @@ bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packe
     }
 
     if (session->in_flight.empty()) session->last_progress = std::chrono::steady_clock::now();
+    const auto submitted_now = std::chrono::steady_clock::now().time_since_epoch();
+    entry->submitted_at_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(submitted_now).count();
     const int result = libusb_submit_transfer(entry->transfer);
     if (result != LIBUSB_SUCCESS) {
         libusb_free_transfer(entry->transfer);
@@ -806,6 +838,8 @@ bool submit_encoded_urb(UsbAudioSession* session,
         entry->transfer->iso_packet_desc[i].length = packet_bytes[static_cast<size_t>(i)];
     }
     if (session->in_flight.empty()) session->last_progress = std::chrono::steady_clock::now();
+    const auto submitted_now = std::chrono::steady_clock::now().time_since_epoch();
+    entry->submitted_at_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(submitted_now).count();
     const int result = libusb_submit_transfer(entry->transfer);
     if (result != LIBUSB_SUCCESS) {
         libusb_free_transfer(entry->transfer);
@@ -883,6 +917,11 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
     }
     if (!session->in_flight.empty()) {
         const auto& oldest = session->in_flight.front();
+        if (oldest->submitted_at_ns > 0) {
+            const auto now = std::chrono::steady_clock::now().time_since_epoch();
+            const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+            failure->transfer_age_ms = std::max<int64_t>(0, now_ns - oldest->submitted_at_ns) / 1000000LL;
+        }
         failure->packet_count = static_cast<unsigned int>(oldest->requested_packet_lengths.size());
         failure->frame_phase_before = oldest->frame_phase_before;
         failure->frame_phase_after = oldest->frame_phase_after;
