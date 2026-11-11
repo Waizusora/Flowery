@@ -1661,13 +1661,18 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
         if (session->control.load() == kSessionControlPause) return pause_pcm_writer();
         if (!failure.failed) {
-            if (remaining > session->max_packet_bytes) {
-                record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
+            std::uint32_t tail_packet_bytes = 0;
+            if (!flowery::usb::pcm_drain_tail_packet_bytes(
+                    remaining, static_cast<std::uint32_t>(bytes_per_frame),
+                    session->max_packet_bytes, tail_packet_bytes)) {
+                record_failure(&failure, remaining > session->max_packet_bytes
+                    ? "packet_exceeds_endpoint_capacity"
+                    : "pcm_drain_tail_not_frame_aligned", LIBUSB_ERROR_INVALID_PARAM);
             } else {
-                const std::vector<unsigned int> tail{static_cast<unsigned int>(remaining)};
+                const std::vector<unsigned int> tail{tail_packet_bytes};
                 for (;;) {
                     const auto submit_result = submit_pcm_urb_if_running(
-                        session, tail, remaining, session->frame_phase,
+                        session, tail, tail_packet_bytes, session->frame_phase,
                         session->frame_phase, &failure);
                     if (submit_result == PcmSubmitResult::Submitted ||
                         submit_result == PcmSubmitResult::Failed) break;
