@@ -421,7 +421,7 @@ class UsbDacController(context: Context) {
                             profile.samplingFrequencyControl
                         )
                         if (nativeHandle != 0L) {
-                            return UsbDacSession(connection, nativeHandle, profile, sampleRate, volumeUnit)
+                            return UsbDacSession(connection, device, nativeHandle, profile, sampleRate, volumeUnit)
                         }
                         lastError = IllegalStateException("Native USB transport rejected the UAC1 playback profile.")
                     } catch (error: Throwable) {
@@ -459,7 +459,7 @@ class UsbDacController(context: Context) {
                             false
                         )
                         if (nativeHandle != 0L) {
-                            return UsbDacSession(connection, nativeHandle, profile, sampleRate, volumeUnit)
+                            return UsbDacSession(connection, device, nativeHandle, profile, sampleRate, volumeUnit)
                         }
                         lastError = IllegalStateException(
                             "Native USB transport rejected alternate setting ${profile.alternateSetting} " +

@@ -1,6 +1,8 @@
 package com.waizusora.flowery
 
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
+import android.hardware.usb.UsbInterface
 import java.util.Collections
 import java.util.IdentityHashMap
 
@@ -70,6 +72,7 @@ internal object UsbDacNative {
  */
 internal class UsbDacSession internal constructor(
     private val connection: UsbDeviceConnection,
+    private val device: UsbDevice,
     private val nativeHandle: Long,
     val profile: UsbDacPlaybackProfile,
     val sampleRate: Int,
@@ -131,18 +134,31 @@ internal class UsbDacSession internal constructor(
     }
 
     /**
+     * Resolves the Audio Control [UsbInterface] by descriptor interface number
+     * (bInterfaceNumber), not by the Android 0-based interface index.
+     */
+    private fun controlUsbInterface(): UsbInterface? {
+        val unit = volumeUnit ?: return null
+        for (index in 0 until device.interfaceCount) {
+            val intf = device.getInterface(index)
+            if (intf.id == unit.controlInterface) return intf
+        }
+        return null
+    }
+
+    /**
      * Ensures the Audio Control interface is claimed before class-specific
      * Feature Unit requests. Some UAC2 DACs stall GET_RANGE/GET_CUR until the
      * control interface is explicitly claimed by the host process.
      */
     private fun ensureControlInterfaceClaimed(): Boolean {
-        val unit = volumeUnit ?: return false
         if (controlInterfaceClaimedBySession) return true
+        val intf = controlUsbInterface() ?: run {
+            lastVolumeControlDiagnostic = "claim_control_interface failed: interface_not_found"
+            return false
+        }
         return try {
-            val claimed = connection.claimInterface(
-                connection.device.getInterface(unit.controlInterface),
-                true,
-            )
+            val claimed = connection.claimInterface(intf, true)
             if (claimed) {
                 controlInterfaceClaimedBySession = true
             }
@@ -156,9 +172,9 @@ internal class UsbDacSession internal constructor(
 
     private fun releaseControlInterfaceIfClaimed() {
         if (!controlInterfaceClaimedBySession) return
-        val unit = volumeUnit ?: return
-        runCatching {
-            connection.releaseInterface(connection.device.getInterface(unit.controlInterface))
+        val intf = controlUsbInterface()
+        if (intf != null) {
+            runCatching { connection.releaseInterface(intf) }
         }
         controlInterfaceClaimedBySession = false
     }
