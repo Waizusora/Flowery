@@ -1324,3 +1324,13 @@ Validation scope:
 - Diagnostic-only change; no packet scheduling, watchdog, drain-success, or audio-volume behavior was changed. This deliberately avoids masking a real transport failure.
 - Implementation commits: `33dae9e789c2b7c75cb1bf0400fdf3796171d0ae` and follow-up counter correction `0e97a90248b55bd490ce0bbc4ab1fe317cfcee2b`.
 - **Status: DIAGNOSTIC BUILD/CI AND PHYSICAL DAC CAPTURE REQUIRED.** The next capture must be made on the KTMicro DAC at a safe verified volume, preferably including the final 10 seconds of a track. No claim is made that stutter or final-drain failure is fixed.
+
+
+### 2026-11-11 — Preserve Type-III encoded tail across paused final drain
+
+- Source audit found that the Type-III branch of `nativeDrain()` returned success when its control action was `WaitForResume`. At that point `pending_encoded` could still contain an unsent tail, so the drain result did not guarantee that all accepted encoded bytes had been submitted and completed.
+- Changed the paused Type-III drain path to wait on the session condition variable until control leaves Pause, then re-evaluate the drain state. Resume continues submitting the pending tail; Stop is handled by the existing Abort path.
+- The wait uses the same `event_mutex` as serialized control publication, preventing a lost wakeup between checking Pause and sleeping.
+- No URB sizing, packet scheduling, timeout, cancellation, or transfer ownership policy was changed.
+- Existing native session-control tests cover the Pause/Resume state transition and Type-III cursor/phase preservation. A device-backed regression is still required to verify the complete JNI drain behavior under a real pause/resume sequence.
+- Physical USB DAC testing was not performed. Direct USB Safety Hold remains active pending device capture.
