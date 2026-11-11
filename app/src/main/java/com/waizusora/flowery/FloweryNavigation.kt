@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
@@ -81,12 +82,14 @@ fun FloweryNavigation(
     val lyricDensity = LocalDensity.current
     LaunchedEffect(lyricsVisible, activeLyricIndex, lyrics.size) {
         if (lyricsVisible && lyrics.isNotEmpty()) {
-            val targetIndex = activeLyricIndex.coerceAtLeast(0) + 1
+            // Wait until the lyrics panel has been measured before centering.
+            withFrameNanos { }
+            val targetIndex = activeLyricIndex.coerceIn(0, lyrics.lastIndex)
             val viewportHeight = lyricListState.layoutInfo.viewportSize.height
-            val fallbackItemHeight = with(lyricDensity) { 56.dp.roundToPx() }
             val itemHeight = lyricListState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.index == targetIndex }?.size ?: fallbackItemHeight
-            val centerOffset = (viewportHeight / 2 - itemHeight / 2).coerceAtLeast(0)
+                .firstOrNull { it.index == targetIndex }?.size
+                ?: with(lyricDensity) { 56.dp.roundToPx() }
+            val centerOffset = ((viewportHeight - itemHeight) / 2).coerceAtLeast(0)
             lyricListState.animateScrollToItem(targetIndex, scrollOffset = -centerOffset)
         }
     }
