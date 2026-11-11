@@ -178,6 +178,10 @@ struct TransportFailure {
     unsigned int feedback_actual_length_at_failure = 0;
     unsigned int feedback_requested_length_at_failure = 0;
     int feedback_resubmit_error_at_failure = LIBUSB_SUCCESS;
+    bool feedback_in_flight_at_failure = false;
+    bool feedback_stopped_at_failure = false;
+    unsigned int feedback_endpoint_at_failure = 0;
+    long long feedback_sample_age_ms_at_failure = -1;
     long long event_loop_idle_ms_at_failure = -1;
     bool snapshot_captured = false;
 };
@@ -308,6 +312,16 @@ void snapshot_transport_failure(const UsbAudioSession* session, TransportFailure
     failure->feedback_actual_length_at_failure = session->feedback_last_actual_length.load(std::memory_order_acquire);
     failure->feedback_requested_length_at_failure = session->feedback_last_requested_length.load(std::memory_order_acquire);
     failure->feedback_resubmit_error_at_failure = session->feedback_resubmit_error.load(std::memory_order_acquire);
+    failure->feedback_in_flight_at_failure = session->feedback_in_flight.load(std::memory_order_acquire);
+    failure->feedback_stopped_at_failure = session->feedback_stopped.load(std::memory_order_acquire);
+    failure->feedback_endpoint_at_failure = session->feedback_endpoint;
+    const int64_t feedback_sample_ns = session->feedback_last_update_ns.load(std::memory_order_acquire);
+    if (feedback_sample_ns > 0) {
+        const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        failure->feedback_sample_age_ms_at_failure =
+            std::max<int64_t>(0, (now_ns - feedback_sample_ns) / 1000000LL);
+    }
     const int64_t feedback_callback_ns = session->feedback_last_callback_ns.load(std::memory_order_acquire);
     if (feedback_callback_ns > 0) {
         const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -785,6 +799,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "feedback_callbacks=%llu; feedback_valid_samples=%llu; feedback_invalid_samples=%llu; "
         "feedback_callback_age_ms=%lld; feedback_transfer_status=%u; feedback_packet_status=%u; "
         "feedback_actual_length=%u; feedback_requested_length=%u; feedback_resubmit_error=%d; "
+        "feedback_in_flight=%d; feedback_stopped=%d; feedback_endpoint=0x%02X; feedback_sample_age_ms=%lld; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
         "queue_target_us=%llu; max_urbs_actual=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
@@ -820,6 +835,10 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.feedback_actual_length_at_failure,
         failure.feedback_requested_length_at_failure,
         failure.feedback_resubmit_error_at_failure,
+        failure.feedback_in_flight_at_failure ? 1 : 0,
+        failure.feedback_stopped_at_failure ? 1 : 0,
+        failure.feedback_endpoint_at_failure,
+        failure.feedback_sample_age_ms_at_failure,
         failure.pending_pcm_remaining_at_failure,
         failure.pending_encoded_remaining_at_failure,
         failure.in_flight_summary,
