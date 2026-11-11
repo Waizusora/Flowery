@@ -29,6 +29,11 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
+    fun setHardwareVolumeFraction(fraction: Float): Float? {
+        lifecycle.checkOpen()
+        return session.setHardwareVolumeFraction(fraction)
+    }
+
     fun requestPause(): Boolean = lifecycle.acceptsControlRequests() && session.requestPause()
     fun requestResume(): Boolean = lifecycle.acceptsControlRequests() && session.requestResume()
     fun requestStop(): Boolean {
