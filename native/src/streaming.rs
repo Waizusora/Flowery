@@ -647,7 +647,6 @@ impl StreamDecoder {
                 return Err("The audio stream changed channel layout mid-track".into());
             }
             let discard = self.discard_source_frames.min(decoded_frames as u64) as usize;
-            let fallback_decoded = decoded.clone();
             self.source_frames_decoded = self.source_frames_decoded.saturating_add(decoded_frames as u64);
             self.discard_source_frames -= discard as u64;
             if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
@@ -674,22 +673,10 @@ impl StreamDecoder {
                     return Ok(true);
                 }
                 Err(error) if !self.native_pcm_decided => {
-                    // The decoder's typed output is not a supported integer
-                    // representation. Preserve playback by switching this
-                    // stream to the established float32 path before any
-                    // native PCM block has been emitted.
-                    let mut buffer = SampleBuffer::<f32>::new(fallback_decoded.capacity() as u64, *fallback_decoded.spec());
-                    buffer.copy_interleaved_ref(fallback_decoded);
-                    let mut samples = buffer.samples().to_vec();
-                    let discard_samples = discard * self.channels;
-                    if discard_samples > 0 && discard_samples <= samples.len() {
-                        samples.drain(..discard_samples);
-                    }
-                    self.input_pending.extend_from_slice(&samples);
-                    self.native_pcm_active = false;
-                    self.native_pcm_decided = true;
-                    let _ = error;
-                    return Ok(false);
+                    // USB Direct test mode never converts an unsupported decoded
+                    // sample representation to float32. Fail explicitly instead
+                    // of silently changing the PCM representation.
+                    return Err(format!("Decoded source cannot be represented as native integer PCM: {error}"));
                 }
                 Err(error) => return Err(format!("Decoder changed sample representation during native PCM playback: {error}")),
             }
@@ -764,8 +751,7 @@ impl StreamDecoder {
             resampling_disabled: self.resampler.is_none(),
         };
         let native_eligible = match format.encoding {
-            crate::usb_pcm::PcmEncoding::SignedInteger => self.lossless_source
-                && matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
+            crate::usb_pcm::PcmEncoding::SignedInteger => matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
                 && crate::native_pcm::is_bit_perfect_eligible(requirements, format),
             crate::usb_pcm::PcmEncoding::IeeeFloat32 => self.ieee_float_source
                 && format.valid_bits == 32 && format.subslot_bytes == 4
