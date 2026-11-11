@@ -326,6 +326,22 @@ void test_pcm_packet_scheduler_rejects_invalid_phase_and_rate() {
  assert(!flowery::usb::next_pcm_packet_frames(44100, 0, 0, frames, next_phase));
  assert(!flowery::usb::next_pcm_packet_frames(44100, 125, 1000000, frames, next_phase));
 }
+void test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment() {
+ using flowery::usb::pcm_drain_tail_packet_bytes;
+ std::uint32_t tail = 0;
+ // 24-bit stereo uses six bytes per sample frame; the final service interval
+ // can contain up to eleven staged frames at 96 kHz / 125 us.
+ assert(pcm_drain_tail_packet_bytes(66, 6, 1024, tail));
+ assert(tail == 66);
+ // 32-bit containers for the same source format remain eight-byte aligned.
+ assert(pcm_drain_tail_packet_bytes(88, 8, 1024, tail));
+ assert(tail == 88);
+ assert(!pcm_drain_tail_packet_bytes(70, 6, 1024, tail));
+ assert(!pcm_drain_tail_packet_bytes(1032, 6, 1024, tail));
+ assert(!pcm_drain_tail_packet_bytes(0, 6, 1024, tail));
+ assert(!pcm_drain_tail_packet_bytes(66, 0, 1024, tail));
+ assert(!pcm_drain_tail_packet_bytes(66, 6, 0, tail));
+}
 void test_isochronous_packet_requires_exact_completion() {
  using flowery::usb::iso_packet_completed_exactly;
  constexpr unsigned int completed = 0;
@@ -373,6 +389,7 @@ int main() {
   test_pcm_packet_scheduler_preserves_16khz_interval_count();
  test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries();
  test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
+ test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (23 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (24 scenarios).\n"; return 0;
 }
