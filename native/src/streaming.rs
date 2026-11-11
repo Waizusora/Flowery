@@ -767,7 +767,10 @@ impl StreamDecoder {
                 return Ok(bytes);
             }
         } else if !native_eligible {
-            self.move_native_remainder_to_float(format);
+            return Err(
+                "USB Direct integer PCM requires matching source/output rate, bit depth, channels, unity gain, and no DSP/resampling."
+                    .into(),
+            );
         }
 
         let samples = self.read_frames(max_frames)?;
