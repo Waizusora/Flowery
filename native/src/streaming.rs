@@ -1695,18 +1695,18 @@ mod tests {
         assert_eq!(actual, expected);
         assert!(stream.native_pcm_active());
 
-        // Simulate a decoder classified as lossy: it must use the same USB
-        // producer's float32 conversion path rather than native integer packing.
-        let float_source = std::fs::File::open(&path).unwrap();
-        let mut float_stream = StreamDecoder::new(float_source.as_raw_fd(), "wav").unwrap();
-        float_stream.lossless_source = false;
-        float_stream.configure(48_000, &[0.0; 31]).unwrap();
-        let float_actual = float_stream.read_usb_pcm(3, 1.0, format).unwrap();
-        assert_eq!(float_actual, expected);
-        assert!(!float_stream.native_pcm_active());
+        // Lossless/lossy classification must not change the integer PCM
+        // transport when the decoder already exposes matching native samples.
+        let classified_source = std::fs::File::open(&path).unwrap();
+        let mut classified_stream = StreamDecoder::new(classified_source.as_raw_fd(), "wav").unwrap();
+        classified_stream.lossless_source = false;
+        classified_stream.configure(48_000, &[0.0; 31]).unwrap();
+        let classified_actual = classified_stream.read_usb_pcm(3, 1.0, format).unwrap();
+        assert_eq!(classified_actual, expected);
+        assert!(classified_stream.native_pcm_active());
 
-        drop(float_stream);
-        drop(float_source);
+        drop(classified_stream);
+        drop(classified_source);
         drop(stream);
         drop(source_file);
         std::fs::remove_file(path).unwrap();
@@ -1800,23 +1800,23 @@ mod tests {
             assert!(stream.native_pcm_active());
 
             if bits == 24 {
-                let float_source = std::fs::File::open(&path).unwrap();
-                let mut float_stream = StreamDecoder::new(float_source.as_raw_fd(), "wav").unwrap();
-                float_stream.lossless_source = false;
-                float_stream.configure(48_000, &[0.0; 31]).unwrap();
+                let classified_source = std::fs::File::open(&path).unwrap();
+                let mut classified_stream = StreamDecoder::new(classified_source.as_raw_fd(), "wav").unwrap();
+                classified_stream.lossless_source = false;
+                classified_stream.configure(48_000, &[0.0; 31]).unwrap();
                 let padded_format = crate::usb_pcm::PcmFormat {
                     encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
                     sample_rate: 48_000, channels: 2, valid_bits: 24,
                     subslot_bytes: 4, signed: true, little_endian: true,
                 };
-                let float_actual = float_stream.read_usb_pcm(2, 1.0, padded_format).unwrap();
-                let float_expected: Vec<u8> = values.iter()
+                let classified_actual = classified_stream.read_usb_pcm(2, 1.0, padded_format).unwrap();
+                let padded_expected: Vec<u8> = values.iter()
                     .flat_map(|value| (*value).wrapping_shl(8).to_le_bytes())
                     .collect();
-                assert_eq!(float_actual, float_expected, "float32 fallback did not left-justify padded 24-bit PCM");
-                assert!(!float_stream.native_pcm_active());
-                drop(float_stream);
-                drop(float_source);
+                assert_eq!(classified_actual, padded_expected, "native integer PCM did not left-justify padded 24-bit samples");
+                assert!(classified_stream.native_pcm_active());
+                drop(classified_stream);
+                drop(classified_source);
             }
 
             drop(stream);
