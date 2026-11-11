@@ -916,7 +916,7 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
                     last_packet_status = static_cast<unsigned int>(packet.status);
                 }
                 if (packet.status == LIBUSB_TRANSFER_COMPLETED) ++packets_with_completion;
-                else if (packet.status != LIBUSB_TRANSFER_ERROR) ++packets_with_error;
+                else ++packets_with_error;
             }
         }
         const int written = std::snprintf(
