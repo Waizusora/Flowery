@@ -27,8 +27,8 @@ internal object IsoGraphicEqualizer {
         require(index in 0 until BAND_COUNT)
         val frequency = centerFrequenciesHz[index]
         return if (frequency >= 1000f) {
-            String.format(Locale.ROOT, "%.2fk", frequency / 1000f)
-                .trimEnd('0').trimEnd('.')
+            String.format(Locale.ROOT, "%.2f", frequency / 1000f)
+                .trimEnd('0').trimEnd('.') + "k"
         } else {
             String.format(Locale.ROOT, "%.1f", frequency)
                 .trimEnd('0').trimEnd('.')
