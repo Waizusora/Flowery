@@ -1334,3 +1334,12 @@ Validation scope:
 - No URB sizing, packet scheduling, timeout, cancellation, or transfer ownership policy was changed.
 - Existing native session-control tests cover the Pause/Resume state transition and Type-III cursor/phase preservation. A device-backed regression is still required to verify the complete JNI drain behavior under a real pause/resume sequence.
 - Physical USB DAC testing was not performed. Direct USB Safety Hold remains active pending device capture.
+
+
+### 2026-11-11 — Repeated app exit while starting “Through Struggle”
+
+- Reviewed the user-supplied `logcat.txt`. The queue is loaded with 72 entries at index 2, and `PLAY_CURRENT` selects `Through Struggle`. The first recorded process exit follows the play request by approximately 244 ms. A second attempt shows the same pattern, with another process exit shortly after `PLAY_CURRENT`.
+- The supplied capture contains no `FATAL EXCEPTION`, `AndroidRuntime` stack trace, `Fatal signal`, tombstone, `PLAYBACK_START_FAILURE`, or native USB transfer diagnostics. The historical exit entry reports `reason=13`, `status=0`, and description `[UNDELIVERED BROADCAST] Can't deliver broadcast`; this alone does not identify the initiating fault. Available-memory readings do not indicate a low-memory condition in this capture.
+- The earlier, separately documented `ArithmeticException: divide by zero` in `FloweryPlayer.positionMs()` was already addressed in the current source by snapshotting `outputSampleRate` once and returning zero for a non-positive snapshot. The supplied capture does not contain the old stack trace, so it does not prove that this is the same failure.
+- Added phase markers to `PlaybackService.playCurrent()` around audio-focus request, metadata retrieval/publication, foreground startup, worker submission/entry, and `player.play()`. These are diagnostic-only and do not change playback or USB transport behavior.
+- **Status: INVESTIGATION REQUIRED.** Reproduce using an unfiltered full logcat capture including AndroidRuntime, libc, DEBUG, ActivityManager, and FloweryDiagnostics. Do not attribute this termination to the USB DAC or change transport scheduling based on the current evidence.
