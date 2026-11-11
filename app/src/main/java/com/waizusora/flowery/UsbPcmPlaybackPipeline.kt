@@ -255,6 +255,7 @@ internal class UsbPcmPlaybackPipeline private constructor(
         return UsbPcmPlaybackSummary(chunks, totalFramesSent, starvationEvents)
     }
 
+    @Synchronized
     override fun close() {
         if (!lifecycle.beginClose()) return
         lifecycle.runCloseStep("stop-producer") {
