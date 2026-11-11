@@ -16,6 +16,7 @@ import android.media.AudioDeviceInfo
 import android.media.AudioDeviceCallback
 import android.net.Uri
 import android.media.MediaMetadataRetriever
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
@@ -107,6 +108,7 @@ class PlaybackService : Service() {
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
     @Volatile private var currentArtworkBytes: ByteArray? = null
+    @Volatile private var currentArtworkBitmap: Bitmap? = null
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
@@ -141,11 +143,14 @@ class PlaybackService : Service() {
                 val position = player.positionMs()
                 val duration = player.durationMs()
                 if (::session.isInitialized && duration > 0L) {
-                    session.setMetadata(MediaMetadataCompat.Builder()
+                    val metadata = MediaMetadataCompat.Builder()
                         .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
                         .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
                         .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
-                        .build())
+                    currentArtworkBitmap?.let {
+                        metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it)
+                    }
+                    session.setMetadata(metadata.build())
                     publishSessionState(position)
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
                 }
@@ -388,6 +393,7 @@ class PlaybackService : Service() {
             ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
         currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
         currentArtworkBytes = null
+        currentArtworkBitmap = null
         val embeddedArtwork = runCatching {
             val retriever = MediaMetadataRetriever()
             try {
@@ -404,6 +410,7 @@ class PlaybackService : Service() {
                 }
             } finally { retriever.release() }
         }.getOrNull()
+        currentArtworkBitmap = embeddedArtwork
         val metadataBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
