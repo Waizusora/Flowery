@@ -59,67 +59,49 @@ internal fun NowPlayingDestination(
     onEdit: () -> Unit
 ) {
             Card(Modifier.fillMaxWidth().aspectRatio(1f), shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = foreground.copy(alpha = .08f))) {
+                colors = CardDefaults.cardColors(
+                    containerColor = if (lyricsVisible) Color(0xFF123E5A) else foreground.copy(alpha = .08f)
+                )) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     if (lyricsVisible) {
                         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 "LYRICS LRC",
-                                color = foreground,
+                                color = Color(0xFFD7E5EC),
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.fillMaxWidth()
                             )
                             if (lyrics.isEmpty()) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("No synchronized LRC lyrics found.", color = muted, textAlign = TextAlign.Center)
+                                    Text("No synchronized LRC lyrics found.", color = Color(0xFF9CB2BF), textAlign = TextAlign.Center)
                                 }
                             } else {
                                 LazyColumn(
                                     state = lyricListState,
                                     modifier = Modifier.weight(1f).fillMaxWidth(),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    contentPadding = PaddingValues(vertical = 120.dp)
+                                    contentPadding = PaddingValues(vertical = 250.dp)
                                 ) {
-                                    item(key = "lyrics-spacer-top") { Spacer(Modifier.height(120.dp)) }
                                     itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
                                         val active = index == activeLyricIndex
-                                        val activeWordIndex = if (active) line.words.indexOfLast { it.timeMs <= positionMs } else -1
-                                        val displayedText = if (line.words.isEmpty()) {
-                                            buildAnnotatedString { append(line.text.ifBlank { "♪" }) }
-                                        } else {
-                                            buildAnnotatedString {
-                                                line.words.forEachIndexed { wordIndex, word ->
-                                                    if (active && wordIndex == activeWordIndex) {
-                                                        withStyle(SpanStyle(
-                                                            color = Color(0xFFB76E87),
-                                                            fontWeight = FontWeight.Bold
-                                                        )) { append(word.text) }
-                                                    } else append(word.text)
-                                                }
-                                            }
-                                        }
                                         Text(
-                                            displayedText,
-                                            color = if (active && line.words.isEmpty()) Color(0xFFB76E87) else muted,
-                                            fontWeight = if (active && line.words.isEmpty()) FontWeight.Bold else FontWeight.Normal,
-                                            fontSize = if (active) 21.sp else 16.sp,
+                                            line.text.ifBlank { "♪" },
+                                            color = if (active) Color.White else Color(0xFF91AAB8),
+                                            fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                            fontSize = if (active) 23.sp else 18.sp,
+                                            lineHeight = if (active) 32.sp else 27.sp,
                                             textAlign = TextAlign.Center,
                                             modifier = Modifier.fillMaxWidth()
-                                                .padding(horizontal = 8.dp, vertical = 9.dp)
-                                                .then(if (active) Modifier.background(
-                                                    Color(0xFFB76E87).copy(alpha = .18f), RoundedCornerShape(12.dp)
-                                                ) else Modifier)
-                                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                                                .padding(horizontal = 16.dp, vertical = 19.dp)
                                         )
                                     }
-                                    item(key = "lyrics-spacer-bottom") { Spacer(Modifier.height(120.dp)) }
                                 }
                             }
                             Text(
                                 "Synced Lyric",
-                                color = muted,
+                                color = Color(0xFFD7E5EC),
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.fillMaxWidth()
