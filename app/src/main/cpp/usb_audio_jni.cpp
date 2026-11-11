@@ -710,8 +710,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "packet_count=%u; packet_lengths_near_failure=%s; actual_packet_lengths_near_failure=%s; "
         "transfer_age_ms=%lld; phase_before=%llu; phase_after=%llu; "
         "feedback_phase_before=%llu; feedback_phase_after=%llu; start_frame=%d; "
-        "transfer_flags=%u; device_speed=%d; packet_lengths_near_failure=%s; "
-        "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
+        "transfer_flags=%u; device_speed=%d; "
+        "interval_us=%u; sample_rate=%d; channels=%d; subslot_bytes=%d; bytes_per_frame=%zu; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_loop_idle_ms=%lld; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
@@ -728,7 +728,9 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.feedback_phase_before),
         static_cast<unsigned long long>(failure.feedback_phase_after),
         failure.scheduled_start_frame, failure.transfer_flags, failure.device_speed,
-        packet_lengths, session->interval_us, session->sample_rate,
+        session->interval_us, session->sample_rate, session->channels,
+        session->subslot_bytes,
+        static_cast<size_t>(session->channels) * static_cast<size_t>(session->subslot_bytes),
         session->endpoint,
         static_cast<unsigned long long>(failure.submitted_at_failure),
         static_cast<unsigned long long>(failure.callbacks_at_failure),
@@ -1420,8 +1422,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
                 }
             }
             if (frames == 0 || planned_frames + frames > available_frames) break;
-            const unsigned int packet_size = static_cast<unsigned int>(frames * bytes_per_frame);
-            if (packet_size > session->max_packet_bytes) {
+            unsigned int packet_size = 0;
+            if (!flowery::usb::pcm_packet_size_bytes(
+                    frames, static_cast<uint32_t>(bytes_per_frame),
+                    session->max_packet_bytes, packet_size)) {
                 record_failure(&failure, "packet_exceeds_endpoint_capacity", LIBUSB_ERROR_OVERFLOW);
                 break;
             }
