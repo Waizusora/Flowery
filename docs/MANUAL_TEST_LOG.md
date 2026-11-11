@@ -1363,3 +1363,23 @@ Validation scope:
 - Required design follow-up before removing Direct USB Safety Hold: define an explicit safe startup-volume policy for both hardware and software volume routes; require hardware SET_CUR followed by GET_CUR readback where supported; fail closed if a requested safe level cannot be confirmed; ensure the first PCM/encoded submission cannot race ahead of the volume gate; and define how users deliberately raise volume after the route is armed. IEC 61937 encoded passthrough needs a separately reviewed policy because PCM software gain is not available on that path.
 
 **Status: STARTUP VOLUME INHERITANCE GAP CONFIRMED BY SOURCE INSPECTION; NO FIX CLAIMED; DIRECT USB SAFETY HOLD REMAINS ACTIVE.**
+
+
+## USB startup-volume gate implementation (2026-11-11)
+
+**Status: SOURCE IMPLEMENTATION ADDED; CI AND DEVICE VALIDATION REQUIRED. DIRECT USB SAFETY HOLD REMAINS IN FORCE.**
+
+- Direct PCM startup no longer inherits Android media volume or a previously stored DAC software level. DACs without a descriptor-advertised Feature Unit start at a conservative software gain of 0.01 (-40 dB).
+- DACs advertising a Feature Unit must accept a hardware SET_CUR targeting no louder than -40 dB and return a GET_CUR value at or below that target before the PCM producer is opened. If the range cannot reach -40 dB, the control transfer fails, or readback is louder than requested, startup aborts.
+- A Feature Unit that was advertised but cannot confirm startup attenuation is not silently treated as a software-volume route.
+- Runtime hardware volume changes also fail closed when SET_CUR/GET_CUR confirmation fails; no unverified switch to software gain is made.
+- Encoded UAC1 Type-II / IEC 61937 Type-III playback now requires a descriptor-derived Feature Unit and the same verified -40 dB hardware attenuation before the encoded producer worker is created. Encoded playback does not use PCM software gain.
+- Added UsbStartupVolumePolicyTest for supported range selection, insufficient attenuation range, invalid ranges, readback confirmation, and software startup gain.
+- Source ordering: PCM policy attaches and arms the DAC before UsbPcmPlaybackPipeline.open() creates/starts its producer; encoded session arms volume before UsbEncodedPlaybackPipeline starts its producer worker.
+- The -40 dB value is a conservative startup attenuation target, not a guarantee of safe acoustic SPL. Amplifier gain, transducer sensitivity, external volume controls, and device firmware remain outside Flowery's control.
+- No physical DAC playback was performed for this change. The user has not yet retested USB DAC playback in Flowery. This implementation does not establish that the historical high-pitched sound, 44.1 kHz packet issue, or 96 kHz final-drain issue is resolved.
+
+Next work:
+1. Run Android/native CI and inspect the built APK.
+2. Audit and test the transport's exact packet completion behavior at 44.1 kHz and 96 kHz; do not change URB scheduling constants without a reproducing trace.
+3. Perform controlled first-use hardware validation at minimum output level, then validate pause/resume, seek, stop, disconnect, and natural drain for PCM and encoded routes.
