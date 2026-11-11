@@ -232,6 +232,18 @@ void test_feedback_initial_submission_state_is_published_before_callback_can_run
  in_flight.store(false, std::memory_order_release); // callback: resubmit failed
  assert(!in_flight.load(std::memory_order_acquire));
 }
+void test_isochronous_packet_requires_exact_completion() {
+ using flowery::usb::iso_packet_completed_exactly;
+ constexpr unsigned int completed = 0;
+ // A full packet is accepted only when libusb reports the requested byte count.
+ assert(iso_packet_completed_exactly(completed, completed, 192, 192));
+ // Short, zero-length, and over-reported completions are never silently accepted.
+ assert(!iso_packet_completed_exactly(completed, completed, 191, 192));
+ assert(!iso_packet_completed_exactly(completed, completed, 0, 192));
+ assert(!iso_packet_completed_exactly(completed, completed, 193, 192));
+ // A packet with an error status is rejected even if its byte count matches.
+ assert(!iso_packet_completed_exactly(1, completed, 192, 192));
+}
 void test_transfer_reclaim_waits_until_callback_dispatch_returns() {
  using flowery::usb::transfer_reclaimable;
  // Not completed: never reclaim, even if the dispatcher has advanced.
@@ -259,6 +271,7 @@ int main() {
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
+ test_isochronous_packet_requires_exact_completion();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (15 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (16 scenarios).\n"; return 0;
 }
