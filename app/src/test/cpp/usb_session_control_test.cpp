@@ -211,6 +211,25 @@ void test_close_requests_stop_before_waiting_for_encoded_writer_lease() {
  closer.join();
  assert(done.wait_for(0ms)==std::future_status::ready);
 }
+void test_feedback_sample_decoder_requires_exact_protocol_length() {
+ using flowery::usb::decode_feedback_sample;
+ const unsigned char full_speed[] = {0x00, 0x80, 0x00};
+ const unsigned char high_speed[] = {0x00, 0x00, 0x80, 0x00};
+ std::uint32_t value = 0;
+ assert(decode_feedback_sample(full_speed, 3, 14, value));
+ assert(value == 0x008000U);
+ assert(decode_feedback_sample(high_speed, 4, 16, value));
+ assert(value == 0x00800000U);
+ // Short and overlong samples are rejected rather than partially decoded.
+ assert(!decode_feedback_sample(full_speed, 2, 14, value));
+ assert(!decode_feedback_sample(full_speed, 4, 14, value));
+ assert(!decode_feedback_sample(high_speed, 3, 16, value));
+ assert(!decode_feedback_sample(high_speed, 5, 16, value));
+ assert(!decode_feedback_sample(full_speed, 3, 15, value));
+ assert(!decode_feedback_sample(nullptr, 3, 14, value));
+ const unsigned char zero_sample[] = {0, 0, 0};
+ assert(!decode_feedback_sample(zero_sample, 3, 14, value));
+}
 void test_feedback_transfer_is_not_resubmitted_after_event_loop_failure() {
  assert(flowery::usb::feedback_resubmit_allowed(false, true, 0, 0));
  assert(!flowery::usb::feedback_resubmit_allowed(true, true, 0, 0));
@@ -303,6 +322,7 @@ int main() {
  test_close_requests_stop_before_waiting_for_encoded_writer_lease();
  test_pause_request_is_serialized_with_encoded_submission();
  test_pause_request_is_serialized_with_pcm_submission();
+ test_feedback_sample_decoder_requires_exact_protocol_length();
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
@@ -311,5 +331,5 @@ int main() {
  test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries();
  test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
- std::cout<<"USB session control tests passed (19 scenarios).\n"; return 0;
+ std::cout<<"USB session control tests passed (20 scenarios).\n"; return 0;
 }
