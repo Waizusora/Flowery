@@ -104,7 +104,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private fun publishUsbPlaybackModeStatus() {
         if (!usbPlaybackMode || outputSampleRate <= 0) return
-        val mode = if (usbNativeBitPerfectConfirmed) "BIT PERFECT" else "PCM · float32 decoded"
+        val mode = if (usbNativeBitPerfectConfirmed) "BIT PERFECT" else "PCM · bit-perfect not confirmed"
         onState("USB exclusive · $mode · ${usbOutputBitDepth}-bit · ${outputSampleRate} Hz")
     }
 
@@ -694,16 +694,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     // This diagnostic no longer gates playback. USB Direct is tested as a
                     // transport path; native integer PCM status is reported independently.
                     usbNativeBitPerfectConfirmed = bitPerfect
-                    val decoderPath = when {
-                        outputEncoding == "ieee_float32" && bitPerfect -> "ieee_float32"
-                        bitPerfect -> "integer"
-                        else -> "float32"
-                    }
+                    // Describe the actual decoder encoding independently from the
+                    // transport/bit-perfect verification result. A failed eligibility
+                    // check does not convert integer PCM into IEEE float32.
+                    val decoderPath = if (outputEncoding == "ieee_float32") "ieee_float32" else "integer"
                     diagnostics.record("USB_NATIVE_PCM bitPerfect=${bitPerfect} decoderPath=${decoderPath}")
                     onState(if (bitPerfect) {
                         "USB exclusive · BIT PERFECT · " + outputBits + "-bit · " + outputRate + " Hz · " +
                             if (outputEncoding == "ieee_float32") "IEEE Float32" else "native integer PCM"
-                    } else "USB exclusive · PCM · float32 decoded · " + outputBits + "-bit · " + outputRate + " Hz")
+                    } else "USB exclusive · PCM · bit-perfect not confirmed · " + outputBits + "-bit · " + outputRate + " Hz")
                 },
                 onHardwareVolume = { softwareVolume = it },
                 onEndOfStream = { chunks, totalFrames ->
