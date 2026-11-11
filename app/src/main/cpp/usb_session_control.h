@@ -126,6 +126,21 @@ inline bool pcm_drain_tail_packet_bytes(std::uint64_t remaining_bytes,
  return true;
 }
 
+inline bool pcm_drain_padded_packet_bytes(std::uint64_t remaining_bytes,
+                                             std::uint32_t expected_packet_bytes,
+                                             std::uint32_t bytes_per_frame,
+                                             std::uint32_t max_packet_bytes,
+                                             std::uint32_t& packet_bytes,
+                                             std::uint32_t& padding_bytes) noexcept {
+ if (remaining_bytes == 0 || bytes_per_frame == 0 || expected_packet_bytes == 0 ||
+     expected_packet_bytes > max_packet_bytes || expected_packet_bytes % bytes_per_frame != 0 ||
+     remaining_bytes > expected_packet_bytes || remaining_bytes % bytes_per_frame != 0) {
+  return false;
+ }
+ packet_bytes = expected_packet_bytes;
+ padding_bytes = expected_packet_bytes - static_cast<std::uint32_t>(remaining_bytes);
+ return true;
+}
 inline bool iso_packet_completed_exactly(unsigned int packet_status,
                                           unsigned int completed_status,
                                           unsigned int actual_length,
