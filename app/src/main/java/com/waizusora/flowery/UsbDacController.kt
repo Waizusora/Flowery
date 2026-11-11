@@ -325,6 +325,9 @@ class UsbDacController(context: Context) {
         requiredChannels: Int? = null,
         requiredEncoding: String = "signed_integer"
     ): UsbDacSession {
+        check(UsbDacSession.retryPendingCloseSessions()) {
+            "A previous PCM USB session is still awaiting confirmed teardown"
+        }
         require(manager.hasPermission(device)) { "USB permission is required before opening the DAC." }
         require(bitResolution == 0 || bitResolution in 8..32) { "PCM resolution must be automatic or between 8 and 32 bits." }
         require(sampleRate > 0) { "Sample rate must be positive." }
