@@ -71,7 +71,9 @@ Known limitations include:
 
 - Audio format support depends on the codecs enabled in the Symphonia build. A recognized file extension does not guarantee that a file can be decoded.
 - USB playback depends on the DAC's advertised UAC profiles and supported synchronization behavior.
-- AAudio may fall back from exclusive to shared mode.
+- Direct USB profile-negotiation failures may fall back to AAudio before the first USB transfer. AAudio requests exclusive sharing first and retries shared mode if exclusive opening fails.
+- USB transport failures after playback has started are reported instead of silently switching output routes.
+- AAudio shared mode may be mixed or resampled by Android.
 - Gapless playback and crossfade are not implemented.
 - Embedded-lyrics extraction, remote lyric search, and lyric downloading are not implemented.
 - Embedded cover-art replacement is not currently exposed.
