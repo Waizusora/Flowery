@@ -16,8 +16,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioDeviceCallback
 import android.net.Uri
 import android.media.MediaMetadataRetriever
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.os.Handler
@@ -107,8 +105,6 @@ class PlaybackService : Service() {
         set(value) = queueState.setShuffle(value)
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
-    @Volatile private var currentArtworkBytes: ByteArray? = null
-    @Volatile private var currentArtworkBitmap: Bitmap? = null
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
@@ -147,9 +143,6 @@ class PlaybackService : Service() {
                         .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
                         .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
                         .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
-                    currentArtworkBitmap?.let {
-                        metadata.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, it)
-                    }
                     session.setMetadata(metadata.build())
                     publishSessionState(position)
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
@@ -395,10 +388,8 @@ class PlaybackService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
         currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
-        currentArtworkBytes = null
-        currentArtworkBitmap = null
         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$queueIndex")
-        val embeddedArtwork = runCatching {
+        runCatching {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(this, uri)
@@ -408,19 +399,13 @@ class PlaybackService : Service() {
                     !queuePlaylistNames.getOrNull(queueIndex).isNullOrBlank()
                 if (!virtualEntry) currentTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: currentTitle
                 if (currentArtist == "Unknown artist") currentArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: currentArtist
-                retriever.embeddedPicture?.let { bytes ->
-                    currentArtworkBytes = bytes
-                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                }
             } finally { retriever.release() }
-        }.getOrNull()
-        currentArtworkBitmap = embeddedArtwork
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_done index=$queueIndex artwork=${embeddedArtwork != null} artworkBytes=${currentArtworkBytes?.size ?: 0}")
+        }
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_done index=$queueIndex artwork=omitted_from_media_session")
         val metadataBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
-        if (embeddedArtwork != null) metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, embeddedArtwork)
         session.setMetadata(metadataBuilder.build())
         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_published index=$queueIndex")
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -575,7 +560,6 @@ class PlaybackService : Service() {
             .putExtra(EXTRA_CURRENT_PLAYLIST_ORDER, queuePlaylistOrders.getOrNull(queueIndex) ?: -1)
             .putExtra(EXTRA_CURRENT_TITLE, currentTitle)
             .putExtra(EXTRA_CURRENT_ARTIST, currentArtist)
-            .putExtra(EXTRA_CURRENT_ARTWORK, currentArtworkBytes)
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
             .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
             .putExtra(EXTRA_REPEAT_MODE, repeatMode)
