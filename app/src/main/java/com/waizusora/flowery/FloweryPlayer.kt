@@ -263,7 +263,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
                         usbPlaybackMode = false
                     }
-                    0 -> Unit
+                    0 -> {
+                        if (usbDirectAvailable) {
+                            usbFallbackReason = "The source format is not eligible for source-preserving USB Bit-Perfect output."
+                            diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                        }
+                    }
                     else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
                 }
 
@@ -729,6 +734,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                 },
                 onBitPerfectChanged = { bitPerfect ->
+                    check(bitPerfect) {
+                        "The USB producer could not confirm source-preserving PCM. Strict USB Bit-Perfect playback was stopped rather than continuing through float32 DSP."
+                    }
                     usbNativeBitPerfectConfirmed = bitPerfect
                     val decoderPath = when {
                         outputEncoding == "ieee_float32" && bitPerfect -> "ieee_float32"
