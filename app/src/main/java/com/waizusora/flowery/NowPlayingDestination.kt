@@ -58,8 +58,9 @@ internal fun NowPlayingDestination(
     onInspect: (AudioTrackItem) -> Unit,
     onEdit: () -> Unit
  ) {
-            val lyricPanelColor = remember(albumArtBytes, currentTag?.pictureBase64) {
-                resolveLyricPanelColor(albumArtBytes, currentTag?.pictureBase64)
+            val roseFallback = MaterialTheme.colorScheme.primaryContainer
+            val lyricPanelColor = remember(albumArtBytes, currentTag?.pictureBase64, roseFallback) {
+                resolveLyricPanelColor(albumArtBytes, currentTag?.pictureBase64, roseFallback)
             }
             Card(Modifier.fillMaxWidth().aspectRatio(1f), shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(
@@ -205,14 +206,18 @@ internal fun NowPlayingDestination(
 /**
  * Derives a dark, readable lyrics-panel tint from the current track artwork.
  */
-private fun resolveLyricPanelColor(albumArtBytes: ByteArray?, pictureBase64: String?): Color {
+private fun resolveLyricPanelColor(
+    albumArtBytes: ByteArray?,
+    pictureBase64: String?,
+    fallback: Color
+): Color {
     val bytes = albumArtBytes ?: pictureBase64
         ?.takeIf { it.isNotBlank() }
         ?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }
-        ?: return Color(0xFF123E5A)
+        ?: return fallback
     val sampled = runCatching {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = 16 })
-    }.getOrNull() ?: return Color(0xFF123E5A)
+    }.getOrNull() ?: return fallback
 
     return try {
         val pixels = IntArray(sampled.width * sampled.height)
@@ -225,7 +230,7 @@ private fun resolveLyricPanelColor(albumArtBytes: ByteArray?, pictureBase64: Str
             blue += android.graphics.Color.blue(pixel)
             count++
         }
-        if (count == 0L) return Color(0xFF123E5A)
+        if (count == 0L) return fallback
         val r = red.toFloat() / count / 255f
         val g = green.toFloat() / count / 255f
         val b = blue.toFloat() / count / 255f
