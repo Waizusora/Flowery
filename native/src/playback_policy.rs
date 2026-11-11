@@ -29,7 +29,7 @@ pub(super) fn select_playback_route(
     {
         return ROUTE_USB_SOURCE_PRESERVING;
     }
-    ROUTE_USB_FLOAT32
+    ROUTE_ANDROID_FLOAT32
 }
 
 #[no_mangle]
@@ -150,9 +150,9 @@ mod tests {
         assert_eq!(select_playback_route(true, true, false, 0, 2), 1);
         assert_eq!(select_playback_route(true, false, true, 24, 2), 2);
         assert_eq!(select_playback_route(true, false, true, 20, 8), 2);
-        assert_eq!(select_playback_route(true, false, true, 24, 9), 3);
-        assert_eq!(select_playback_route(true, false, false, 16, 2), 3);
-        assert_eq!(select_playback_route(true, false, true, 12, 2), 3);
+        assert_eq!(select_playback_route(true, false, true, 24, 9), 0);
+        assert_eq!(select_playback_route(true, false, false, 16, 2), 0);
+        assert_eq!(select_playback_route(true, false, true, 12, 2), 0);
     }
 
     #[test]
