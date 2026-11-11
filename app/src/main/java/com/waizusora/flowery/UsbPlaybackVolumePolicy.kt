@@ -23,9 +23,12 @@ internal data class UsbPlaybackVolumeState(
 /**
  * Applies the per-DAC hardware/software volume policy before the PCM producer is opened.
  *
- * A DAC with a Feature Unit must accept SET_CUR(minimum) and confirm a near-minimum
- * GET_CUR before playback is allowed. A DAC without a Feature Unit starts at a
- * deliberately conservative software gain instead of inheriting Android's media volume.
+ * When a Feature Unit is advertised, Flowery first attempts SET_CUR(minimum) and a
+ * confirming near-minimum GET_CUR. If the control path is non-responsive (common on
+ * descriptors that advertise volume but do not implement standard UAC requests),
+ * playback continues with a conservative software gain instead of being blocked.
+ * A DAC without a Feature Unit always starts at the same software startup gain
+ * rather than inheriting Android media volume.
  */
 internal class UsbPlaybackVolumePolicy(
     private val preferences: OutputVolumeController,
@@ -50,18 +53,18 @@ internal class UsbPlaybackVolumePolicy(
                 readBack = readBack,
                 maximumSafeFraction = SAFE_HARDWARE_READBACK_FRACTION,
             )
-            checkNotNull(confirmed) {
-                "USB DAC startup volume safety check failed: setAccepted=$setAccepted " +
-                    "readBackFraction=$readBack; ${session.hardwareVolumeDiagnostic()}. " +
-                    "Playback is blocked for safety."
+            if (confirmed != null) {
+                preferences.setUsbVolume(deviceKey, confirmed)
+                return UsbPlaybackVolumeState(
+                    softwareVolume = confirmed,
+                    hardwareVolumeAvailable = true,
+                    softwareGainEnabled = false,
+                    bitPerfectActive = true,
+                )
             }
-            preferences.setUsbVolume(deviceKey, confirmed)
-            return UsbPlaybackVolumeState(
-                softwareVolume = confirmed,
-                hardwareVolumeAvailable = true,
-                softwareGainEnabled = false,
-                bitPerfectActive = true,
-            )
+            // Feature Unit is advertised but does not accept or confirm volume control.
+            // Fall back to software gain so playback remains available; the diagnostic
+            // string is retained on the session for USB logs.
         }
 
         // Never inherit a potentially high Android media volume or a prior per-DAC value.
