@@ -943,6 +943,7 @@ bool wait_for_progress(UsbAudioSession* session, TransportFailure* failure) {
             failure->in_flight_at_failure = session->in_flight.size();
             failure->idle_ms_at_failure =
                 std::chrono::duration_cast<std::chrono::milliseconds>(idle).count();
+            snapshot_stalled_transport(session, failure);
             return false;
         }
     }
