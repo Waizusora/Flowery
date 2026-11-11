@@ -383,7 +383,10 @@ class PlaybackService : Service() {
             return
         }
         Log.i("FloweryDiagnostics", "PLAY_CURRENT index=$queueIndex queueSize=${queue.size} title=${queueTitles.getOrNull(queueIndex).orEmpty()} repeat=$repeatMode shuffle=$shuffle")
-        if (!requestFocus()) {
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_start index=$queueIndex")
+        val focusAccepted = requestFocus()
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_done accepted=$focusAccepted index=$queueIndex")
+        if (!focusAccepted) {
             publishState("Playback could not start because audio focus was denied")
             return
         }
@@ -394,6 +397,7 @@ class PlaybackService : Service() {
         currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
         currentArtworkBytes = null
         currentArtworkBitmap = null
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$queueIndex")
         val embeddedArtwork = runCatching {
             val retriever = MediaMetadataRetriever()
             try {
@@ -411,16 +415,23 @@ class PlaybackService : Service() {
             } finally { retriever.release() }
         }.getOrNull()
         currentArtworkBitmap = embeddedArtwork
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_done index=$queueIndex artwork=${embeddedArtwork != null} artworkBytes=${currentArtworkBytes?.size ?: 0}")
         val metadataBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
         if (embeddedArtwork != null) metadataBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, embeddedArtwork)
         session.setMetadata(metadataBuilder.build())
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_published index=$queueIndex")
         startForeground(NOTIFICATION_ID, buildNotification())
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=foreground_started index=$queueIndex")
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=worker_submit index=$queueIndex")
         io.execute {
+            Log.i("FloweryDiagnostics", "PLAY_PHASE phase=worker_enter index=$queueIndex")
             try {
+                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$queueIndex")
                 player.play(uri, queueCueStarts.getOrNull(queueIndex) ?: 0L, queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L })
+                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$queueIndex")
                 playbackState = PlaybackStateCompat.STATE_PLAYING
                 publishSessionState()
             } catch (error: Throwable) {
