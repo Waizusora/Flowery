@@ -1177,31 +1177,37 @@ private fun FloweryApp(
                 }
                 Text("OUTPUT VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
-                Text("BASS · MID · TREBLE · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
+                Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
                     shape = RoundedCornerShape(18.dp)
                 ) {
                     Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalAlignment = Alignment.Bottom
                     ) {
-                        listOf("Bass", "Mid", "Treble").forEachIndexed { index, label ->
+                        (0 until IsoGraphicEqualizer.BAND_COUNT).forEach { index ->
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(72.dp)
+                                modifier = Modifier.width(48.dp)
                             ) {
-                                VerticalEqualizerSlider(
-                                    value = equalizerGains[index],
-                                    onValueChange = { onBandGain(index, it) },
-                                    modifier = Modifier.height(220.dp).width(52.dp)
-                                )
-                                Text(label, color = Color.White, style = MaterialTheme.typography.labelMedium)
                                 Text(
-                                    String.format(java.util.Locale.ROOT, "%+.1f dB", equalizerGains[index]),
+                                    String.format(java.util.Locale.ROOT, "%+.1f", equalizerGains.getOrElse(index) { 0f }),
                                     color = Color.White.copy(alpha = 0.72f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1
+                                )
+                                VerticalEqualizerSlider(
+                                    value = equalizerGains.getOrElse(index) { 0f },
+                                    onValueChange = { onBandGain(index, it) },
+                                    modifier = Modifier.height(176.dp).width(40.dp)
+                                )
+                                Text(
+                                    IsoGraphicEqualizer.formatFrequency(index),
+                                    color = Color.White,
                                     style = MaterialTheme.typography.labelSmall,
                                     maxLines = 1
                                 )
