@@ -8,7 +8,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class UsbPcmBlockDecoderTest {
+class UsbPcmProducerAdapterTest {
     @Test
     fun decodesBoundedPcmBlockEnvelope() {
         val payload = byteArrayOf(1, 2, 3, 4, 5, 6)
