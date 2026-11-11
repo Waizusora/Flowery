@@ -751,37 +751,36 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
                             std::strcmp(failure.reason, "packet_error") == 0;
     const char* transfer_name = has_status ? transfer_status_name(failure.transfer_status) : "n/a";
     const char* packet_name = failure.failed_packet >= 0 ? transfer_status_name(failure.packet_status) : "n/a";
-    char packet_lengths[256] = {};
-    if (!failure.requested_packet_lengths.empty() && failure.failed_packet >= 0) {
-        const size_t failed = static_cast<size_t>(failure.failed_packet);
-        const size_t begin = failed > 4 ? failed - 4 : 0;
-        const size_t end = std::min(failure.requested_packet_lengths.size(), failed + 5);
+    // Preserve the complete URB packet-length schedule on failure. For
+    // fractional rates such as 44.1 kHz, the position of each 5/6-frame packet
+    // is needed to distinguish phase drift from a host-controller short packet.
+    char packet_lengths[512] = {};
+    if (!failure.requested_packet_lengths.empty()) {
         size_t used = 0;
-        for (size_t index = begin; index < end && used < sizeof(packet_lengths); ++index) {
+        for (size_t index = 0; index < failure.requested_packet_lengths.size() &&
+                                used < sizeof(packet_lengths); ++index) {
             const int written = std::snprintf(packet_lengths + used, sizeof(packet_lengths) - used,
-                "%s%zu:%u", index == begin ? "" : ",", index,
+                "%s%zu:%u", index == 0 ? "" : ",", index,
                 failure.requested_packet_lengths[index]);
             if (written < 0) break;
             used += std::min(static_cast<size_t>(written), sizeof(packet_lengths) - used);
         }
     }
-    char actual_packet_lengths[256] = {};
-    if (!failure.actual_packet_lengths.empty() && failure.failed_packet >= 0) {
-        const size_t failed = static_cast<size_t>(failure.failed_packet);
-        const size_t begin = failed > 4 ? failed - 4 : 0;
-        const size_t end = std::min(failure.actual_packet_lengths.size(), failed + 5);
+    char actual_packet_lengths[512] = {};
+    if (!failure.actual_packet_lengths.empty()) {
         size_t used = 0;
-        for (size_t index = begin; index < end && used < sizeof(actual_packet_lengths); ++index) {
+        for (size_t index = 0; index < failure.actual_packet_lengths.size() &&
+                                used < sizeof(actual_packet_lengths); ++index) {
             const int written = std::snprintf(actual_packet_lengths + used,
                 sizeof(actual_packet_lengths) - used, "%s%zu:%u",
-                index == begin ? "" : ",", index, failure.actual_packet_lengths[index]);
+                index == 0 ? "" : ",", index, failure.actual_packet_lengths[index]);
             if (written < 0) break;
             used += std::min(static_cast<size_t>(written), sizeof(actual_packet_lengths) - used);
         }
     }
     const size_t max_urbs = failure.max_urbs_at_failure != 0
         ? failure.max_urbs_at_failure : max_urbs_in_flight(session);
-    char message[2048];
+    char message[4096];
     std::snprintf(
         message, sizeof(message),
         "USB isochronous transfer failed: reason=%s; %s (%d); "
