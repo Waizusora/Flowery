@@ -46,7 +46,7 @@ internal fun DspDestination(
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text("31-band ISO Equalizer", color = foreground, fontWeight = FontWeight.SemiBold)
+            Text("31-Band ISO Equalizer", color = foreground, fontWeight = FontWeight.SemiBold)
             Text(
                 if (equalizerEnabled) "Enabled · 20 Hz–20 kHz · ±12 dB"
                 else "Bypassed · all 31 band gains retained",
@@ -106,7 +106,7 @@ internal fun DspDestination(
                 }
             }
             Text(
-                "Geser untuk mengatur",
+                "Swipe to adjust",
                 color = muted,
                 fontSize = 10.sp,
                 modifier = Modifier.fillMaxWidth(),
