@@ -24,13 +24,14 @@ namespace {
 
 // Isochronous transport tuning.
 //
-// Use 128 service intervals per URB to reduce completion/callback overhead.
-// At the DAC's 125 us high-speed interval, each URB covers 16 ms. The 64 ms
-// scheduling horizon therefore keeps four URBs in flight: the same bounded
-// audio depth as before, with half as many URB submissions and callbacks.
-constexpr size_t kPacketsPerUrb = 128;
+// Keep each isochronous URB short (8 ms at the DAC's 125 us interval)
+// and cap the submitted audio horizon at 32 ms. The previous 128-packet URBs
+// left four 16 ms transfers outstanding when the host controller stopped
+// completing callbacks; a smaller window limits queued work while retaining
+// multiple URBs for continuous playback.
+constexpr size_t kPacketsPerUrb = 64;
 constexpr size_t kMaxUrbsInFlight = 8;
-constexpr uint64_t kTargetQueuedAudioUs = 64000ULL;
+constexpr uint64_t kTargetQueuedAudioUs = 32000ULL;
 // No URB completion for this long while URBs are queued is treated as a stalled
 // endpoint. libusb's per-transfer timeout is deliberately disabled (set to 0)
 // because it cancels queued isochronous URBs and breaks the scheduling chain.
