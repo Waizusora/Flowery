@@ -51,6 +51,8 @@ struct InFlightTransfer {
     uint64_t sequence = 0;
     uint64_t frame_phase_before = 0;
     uint64_t frame_phase_after = 0;
+    uint64_t feedback_phase_before = 0;
+    uint64_t feedback_phase_after = 0;
     std::vector<unsigned int> requested_packet_lengths;
     UsbAudioSession* owner = nullptr;
 };
@@ -132,6 +134,8 @@ struct TransportFailure {
     unsigned int packet_count = 0;
     uint64_t frame_phase_before = 0;
     uint64_t frame_phase_after = 0;
+    uint64_t feedback_phase_before = 0;
+    uint64_t feedback_phase_after = 0;
     int scheduled_start_frame = 0;
     unsigned int transfer_flags = 0;
     int device_speed = LIBUSB_SPEED_UNKNOWN;
@@ -391,6 +395,8 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
                         failure->packet_count = static_cast<unsigned int>(transfer->num_iso_packets);
                         failure->frame_phase_before = entry->frame_phase_before;
                         failure->frame_phase_after = entry->frame_phase_after;
+                        failure->feedback_phase_before = entry->feedback_phase_before;
+                        failure->feedback_phase_after = entry->feedback_phase_after;
                         // libusb's public transfer structure does not expose the host-scheduled start frame.
                         failure->scheduled_start_frame = -1;
                         failure->transfer_flags = transfer->flags;
@@ -673,7 +679,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "USB isochronous transfer failed: reason=%s; %s (%d); "
         "transfer_status=%u (%s); sequence=%llu; in_flight_at_failure=%zu; idle_ms=%lld; failed_packet=%d; "
         "packet_status=%u (%s); actual_length=%u; requested_length=%u; "
-        "packet_count=%u; phase_before=%llu; phase_after=%llu; start_frame=%d; "
+        "packet_count=%u; phase_before=%llu; phase_after=%llu; "
+        "feedback_phase_before=%llu; feedback_phase_after=%llu; start_frame=%d; "
         "transfer_flags=%u; device_speed=%d; packet_lengths_near_failure=%s; "
         "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
@@ -688,6 +695,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.requested_length, failure.packet_count,
         static_cast<unsigned long long>(failure.frame_phase_before),
         static_cast<unsigned long long>(failure.frame_phase_after),
+        static_cast<unsigned long long>(failure.feedback_phase_before),
+        static_cast<unsigned long long>(failure.feedback_phase_after),
         failure.scheduled_start_frame, failure.transfer_flags, failure.device_speed,
         packet_lengths, session->interval_us, session->sample_rate,
         session->endpoint,
@@ -708,11 +717,14 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
 // payload is consumed from the front of the pending PCM region.
 bool submit_urb(UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
                 size_t total_bytes, uint64_t frame_phase_before,
-                uint64_t frame_phase_after, TransportFailure* failure) {
+                uint64_t frame_phase_after, uint64_t feedback_phase_before,
+                uint64_t feedback_phase_after, TransportFailure* failure) {
     auto entry = std::make_unique<InFlightTransfer>();
     entry->sequence = session->next_sequence;
     entry->frame_phase_before = frame_phase_before;
     entry->frame_phase_after = frame_phase_after;
+    entry->feedback_phase_before = feedback_phase_before;
+    entry->feedback_phase_after = feedback_phase_after;
     entry->requested_packet_lengths = packet_bytes;
     entry->owner = session;
     entry->buffer.assign(
@@ -757,13 +769,14 @@ enum class PcmSubmitResult { Submitted, ControlChanged, Failed };
 PcmSubmitResult submit_pcm_urb_if_running(
     UsbAudioSession* session, const std::vector<unsigned int>& packet_bytes,
     size_t total_bytes, uint64_t frame_phase_before, uint64_t frame_phase_after,
+    uint64_t feedback_phase_before, uint64_t feedback_phase_after,
     TransportFailure* failure) {
     std::lock_guard<std::mutex> control_lock(session->event_mutex);
     if (!flowery::usb::submission_allowed(session->control)) {
         return PcmSubmitResult::ControlChanged;
     }
     return submit_urb(session, packet_bytes, total_bytes, frame_phase_before,
-                      frame_phase_after, failure)
+                      frame_phase_after, feedback_phase_before, feedback_phase_after, failure)
         ? PcmSubmitResult::Submitted
         : PcmSubmitResult::Failed;
 }
@@ -853,12 +866,14 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
         const int written = std::snprintf(
             failure->in_flight_summary + used,
             sizeof(failure->in_flight_summary) - used,
-            "%s#%llu/%zu/%llu-%llu/%llu/%u-%u",
+            "%s#%llu/%zu/f%llu-%llu/b%llu-%llu/%llu/%u-%u",
             used == 0 ? "" : ";",
             static_cast<unsigned long long>(entry->sequence),
             entry->requested_packet_lengths.size(),
             static_cast<unsigned long long>(entry->frame_phase_before),
             static_cast<unsigned long long>(entry->frame_phase_after),
+            static_cast<unsigned long long>(entry->feedback_phase_before),
+            static_cast<unsigned long long>(entry->feedback_phase_after),
             static_cast<unsigned long long>(requested_bytes),
             first_packet, last_packet);
         if (written < 0) break;
@@ -871,6 +886,8 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
         failure->packet_count = static_cast<unsigned int>(oldest->requested_packet_lengths.size());
         failure->frame_phase_before = oldest->frame_phase_before;
         failure->frame_phase_after = oldest->frame_phase_after;
+        failure->feedback_phase_before = oldest->feedback_phase_before;
+        failure->feedback_phase_after = oldest->feedback_phase_after;
         if (oldest->transfer != nullptr) {
             failure->transfer_flags = oldest->transfer->flags;
         }
@@ -1360,7 +1377,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
         const auto submit_result = submit_pcm_urb_if_running(
             session, packet_bytes, planned_frames * bytes_per_frame,
-            session->frame_phase, phase, &failure);
+            session->frame_phase, phase, session->feedback_phase, feedback_phase, &failure);
         if (submit_result == PcmSubmitResult::ControlChanged) continue;
         if (submit_result == PcmSubmitResult::Failed) break;
         session->frame_phase = phase;
@@ -1755,7 +1772,8 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
                 for (;;) {
                     const auto submit_result = submit_pcm_urb_if_running(
                         session, tail, tail_packet_bytes, session->frame_phase,
-                        session->frame_phase, &failure);
+                        session->frame_phase, session->feedback_phase,
+                        session->feedback_phase, &failure);
                     if (submit_result == PcmSubmitResult::Submitted ||
                         submit_result == PcmSubmitResult::Failed) break;
                     const int control = session->control.load();
