@@ -26,6 +26,8 @@ import androidx.compose.material3.*
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.*
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
@@ -82,14 +84,14 @@ fun FloweryNavigation(
     val lyricDensity = LocalDensity.current
     LaunchedEffect(lyricsVisible, activeLyricIndex, lyrics.size) {
         if (lyricsVisible && lyrics.isNotEmpty()) {
-            // Wait until the lyrics panel has been measured before centering.
+            // Wait for a real, non-zero LazyColumn viewport. A single frame is
+            // not sufficient on first entry or after the panel is resized.
             withFrameNanos { }
+            val viewportHeight = snapshotFlow { lyricListState.layoutInfo.viewportSize.height }
+                .first { it > 0 }
             val targetIndex = activeLyricIndex.coerceIn(0, lyrics.lastIndex)
-            val viewportHeight = lyricListState.layoutInfo.viewportSize.height
-            val itemHeight = lyricListState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.index == targetIndex }?.size
-                ?: with(lyricDensity) { 56.dp.roundToPx() }
-            val centerOffset = ((viewportHeight - itemHeight) / 2).coerceAtLeast(0)
+            val rowHeight = with(lyricDensity) { 88.dp.roundToPx() }
+            val centerOffset = ((viewportHeight - rowHeight) / 2).coerceAtLeast(0)
             lyricListState.animateScrollToItem(targetIndex, scrollOffset = -centerOffset)
         }
     }
