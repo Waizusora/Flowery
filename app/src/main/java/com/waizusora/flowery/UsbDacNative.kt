@@ -155,7 +155,7 @@ internal class UsbDacSession internal constructor(
     @Synchronized
     fun drain() {
         check(!closed) { "USB DAC session is closed" }
-        UsbDacNative.nativeDrain(nativeHandle)
+        requireUsbPcmDrainResult(UsbDacNative.nativeDrain(nativeHandle))
     }
 
     /** Discards staged and queued audio so playback can resume from a new position. */
@@ -207,5 +207,13 @@ internal class UsbDacSession internal constructor(
             connectionClosed = true
         }
         closed = true
+    }
+}
+
+
+/** Rejects native drain failures while allowing an intentional concurrent stop. */
+internal fun requireUsbPcmDrainResult(result: Int) {
+    check(result == 0 || result == UsbDacSession.WRITE_STOPPED) {
+        "USB transport drain failed (status=$result)"
     }
 }
