@@ -424,10 +424,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
     let sharing=if exclusive==JNI_TRUE{SHARING_EXCLUSIVE}else{SHARING_SHARED};
     e.last_open=[device as i64,sharing as i64,rate as i64,channels as i64,INVALID_STATE as i64,0,-1,0,0,-1,1];
-    let result=unsafe{e.open(&mut out,rate,sharing,device)};
+    let mut result=unsafe{e.open(&mut out,rate,sharing,device)};
     e.last_open[4]=result as i64;
+    let mut actual_sharing=sharing;
+    if result!=OK && sharing==SHARING_EXCLUSIVE {
+        unsafe{e.stop();}
+        actual_sharing=SHARING_SHARED;
+        result=unsafe{e.open(&mut out,rate,actual_sharing,device)};
+        e.last_open[4]=result as i64;
+        e.last_open[10]=4; // Exclusive open failed; shared retry was attempted.
+    }
     if result!=OK{unsafe{e.stop();}return result;}
-    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;e.last_open[10]=0;e.output=Some(out);let _=&mut env;OK
+    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);let _=&mut env;OK
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(_:JNIEnv,_:JClass)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
