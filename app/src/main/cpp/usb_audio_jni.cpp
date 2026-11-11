@@ -48,6 +48,8 @@ struct InFlightTransfer {
     // The transfer is reclaimable only after the libusb event-dispatch call
     // that invoked its callback has returned.
     std::atomic<uint64_t> callback_return_iteration{0};
+    // Timestamp is published at callback entry, independently of completion.
+    std::atomic<int64_t> callback_entered_at_ns{0};
     uint64_t sequence = 0;
     int64_t submitted_at_ns = 0;
     uint64_t frame_phase_before = 0;
@@ -147,7 +149,8 @@ struct TransportFailure {
     size_t max_urbs_at_failure = 0;
     size_t pending_pcm_remaining_at_failure = 0;
     size_t pending_encoded_remaining_at_failure = 0;
-    char in_flight_summary[512] = {};
+    // Enough space for compact state from all eight outstanding URBs.
+    char in_flight_summary[1024] = {};
     bool stall_snapshot_captured = false;
     long long idle_ms_at_failure = 0;
     uint64_t submitted_at_failure = 0;
@@ -163,6 +166,10 @@ void LIBUSB_CALL on_transfer_complete(libusb_transfer* transfer) {
     if (entry != nullptr) {
         UsbAudioSession* owner = entry->owner;
         if (owner != nullptr) {
+            const auto callback_now = std::chrono::steady_clock::now().time_since_epoch();
+            entry->callback_entered_at_ns.store(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(callback_now).count(),
+                std::memory_order_release);
             owner->completed_transfer_callback_count.fetch_add(1, std::memory_order_relaxed);
             owner->event_condition.notify_all();
             entry->callback_return_iteration.store(
@@ -889,6 +896,8 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
         session->pending_pcm.size() - session->pending_offset;
     failure->pending_encoded_remaining_at_failure =
         session->pending_encoded.size() - session->encoded_offset;
+    const int64_t snapshot_now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
     size_t used = 0;
     for (const auto& entry : session->in_flight) {
         uint64_t requested_bytes = 0;
@@ -899,14 +908,17 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
             ? 0U : entry->requested_packet_lengths.front();
         const unsigned int last_packet = entry->requested_packet_lengths.empty()
             ? 0U : entry->requested_packet_lengths.back();
+        // libusb only guarantees transfer and iso-packet result fields after
+        // the completion callback has run. Never interpret in-flight descriptors.
+        const bool callback_completed = entry->completed.load(std::memory_order_acquire);
         unsigned int packets_with_completion = 0;
         unsigned int packets_with_error = 0;
         unsigned int first_actual = 0;
         unsigned int last_actual = 0;
-        unsigned int first_packet_status = LIBUSB_TRANSFER_ERROR;
-        unsigned int last_packet_status = LIBUSB_TRANSFER_ERROR;
+        unsigned int first_packet_status = 0;
+        unsigned int last_packet_status = 0;
         const libusb_transfer* transfer = entry->transfer;
-        if (transfer != nullptr) {
+        if (callback_completed && transfer != nullptr) {
             for (int packet_index = 0; packet_index < transfer->num_iso_packets; ++packet_index) {
                 const auto& packet = transfer->iso_packet_desc[packet_index];
                 if (packet_index == 0) {
@@ -921,10 +933,19 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
                 else ++packets_with_error;
             }
         }
+        const int64_t callback_entered_ns =
+            entry->callback_entered_at_ns.load(std::memory_order_acquire);
+        const long long callback_age_ms = callback_entered_ns > 0
+            ? std::max<int64_t>(0, snapshot_now_ns - callback_entered_ns) / 1000000LL
+            : -1;
+        const uint64_t callback_return_iteration =
+            callback_completed
+                ? entry->callback_return_iteration.load(std::memory_order_acquire)
+                : 0;
         const int written = std::snprintf(
             failure->in_flight_summary + used,
             sizeof(failure->in_flight_summary) - used,
-            "%s#%llu/%zu/f%llu-%llu/b%llu-%llu/%llu/%u-%u/cb%d/ts%u/pc%u/pe%u/a%u-%u/ps%u-%u",
+            "%s#%llu/%zu/f%llu-%llu/b%llu-%llu/%llu/%u-%u/cb%d/cba%lld/cri%llu/valid%d/ts%u/pc%u/pe%u/a%u-%u/ps%u-%u",
             used == 0 ? "" : ";",
             static_cast<unsigned long long>(entry->sequence),
             entry->requested_packet_lengths.size(),
@@ -934,8 +955,12 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
             static_cast<unsigned long long>(entry->feedback_phase_after),
             static_cast<unsigned long long>(requested_bytes),
             first_packet, last_packet,
-            entry->completed.load(std::memory_order_acquire) ? 1 : 0,
-            transfer == nullptr ? LIBUSB_TRANSFER_ERROR : static_cast<unsigned int>(transfer->status),
+            callback_completed ? 1 : 0,
+            callback_age_ms,
+            static_cast<unsigned long long>(callback_return_iteration),
+            callback_completed && transfer != nullptr ? 1 : 0,
+            callback_completed && transfer != nullptr
+                ? static_cast<unsigned int>(transfer->status) : 0U,
             packets_with_completion, packets_with_error, first_actual, last_actual,
             first_packet_status, last_packet_status);
         if (written < 0) break;
