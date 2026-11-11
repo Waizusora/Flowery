@@ -1486,7 +1486,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
 
     TransportFailure failure;
     std::vector<unsigned int> packet_bytes;
-    packet_bytes.reserve(kPacketsPerUrb);
+    packet_bytes.reserve(packets_per_urb(session));
 
     while (true) {
         const int control = session->control.load();
@@ -1534,7 +1534,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteIsochronous(
         uint64_t phase = session->frame_phase;
         uint64_t feedback_phase = session->feedback_phase;
         size_t planned_frames = 0;
-        while (packet_bytes.size() < kPacketsPerUrb) {
+        while (packet_bytes.size() < packets_per_urb(session)) {
             unsigned int frames = 0;
             uint64_t next_phase = phase;
             uint64_t next_feedback_phase = feedback_phase;
