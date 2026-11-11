@@ -460,6 +460,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val (device, openedPipeline) =
                 controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sessionHandle, sourceRate)
             pipeline = openedPipeline
+            softwareVolume = openedPipeline.readHardwareVolumeFraction()
+                ?: throw IllegalStateException("Encoded DAC startup volume could not be read back after arming.")
             activeUsbEncodedPipeline = openedPipeline
             activeUsbSession = null
             activeUsbDeviceKey = controller.deviceIdentity(device.usbDevice)
