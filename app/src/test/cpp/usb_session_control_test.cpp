@@ -376,6 +376,10 @@ void test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment() {
  // can contain up to eleven staged frames at 96 kHz / 125 us.
  assert(pcm_drain_tail_packet_bytes(66, 6, 1024, tail));
  assert(tail == 66);
+ // The captured 20,397,862-frame track ends with ten frames after dividing
+ // by the 12-frame nominal service interval: its aligned drain tail is 60 B.
+ assert(pcm_drain_tail_packet_bytes(60, 6, 1024, tail));
+ assert(tail == 60);
  // 32-bit containers for the same source format remain eight-byte aligned.
  assert(pcm_drain_tail_packet_bytes(88, 8, 1024, tail));
  assert(tail == 88);
