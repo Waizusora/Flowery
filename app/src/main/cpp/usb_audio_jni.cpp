@@ -379,8 +379,11 @@ void reap_completed(UsbAudioSession* session, TransportFailure* failure) {
             } else {
                 for (int i = 0; i < transfer->num_iso_packets; ++i) {
                     const auto& packet = transfer->iso_packet_desc[i];
-                    if (packet.status != LIBUSB_TRANSFER_COMPLETED ||
-                        packet.actual_length != packet.length) {
+                    if (!flowery::usb::iso_packet_completed_exactly(
+                            static_cast<unsigned int>(packet.status),
+                            LIBUSB_TRANSFER_COMPLETED,
+                            packet.actual_length,
+                            packet.length)) {
                         record_failure(failure, "packet_error", LIBUSB_ERROR_IO);
                         failure->sequence = entry->sequence;
                         failure->in_flight_at_failure = queue.size();
