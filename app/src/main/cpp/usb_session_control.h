@@ -45,6 +45,22 @@ inline bool transfer_reclaimable(bool callback_completed,
  return callback_completed && callback_return_iteration != 0 &&
         completed_event_iteration >= callback_return_iteration;
 }
+// Advance the nominal PCM service-interval accumulator without losing its
+// fractional frame remainder between packets or URB boundaries.
+inline bool next_pcm_packet_frames(std::uint32_t sample_rate,
+                                   std::uint32_t interval_us,
+                                   std::uint64_t phase_before,
+                                   std::uint32_t& frames,
+                                   std::uint64_t& phase_after) noexcept {
+ if (sample_rate == 0 || interval_us == 0 || phase_before >= 1000000ULL) return false;
+ const std::uint64_t accumulated =
+     phase_before + static_cast<std::uint64_t>(sample_rate) * interval_us;
+ const std::uint64_t frame_count = accumulated / 1000000ULL;
+ if (frame_count > 0xffffffffULL) return false;
+ frames = static_cast<std::uint32_t>(frame_count);
+ phase_after = accumulated % 1000000ULL;
+ return true;
+}
 inline bool iso_packet_completed_exactly(unsigned int packet_status,
                                           unsigned int completed_status,
                                           unsigned int actual_length,
