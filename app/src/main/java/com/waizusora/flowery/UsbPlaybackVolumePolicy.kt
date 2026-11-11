@@ -83,15 +83,14 @@ internal class UsbPlaybackVolumePolicy(
                 runCatching { session.readHardwareVolumeFraction() }.getOrNull()
             } else null
             val applied = UsbHardwareVolumeReadback.confirmedFraction(setAccepted, confirmed)
-            if (applied != null) {
-                preferences.setUsbVolume(deviceKey, applied)
-                return UsbPlaybackVolumeState(
-                    softwareVolume = applied,
-                    hardwareVolumeAvailable = true,
-                    softwareGainEnabled = false,
-                    bitPerfectActive = true,
-                )
-            }
+                ?: return null
+            preferences.setUsbVolume(deviceKey, applied)
+            return UsbPlaybackVolumeState(
+                softwareVolume = applied,
+                hardwareVolumeAvailable = true,
+                softwareGainEnabled = false,
+                bitPerfectActive = true,
+            )
         }
         preferences.setUsbVolume(deviceKey, normalized)
         return UsbPlaybackVolumeState(
