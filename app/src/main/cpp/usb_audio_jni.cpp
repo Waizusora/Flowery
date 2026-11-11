@@ -1962,20 +1962,50 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
             if (pause_result != 0) return pause_result;
         }
         if (!failure.failed) {
-            std::uint32_t tail_packet_bytes = 0;
-            if (!flowery::usb::pcm_drain_tail_packet_bytes(
-                    remaining, static_cast<std::uint32_t>(bytes_per_frame),
-                    session->max_packet_bytes, tail_packet_bytes)) {
-                record_failure(&failure, remaining > session->max_packet_bytes
-                    ? "packet_exceeds_endpoint_capacity"
-                    : "pcm_drain_tail_not_frame_aligned", LIBUSB_ERROR_INVALID_PARAM);
+            std::uint32_t expected_frames = 0;
+            uint64_t next_frame_phase = session->frame_phase;
+            uint64_t next_feedback_phase = session->feedback_phase;
+            bool schedule_valid = false;
+            if (session->feedback_endpoint != 0 &&
+                session->feedback_valid.load(std::memory_order_acquire)) {
+                const uint32_t feedback = session->feedback_rate_fp.load(std::memory_order_acquire);
+                schedule_valid = flowery::usb::next_feedback_packet_frames(
+                    feedback, session->feedback_fraction_bits, session->interval_us,
+                    session->feedback_base_interval_us, session->feedback_phase,
+                    expected_frames, next_feedback_phase);
             } else {
+                schedule_valid = flowery::usb::next_pcm_packet_frames(
+                    static_cast<uint32_t>(session->sample_rate), session->interval_us,
+                    session->frame_phase, expected_frames, next_frame_phase);
+            }
+
+            std::uint32_t expected_packet_bytes = 0;
+            std::uint32_t tail_packet_bytes = 0;
+            std::uint32_t padding_bytes = 0;
+            const bool packet_size_valid = schedule_valid && expected_frames > 0 &&
+                flowery::usb::pcm_packet_size_bytes(
+                    expected_frames, static_cast<std::uint32_t>(bytes_per_frame),
+                    session->max_packet_bytes, expected_packet_bytes) &&
+                flowery::usb::pcm_drain_padded_packet_bytes(
+                    remaining, expected_packet_bytes,
+                    static_cast<std::uint32_t>(bytes_per_frame),
+                    session->max_packet_bytes, tail_packet_bytes, padding_bytes);
+            if (!packet_size_valid) {
+                record_failure(&failure, "pcm_drain_tail_not_service_interval_aligned",
+                               LIBUSB_ERROR_INVALID_PARAM);
+            } else {
+                // Complete the final service interval with digital silence. A
+                // sub-interval short packet can leave some adaptive USB DACs
+                // waiting for the remainder and prevent the final URB callback.
+                if (padding_bytes > 0) {
+                    session->pending_pcm.insert(session->pending_pcm.end(), padding_bytes, 0);
+                }
                 const std::vector<unsigned int> tail{tail_packet_bytes};
                 for (;;) {
                     const auto submit_result = submit_pcm_urb_if_running(
                         session, tail, tail_packet_bytes, session->frame_phase,
-                        session->frame_phase, session->feedback_phase,
-                        session->feedback_phase, &failure);
+                        next_frame_phase, session->feedback_phase,
+                        next_feedback_phase, &failure);
                     if (submit_result == PcmSubmitResult::Submitted ||
                         submit_result == PcmSubmitResult::Failed) break;
                     const int control = session->control.load();
@@ -1986,6 +2016,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
                     }
                     // A concurrent Resume may have won immediately after the
                     // Pause request; retry under the same submission gate.
+                }
+                if (!failure.failed) {
+                    session->frame_phase = next_frame_phase;
+                    session->feedback_phase = next_feedback_phase;
                 }
             }
         }
