@@ -1373,3 +1373,12 @@ Validation scope:
 - Added JVM regression tests for accepted minimum readback, rejected SET_CUR, missing/non-finite readback, out-of-window readback, and normalization.
 - This change covers decoded USB PCM only. UAC1 encoded AC-3/IEC 61937 passthrough still requires a separately reviewed startup-volume policy. It does not fix the 44.1 kHz short-packet or 96 kHz final-drain transport failures.
 - CI and physical DAC verification are pending. Direct USB Safety Hold remains active; do not perform loudness testing until the new build is installed and the DAC startup level is verified.
+
+
+### 2026-11-11 — 44.1 kHz USB PCM packet-size audit
+
+- Audited the decoded PCM packet planner and the endpoint service-interval calculation. At 44.1 kHz / 125 us, the nominal scheduler correctly distributes five- and six-frame packets using a carried fractional phase; for stereo 16-bit PCM this produces 20-byte and 24-byte packets, respectively.
+- Added a shared bounded packet-size helper used by the production planner and native C++ tests. Added an 8,000-interval regression proving the 20/24-byte sequence carries exactly 44,100 frames and 176,400 bytes over one second without phase drift.
+- Corrected the transport failure diagnostic format: removed a duplicate packet-length field and added channel count, subslot width, and bytes per frame. This makes a future 20-versus-24-byte failure capture interpretable against the negotiated PCM frame geometry.
+- No packet completion is relaxed: a successful isochronous OUT packet must still report the exact requested byte count. Accepting a short completion would silently drop PCM bytes and corrupt frame alignment.
+- **Status: ARITHMETIC/DIAGNOSTIC COVERAGE ADDED; ROOT CAUSE OF THE HISTORICAL SHORT COMPLETION NOT YET PROVEN.** The nominal scheduler test does not emulate the Android USB host controller or KTMicro DAC. A fresh diagnostic capture from the DAC is still required before changing URB timing, endpoint interval, or short-completion policy. Direct USB Safety Hold remains active.

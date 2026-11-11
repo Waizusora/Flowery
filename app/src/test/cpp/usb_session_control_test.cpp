@@ -335,6 +335,33 @@ void test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries(
  assert(total_frames == 44100);
  assert(phase == 0);
 }
+void test_pcm_44100hz_stereo_16bit_packets_are_exactly_20_or_24_bytes() {
+ using flowery::usb::next_pcm_packet_frames;
+ using flowery::usb::pcm_packet_size_bytes;
+ std::uint64_t phase = 0;
+ std::uint64_t total_frames = 0;
+ std::uint64_t total_bytes = 0;
+ const std::uint32_t expected_prefix[] = {20, 24, 20, 24};
+ for (std::size_t packet = 0; packet < 8000; ++packet) {
+  std::uint32_t frames = 0;
+  std::uint64_t next_phase = 0;
+  assert(next_pcm_packet_frames(44100, 125, phase, frames, next_phase));
+  std::uint32_t packet_bytes = 0;
+  assert(pcm_packet_size_bytes(frames, 4, 1024, packet_bytes));
+  if (packet < 4) assert(packet_bytes == expected_prefix[packet]);
+  assert(packet_bytes == 20 || packet_bytes == 24);
+  total_frames += frames;
+  total_bytes += packet_bytes;
+  phase = next_phase;
+ }
+ assert(total_frames == 44100);
+ assert(total_bytes == 176400);
+ assert(phase == 0);
+ std::uint32_t packet_bytes = 0;
+ assert(!pcm_packet_size_bytes(0, 4, 1024, packet_bytes));
+ assert(!pcm_packet_size_bytes(6, 0, 1024, packet_bytes));
+ assert(!pcm_packet_size_bytes(6, 4, 23, packet_bytes));
+}
 void test_pcm_packet_scheduler_rejects_invalid_phase_and_rate() {
  std::uint32_t frames = 0;
  std::uint64_t next_phase = 0;
@@ -405,6 +432,7 @@ int main() {
   test_feedback_packet_scheduler_rejects_invalid_parameters();
   test_pcm_packet_scheduler_preserves_16khz_interval_count();
  test_pcm_packet_scheduler_preserves_44100hz_fraction_across_urb_boundaries();
+ test_pcm_44100hz_stereo_16bit_packets_are_exactly_20_or_24_bytes();
  test_pcm_packet_scheduler_rejects_invalid_phase_and_rate();
  test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment();
  test_feedback_initial_submission_state_is_published_before_callback_can_run();
