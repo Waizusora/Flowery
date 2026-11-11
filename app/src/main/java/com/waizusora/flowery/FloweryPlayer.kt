@@ -851,8 +851,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         }
         val encodedPipelineClosed = retryPendingUsbEncodedClose()
         val pcmPipelineClosed = retryPendingUsbPcmClose()
-        val retainedSessionsClosed = UsbEncodedDacSession.retryPendingCloseSessions()
-        return encodedPipelineClosed && pcmPipelineClosed && retainedSessionsClosed
+        val retainedEncodedSessionsClosed = UsbEncodedDacSession.retryPendingCloseSessions()
+        val retainedPcmSessionsClosed = UsbDacSession.retryPendingCloseSessions()
+        return encodedPipelineClosed && pcmPipelineClosed &&
+            retainedEncodedSessionsClosed && retainedPcmSessionsClosed
     }
 
     /**
