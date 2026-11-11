@@ -389,6 +389,25 @@ void test_pcm_drain_tail_packet_preserves_24_bit_96khz_frame_alignment() {
  assert(!pcm_drain_tail_packet_bytes(66, 0, 1024, tail));
  assert(!pcm_drain_tail_packet_bytes(66, 6, 0, tail));
 }
+void test_pcm_drain_pads_short_tail_to_next_service_interval() {
+ using flowery::usb::pcm_drain_padded_packet_bytes;
+ std::uint32_t packet_bytes = 0;
+ std::uint32_t padding_bytes = 0;
+ // 96 kHz stereo 24-bit has twelve six-byte frames per high-speed microframe.
+ assert(pcm_drain_padded_packet_bytes(6, 72, 6, 1024, packet_bytes, padding_bytes));
+ assert(packet_bytes == 72);
+ assert(padding_bytes == 66);
+ // A tail that already fills the next service interval needs no padding.
+ assert(pcm_drain_padded_packet_bytes(72, 72, 6, 1024, packet_bytes, padding_bytes));
+ assert(packet_bytes == 72);
+ assert(padding_bytes == 0);
+ // Reject non-frame-aligned data, oversized service intervals, and tails larger
+ // than the next scheduled packet.
+ assert(!pcm_drain_padded_packet_bytes(7, 72, 6, 1024, packet_bytes, padding_bytes));
+ assert(!pcm_drain_padded_packet_bytes(78, 72, 6, 1024, packet_bytes, padding_bytes));
+ assert(!pcm_drain_padded_packet_bytes(6, 72, 6, 66, packet_bytes, padding_bytes));
+ assert(!pcm_drain_padded_packet_bytes(0, 72, 6, 1024, packet_bytes, padding_bytes));
+}
 void test_isochronous_packet_requires_exact_completion() {
  using flowery::usb::iso_packet_completed_exactly;
  constexpr unsigned int completed = 0;
@@ -430,7 +449,7 @@ int main() {
  test_feedback_transfer_is_not_resubmitted_after_event_loop_failure();
  test_failed_dispatcher_teardown_pump_requires_exclusive_event_ownership();
  test_transfer_reclaim_waits_until_callback_dispatch_returns();
- test_isochronous_packet_requires_exact_completion();
+ test_isochronous_packet_requires_exact_completion(); test_pcm_drain_pads_short_tail_to_next_service_interval();
  test_feedback_packet_scheduler_preserves_high_speed_44100hz_fraction();
   test_feedback_packet_scheduler_preserves_full_speed_44100hz_fraction();
   test_feedback_packet_scheduler_rejects_invalid_parameters();
