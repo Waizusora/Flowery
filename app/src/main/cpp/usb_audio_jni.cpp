@@ -1634,9 +1634,21 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         return -2;
     };
     auto pause_pcm_writer = [&]() -> jint {
-        while (!failure.failed && !session->in_flight.empty()) {
-            if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
-            if (!wait_for_progress(session, &failure)) break;
+        while (!failure.failed) {
+            const auto action = flowery::usb::pcm_drain_control_action(
+                session->control.load(), session->in_flight.size());
+            if (action == flowery::usb::PcmDrainControlAction::Abort) {
+                return stop_pcm_writer();
+            }
+            if (action == flowery::usb::PcmDrainControlAction::SubmitTail) return 0;
+            if (action == flowery::usb::PcmDrainControlAction::DrainInFlight) {
+                if (!wait_for_progress(session, &failure)) break;
+                continue;
+            }
+            std::unique_lock<std::mutex> lock(session->event_mutex);
+            session->event_condition.wait(lock, [&]() {
+                return session->control.load() != kSessionControlPause;
+            });
         }
         if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
         if (failure.failed) {
@@ -1645,7 +1657,7 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
             throw_transport_failure(env, session, failure);
             return -1;
         }
-        return 0; // Preserve the staged PCM suffix and packet phase for Resume.
+        return 0;
     };
     if (session->control.load() == kSessionControlStop) {
         return stop_pcm_writer();
@@ -1657,11 +1669,18 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
         while (session->in_flight.size() >= max_urbs_in_flight(session)) {
             const int control = session->control.load();
             if (control == kSessionControlStop) return stop_pcm_writer();
-            if (control == kSessionControlPause) return pause_pcm_writer();
+            if (control == kSessionControlPause) {
+                const jint pause_result = pause_pcm_writer();
+                if (pause_result != 0) return pause_result;
+                continue;
+            }
             if (!wait_for_progress(session, &failure)) break;
         }
         if (session->control.load() == kSessionControlStop) return stop_pcm_writer();
-        if (session->control.load() == kSessionControlPause) return pause_pcm_writer();
+        if (session->control.load() == kSessionControlPause) {
+            const jint pause_result = pause_pcm_writer();
+            if (pause_result != 0) return pause_result;
+        }
         if (!failure.failed) {
             std::uint32_t tail_packet_bytes = 0;
             if (!flowery::usb::pcm_drain_tail_packet_bytes(
@@ -1680,7 +1699,10 @@ Java_com_waizusora_flowery_UsbDacNative_nativeDrain(
                         submit_result == PcmSubmitResult::Failed) break;
                     const int control = session->control.load();
                     if (control == kSessionControlStop) return stop_pcm_writer();
-                    if (control == kSessionControlPause) return pause_pcm_writer();
+                    if (control == kSessionControlPause) {
+                        const jint pause_result = pause_pcm_writer();
+                        if (pause_result != 0) return pause_result;
+                    }
                     // A concurrent Resume may have won immediately after the
                     // Pause request; retry under the same submission gate.
                 }
