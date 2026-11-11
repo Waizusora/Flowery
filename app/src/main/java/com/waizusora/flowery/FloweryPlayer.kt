@@ -266,7 +266,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     targetRate, channels,
                     softwareVolume,
                     deviceId,
-                    requireExclusive = false, // Non-bit-perfect USB playback must use Android's SHARED mixer route.
+                    requireExclusive = true, // Prefer AAudio EXCLUSIVE; native open retries SHARED if exclusive is unavailable.
                     outputFormat = outputFormat,
                     capacityFrames = outputRingCapacityFrames
                 )
