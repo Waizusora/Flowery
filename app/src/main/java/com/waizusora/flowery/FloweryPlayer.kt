@@ -81,8 +81,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 fraction = normalized,
                 softwareGainEnabled = usbSoftwareGainEnabled,
             )
-            if (volumeState == null) {
-                onState("USB DAC hardware volume control is unavailable; software volume is disabled for this session.")
+            if (volumeState == null || !volumeState.bitPerfectActive) {
+                onState("USB Bit-Perfect requires confirmed DAC hardware volume; software volume was not applied.")
                 return
             }
             softwareVolume = volumeState.softwareVolume
@@ -91,8 +91,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "persisted=${volumeController.usbVolume(usbKey)} " +
                     "hardware=${volumeState.hardwareVolumeAvailable}"
             )
-            usbBitPerfectActive = volumeState.bitPerfectActive
-            usbSoftwareGainEnabled = volumeState.softwareGainEnabled
+            if (!volumeState.bitPerfectActive) {
+                throw UsbDirectRouteUnavailableException(
+                    "The DAC has no confirmed hardware volume control; software gain would alter PCM samples.",
+                )
+            }
+            usbBitPerfectActive = true
+            usbSoftwareGainEnabled = false
             if (volumeState.hardwareVolumeAvailable) {
                 onState("USB DAC hardware volume synchronized · ${(softwareVolume * 100).toInt()}%")
             } else {
@@ -119,6 +124,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun setDucked(ducked: Boolean) {
+        if (usbPlaybackMode && usbBitPerfectActive) {
+            outputDucked = false
+            publishUsbPlaybackModeStatus()
+            return
+        }
         outputDucked = ducked
         if (ducked && usbPlaybackMode) usbNativeBitPerfectConfirmed = false
         activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
@@ -228,14 +238,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_SOURCE_PRESERVING_CANDIDATE sourceBits=${sourceBits}")
                         usbPlaybackMode = true
                         onState("Playing · USB exclusive · preparing decoded PCM output…")
-                        try {
-                            playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                            return@thread
-                        } catch (error: UsbDirectRouteUnavailableException) {
-                            usbFallbackReason = error.message ?: "USB Direct route is unavailable."
+                        if (bandGainsDb.any { it != 0f }) {
+                            usbFallbackReason = "The equalizer is active; strict USB Bit-Perfect requires flat DSP."
                             diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
                             usbPlaybackMode = false
-                            onState("USB Direct unavailable · falling back to AAudio")
+                        } else {
+                            try {
+                                playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
+                                return@thread
+                            } catch (error: UsbDirectRouteUnavailableException) {
+                                usbFallbackReason = error.message ?: "USB Direct route is unavailable."
+                                diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                                usbPlaybackMode = false
+                                onState("USB Direct unavailable · falling back to AAudio")
+                            }
                         }
                     }
                     3 -> {
@@ -243,15 +259,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_FLOAT32 sourceLossless=${losslessSource} sourceBits=${sourceBits}")
                         usbPlaybackMode = true
                         onState("Playing · USB exclusive · preparing decoded PCM output…")
-                        try {
-                            playUsbDecodedDirect(handle, sourceRate, 0, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                            return@thread
-                        } catch (error: UsbDirectRouteUnavailableException) {
-                            usbFallbackReason = error.message ?: "USB Direct route is unavailable."
-                            diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
-                            usbPlaybackMode = false
-                            onState("USB Direct unavailable · falling back to AAudio")
-                        }
+                        usbFallbackReason = "The source cannot be sent through the strict source-preserving USB PCM path."
+                        diagnostics.record("USB_DIRECT_FALLBACK reason=${usbFallbackReason} target=AAUDIO")
+                        usbPlaybackMode = false
                     }
                     0 -> Unit
                     else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
