@@ -258,6 +258,10 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                         "AC-3 source bitrate exceeds the selected UAC1 Type-II descriptor limit"
                     }
                 }
+                val volumeUnit = UsbFeatureUnitParser.find(descriptors)
+                    ?: throw IllegalStateException(
+                        "Encoded USB passthrough requires a DAC Feature Unit with verifiable hardware volume."
+                    )
                 session = UsbEncodedDacSession.open(
                     connection,
                     interfaceNumber,
@@ -272,8 +276,12 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     sourceRate,
                     validation.optBoolean("samplingFrequencyControl"),
                     validation.optInt("feedbackEndpoint"),
-                    validation.optInt("feedbackMaxPacketBytes")
+                    validation.optInt("feedbackMaxPacketBytes"),
+                    volumeUnit
                 )
+                check(session.armSafeStartupVolume()) {
+                    "Encoded USB passthrough was blocked because the DAC could not confirm safe -40 dB startup attenuation."
+                }
                 return UsbEncodedPlaybackPipeline(
                     queue, producer, session, framingKind, formatCode
                 )
