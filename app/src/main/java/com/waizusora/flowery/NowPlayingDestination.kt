@@ -57,10 +57,13 @@ internal fun NowPlayingDestination(
     onSeek: (Long) -> Unit,
     onInspect: (AudioTrackItem) -> Unit,
     onEdit: () -> Unit
-) {
+ ) {
+            val lyricPanelColor = remember(albumArtBytes, currentTag?.pictureBase64) {
+                resolveLyricPanelColor(albumArtBytes, currentTag?.pictureBase64)
+            }
             Card(Modifier.fillMaxWidth().aspectRatio(1f), shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = if (lyricsVisible) Color(0xFF123E5A) else foreground.copy(alpha = .08f)
+                    containerColor = if (lyricsVisible) lyricPanelColor else foreground.copy(alpha = .08f)
                 )) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     if (lyricsVisible) {
@@ -78,12 +81,16 @@ internal fun NowPlayingDestination(
                                     Text("No synchronized LRC lyrics found.", color = Color(0xFF9CB2BF), textAlign = TextAlign.Center)
                                 }
                             } else {
-                                LazyColumn(
-                                    state = lyricListState,
-                                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    contentPadding = PaddingValues(vertical = 250.dp)
+                                BoxWithConstraints(
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
                                 ) {
+                                    val edgeSpace = ((maxHeight - 72.dp) / 2).coerceAtLeast(0.dp)
+                                    LazyColumn(
+                                        state = lyricListState,
+                                        modifier = Modifier.fillMaxSize(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        contentPadding = PaddingValues(vertical = edgeSpace)
+                                    ) {
                                     itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
                                         val active = index == activeLyricIndex
                                         Text(
@@ -97,6 +104,7 @@ internal fun NowPlayingDestination(
                                                 .padding(horizontal = 16.dp, vertical = 19.dp)
                                         )
                                     }
+                                }
                                 }
                             }
                             Text(
@@ -186,4 +194,40 @@ internal fun NowPlayingDestination(
                     }
                 }
             }
+}
+
+
+/**
+ * Derives a dark, readable lyrics-panel tint from the current track artwork.
+ */
+private fun resolveLyricPanelColor(albumArtBytes: ByteArray?, pictureBase64: String?): Color {
+    val bytes = albumArtBytes ?: pictureBase64
+        ?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { Base64.decode(it, Base64.DEFAULT) }.getOrNull() }
+        ?: return Color(0xFF123E5A)
+    val sampled = runCatching {
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = 16 })
+    }.getOrNull() ?: return Color(0xFF123E5A)
+
+    return try {
+        val pixels = IntArray(sampled.width * sampled.height)
+        sampled.getPixels(pixels, 0, sampled.width, 0, 0, sampled.width, sampled.height)
+        var red = 0L; var green = 0L; var blue = 0L; var count = 0L
+        for (pixel in pixels) {
+            if (android.graphics.Color.alpha(pixel) < 32) continue
+            red += android.graphics.Color.red(pixel)
+            green += android.graphics.Color.green(pixel)
+            blue += android.graphics.Color.blue(pixel)
+            count++
+        }
+        if (count == 0L) return Color(0xFF123E5A)
+        val r = red.toFloat() / count / 255f
+        val g = green.toFloat() / count / 255f
+        val b = blue.toFloat() / count / 255f
+        val luminance = 0.2126f * r + 0.7152f * g + 0.0722f * b
+        val scale = if (luminance > 0.001f) (0.19f / luminance).coerceIn(0.32f, 0.82f) else 0.65f
+        Color(r * scale, g * scale, b * scale, 1f)
+    } finally {
+        sampled.recycle()
+    }
 }
