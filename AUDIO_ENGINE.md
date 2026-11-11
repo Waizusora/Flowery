@@ -195,3 +195,10 @@ The Rust-owned AAudio stream-pump retains a diagnostic message when channel vali
 ## Playback queue completion
 
 Natural completion of the final queue item transitions playback to `STATE_STOPPED` and releases audio focus without stopping the playback service or removing its foreground notification. The media session, notification controls, current queue selection, and Now Playing screen remain available so the user can replay the final item or select another track. Explicit user stop remains a separate lifecycle operation and continues to stop the player service.
+
+
+## USB PCM real-time scheduling and end-of-stream drain
+
+USB diagnostic events are enqueued from the playback worker and persisted in bounded batches on a dedicated daemon thread. The playback worker does not read or rewrite the diagnostic SharedPreferences payload for each PCM block. The pending event queue is bounded, and the persisted diagnostic history remains capped at 1,200 lines.
+
+At natural end of a PCM stream, the transport completes the final USB service interval using the next scheduled frame count. If the decoded stream ends partway through that interval, the remaining frames are filled with digital silence before the final isochronous packet is submitted. This preserves the endpoint's service-interval cadence while ensuring that no source audio frames are fabricated or counted as decoded playback.
