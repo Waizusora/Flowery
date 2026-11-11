@@ -651,7 +651,7 @@ impl StreamDecoder {
             self.discard_source_frames -= discard as u64;
             if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
                 if !self.ieee_float_source { return Err("IEEE Float32 USB output requires an IEEE Float32 source".into()); }
-                if let symphonia::core::audio::AudioBufferRef::F32(buffer) = fallback_decoded.clone() {
+                if let symphonia::core::audio::AudioBufferRef::F32(buffer) = decoded.clone() {
                     let mut samples = Vec::with_capacity((decoded_frames - discard) * self.channels);
                     for frame in discard..decoded_frames {
                         for channel in 0..self.channels { samples.push(buffer.chan(channel)[frame]); }
