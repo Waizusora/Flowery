@@ -72,52 +72,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbPlaybackMode) {
             onState("USB Direct test mode · software volume disabled · unity PCM gain")
             return
-            val usbKey = activeUsbDeviceKey
-            val session = activeUsbSession
-            diagnostics.record(
-                "USB_VOLUME_REQUEST deviceKey=${usbKey ?: "none"} requested=${normalized} " +
-                    "sessionActive=${session != null} softwareGainEnabled=${usbSoftwareGainEnabled}"
-            )
-            if (usbKey == null) {
-                onState("USB DAC volume is unavailable until a device session is active.")
-                return
-            }
-            val volumeState = usbVolumePolicy.setVolume(
-                deviceKey = usbKey,
-                session = session,
-                fraction = normalized,
-                softwareGainEnabled = usbSoftwareGainEnabled,
-            )
-            if (volumeState == null || !volumeState.bitPerfectActive) {
-                onState("USB Bit-Perfect requires confirmed DAC hardware volume; software volume was not applied.")
-                return
-            }
-            softwareVolume = volumeState.softwareVolume
-            diagnostics.record(
-                "USB_VOLUME_APPLIED deviceKey=${usbKey} active=${softwareVolume} " +
-                    "persisted=${volumeController.usbVolume(usbKey)} " +
-                    "hardware=${volumeState.hardwareVolumeAvailable}"
-            )
-            if (!volumeState.bitPerfectActive) {
-                throw UsbDirectRouteUnavailableException(
-                    "The DAC has no confirmed hardware volume control; software gain would alter PCM samples.",
-                )
-            }
-            usbBitPerfectActive = true
-            usbSoftwareGainEnabled = false
-            if (volumeState.hardwareVolumeAvailable) {
-                onState("USB DAC hardware volume synchronized · ${(softwareVolume * 100).toInt()}%")
-            } else {
-                usbNativeBitPerfectConfirmed = false
-                activeUsbPcmProducerHandle.takeIf { it != 0L }?.let {
-                    check(NativeAudio.nativeSetUsbPcmProducerGain(it, currentUsbGain()) == 0) {
-                        "Unable to update the active Rust USB PCM producer gain."
-                    }
-                }
-                onState("USB DAC software volume · ${(softwareVolume * 100).toInt()}%")
-            }
-            publishUsbPlaybackModeStatus()
-            return
         }
         volumeController.setSystemVolume(normalized)
         softwareVolume = 1f
@@ -543,7 +497,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             diagnostics.record("USB_ENUMERATION audioDeviceCount=${discovered.size} devices=${discovered.joinToString { it.identity + ":" + it.displayName }}")
             val ieeeFloatSource = NativeAudio.nativeIsIeeeFloat32Source(handle)
             val equalizerFlat = bandGainsDb.all { it == 0f }
-            var ieeeFloatCandidate = ieeeFloatSource && equalizerFlat
+            var ieeeFloatCandidate = false
             var nativeCandidate = !ieeeFloatSource && sourceBits in 8..32
             onState(
                 if (ieeeFloatCandidate) "USB exclusive: requiring exact IEEE Float32/${sourceRate} Hz ${channels}-channel DAC profile…"
@@ -557,7 +511,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     sourceBits = sourceBits,
                     sourceRate = sourceRate,
                     channels = channels,
-                    ieeeFloatSource = ieeeFloatSource,
+                    ieeeFloatSource = false,
                     equalizerFlat = true,
                     onFallback = { error ->
                         if (ieeeFloatCandidate) {
