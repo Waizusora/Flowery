@@ -1,5 +1,11 @@
 package com.waizusora.flowery
 
+/** A successful SET_CUR is not enough: require a readable GET_CUR confirmation. */
+internal object UsbHardwareVolumeReadback {
+    fun confirmedFraction(setAccepted: Boolean, readBack: Float?): Float? =
+        if (setAccepted) readBack?.takeIf { it.isFinite() }?.coerceIn(0f, 1f) else null
+}
+
 internal data class UsbPlaybackVolumeState(
     val softwareVolume: Float,
     val hardwareVolumeAvailable: Boolean,
@@ -47,17 +53,26 @@ internal class UsbPlaybackVolumePolicy(
         softwareGainEnabled: Boolean,
     ): UsbPlaybackVolumeState? {
         val normalized = fraction.coerceIn(0f, 1f)
-        if (session?.hardwareVolumeAvailable == true &&
-            session.setHardwareVolumeFraction(normalized)) {
-            val applied = session.readHardwareVolumeFraction() ?: normalized
-            preferences.setUsbVolume(deviceKey, applied)
-            return UsbPlaybackVolumeState(
-                softwareVolume = applied,
-                hardwareVolumeAvailable = true,
-                softwareGainEnabled = false,
-                bitPerfectActive = true,
-            )
+        if (session?.hardwareVolumeAvailable == true) {
+            val setAccepted = runCatching {
+                session.setHardwareVolumeFraction(normalized)
+            }.getOrDefault(false)
+            val confirmed = if (setAccepted) {
+                runCatching { session.readHardwareVolumeFraction() }.getOrNull()
+            } else null
+            val applied = UsbHardwareVolumeReadback.confirmedFraction(setAccepted, confirmed)
+            if (applied != null) {
+                preferences.setUsbVolume(deviceKey, applied)
+                return UsbPlaybackVolumeState(
+                    softwareVolume = applied,
+                    hardwareVolumeAvailable = true,
+                    softwareGainEnabled = false,
+                    bitPerfectActive = true,
+                )
+            }
         }
+        // A Feature Unit that is merely advertised, but cannot confirm GET_CUR,
+        // must not be treated as a working hardware volume control.
         if (!softwareGainEnabled) return null
         preferences.setUsbVolume(deviceKey, normalized)
         return UsbPlaybackVolumeState(
