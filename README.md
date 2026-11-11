@@ -1,3 +1,4 @@
+# Aux Speaker Work Bluetooth untested USB DAC fail
 # Flowery
 
 Flowery is an Android music player focused on local music, transparent audio routing, and high-quality playback. It combines a Jetpack Compose interface with a native Rust audio engine and direct USB DAC support.
