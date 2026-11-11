@@ -102,6 +102,18 @@ inline bool next_pcm_packet_frames(std::uint32_t sample_rate,
  phase_after = accumulated % 1000000ULL;
  return true;
 }
+// Convert a service-interval frame count into a bounded, frame-aligned USB packet size.
+inline bool pcm_packet_size_bytes(std::uint32_t frames,
+                                  std::uint32_t bytes_per_frame,
+                                  std::uint32_t max_packet_bytes,
+                                  std::uint32_t& packet_bytes) noexcept {
+ if (frames == 0 || bytes_per_frame == 0 || max_packet_bytes == 0) return false;
+ const std::uint64_t bytes =
+     static_cast<std::uint64_t>(frames) * bytes_per_frame;
+ if (bytes > max_packet_bytes || bytes > 0xffffffffULL) return false;
+ packet_bytes = static_cast<std::uint32_t>(bytes);
+ return true;
+}
 inline bool pcm_drain_tail_packet_bytes(std::uint64_t remaining_bytes,
                                            std::uint32_t bytes_per_frame,
                                            std::uint32_t max_packet_bytes,
