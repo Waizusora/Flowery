@@ -1417,3 +1417,11 @@ Validation scope:
 - The counters are derived from each URB's atomic callback-entry timestamp and completion flag. They complement the per-URB `cb`/`cba` fields and event-dispatcher liveness metrics, making it easier to distinguish callbacks not being delivered from callbacks that have entered but are not completing.
 - Transfer and isochronous packet result fields remain gated on published callback completion. No transfer scheduling, cancellation, watchdog, or short-completion policy changed.
 - Validation is through the repository CI workflow. Physical KTMicro KT-384/32 capture is still required to identify the actual host-controller/endpoint failure mode. Direct USB Safety Hold remains active.
+
+
+### 2026-11-11 — Capture asynchronous feedback endpoint callback state
+
+- Extended USB transport failure snapshots with feedback-endpoint callback count, valid/invalid feedback sample counts, age of the most recent callback, last callback transfer/packet status, actual/requested packet lengths, and feedback resubmission error.
+- These values are published from the feedback callback using atomics. Transfer and packet result fields are read only while executing that callback, when libusb has delivered the completion; failure reporting consumes only the published atomic snapshot.
+- The diagnostics distinguish a feedback endpoint that stopped delivering callbacks from one that continues delivering malformed/failed samples, and from a callback that cannot resubmit its next transfer.
+- Diagnostic-only change. Feedback parsing, resubmission eligibility, packet scheduling, timeout thresholds, cancellation, and completion acceptance semantics are unchanged. CI validation is required. Physical KTMicro KT-384/32 capture remains outstanding; Direct USB Safety Hold remains active.
