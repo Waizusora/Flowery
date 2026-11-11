@@ -155,6 +155,8 @@ struct TransportFailure {
     long long idle_ms_at_failure = 0;
     uint64_t submitted_at_failure = 0;
     uint64_t callbacks_at_failure = 0;
+    unsigned int callback_entered_urbs_at_failure = 0;
+    unsigned int callback_pending_urbs_at_failure = 0;
     uint64_t event_loops_at_failure = 0;
     int event_loop_error_at_failure = LIBUSB_SUCCESS;
     bool event_thread_running_at_failure = false;
@@ -724,6 +726,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "interval_us=%u; sample_rate=%d; channels=%d; subslot_bytes=%d; bytes_per_frame=%zu; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_thread_running=%d; event_loop_idle_ms=%lld; "
+        "callback_entered_urbs=%u; callback_pending_urbs=%u; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
         "queue_target_us=%llu; max_urbs_actual=%zu",
         failure.reason, libusb_error_name(failure.code), failure.code,
@@ -748,6 +751,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         failure.event_loop_error_at_failure,
          failure.event_thread_running_at_failure ? 1 : 0,
         failure.event_loop_idle_ms_at_failure,
+        failure.callback_entered_urbs_at_failure,
+        failure.callback_pending_urbs_at_failure,
         failure.pending_pcm_remaining_at_failure,
         failure.pending_encoded_remaining_at_failure,
         failure.in_flight_summary,
@@ -915,6 +920,12 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
         // libusb only guarantees transfer and iso-packet result fields after
         // the completion callback has run. Never interpret in-flight descriptors.
         const bool callback_completed = entry->completed.load(std::memory_order_acquire);
+        const int64_t callback_entered_ns =
+            entry->callback_entered_at_ns.load(std::memory_order_acquire);
+        if (callback_entered_ns > 0) {
+            ++failure->callback_entered_urbs_at_failure;
+            if (!callback_completed) ++failure->callback_pending_urbs_at_failure;
+        }
         unsigned int packets_with_completion = 0;
         unsigned int packets_with_error = 0;
         unsigned int first_actual = 0;
@@ -937,8 +948,6 @@ void snapshot_stalled_transport(const UsbAudioSession* session, TransportFailure
                 else ++packets_with_error;
             }
         }
-        const int64_t callback_entered_ns =
-            entry->callback_entered_at_ns.load(std::memory_order_acquire);
         const long long callback_age_ms = callback_entered_ns > 0
             ? std::max<int64_t>(0, snapshot_now_ns - callback_entered_ns) / 1000000LL
             : -1;
