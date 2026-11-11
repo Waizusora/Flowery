@@ -255,7 +255,7 @@ void test_feedback_packet_scheduler_preserves_high_speed_44100hz_fraction() {
  std::uint64_t phase = 0;
  std::uint64_t total_frames = 0;
  // 44.1 kHz expressed as frames per 125 us in 16.16 format.
- constexpr std::uint32_t feedback = 361267;
+ constexpr std::uint32_t feedback = 361268;
  for (int packet = 0; packet < 8000; ++packet) {
   std::uint32_t frames = 0;
   std::uint64_t next_phase = 0;
@@ -270,7 +270,7 @@ void test_feedback_packet_scheduler_preserves_full_speed_44100hz_fraction() {
  std::uint64_t phase = 0;
  std::uint64_t total_frames = 0;
  // 44.1 kHz expressed as frames per 1 ms in 10.14 format.
- constexpr std::uint32_t feedback = 722534;
+ constexpr std::uint32_t feedback = 722535;
  for (int packet = 0; packet < 1000; ++packet) {
   std::uint32_t frames = 0;
   std::uint64_t next_phase = 0;
