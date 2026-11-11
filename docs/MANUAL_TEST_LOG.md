@@ -1409,3 +1409,11 @@ Validation scope:
 - Added `event_thread_running=0|1` to the USB failure diagnostic beside the event-loop error, iteration count, and time since the last event-loop return. This makes it easier to distinguish a dispatcher that exited from one that is still returning from libusb event handling while URBs remain outstanding.
 - The value is a point-in-time atomic observation, not proof that the host controller is making USB progress. Interpret it together with `event_loops`, `event_loop_idle_ms`, callback counts, and per-URB callback state.
 - Diagnostic-only change. No event handling, transfer scheduling, watchdog, cancellation, or completion policy changed. Native/Android CI validation is required; a physical KTMicro KT-384/32 capture remains necessary. Direct USB Safety Hold remains active.
+
+
+### 2026-11-11 — Aggregate callback-entry state in stalled URB snapshots
+
+- Added two aggregate counters to stalled USB transport diagnostics: `callback_entered_urbs` counts in-flight URBs whose completion callback has begun, while `callback_pending_urbs` counts those whose callback has begun but has not yet published completion.
+- The counters are derived from each URB's atomic callback-entry timestamp and completion flag. They complement the per-URB `cb`/`cba` fields and event-dispatcher liveness metrics, making it easier to distinguish callbacks not being delivered from callbacks that have entered but are not completing.
+- Transfer and isochronous packet result fields remain gated on published callback completion. No transfer scheduling, cancellation, watchdog, or short-completion policy changed.
+- Validation is through the repository CI workflow. Physical KTMicro KT-384/32 capture is still required to identify the actual host-controller/endpoint failure mode. Direct USB Safety Hold remains active.
