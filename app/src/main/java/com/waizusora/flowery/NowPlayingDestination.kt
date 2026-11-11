@@ -84,7 +84,7 @@ internal fun NowPlayingDestination(
                                 BoxWithConstraints(
                                     modifier = Modifier.weight(1f).fillMaxWidth()
                                 ) {
-                                    val edgeSpace = ((maxHeight - 72.dp) / 2).coerceAtLeast(0.dp)
+                                    val edgeSpace = ((maxHeight - 88.dp) / 2).coerceAtLeast(0.dp)
                                     LazyColumn(
                                         state = lyricListState,
                                         modifier = Modifier.fillMaxSize(),
