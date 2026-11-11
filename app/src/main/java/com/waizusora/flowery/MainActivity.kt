@@ -179,7 +179,7 @@ class MainActivity : ComponentActivity() {
     }
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
-    private val equalizerGains = mutableStateListOf(0f, 0f, 0f)
+    private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
     private var equalizerEnabled by mutableStateOf(true)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
@@ -275,9 +275,27 @@ class MainActivity : ComponentActivity() {
             .putBoolean("usb_diagnostic_recording", false).apply()
         val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
         equalizerEnabled = audioPreferences.getBoolean("equalizer_enabled", true)
-        equalizerGains[0] = audioPreferences.getFloat("equalizer_bass_db", 0f).coerceIn(-12f, 12f)
-        equalizerGains[1] = audioPreferences.getFloat("equalizer_mid_db", 0f).coerceIn(-12f, 12f)
-        equalizerGains[2] = audioPreferences.getFloat("equalizer_treble_db", 0f).coerceIn(-12f, 12f)
+        val legacyGains = listOf(
+            audioPreferences.getFloat("equalizer_bass_db", 0f),
+            audioPreferences.getFloat("equalizer_mid_db", 0f),
+            audioPreferences.getFloat("equalizer_treble_db", 0f)
+        )
+        val migratedGains = IsoGraphicEqualizer.expandLegacyThreeBand(legacyGains)
+        val restoredGains = FloatArray(31) { index ->
+            audioPreferences.getFloat(
+                IsoGraphicEqualizer.preferenceKey(index),
+                migratedGains[index]
+            ).coerceIn(IsoGraphicEqualizer.MIN_GAIN_DB, IsoGraphicEqualizer.MAX_GAIN_DB)
+        }
+        equalizerGains.clear()
+        equalizerGains.addAll(restoredGains.toList())
+        if ((0 until 31).any { !audioPreferences.contains(IsoGraphicEqualizer.preferenceKey(it)) }) {
+            val migration = audioPreferences.edit()
+            restoredGains.forEachIndexed { index, gain ->
+                migration.putFloat(IsoGraphicEqualizer.preferenceKey(index), gain)
+            }
+            migration.apply()
+        }
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -316,20 +334,20 @@ class MainActivity : ComponentActivity() {
                 equalizerGains = equalizerGains,
                 equalizerEnabled = equalizerEnabled,
                 onBandGain = { index, gain ->
-                    require(index in 0..2) { "The three-band equalizer index must be Bass, Mid, or Treble" }
-                    val boundedGain = gain.coerceIn(-12f, 12f)
-                    equalizerGains[index] = boundedGain
-                    val preferenceKey = when (index) {
-                        0 -> "equalizer_bass_db"
-                        1 -> "equalizer_mid_db"
-                        else -> "equalizer_treble_db"
+                    require(index in 0 until IsoGraphicEqualizer.BAND_COUNT) {
+                        "The ISO equalizer band index must be between 0 and 30"
                     }
+                    val boundedGain = gain.coerceIn(
+                        IsoGraphicEqualizer.MIN_GAIN_DB,
+                        IsoGraphicEqualizer.MAX_GAIN_DB
+                    )
+                    equalizerGains[index] = boundedGain
                     getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putFloat(preferenceKey, boundedGain).apply()
+                        .putFloat(IsoGraphicEqualizer.preferenceKey(index), boundedGain).apply()
                     sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
                         putExtra(
                             PlaybackService.EXTRA_GAINS,
-                            if (equalizerEnabled) ThreeBandEqualizer.expand(equalizerGains) else FloatArray(31)
+                            if (equalizerEnabled) equalizerGains.toFloatArray() else FloatArray(31)
                         )
                     }
                 },
@@ -340,7 +358,7 @@ class MainActivity : ComponentActivity() {
                     sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
                         putExtra(
                             PlaybackService.EXTRA_GAINS,
-                            if (enabled) ThreeBandEqualizer.expand(equalizerGains) else FloatArray(31)
+                            if (enabled) equalizerGains.toFloatArray() else FloatArray(31)
                         )
                     }
                 },
