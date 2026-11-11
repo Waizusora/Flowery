@@ -1215,6 +1215,13 @@ private fun FloweryApp(
                         }
                     }
                 }
+                Text(
+                    "Geser untuk mengatur",
+                    color = Color.White.copy(alpha = 0.68f),
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(Modifier.height(18.dp))
             }
         }
