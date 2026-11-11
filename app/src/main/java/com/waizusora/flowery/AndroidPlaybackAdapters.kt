@@ -41,7 +41,8 @@ internal class AudioSourceResolver(private val context: Context) {
 
 /** Bounded asynchronous USB diagnostics recorder and Android USB-host inventory adapter. */
 internal class UsbPlaybackDiagnostics(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences(
         "flowery_preferences",
         Context.MODE_PRIVATE
     )
@@ -111,7 +112,7 @@ internal class UsbPlaybackDiagnostics(context: Context) {
     }
 
     fun hostDeviceSummary(): String {
-        val manager = context.applicationContext.getSystemService(Context.USB_SERVICE) as? UsbManager
+        val manager = appContext.getSystemService(Context.USB_SERVICE) as? UsbManager
             ?: return "usbHostDevices=unavailable"
         val devices = runCatching { manager.deviceList.values.toList() }.getOrDefault(emptyList())
         if (devices.isEmpty()) return "usbHostDevices=none"
