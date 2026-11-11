@@ -29,16 +29,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
-    fun readHardwareVolumeFraction(): Float? {
-        lifecycle.checkOpen()
-        return session.readHardwareVolumeFraction()
-    }
-
-    fun setHardwareVolumeFraction(fraction: Float): Float? {
-        lifecycle.checkOpen()
-        return session.setHardwareVolumeFraction(fraction)
-    }
-
     fun requestPause(): Boolean = lifecycle.acceptsControlRequests() && session.requestPause()
     fun requestResume(): Boolean = lifecycle.acceptsControlRequests() && session.requestResume()
     fun requestStop(): Boolean {
@@ -268,10 +258,6 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                         "AC-3 source bitrate exceeds the selected UAC1 Type-II descriptor limit"
                     }
                 }
-                val volumeUnit = UsbFeatureUnitParser.find(descriptors)
-                    ?: throw IllegalStateException(
-                        "Encoded USB passthrough requires a DAC Feature Unit with verifiable hardware volume."
-                    )
                 session = UsbEncodedDacSession.open(
                     connection,
                     interfaceNumber,
@@ -286,12 +272,8 @@ internal class UsbEncodedPlaybackPipeline private constructor(
                     sourceRate,
                     validation.optBoolean("samplingFrequencyControl"),
                     validation.optInt("feedbackEndpoint"),
-                    validation.optInt("feedbackMaxPacketBytes"),
-                    volumeUnit
+                    validation.optInt("feedbackMaxPacketBytes")
                 )
-                check(session.armSafeStartupVolume()) {
-                    "Encoded USB passthrough was blocked because the DAC could not confirm safe -40 dB startup attenuation."
-                }
                 return UsbEncodedPlaybackPipeline(
                     queue, producer, session, framingKind, formatCode
                 )

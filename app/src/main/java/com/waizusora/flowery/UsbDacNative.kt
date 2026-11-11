@@ -142,7 +142,6 @@ internal class UsbDacSession internal constructor(
         val current = ByteArray(2)
         if (volumeControl(0x81, current) != 2) return null
         val raw = java.nio.ByteBuffer.wrap(current).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        if (raw !in range.first..range.second) return null
         return ((raw - range.first).toFloat() / (range.second - range.first).toFloat()).coerceIn(0f, 1f)
     }
 
@@ -153,29 +152,6 @@ internal class UsbDacSession internal constructor(
         val raw = (range.first + (range.second - range.first) * fraction.coerceIn(0f, 1f)).toInt()
         val data = java.nio.ByteBuffer.allocate(2).order(java.nio.ByteOrder.LITTLE_ENDIAN).putShort(raw.toShort()).array()
         return volumeControl(0x01, data) == 2
-    }
-
-    /**
-     * Arms a conservative hardware attenuation before any PCM transfer can start.
-     * The SET_CUR is accepted only when GET_CUR confirms a level at or below
-     * the requested attenuation. A Feature Unit that cannot prove this is unsafe.
-     */
-    @Synchronized
-    fun armSafeStartupVolume(targetDb: Float = UsbStartupVolumePolicy.SAFE_STARTUP_DB): Float? {
-        check(!closed) { "USB DAC session is closed" }
-        val range = volumeRange() ?: return null
-        val targetRaw = UsbStartupVolumePolicy.targetRaw(range.first, range.second, targetDb) ?: return null
-        val requested = java.nio.ByteBuffer.allocate(2)
-            .order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            .putShort(targetRaw.toShort()).array()
-        if (volumeControl(0x01, requested) != 2) return null
-        val current = ByteArray(2)
-        if (volumeControl(0x81, current) != 2) return null
-        val confirmedRaw = java.nio.ByteBuffer.wrap(current)
-            .order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        if (confirmedRaw !in range.first..range.second || confirmedRaw > targetRaw) return null
-        return ((confirmedRaw - range.first).toFloat() /
-            (range.second - range.first).toFloat()).coerceIn(0f, 1f)
     }
     @Volatile
     private var nativeClosed = false

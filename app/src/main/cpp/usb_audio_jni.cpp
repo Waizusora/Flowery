@@ -710,8 +710,8 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         "packet_count=%u; packet_lengths_near_failure=%s; actual_packet_lengths_near_failure=%s; "
         "transfer_age_ms=%lld; phase_before=%llu; phase_after=%llu; "
         "feedback_phase_before=%llu; feedback_phase_after=%llu; start_frame=%d; "
-        "transfer_flags=%u; device_speed=%d; max_packet_bytes=%d; b_interval=%d; "
-        "channels=%d; subslot_bytes=%d; interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
+        "transfer_flags=%u; device_speed=%d; packet_lengths_near_failure=%s; "
+        "interval_us=%u; sample_rate=%d; endpoint=0x%02X; "
         "submitted=%llu; callbacks=%llu; event_loops=%llu; "
         "event_loop_error=%d; event_loop_idle_ms=%lld; "
         "pending_pcm_remaining=%zu; pending_encoded_remaining=%zu; in_flight_detail=%s; "
@@ -728,8 +728,7 @@ void throw_transport_failure(JNIEnv* env, const UsbAudioSession* session,
         static_cast<unsigned long long>(failure.feedback_phase_before),
         static_cast<unsigned long long>(failure.feedback_phase_after),
         failure.scheduled_start_frame, failure.transfer_flags, failure.device_speed,
-        static_cast<int>(session->max_packet_bytes), static_cast<int>(session->interval),
-        session->channels, session->subslot_bytes, session->interval_us, session->sample_rate,
+        packet_lengths, session->interval_us, session->sample_rate,
         session->endpoint,
         static_cast<unsigned long long>(failure.submitted_at_failure),
         static_cast<unsigned long long>(failure.callbacks_at_failure),

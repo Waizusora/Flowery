@@ -64,26 +64,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val normalized = value.coerceIn(0f, 1f)
         if (usbPlaybackMode) {
             val usbKey = activeUsbDeviceKey
-            if (usbKey == null) {
-                onState("USB DAC volume is unavailable until a device session is active.")
-                return
-            }
-            val encodedPipeline = activeUsbEncodedPipeline
-            if (encodedPipeline != null) {
-                val applied = runCatching {
-                    encodedPipeline.setHardwareVolumeFraction(normalized)
-                }.getOrNull()
-                if (applied == null) {
-                    onState("Encoded USB hardware volume could not be verified; playback remains at safe level or stops.")
-                    return
-                }
-                softwareVolume = applied
-                runCatching { volumeController.setUsbVolume(usbKey, applied) }
-                diagnostics.record("USB_ENCODED_VOLUME_APPLIED deviceKey=${usbKey} active=${applied}")
-                onState("USB DAC hardware volume synchronized · ${(applied * 100).toInt()}% · encoded")
-                publishUsbPlaybackModeStatus()
-                return
-            }
             val session = activeUsbSession
             diagnostics.record(
                 "USB_VOLUME_REQUEST deviceKey=${usbKey ?: "none"} requested=${normalized} " +
@@ -460,8 +440,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             val (device, openedPipeline) =
                 controller.openFirstCompatibleEncodedPlaybackPipeline(devices, handle, sessionHandle, sourceRate)
             pipeline = openedPipeline
-            softwareVolume = openedPipeline.readHardwareVolumeFraction()
-                ?: throw IllegalStateException("Encoded DAC startup volume could not be read back after arming.")
             activeUsbEncodedPipeline = openedPipeline
             activeUsbSession = null
             activeUsbDeviceKey = controller.deviceIdentity(device.usbDevice)

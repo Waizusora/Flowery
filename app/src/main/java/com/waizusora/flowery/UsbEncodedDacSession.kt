@@ -1,8 +1,6 @@
 package com.waizusora.flowery
 
 import android.hardware.usb.UsbDeviceConnection
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.Collections
 import java.util.IdentityHashMap
 
@@ -17,89 +15,8 @@ internal const val USB_ENCODED_WRITE_STOPPED = -2
  */
 class UsbEncodedDacSession private constructor(
     private val connection: UsbDeviceConnection,
-    private val nativeHandle: Long,
-    private val volumeUnit: UsbFeatureUnit?
+    private val nativeHandle: Long
 ) : AutoCloseable {
-    private var cachedVolumeRange: Pair<Int, Int>? = null
-    private var volumeRangeLoaded = false
-
-    private fun volumeControl(request: Int, data: ByteArray): Int {
-        val unit = volumeUnit ?: return -1
-        val value = 0x0200
-        val index = (unit.unitId shl 8) or unit.controlInterface
-        val requestType = if (request == 0x01) 0x21 else 0xA1
-        return connection.controlTransfer(requestType, request, value, index, data, data.size, 500)
-    }
-
-    private fun volumeRange(): Pair<Int, Int>? {
-        if (volumeRangeLoaded) return cachedVolumeRange
-        val unit = volumeUnit ?: return null
-        val minimum = ByteArray(2)
-        val maximum = ByteArray(2)
-        val parsed = if (unit.protocol == 0x20) {
-            val response = ByteArray(2 + 6 * 16)
-            UsbFeatureUnitVolumeRange.parseUac2(response, volumeControl(0x82, response))
-        } else if (volumeControl(0x82, minimum) == 2 && volumeControl(0x83, maximum) == 2) {
-            UsbFeatureUnitVolumeRange.parseUac1(minimum, maximum)
-        } else null
-        volumeRangeLoaded = true
-        cachedVolumeRange = parsed
-        return parsed
-    }
-
-    @Synchronized
-    fun readHardwareVolumeFraction(): Float? {
-        check(!closed) { "Encoded USB session is closed" }
-        val range = volumeRange() ?: return null
-        val current = ByteArray(2)
-        if (volumeControl(0x81, current) != 2) return null
-        val raw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
-        if (raw !in range.first..range.second) return null
-        return ((raw - range.first).toFloat() /
-            (range.second - range.first).toFloat()).coerceIn(0f, 1f)
-    }
-
-    /** Applies an encoded-route hardware level and verifies it with GET_CUR. */
-    @Synchronized
-    fun setHardwareVolumeFraction(fraction: Float): Float? {
-        check(!closed) { "Encoded USB session is closed" }
-        val range = volumeRange() ?: return null
-        val requestedRaw = (range.first +
-            (range.second - range.first) * fraction.coerceIn(0f, 1f)).toInt()
-        val requested = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN)
-            .putShort(requestedRaw.toShort()).array()
-        val setAccepted = volumeControl(0x01, requested) == 2
-        val current = ByteArray(2)
-        val transferred = if (setAccepted) volumeControl(0x81, current) else -1
-        if (transferred != 2) {
-            if (!armSafeStartupVolume()) requestStop()
-            return null
-        }
-        val readBackRaw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
-        return if (readBackRaw in range.first..range.second) {
-            ((readBackRaw - range.first).toFloat() /
-                (range.second - range.first).toFloat()).coerceIn(0f, 1f)
-        } else {
-            if (!armSafeStartupVolume()) requestStop()
-            null
-        }
-    }
-
-    /** Must complete before the encoded producer worker can submit its first packet. */
-    @Synchronized
-    fun armSafeStartupVolume(): Boolean {
-        check(!closed) { "Encoded USB session is closed" }
-        val range = volumeRange() ?: return false
-        val targetRaw = UsbStartupVolumePolicy.targetRaw(range.first, range.second) ?: return false
-        val requested = ByteBuffer.allocate(2).order(ByteOrder.LITTLE_ENDIAN)
-            .putShort(targetRaw.toShort()).array()
-        if (volumeControl(0x01, requested) != 2) return false
-        val current = ByteArray(2)
-        if (volumeControl(0x81, current) != 2) return false
-        val readBackRaw = ByteBuffer.wrap(current).order(ByteOrder.LITTLE_ENDIAN).short.toInt()
-        return readBackRaw in range.first..range.second &&
-            UsbStartupVolumePolicy.confirmsHardwareStartup(true, targetRaw, readBackRaw)
-    }
     @Volatile
     private var nativeClosed = false
 
@@ -236,8 +153,7 @@ class UsbEncodedDacSession private constructor(
             sourceSampleRate: Int,
             samplingFrequencyControl: Boolean,
             feedbackEndpoint: Int,
-            feedbackMaxPacketBytes: Int,
-            volumeUnit: UsbFeatureUnit?
+            feedbackMaxPacketBytes: Int
         ): UsbEncodedDacSession {
             check(retryPendingCloseSessions()) {
                 "A previous encoded USB session is still awaiting confirmed teardown"
@@ -263,7 +179,7 @@ class UsbEncodedDacSession private constructor(
                 feedbackMaxPacketBytes
             )
             check(handle != 0L) { "Unable to open encoded USB transport" }
-            return UsbEncodedDacSession(connection, handle, volumeUnit)
+            return UsbEncodedDacSession(connection, handle)
         }
     }
 }
