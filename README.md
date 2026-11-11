@@ -70,7 +70,7 @@ GitHub Actions builds the Android application and native Rust components and run
 Known limitations include:
 
 - Audio format support depends on the codecs enabled in the Symphonia build. A recognized file extension does not guarantee that a file can be decoded.
-- USB playback depends on the DAC's advertised UAC profiles and supported synchronization behavior.
+- Strict USB Bit-Perfect requires a compatible source-preserving UAC profile, flat EQ, matching PCM format, and confirmed DAC hardware volume. Unsupported formats or USB profile negotiation failures use AAudio instead.
 - Direct USB profile-negotiation failures may fall back to AAudio before the first USB transfer. AAudio requests exclusive sharing first and retries shared mode if exclusive opening fails.
 - USB transport failures after playback has started are reported instead of silently switching output routes.
 - AAudio shared mode may be mixed or resampled by Android.
