@@ -27,7 +27,6 @@ internal fun WelcomeDestination(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(18.dp))
-        Icon(Icons.Default.LocalFlorist, contentDescription = "Flowery", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(76.dp))
         Text("Welcome to Flowery", color = foreground, style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Text("Your local Hi-Fi music player. Follow these steps to add your music folder.",

@@ -141,6 +141,9 @@ class MainActivity : ComponentActivity() {
     private var selectedTrack by mutableStateOf<AudioTrackItem?>(null)
     private var lyrics by mutableStateOf<List<LyricLine>>(emptyList())
     private var currentTag by mutableStateOf<AudioTag?>(null)
+    private var albumArtBytes by mutableStateOf<ByteArray?>(null)
+    private var nowPlayingTitle by mutableStateOf("Nothing playing")
+    private var nowPlayingArtist by mutableStateOf("Unknown artist")
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
@@ -190,6 +193,13 @@ class MainActivity : ComponentActivity() {
                 isPlaying = intent.getBooleanExtra(PlaybackService.EXTRA_IS_PLAYING, false)
             }
             val reportedStatus = intent.getStringExtra(PlaybackService.EXTRA_STATUS)
+            intent.getStringExtra(PlaybackService.EXTRA_CURRENT_TITLE)
+                ?.takeIf { it.isNotBlank() }?.let { nowPlayingTitle = it }
+            intent.getStringExtra(PlaybackService.EXTRA_CURRENT_ARTIST)
+                ?.takeIf { it.isNotBlank() }?.let { nowPlayingArtist = it }
+            if (intent.hasExtra(PlaybackService.EXTRA_CURRENT_ARTWORK)) {
+                albumArtBytes = intent.getByteArrayExtra(PlaybackService.EXTRA_CURRENT_ARTWORK)
+            }
             if (reportedStatus == "Stopped" || reportedStatus == "Playback finished") hasPlaybackSession = false
             if (reportedStatus?.startsWith("USB DAC released") == true) {
                 usbDacConnectionReleased = true
@@ -327,6 +337,9 @@ class MainActivity : ComponentActivity() {
                 repeatMode = repeatMode,
                 selectedTrack = selectedTrack,
                 currentTag = currentTag,
+                albumArtBytes = albumArtBytes,
+                displayTitle = nowPlayingTitle,
+                displayArtist = nowPlayingArtist,
                 lyrics = lyrics,
                 volume = volume,
                 positionMs = playbackPositionMs,

@@ -39,6 +39,9 @@ internal fun NowPlayingDestination(
     lyrics: List<LyricLine>,
     activeLyricIndex: Int,
     currentTag: AudioTag?,
+    albumArtBytes: ByteArray?,
+    displayTitle: String,
+    displayArtist: String,
     selectedTrack: AudioTrackItem?,
     shuffleEnabled: Boolean,
     isPlaying: Boolean,
@@ -123,9 +126,10 @@ internal fun NowPlayingDestination(
                             )
                         }
                     } else {
-                        val art = remember(currentTag?.pictureBase64) {
+                        val art = remember(albumArtBytes, currentTag?.pictureBase64) {
                             runCatching {
-                                val bytes = currentTag?.pictureBase64?.takeIf { it.isNotBlank() }?.let { Base64.decode(it, Base64.DEFAULT) }
+                                val bytes = albumArtBytes
+                                    ?: currentTag?.pictureBase64?.takeIf { it.isNotBlank() }?.let { Base64.decode(it, Base64.DEFAULT) }
                                 bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size)?.asImageBitmap() }
                             }.getOrNull()
                         }
@@ -138,12 +142,11 @@ internal fun NowPlayingDestination(
             }
             Column(Modifier.fillMaxWidth().padding(8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally) {
-                val virtualTrackTitle = selectedTrack?.takeIf { it.cuePlaylist != null || it.playlistName != null }?.title
-                Text(virtualTrackTitle ?: currentTag?.title?.ifBlank { selectedTrack?.title ?: "Nothing playing" } ?: selectedTrack?.title ?: "Nothing playing",
+                Text(displayTitle.ifBlank { selectedTrack?.title ?: "Nothing playing" },
                     Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE), color = foreground,
                     style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center, maxLines = 1)
-                Text(currentTag?.artist?.ifBlank { "Unknown artist" } ?: "Unknown artist",
+                Text(displayArtist.ifBlank { "Unknown artist" },
                     Modifier.fillMaxWidth().basicMarquee(iterations = Int.MAX_VALUE), color = muted,
                     style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1)
                 if (status.contains("Bit Perfect")) {

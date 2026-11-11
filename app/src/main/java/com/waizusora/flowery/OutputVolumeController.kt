@@ -47,9 +47,19 @@ class OutputVolumeController(context: Context) {
             )
         }.getOrDefault(OutputVolumeProfile.USB_SOFTWARE)
 
-    /** New USB DACs without hardware volume controls start at a conservative 20%. */
-    fun usbVolume(deviceKey: String): Float =
-        preferences.getFloat(key(deviceKey), 0.20f).coerceIn(0f, 1f)
+    /**
+     * Restores the last software level for this DAC. A DAC with no saved level
+     * inherits Android's current media volume instead of receiving an arbitrary default.
+     */
+    fun usbVolume(deviceKey: String): Float {
+        val preferenceKey = key(deviceKey)
+        val restored = if (preferences.contains(preferenceKey)) {
+            preferences.getFloat(preferenceKey, systemVolumeFraction())
+        } else {
+            systemVolumeFraction()
+        }
+        return restored.coerceIn(0f, 1f)
+    }
 
     fun setUsbVolume(deviceKey: String, fraction: Float) {
         val normalized = fraction.coerceIn(0f, 1f)

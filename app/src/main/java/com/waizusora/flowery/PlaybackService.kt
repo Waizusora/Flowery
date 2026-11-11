@@ -62,6 +62,7 @@ class PlaybackService : Service() {
         const val EXTRA_ARTIST = "media_artist"
         const val EXTRA_CURRENT_TITLE = "current_title"
         const val EXTRA_CURRENT_ARTIST = "current_artist"
+        const val EXTRA_CURRENT_ARTWORK = "current_artwork"
         const val EXTRA_GAINS = "gains"
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
@@ -105,6 +106,7 @@ class PlaybackService : Service() {
         set(value) = queueState.setShuffle(value)
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
+    @Volatile private var currentArtworkBytes: ByteArray? = null
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
@@ -385,6 +387,7 @@ class PlaybackService : Service() {
             ?.takeIf { it.isNotBlank() }
             ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
         currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
+        currentArtworkBytes = null
         val embeddedArtwork = runCatching {
             val retriever = MediaMetadataRetriever()
             try {
@@ -395,7 +398,10 @@ class PlaybackService : Service() {
                     !queuePlaylistNames.getOrNull(queueIndex).isNullOrBlank()
                 if (!virtualEntry) currentTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: currentTitle
                 if (currentArtist == "Unknown artist") currentArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: currentArtist
-                retriever.embeddedPicture?.let { bytes -> BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }
+                retriever.embeddedPicture?.let { bytes ->
+                    currentArtworkBytes = bytes
+                    BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                }
             } finally { retriever.release() }
         }.getOrNull()
         val metadataBuilder = MediaMetadataCompat.Builder()
@@ -551,6 +557,7 @@ class PlaybackService : Service() {
             .putExtra(EXTRA_CURRENT_PLAYLIST_ORDER, queuePlaylistOrders.getOrNull(queueIndex) ?: -1)
             .putExtra(EXTRA_CURRENT_TITLE, currentTitle)
             .putExtra(EXTRA_CURRENT_ARTIST, currentArtist)
+            .putExtra(EXTRA_CURRENT_ARTWORK, currentArtworkBytes)
             .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
             .putExtra(EXTRA_SHUFFLE_ENABLED, shuffle)
             .putExtra(EXTRA_REPEAT_MODE, repeatMode)

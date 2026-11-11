@@ -35,7 +35,7 @@ internal fun DspDestination(
         textAlign = TextAlign.End
     )
     Text(
-        "USB DAC: this single control uses the DAC's USB hardware volume when its Feature Unit is readable; otherwise it uses Flowery software gain. Speaker, AUX and Bluetooth follow Android media volume.",
+        "USB DAC uses hardware volume when its Feature Unit is readable; otherwise, Flowery software volume is used. Speaker, AUX and Bluetooth use Android media volume.",
         color = muted,
         style = MaterialTheme.typography.bodySmall
     )
