@@ -1495,10 +1495,17 @@ Java_com_waizusora_flowery_UsbDacNative_nativeWriteEncodedPacket(
                     record_failure(&failure, "encoded_feedback_timeout", LIBUSB_ERROR_TIMEOUT);
                     break;
                 }
-                const uint64_t scaled = feedback * session->interval_us /
-                    session->feedback_base_interval_us + feedback_phase;
-                frames = scaled >> session->feedback_fraction_bits;
-                feedback_phase = scaled & ((1ULL << session->feedback_fraction_bits) - 1ULL);
+                std::uint32_t feedback_frames = 0;
+                std::uint64_t next_feedback_phase = 0;
+                if (!flowery::usb::next_feedback_packet_frames(
+                        static_cast<std::uint32_t>(feedback), session->feedback_fraction_bits,
+                        session->interval_us, session->feedback_base_interval_us,
+                        feedback_phase, feedback_frames, next_feedback_phase)) {
+                    record_failure(&failure, "invalid_encoded_feedback_schedule", LIBUSB_ERROR_INVALID_PARAM);
+                    break;
+                }
+                frames = feedback_frames;
+                feedback_phase = next_feedback_phase;
             } else {
                 const uint64_t scaled = static_cast<uint64_t>(session->encoded_frame_rate) *
                                        session->interval_us + phase;
