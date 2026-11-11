@@ -29,6 +29,11 @@ internal class UsbEncodedPlaybackPipeline private constructor(
     val isEnded: Boolean get() = ended
     fun positionMs(): Long = lastPositionMs
 
+    fun readHardwareVolumeFraction(): Float? {
+        lifecycle.checkOpen()
+        return session.readHardwareVolumeFraction()
+    }
+
     fun setHardwareVolumeFraction(fraction: Float): Float? {
         lifecycle.checkOpen()
         return session.setHardwareVolumeFraction(fraction)
