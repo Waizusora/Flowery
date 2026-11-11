@@ -116,18 +116,22 @@ internal class UsbDacSession internal constructor(
         val unit = volumeUnit ?: return null
         val minimum = ByteArray(2)
         val maximum = ByteArray(2)
-        if (unit.protocol == 0x20) {
-            val range = ByteArray(8)
+        val parsed = if (unit.protocol == 0x20) {
+            // UAC2 returns wNumSubRanges followed by signed MIN/MAX/RES triplets.
+            // Read all advertised subranges instead of silently using only the first.
+            val range = ByteArray(2 + 6 * 16)
             val transferred = volumeControl(0x82, range)
-            if (transferred < 8) { volumeRangeLoaded = true; return null }
-            val buffer = java.nio.ByteBuffer.wrap(range).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-            if (buffer.short.toInt() < 1) { volumeRangeLoaded = true; return null }
-            return (buffer.short.toInt() to buffer.short.toInt()).also { cachedVolumeRange = it; volumeRangeLoaded = true }
+            UsbFeatureUnitVolumeRange.parseUac2(range, transferred)
+        } else {
+            if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) {
+                null
+            } else {
+                UsbFeatureUnitVolumeRange.parseUac1(minimum, maximum)
+            }
         }
-        if (volumeControl(0x82, minimum) != 2 || volumeControl(0x83, maximum) != 2) { volumeRangeLoaded = true; return null }
-        val min = java.nio.ByteBuffer.wrap(minimum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        val max = java.nio.ByteBuffer.wrap(maximum).order(java.nio.ByteOrder.LITTLE_ENDIAN).short.toInt()
-        return (if (max > min) min to max else null).also { cachedVolumeRange = it; volumeRangeLoaded = true }
+        volumeRangeLoaded = true
+        cachedVolumeRange = parsed
+        return parsed
     }
 
     @Synchronized
