@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
+#[cfg(target_os = "android")]
 use crate::write_text_to_java;
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(target_os = "android")]
@@ -13,7 +14,9 @@ use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong, jstring};
+use jni::sys::{jint, jlong};
+#[cfg(target_os = "android")]
+use jni::sys::jstring;
 use jni::JNIEnv;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
@@ -209,6 +212,7 @@ impl StreamDecoder {
 
 
 
+    #[cfg(target_os = "android")]
     fn decode_packet(&mut self) -> Result<bool,String> {
         loop {
             let packet = match self.format.next_packet() {
@@ -259,6 +263,7 @@ impl StreamDecoder {
         }
     }
 
+    #[cfg(target_os = "android")]
     fn read_frames(&mut self, requested: usize) -> Result<Vec<f32>,String> {
         while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
         if self.input_pending.is_empty() { return Ok(Vec::new()); }
