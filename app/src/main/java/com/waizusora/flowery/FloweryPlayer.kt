@@ -31,6 +31,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
+    @Volatile private var usbPlaybackSession: UsbNativePlaybackSession? = null
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicLong(-1L)
     @Volatile private var activeSegmentStartMs = 0L
@@ -111,6 +112,47 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // Select the connected Android output automatically. Do not use a stale
                 // preference here: the playback stream must follow the currently attached route.
                 val selectedTarget = routeResolver.detectCurrent()
+                if (selectedTarget == AndroidOutputTarget.USB) {
+                    val targetPositionMs = segmentStartMs + initialPositionMs.coerceAtLeast(0L)
+                    if (targetPositionMs > 0L) {
+                        val seeked = NativeAudio.nativeSeekStreamDecoder(handle, targetPositionMs)
+                        check(seeked >= 0L) { "Unable to seek the decoder to the requested USB playback start position" }
+                    }
+                    val directUsb = UsbNativePlaybackSession.open(
+                        context, handle, sourceRate, channels, sourceBits
+                    ).getOrThrow()
+                    usbPlaybackSession = directUsb
+                    directUsb.start().getOrThrow()
+                    outputSampleRate = sourceRate
+                    val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
+                    val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
+                    outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
+                    val shouldStartPaused = synchronized(outputLifecycleLock) {
+                        outputReady = true
+                        pauseRequested.getAndSet(false)
+                    }
+                    if (startPaused || shouldStartPaused) {
+                        directUsb.pause().getOrThrow()
+                        paused = true
+                        onState("Paused · native USB audio")
+                    } else {
+                        paused = false
+                        onState("Playing · native USB audio · ${sourceRate} Hz · ${channels} ch")
+                    }
+                    while (!stopped.get() && playbackGeneration.get() == generation) {
+                        val usbStatus = directUsb.status()
+                        when (usbStatus.optInt("status", -1)) {
+                            0 -> Thread.sleep(8)
+                            1 -> break
+                            2 -> if (stopped.get()) break else Thread.sleep(8)
+                            else -> throw IllegalStateException(
+                                usbStatus.optString("error").ifBlank { "Native USB isochronous playback failed" }
+                            )
+                        }
+                    }
+                    if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
+                    return@thread
+                }
                 val outputRoute = routeResolver.resolve(selectedTarget)
                 check(selectedTarget == AndroidOutputTarget.SPEAKER || outputRoute.deviceId > 0) {
                     "The selected ${selectedTarget.displayName} output is not currently available."
@@ -269,6 +311,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 // Closing the native session stops and joins its AAudio decode/output workers.
+                usbPlaybackSession?.let { usb ->
+                    runCatching { usb.close() }
+                    if (usbPlaybackSession === usb) usbPlaybackSession = null
+                }
                 if (sessionHandle != 0L) {
                     if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
@@ -287,6 +333,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun currentVolumeFraction(): Float = volumeController.systemVolumeFraction()
 
     fun positionMs(): Long {
+        usbPlaybackSession?.let { usb ->
+            return (usb.positionMs() - activeSegmentStartMs).coerceAtLeast(0L)
+        }
         val sampleRate = outputSampleRate
         if (sampleRate <= 0) return 0L
         return NativeAudio.nativeGetOutputPositionFrames() * 1000L / sampleRate
@@ -298,6 +347,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val boundedPosition = positionMs.coerceAtLeast(0L)
         if (decoderHandle == 0L) {
             pendingSeekMs.set(boundedPosition)
+            return
+        }
+        usbPlaybackSession?.let { usb ->
+            val actual = usb.seek(activeSegmentStartMs + boundedPosition).getOrThrow()
+            onState("Seeking · ${actual / 1000}s")
             return
         }
         val session = nativeSessionHandle
@@ -321,6 +375,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 pauseRequested.set(true)
                 return@synchronized true
             }
+            usbPlaybackSession?.let { usb ->
+                if (usb.pause().isFailure) return@synchronized false
+                paused = true
+                return@synchronized true
+            }
             val session = nativeSessionHandle
             if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) {
                 return@synchronized false
@@ -333,6 +392,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun resume(): Boolean {
+        usbPlaybackSession?.let { usb ->
+            if (usb.resume().isFailure) return false
+            paused = false
+            onState("Playing · native USB audio")
+            return true
+        }
         val session = nativeSessionHandle
         if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 2).toInt() != 0) return false
         paused = false
@@ -360,6 +425,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stopped.set(true)
         pauseRequested.set(false)
         synchronized(outputLifecycleLock) { outputReady = false }
+        usbPlaybackSession?.let { usb -> runCatching { usb.stopPlayback() } }
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
