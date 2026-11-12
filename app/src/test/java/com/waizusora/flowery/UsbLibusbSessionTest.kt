@@ -103,7 +103,7 @@ class UsbLibusbSessionTest {
         assertTrue(rollback.isSuccess)
         assertEquals(1, fake.selectorPin)
         assertEquals(44_100, fake.sourceRate)
-        assertEquals(listOf("selector:2", "source:48000", "source:44100", "selector:1"), fake.writes)
+        assertEquals(listOf("selector5:2", "source:48000", "source:44100", "selector5:1"), fake.writes)
     }
 
     @Test
@@ -128,7 +128,7 @@ class UsbLibusbSessionTest {
         assertTrue(negotiated.isFailure)
         assertEquals(1, fake.selectorPin)
         assertEquals(44_100, fake.sourceRate)
-        assertEquals(listOf("selector:2", "source:44100", "selector:1"), fake.writes)
+        assertEquals(listOf("selector5:2", "source:44100", "selector5:1"), fake.writes)
     }
 
     @Test
