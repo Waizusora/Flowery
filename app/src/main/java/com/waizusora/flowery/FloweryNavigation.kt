@@ -44,7 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 
-private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
+private enum class Destination { WELCOME, PLAYER, FOLDERS, SETTINGS }
 internal enum class SettingsPage { ROOT, AUDIO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -53,9 +53,8 @@ fun FloweryNavigation(
     context: Context, folders: List<LibraryFolder>, tracks: List<AudioTrackItem>,
     isPlaying: Boolean, shuffleEnabled: Boolean, repeatMode: Int, selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?, albumArtBytes: ByteArray?, displayTitle: String, displayArtist: String,
-    lyrics: List<LyricLine>, volume: Float, positionMs: Long, durationMs: Long,
-    equalizerGains: List<Float>, equalizerEnabled: Boolean, status: String,
-    onBandGain: (Int, Float) -> Unit, onEqualizerEnabled: (Boolean) -> Unit,
+    lyrics: List<LyricLine>, positionMs: Long, durationMs: Long,
+    status: String,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
     onScan: () -> Unit, onRefreshFolder: (LibraryFolder) -> Unit,
@@ -191,16 +190,6 @@ fun FloweryNavigation(
                     onSelectedFolder = { selectedFolder = it },
                     onVirtualCueFolder = { virtualCueFolder = it },
                     onPlay = onPlay
-                )
-                Destination.DSP -> DspDestination(
-                    volume = volume,
-                    equalizerGains = equalizerGains,
-                    equalizerEnabled = equalizerEnabled,
-                    foreground = foreground,
-                    muted = muted,
-                    onVolume = onVolume,
-                    onBandGain = onBandGain,
-                    onEqualizerEnabled = onEqualizerEnabled
                 )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     audioSourceLabel = audioSourceLabel,
