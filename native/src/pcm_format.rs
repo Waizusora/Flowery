@@ -107,7 +107,7 @@ mod tests {
         assert_eq!(&output[0..4], &[0, 0, 0, 0]);
         assert_eq!(&output[4..8], &[0, 0, 0, 0x80]);
         assert_eq!(&output[8..12], &[0, 0, 0, 0x40]);
-        assert_eq!(&output[12..16], &[0, 0, 0, 0x7f]);
+        assert_eq!(&output[12..16], &[0, 0xff, 0xff, 0x7f]);
     }
 
     #[test]
