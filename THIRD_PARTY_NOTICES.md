@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-This file identifies the direct third-party dependencies used by Flowery. Transitive dependency versions and notices are resolved by Cargo and Gradle during the build; consult their generated dependency reports for the complete transitive inventory.
+This file identifies the direct third-party dependencies used by Flowery. Transitive dependency versions and notices are resolved by Cargo and Gradle during the build.
 
 ## Rust dependencies
 
