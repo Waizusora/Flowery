@@ -239,7 +239,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
                     }).to_string()),
                 };
                 if plan.requires_uac2_clock_negotiation {
-                    match crate::usb_uac2::parse_playback_clock_info(&bytes) {
+                    match crate::usb_uac2::parse_playback_clock_info_for_interface(&bytes, Some(plan.interface_number)) {
                         Ok(clock) if clock.streaming_interface_number == plan.interface_number => {
                             plan_value["uac2_control_interface_number"] = serde_json::json!(clock.control_interface_number);
                             plan_value["uac2_clock_source_entity_id"] = serde_json::json!(clock.clock_source_entity_id);
