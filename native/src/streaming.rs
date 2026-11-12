@@ -757,6 +757,7 @@ mod handle_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pcm_format::quantize_signed_pcm;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     #[test]
