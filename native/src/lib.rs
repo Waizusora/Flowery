@@ -66,7 +66,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
     session: jni::sys::jlong, decoder: jni::sys::jlong,
     endpoint: jint, raw_max_packet_size: jint, interval: jint,
     sample_rate: jint, channels: jint, valid_bits: jint, subslot_bytes: jint,
-    initial_position_ms: jlong,
+    initial_position_ms: jni::sys::jlong,
 ) -> jint {
     if session <= 0 || decoder <= 0 || !(0..=255).contains(&endpoint)
         || !(0..=u16::MAX as jint).contains(&raw_max_packet_size)
