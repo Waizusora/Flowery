@@ -57,12 +57,15 @@ internal class UsbLibusbSession private constructor(
         clockSelectorEntityId: Int = 0,
         clockSelectorControls: Int = 0,
         selectorClockSources: IntArray = intArrayOf(),
-        selectorSourceControls: IntArray = intArrayOf()
+        selectorSourceControls: IntArray = intArrayOf(),
+        clockMultiplierEntityId: Int = 0,
+        clockMultiplierControls: Int = 0
     ): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB session is closed"))
         if (controlInterfaceNumber !in 0..255 || clockSourceEntityId !in 0..255 ||
             clockControls !in 0..255 || sampleRate <= 0 ||
-            clockSelectorEntityId !in 0..255 || clockSelectorControls !in 0..255) {
+            clockSelectorEntityId !in 0..255 || clockSelectorControls !in 0..255 ||
+            clockMultiplierEntityId !in 0..255 || clockMultiplierControls !in 0..255) {
             return Result.failure(IllegalArgumentException("Invalid UAC2 clock negotiation parameters"))
         }
         return try {
@@ -148,8 +151,40 @@ internal class UsbLibusbSession private constructor(
             if (selectedClockSource !in 1..255 || (selectedClockControls and 0x03) !in 1..2) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source has no usable frequency control"))
             }
-            if (!supportsRate(selectedClockSource, sampleRate)) {
-                return Result.failure(IllegalArgumentException("USB DAC Clock Source $selectedClockSource does not advertise $sampleRate Hz"))
+
+            var sourceSampleRate = sampleRate
+            if (clockMultiplierEntityId != 0) {
+                if ((clockMultiplierControls and 0x01) == 0 || (clockMultiplierControls and 0x04) == 0) {
+                    return Result.failure(IllegalStateException("UAC2 Clock Multiplier does not expose readable numerator and denominator controls"))
+                }
+                val multiplierIndex = (clockMultiplierEntityId shl 8) or controlInterfaceNumber
+                fun readMultiplierControl(selector: Int): Long? {
+                    val value = ByteArray(4)
+                    val length = connection.controlTransfer(
+                        0xA1, 0x01, selector shl 8, multiplierIndex, value, value.size, 1_000
+                    )
+                    return if (length == 4) readU32(value, 0) else null
+                }
+                val numerator = readMultiplierControl(0x01)
+                    ?: return Result.failure(IllegalStateException("UAC2 Clock Multiplier numerator GET_CUR failed"))
+                val denominator = readMultiplierControl(0x02)
+                    ?: return Result.failure(IllegalStateException("UAC2 Clock Multiplier denominator GET_CUR failed"))
+                if (numerator == 0L || denominator == 0L) {
+                    return Result.failure(IllegalStateException("UAC2 Clock Multiplier returned a zero numerator or denominator"))
+                }
+                val requiredSourceRate = sampleRate.toLong() * denominator
+                if (requiredSourceRate % numerator != 0L) {
+                    return Result.failure(IllegalArgumentException("Requested $sampleRate Hz cannot be represented exactly by Clock Multiplier $clockMultiplierEntityId ratio $numerator/$denominator"))
+                }
+                val calculatedSourceRate = requiredSourceRate / numerator
+                if (calculatedSourceRate !in 1..Int.MAX_VALUE.toLong()) {
+                    return Result.failure(IllegalArgumentException("UAC2 Clock Multiplier requires an unsupported source frequency"))
+                }
+                sourceSampleRate = calculatedSourceRate.toInt()
+            }
+
+            if (!supportsRate(selectedClockSource, sourceSampleRate)) {
+                return Result.failure(IllegalArgumentException("USB DAC Clock Source $selectedClockSource does not advertise required source frequency $sourceSampleRate Hz for output $sampleRate Hz"))
             }
 
             val index = (selectedClockSource shl 8) or controlInterfaceNumber
@@ -161,16 +196,16 @@ internal class UsbLibusbSession private constructor(
                 return Result.failure(IllegalStateException("UAC2 Clock Source GET_CUR failed: controlTransfer=$currentLength"))
             }
             val currentRate = readU32(current, 0)
-            if (currentRate == sampleRate.toLong()) return Result.success(Unit)
+            if (currentRate == sourceSampleRate.toLong()) return Result.success(Unit)
             if ((selectedClockControls and 0x03) != 0x02) {
-                return Result.failure(IllegalStateException("UAC2 Clock Source is read-only at $currentRate Hz; requested $sampleRate Hz"))
+                return Result.failure(IllegalStateException("UAC2 Clock Source is read-only at $currentRate Hz; requested $sourceSampleRate Hz"))
             }
 
             val payload = byteArrayOf(
-                (sampleRate and 0xFF).toByte(),
-                ((sampleRate ushr 8) and 0xFF).toByte(),
-                ((sampleRate ushr 16) and 0xFF).toByte(),
-                ((sampleRate ushr 24) and 0xFF).toByte()
+                (sourceSampleRate and 0xFF).toByte(),
+                ((sourceSampleRate ushr 8) and 0xFF).toByte(),
+                ((sourceSampleRate ushr 16) and 0xFF).toByte(),
+                ((sourceSampleRate ushr 24) and 0xFF).toByte()
             )
             val written = connection.controlTransfer(0x21, 0x01, 0x0100, index, payload, payload.size, 1_000)
             if (written != payload.size) {
@@ -178,9 +213,9 @@ internal class UsbLibusbSession private constructor(
             }
             val verified = ByteArray(4)
             val verifiedLength = connection.controlTransfer(0xA1, 0x01, 0x0100, index, verified, verified.size, 1_000)
-            if (verifiedLength != 4 || readU32(verified, 0) != sampleRate.toLong()) {
+            if (verifiedLength != 4 || readU32(verified, 0) != sourceSampleRate.toLong()) {
                 val actual = if (verifiedLength == 4) readU32(verified, 0).toString() else "unavailable"
-                return Result.failure(IllegalStateException("UAC2 Clock Source did not confirm $sampleRate Hz after SET_CUR (current=$actual)"))
+                return Result.failure(IllegalStateException("UAC2 Clock Source did not confirm $sourceSampleRate Hz after SET_CUR (current=$actual)"))
             }
             Result.success(Unit)
         } catch (error: Exception) {
