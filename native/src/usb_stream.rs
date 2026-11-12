@@ -408,6 +408,17 @@ pub(super) fn start(
 }
 
 #[cfg(target_os = "android")]
+pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
+    let map = workers().lock().unwrap_or_else(|e| e.into_inner());
+    let worker = map.get(&session).ok_or("USB stream worker is not running")?;
+    if worker.status.load(Ordering::Acquire) != 0 {
+        return Err("USB stream is not in a running state".into());
+    }
+    worker.paused.store(paused, Ordering::Release);
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
 pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     match map.get(&session) {
