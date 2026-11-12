@@ -118,6 +118,14 @@ internal class UsbLibusbSession private constructor(
             if (written != payload.size) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source SET_CUR failed: controlTransfer=$written"))
             }
+            val verified = ByteArray(4)
+            val verifiedLength = connection.controlTransfer(
+                0xA1, 0x01, 0x0100, index, verified, verified.size, 1_000
+            )
+            if (verifiedLength != 4 || readU32(verified, 0) != sampleRate.toLong()) {
+                val actual = if (verifiedLength == 4) readU32(verified, 0).toString() else "unavailable"
+                return Result.failure(IllegalStateException("UAC2 Clock Source did not confirm $sampleRate Hz after SET_CUR (current=$actual)"))
+            }
             Result.success(Unit)
         } catch (error: Exception) {
             Result.failure(error)
