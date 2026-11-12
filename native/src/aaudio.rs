@@ -446,7 +446,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     stop_output_scheduler();
 }
 
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,fail_on_shared:jboolean,format:jint,capacity:jint)->jint{
     if !(channels==1||channels==2) || capacity<2048 || !valid_integer_output_format(rate,channels,format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let mut out=Box::new(Output{ring:vec![0.0;(cap as usize)*channels as usize],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
@@ -457,12 +457,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     let mut result=unsafe{e.open(&mut out,rate,sharing,device)};
     e.last_open[4]=result as i64;
     let mut actual_sharing=sharing;
-    if result!=OK && sharing==SHARING_EXCLUSIVE {
+    if result!=OK && sharing==SHARING_EXCLUSIVE && fail_on_shared!=JNI_TRUE {
         unsafe{e.stop();}
         actual_sharing=SHARING_SHARED;
         result=unsafe{e.open(&mut out,rate,actual_sharing,device)};
         e.last_open[4]=result as i64;
         e.last_open[10]=4; // Exclusive open failed; shared retry was attempted.
+    } else if result!=OK && sharing==SHARING_EXCLUSIVE && fail_on_shared==JNI_TRUE {
+        e.last_open[10]=7; // Exclusive mode is mandatory; shared fallback is prohibited.
     }
     if result!=OK{unsafe{e.stop();}return result;}
     out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);let _=&mut env;OK
