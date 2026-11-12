@@ -8,4 +8,4 @@ The application navigation exposes the player, folders, lyrics, and settings. Au
 
 When the lyrics panel is visible, its card background uses `MaterialTheme.colorScheme.primaryContainer` rather than sampling the current album artwork. This means the panel follows the active Soft Rose light/dark palette. Lyric text uses `onPrimaryContainer` for contrast.
 
-The player renders timestamped LRC lines, visually emphasizing the active line and dimming surrounding lines. The panel no longer shows the static `LYRICS LRC` and `Synced Lyric` captions. These captions were not controls or runtime detection indicators.
+The player renders timestamped LRC lines, visually emphasizing the active line and dimming surrounding lines.
