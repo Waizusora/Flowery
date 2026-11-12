@@ -6,7 +6,7 @@
 - Gradle 8.9
 - Android SDK Platform 35 and Build Tools 35.0.0
 - Android NDK 27.2.12479018
-- Rust toolchain compatible with Rubato 5 (rustc 1.87 or newer)
+- Rust toolchain compatible with the versions declared in `native/Cargo.toml`
 - Rust targets `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
 - `cargo-ndk`
 
