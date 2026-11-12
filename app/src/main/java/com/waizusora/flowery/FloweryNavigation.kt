@@ -98,11 +98,6 @@ fun FloweryNavigation(
         animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing)),
         label = "folder-refresh-rotation"
     )
-    val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
-    var outputRoute by remember(context) {
-        mutableStateOf(AndroidOutputTarget.fromPreference(prefs.getString("audio_output_route", "speaker")))
-    }
-
     var theme by remember {
         mutableStateOf(when (prefs.getString("theme", "System")) {
             "Light" -> "Light"
@@ -193,11 +188,6 @@ fun FloweryNavigation(
                 )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     audioSourceLabel = audioSourceLabel,
-                    outputRoute = outputRoute,
-                    onOutputRouteChange = { selected ->
-                        outputRoute = selected
-                        prefs.edit().putString("audio_output_route", selected.preferenceValue).apply()
-                    },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
