@@ -20,6 +20,7 @@ internal class UsbLibusbSession private constructor(
     private val nativeHandle: Long
 ) : Closeable {
     private var closed = false
+    private var pendingClockRollback: (() -> List<String>)? = null
 
     /**
      * Applies the descriptor-advertised UAC1 endpoint sampling frequency.
@@ -250,6 +251,7 @@ internal class UsbLibusbSession private constructor(
                         failures += mutationFailure
                         continue
                     }
+                    pendingClockRollback = { restoreState() }
                     return Result.success(Unit)
                 }
                 return Result.failure(IllegalStateException(
@@ -464,6 +466,31 @@ internal class UsbLibusbSession private constructor(
             else Result.failure(IllegalStateException("Native USB seek failed"))
         } catch (error: Exception) {
             Result.failure(error)
+        }
+    }
+
+    /** Discard the pre-start clock snapshot once native playback has started. */
+    @Synchronized
+    fun commitClockNegotiation() {
+        pendingClockRollback = null
+    }
+
+    /** Restore the previous UAC2 clock state if native stream startup failed. */
+    @Synchronized
+    fun rollbackClockNegotiation(): Result<Unit> {
+        val rollback = pendingClockRollback ?: return Result.success(Unit)
+        pendingClockRollback = null
+        return try {
+            val errors = rollback()
+            if (errors.isEmpty()) Result.success(Unit)
+            else Result.failure(IllegalStateException(
+                "FATAL: unable to restore UAC2 clock state after playback startup failure: " +
+                    errors.joinToString()
+            ))
+        } catch (error: Exception) {
+            Result.failure(IllegalStateException(
+                "FATAL: UAC2 clock rollback threw after playback startup failure", error
+            ))
         }
     }
 
