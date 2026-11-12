@@ -23,6 +23,34 @@ pub fn decode_feedback_rate_hz(packet: &[u8], speed: FeedbackBusSpeed) -> Result
     }
 }
 
+
+/// Fractional frame scheduler driven by the nominal or measured DAC clock.
+/// The phase accumulator preserves fractional samples across service intervals.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PacketFrameScheduler {
+    phase: u64,
+}
+
+impl PacketFrameScheduler {
+    pub fn next_frames(&mut self, rate_hz: f64, interval_us: u32) -> Result<usize, String> {
+        if !rate_hz.is_finite() || !(1_000.0..=768_000.0).contains(&rate_hz) {
+            return Err("Packet scheduler rate is outside the supported USB audio range".into());
+        }
+        if interval_us == 0 {
+            return Err("USB service interval must be non-zero".into());
+        }
+        let rate_millihz = (rate_hz * 1_000.0).round() as u64;
+        let numerator = rate_millihz
+            .checked_mul(u64::from(interval_us))
+            .ok_or("USB service interval frame calculation overflow")?;
+        self.phase = self.phase.checked_add(numerator)
+            .ok_or("USB frame phase overflow")?;
+        let frames = self.phase / 1_000_000_000;
+        self.phase %= 1_000_000_000;
+        usize::try_from(frames).map_err(|_| "USB packet frame count exceeds platform limits".into())
+    }
+}
+
 /// A bounded low-pass estimate used by the future packet scheduler. The caller
 /// must validate the estimate against the selected format and endpoint capacity.
 #[derive(Debug, Clone, Copy)]
@@ -57,6 +85,33 @@ impl FeedbackRateTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn schedules_fractional_full_speed_44100_without_long_term_drift() {
+        let mut scheduler = PacketFrameScheduler::default();
+        let frames: usize = (0..1_000)
+            .map(|_| scheduler.next_frames(44_100.0, 1_000).unwrap())
+            .sum();
+        assert_eq!(frames, 44_100);
+    }
+
+    #[test]
+    fn schedules_high_speed_48000_as_six_frames_per_microframe() {
+        let mut scheduler = PacketFrameScheduler::default();
+        for _ in 0..100 {
+            assert_eq!(scheduler.next_frames(48_000.0, 125).unwrap(), 6);
+        }
+    }
+
+    #[test]
+    fn schedules_high_speed_44100_fractionally_without_drift() {
+        let mut scheduler = PacketFrameScheduler::default();
+        let frames: usize = (0..80)
+            .map(|_| scheduler.next_frames(44_100.0, 125).unwrap())
+            .sum();
+        assert_eq!(frames, 441);
+    }
 
     #[test]
     fn decodes_full_speed_44100_feedback() {
