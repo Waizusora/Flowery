@@ -58,35 +58,8 @@ object NativeAudio {
     external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
-    external fun nativeCreateUsbPcmQueue(capacityBlocks: Int): Long
-    external fun nativePollUsbPcmBlock(queue: Long, timeoutMs: Int): ByteArray?
-    external fun nativeUsbPcmQueueSize(queue: Long): Int
-    external fun nativeCloseUsbPcmQueue(queue: Long)
-    external fun nativeDestroyUsbPcmQueue(queue: Long)
-    external fun nativeCreateUsbPcmProducer(decoder: Long, queue: Long, session: Long, sourceRate: Int, channels: Int, bitResolution: Int, subslotBytes: Int, segmentStartMs: Long, segmentEndMs: Long, encoding: Int): Long
-    external fun nativeRequestUsbPcmProducerSeek(producer: Long, positionMs: Long)
-    external fun nativePumpUsbPcmProducer(producer: Long, targetGain: Float): Int
-    external fun nativeStartUsbPcmProducerWorker(producer: Long): Int
-    external fun nativeSetUsbPcmProducerGain(producer: Long, gain: Float): Int
-    external fun nativeUsbPcmProducerWorkerError(producer: Long): String
     external fun nativeStopUsbPcmProducerWorker(producer: Long): Int
-    external fun nativeIsUsbPcmProducerBitPerfect(producer: Long): Boolean
-    external fun nativeIsUsbPcmProducerAtEnd(producer: Long): Boolean
-    external fun nativeDestroyUsbPcmProducer(producer: Long)
-    external fun nativeValidateUsbEncodedDescriptor(descriptors: ByteArray, interfaceNumber: Int, alternateSetting: Int, formatType: Int, formatTag: Int, sampleRate: Int): String
-    external fun nativeSeekUsbEncodedSession(producer: Long, transport: UsbEncodedDacSession, positionMs: Long): Long
-    external fun nativeGetUsbEncodedTransportRate(decoder: Long, framingKind: Int): Long
-    external fun nativeCreateUsbEncodedQueue(maxPackets: Int, maxBytes: Int): Long
-    external fun nativePollUsbEncodedPacket(queue: Long, timeoutMs: Int): ByteArray?
-    external fun nativePumpUsbEncodedTransport(queue: Long, producer: Long, transport: UsbEncodedDacSession, maxPackets: Int, expectedSequence: Long, framingKind: Int, formatCode: Int, lastPositionMs: Long): LongArray
-    external fun nativeCloseUsbEncodedQueue(queue: Long)
-    external fun nativeClearUsbEncodedQueue(queue: Long)
-    external fun nativeDestroyUsbEncodedQueue(queue: Long)
-    external fun nativeCreateUsbEncodedProducer(decoder: Long, queue: Long, session: Long, framingKind: Int, formatCode: Int, maximumBitrateKbps: Int): Long
-    external fun nativeStartUsbEncodedProducerWorker(producer: Long): Int
-    external fun nativeGetUsbEncodedProducerWorkerStatus(producer: Long): Int
     external fun nativeStopUsbEncodedProducerWorker(producer: Long)
-    external fun nativeDestroyUsbEncodedProducer(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
@@ -101,13 +74,6 @@ object NativeAudio {
     external fun nativeGetLastOutputOpenDiagnostics(): LongArray
     external fun nativeTuneOutputBuffer(): Int
     external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int, outputFormat: Int, requireExactRate: Boolean): Int
-    external fun nativeParseUsbDacProfiles(descriptors: ByteArray, requestedBitResolution: Int): String
-    external fun nativeSelectUsbSampleRates(sourceRate: Int, rangesJson: String): String
-    external fun nativeParseUsbDacPlaybackClocks(descriptors: ByteArray, streamingInterface: Int): String
-    external fun nativeParseUsbDacClockSources(descriptors: ByteArray): String
-    external fun nativeFindUsbFeatureUnitVolumeControl(descriptors: ByteArray): String
-    external fun nativeDescribeUsbAudioDescriptors(descriptors: ByteArray): String
-    external fun nativeParseUsbClockRanges(response: ByteArray, transferred: Int): String
     external fun nativeUsbPlaybackDescriptorTrace(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeReadTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String): String

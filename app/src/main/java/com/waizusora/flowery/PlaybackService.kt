@@ -42,7 +42,6 @@ class PlaybackService : Service() {
         const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
         const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
         const val ACTION_UPDATE_METADATA = "com.waizusora.flowery.UPDATE_METADATA"
-        const val ACTION_RELEASE_USB = "com.waizusora.flowery.RELEASE_USB"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_TITLES = "queue_titles"
@@ -253,27 +252,10 @@ class PlaybackService : Service() {
                 val requestedVolume = intent.getFloatExtra(EXTRA_VALUE, 1f)
                 io.execute { if (::player.isInitialized) player.setVolume(requestedVolume) }
             }
-            ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
             ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
-            ACTION_RELEASE_USB -> {
-                player.releaseUsb {
-                    mainHandler.post {
-                        resumeAfterFocus = false
-                        hasAudioFocus = false
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
-                        else abandonLegacyAudioFocus()
-                        focusRequest = null
-                        focusListener = null
-                        playbackState = PlaybackStateCompat.STATE_STOPPED
-                        publishSessionState()
-                        publishState("USB DAC released · USB connection closed and interface released")
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
-                }
-            }
+
             ACTION_UPDATE_METADATA -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: currentTitle
                 currentArtist = intent.getStringExtra(EXTRA_ARTIST)?.takeIf { it.isNotBlank() } ?: currentArtist
@@ -433,8 +415,6 @@ class PlaybackService : Service() {
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
             AudioDeviceInfo.TYPE_LINE_ANALOG,
             AudioDeviceInfo.TYPE_LINE_DIGITAL,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_USB_HEADSET,
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
             AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
             AudioDeviceInfo.TYPE_HDMI,
