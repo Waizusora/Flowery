@@ -246,10 +246,14 @@ pub fn plan_pcm_playback(
         {
             continue;
         }
+        // UAC2 frequency support is determined by the Clock Source GET_RANGE
+        // control, not by the UAC1 discrete-rate fields in the AS descriptor.
         let rate_supported = format.sample_rates.contains(&sample_rate)
             || format.continuous_rate_range
                 .map(|(min, max)| sample_rate >= min && sample_rate <= max)
-                .unwrap_or(false);
+                .unwrap_or(false)
+            || (format.protocol == 0x20 && format.sample_rates.is_empty()
+                && format.continuous_rate_range.is_none());
         if !rate_supported { continue; }
         if format.synchronization_type == Some(1) && format.feedback_endpoint_address.is_none() {
             missing_async_feedback = true;
