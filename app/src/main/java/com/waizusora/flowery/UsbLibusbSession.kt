@@ -84,6 +84,15 @@ internal class UsbLibusbSession private constructor(
                 return false
             }
 
+            fun canNegotiateSource(sourceId: Int, controls: Int, rate: Int): Boolean {
+                if (!supportsRate(sourceId, rate)) return false
+                val sourceIndex = (sourceId shl 8) or controlInterfaceNumber
+                val current = ByteArray(4)
+                val length = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, current, 4, 1_000)
+                if (length != 4) return false
+                return readU32(current, 0) == rate.toLong() || (controls and 0x03) == 0x02
+            }
+
             var selectedClockSource = clockSourceEntityId
             var selectedClockControls = clockControls
             if (clockSelectorEntityId != 0) {
@@ -106,10 +115,12 @@ internal class UsbLibusbSession private constructor(
                     return Result.failure(IllegalStateException("UAC2 Clock Selector returned invalid pin $activePin"))
                 }
                 val currentSource = selectorClockSources[activePin - 1]
-                val chosenIndex = if (supportsRate(currentSource, sampleRate)) {
+                val chosenIndex = if (canNegotiateSource(currentSource, selectorSourceControls[activePin - 1], sampleRate)) {
                     activePin - 1
                 } else {
-                    selectorClockSources.indices.firstOrNull { supportsRate(selectorClockSources[it], sampleRate) }
+                    selectorClockSources.indices.firstOrNull {
+                        canNegotiateSource(selectorClockSources[it], selectorSourceControls[it], sampleRate)
+                    }
                         ?: return Result.failure(IllegalArgumentException("No input of UAC2 Clock Selector $clockSelectorEntityId supports $sampleRate Hz"))
                 }
                 if (chosenIndex != activePin - 1) {
