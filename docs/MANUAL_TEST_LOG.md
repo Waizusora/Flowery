@@ -1,5 +1,7 @@
 # Flowery Manual Test Log
 
+> **Historical archive:** Entries describing USB DAC, UAC, libusb, or Bit-perfect behavior document earlier builds only. Those playback features have since been removed from the trial branch and are not supported by the current AAudio-only architecture. Do not use the historical USB results as current acceptance evidence.
+
 This document records manual tests performed on a physical Android device. Results are based on user-observed behavior and are not a substitute for automated tests or hardware certification.
 
 ## Test environment
