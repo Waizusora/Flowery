@@ -201,7 +201,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
 
 /// Selects a descriptor-advertised PCM playback alternate. This is a planning
 /// result only: it does not claim the USB interface or submit isochronous URBs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct UsbAudioStreamPlan {
     pub interface_number: u8,
     pub alternate_setting: u8,
