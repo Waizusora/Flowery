@@ -250,6 +250,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
                             plan_value["uac2_selector_source_controls"] = serde_json::json!(clock.selector_source_controls);
                             plan_value["uac2_clock_multiplier_entity_id"] = serde_json::json!(clock.clock_multiplier_entity_id);
                             plan_value["uac2_clock_multiplier_controls"] = serde_json::json!(clock.clock_multiplier_controls);
+                            plan_value["uac2_clock_paths"] = serde_json::json!(clock.clock_paths);
                         }
                         Ok(_) => return write_text_to_java(&mut env, &serde_json::json!({
                             "ok": false, "error": "Resolved UAC2 clock path does not belong to the selected playback interface"
