@@ -18,7 +18,25 @@ pub struct UsbAudioFormat {
     pub continuous_rate_range: Option<(u32, u32)>,
     pub endpoint_address: Option<u8>,
     pub max_packet_size: Option<u16>,
-    pub interval: Option<u8>,
+    pub interval: Option<u8>, 
+    #[test]
+    fn plans_matching_uac1_pcm_alternate() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+        ];
+        let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
+        assert_eq!(plan.interface_number, 2);
+        assert_eq!(plan.alternate_setting, 1);
+        assert_eq!(plan.endpoint_address, 0x01);
+        assert_eq!(plan.sample_rate, 44_100);
+        assert!(!plan.requires_uac2_clock_negotiation);
+        assert!(plan_pcm_playback(&descriptors, 96_000, 2, 24).is_err());
+    }
+
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
