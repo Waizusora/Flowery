@@ -1,29 +1,25 @@
 # Flowery Architecture
 
-Flowery is an Android music player with a Kotlin/Compose application layer and a Rust audio engine. The application has one normal playback transport: Android AAudio.
+Flowery is an Android local-audio player. The Android application is implemented in Kotlin/Jetpack Compose; the audio engine is implemented in Rust and integrated through JNI.
 
-## Ownership boundaries
+## Runtime components
 
-- **Kotlin / Android:** Compose UI, Activity and service lifecycle, SAF document access, Android output-device discovery, audio focus, system volume, MediaSession, notifications, and user-facing playback state.
-- **Rust:** Symphonia demuxing/decoding, Rubato resampling, bounded PCM queues, playback-session lifecycle, seek scheduling, and the AAudio NDK backend.
-- **C++:** No application-owned C++ audio or USB transport layer is required.
+- **Android/Kotlin:** library access through the Storage Access Framework, metadata presentation, queue and playback controls, Android audio focus, and output-route selection.
+- **Rust:** source-format inspection, Symphonia demuxing/decoding, PCM conversion, bounded buffering, playback-session lifecycle, and seek scheduling.
+- **AAudio:** Android NDK output for the three supported targets: AUX, built-in speaker, and Bluetooth.
 
 ## Playback path
 
-`SAF document → Rust/Symphonia → Rust/Rubato → bounded PCM ring → Rust AAudio NDK backend → Android audio system`
+`SAF document → Symphonia decode → integer PCM conversion → bounded PCM ring → AAudio → Android audio system`
 
-The output route resolver maps the selected AUX, speaker, or Bluetooth preference to an Android output-device ID. Android retains control of the actual route and downstream audio processing.
+Flowery detects the source sample rate, channel count, and bit depth from the selected audio stream. It requests AAudio output at the source sample rate and chooses a supported signed-integer PCM representation for the output boundary. Flowery does not resample internally; Android owns any downstream mixing, resampling, or device-format conversion.
 
-## Native integration
+The internal decoder may use floating-point working samples. The AAudio output format is configured as signed integer PCM, not Float32.
 
-`NativeAudio.kt` declares the Rust JNI interface. `scripts/check_jni_contract.py` compares those declarations with Rust JNI exports. Native handles are opaque positive IDs; create/close operations are paired, and session teardown cancels and joins worker activity before releasing shared state.
+## Output routing
 
-## PCM output contract
+The route resolver selects AUX, the built-in speaker, or Bluetooth using Android's output-device inventory. If the requested target is unavailable, Android's default output device remains the fallback.
 
-AAudio is configured for signed integer PCM. Flowery requests PCM 16-bit for source depths up to 16-bit and packed PCM 24-bit for higher-depth sources on Android API 31+, with a PCM 16-bit fallback on older Android versions. Internal decode and resampling may use floating-point samples; Float32 is not selected as the AAudio output format.
+## Native boundary
 
-The transport-neutral PCM layout contract is in `native/src/pcm_format.rs`. USB/UAC descriptor handling, USB permission/discovery, libusb, and direct USB playback have been removed.
-
-## Validation
-
-CI runs native Rust tests, JNI contract checks, Android JVM unit tests, native Android library builds for the configured ABIs, and debug/release APK packaging. Hardware verification remains necessary for AAudio behavior and actual AUX, speaker, and Bluetooth routing.
+The PCM format contract is transport-neutral and lives in `native/src/pcm_format.rs`. Native audio output is provided by the Android AAudio backend. There is no application-owned USB transport, USB permission/discovery flow, or C++ audio transport layer.
