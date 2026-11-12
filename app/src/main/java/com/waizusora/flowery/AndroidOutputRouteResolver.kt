@@ -25,7 +25,6 @@ internal data class OutputDeviceCandidate(
     val id: Int,
     val type: Int,
     val productName: String?,
-    val sampleRates: IntArray,
 )
 
 internal class AndroidOutputRouteResolver(context: Context) {
@@ -38,9 +37,6 @@ internal class AndroidOutputRouteResolver(context: Context) {
                 id = device.id,
                 type = device.type,
                 productName = device.productName?.toString(),
-                sampleRates = if (Build.VERSION.SDK_INT >= 28) {
-                    device.sampleRates?.filter { it > 0 }?.toIntArray() ?: intArrayOf()
-                } else intArrayOf(),
             )
         }
         val selected = when (target) {
