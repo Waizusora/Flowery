@@ -62,6 +62,7 @@ struct UsbStreamWorker {
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
     played_frames: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
     thread: JoinHandle<()>,
 }
@@ -223,6 +224,7 @@ fn run_worker(
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
     played_frames: Arc<AtomicU64>,
+    paused: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
 ) {
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
@@ -250,45 +252,40 @@ fn run_worker(
     }
 
     let mut cancelling = false;
-    while slots.iter().any(|slot| slot.submitted) {
-        if (stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0) && !cancelling {
-            cancelling = true;
-            for slot in &slots {
-                if slot.submitted {
-                    let _ = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) };
+    loop {
+        if stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0 {
+            if !cancelling {
+                cancelling = true;
+                for slot in &slots {
+                    if slot.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) }; }
                 }
             }
         }
-
-        let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
-        let event_result = unsafe {
-            libusb1_sys::libusb_handle_events_timeout_completed(
-                session.context,
-                &timeout,
-                std::ptr::null_mut(),
-            )
-        };
-        if event_result < 0 && event_result != -10 {
-            set_error(&error, &status, format!("libusb event handling failed with code {event_result}"));
-            continue;
-        }
-
-        for slot in &mut slots {
-            if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) {
-                continue;
+        if !cancelling && !paused.load(Ordering::Acquire) && !eof {
+            for slot in &mut slots {
+                if !slot.submitted {
+                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
+                        set_error(&error, &status, message); break;
+                    }
+                    if eof { break; }
+                }
             }
+        }
+        if !slots.iter().any(|slot| slot.submitted) {
+            if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
+            thread::sleep(Duration::from_millis(1)); continue;
+        }
+        let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
+        let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
+        if event_result < 0 && event_result != -10 {
+            set_error(&error, &status, format!("libusb event handling failed with code {event_result}")); continue;
+        }
+        for slot in &mut slots {
+            if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) { continue; }
             slot.submitted = false;
             if !cancelling {
-                if let Err(message) = transfer_packets_succeeded(slot) {
-                    set_error(&error, &status, message);
-                    continue;
-                }
+                if let Err(message) = transfer_packets_succeeded(slot) { set_error(&error, &status, message); continue; }
                 played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
-                if !eof {
-                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
-                        set_error(&error, &status, message);
-                    }
-                }
             }
         }
     }
@@ -386,10 +383,12 @@ pub(super) fn start(
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let played_frames = Arc::new(AtomicU64::new(0));
+    let paused = Arc::new(AtomicBool::new(false));
     let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
     let thread_played_frames = Arc::clone(&played_frames);
+    let thread_paused = Arc::clone(&paused);
     let thread_error = Arc::clone(&error);
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
@@ -398,26 +397,27 @@ pub(super) fn start(
     let worker_thread = thread::Builder::new()
         .name("flowery-usb-iso-out".into())
         .spawn(move || run_worker(
-            session, decoder_handle, config, thread_stop, thread_status, thread_played_frames, thread_error,
+            session, decoder_handle, config, thread_stop, thread_status, thread_played_frames, thread_paused, thread_error,
         ))
         .map_err(|e| e.to_string())?;
     workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
         session_handle,
-        UsbStreamWorker { session: session_handle, stop, status, played_frames, error, thread: worker_thread },
+        UsbStreamWorker { session: session_handle, stop, status, played_frames, paused, error, thread: worker_thread },
     );
     Ok(())
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn status(session: i64) -> (i32, String, u64) {
+pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     match map.get(&session) {
         Some(worker) => (
             worker.status.load(Ordering::Acquire),
             worker.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             worker.played_frames.load(Ordering::Acquire),
+            worker.paused.load(Ordering::Acquire),
         ),
-        None => (-1, "USB stream worker is not running".into(), 0),
+        None => (-1, "USB stream worker is not running".into(), 0, false),
     }
 }
 
