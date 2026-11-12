@@ -6,6 +6,7 @@ mod queue;
 mod playback_controller;
 mod playback_session;
 mod playlists;
+mod pcm_format;
 mod playback_policy;
 #[cfg(target_os = "android")]
 mod aaudio;
