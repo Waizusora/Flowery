@@ -7,7 +7,7 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
@@ -30,6 +30,7 @@ struct TransferSlot {
     buffer: Vec<u8>,
     signal: Box<TransferSignal>,
     submitted: bool,
+    audio_frames: u64,
 }
 
 #[cfg(target_os = "android")]
@@ -60,6 +61,7 @@ struct UsbStreamWorker {
     session: i64,
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
+    played_frames: Arc<AtomicU64>,
     error: Arc<Mutex<String>>,
     thread: JoinHandle<()>,
 }
@@ -116,7 +118,7 @@ fn create_slot(
             0,
         );
     }
-    Ok(TransferSlot { transfer, buffer, signal, submitted: false })
+    Ok(TransferSlot { transfer, buffer, signal, submitted: false, audio_frames: 0 })
 }
 
 #[cfg(target_os = "android")]
@@ -134,6 +136,7 @@ fn fill_and_submit(
 
     slot.buffer.fill(0);
     let mut offset = 0usize;
+    let mut audio_frames = 0u64;
     for packet_index in 0..PACKETS_PER_TRANSFER {
         let numerator = u64::from(config.sample_rate)
             .checked_mul(u64::from(config.interval_us))
@@ -170,12 +173,14 @@ fn fill_and_submit(
             written += copy;
         }
 
+        audio_frames = audio_frames.saturating_add((written / frame_bytes) as u64);
         let descriptor = unsafe { (*slot.transfer).iso_packet_desc.as_mut_ptr().add(packet_index) };
         unsafe { (*descriptor).length = expected as u32; }
         offset = offset.checked_add(expected)
             .ok_or("USB packet buffer offset overflow")?;
     }
 
+    slot.audio_frames = audio_frames;
     slot.signal.completed.store(false, Ordering::Release);
     let result = unsafe { libusb1_sys::libusb_submit_transfer(slot.transfer) };
     if result != 0 {
@@ -217,6 +222,7 @@ fn run_worker(
     config: StreamConfig,
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
+    played_frames: Arc<AtomicU64>,
     error: Arc<Mutex<String>>,
 ) {
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
@@ -277,6 +283,7 @@ fn run_worker(
                     set_error(&error, &status, message);
                     continue;
                 }
+                played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
                 if !eof {
                     if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
                         set_error(&error, &status, message);
@@ -378,9 +385,11 @@ pub(super) fn start(
     stop_worker_locked(session_handle);
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
+    let played_frames = Arc::new(AtomicU64::new(0));
     let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
+    let thread_played_frames = Arc::clone(&played_frames);
     let thread_error = Arc::clone(&error);
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
@@ -389,12 +398,12 @@ pub(super) fn start(
     let worker_thread = thread::Builder::new()
         .name("flowery-usb-iso-out".into())
         .spawn(move || run_worker(
-            session, decoder_handle, config, thread_stop, thread_status, thread_error,
+            session, decoder_handle, config, thread_stop, thread_status, thread_played_frames, thread_error,
         ))
         .map_err(|e| e.to_string())?;
     workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
         session_handle,
-        UsbStreamWorker { session: session_handle, stop, status, error, thread: worker_thread },
+        UsbStreamWorker { session: session_handle, stop, status, played_frames, error, thread: worker_thread },
     );
     Ok(())
 }
@@ -406,8 +415,9 @@ pub(super) fn status(session: i64) -> (i32, String) {
         Some(worker) => (
             worker.status.load(Ordering::Acquire),
             worker.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+            worker.played_frames.load(Ordering::Acquire),
         ),
-        None => (-1, "USB stream worker is not running".into()),
+        None => (-1, "USB stream worker is not running".into(), 0),
     }
 }
 
