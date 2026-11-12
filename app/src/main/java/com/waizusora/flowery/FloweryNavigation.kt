@@ -188,20 +188,6 @@ fun FloweryNavigation(
                 if (destination != Destination.PLAYER) destination = Destination.PLAYER
                 lyricsVisible = !lyricsVisible
             }
-            val usbTransportActive = status.contains("USB exclusive")
-            val unityGainDirectPcm = status.contains("unity gain")
-            IconButton(onClick = onUsbDacClick) {
-                Icon(
-                    Icons.Default.Usb,
-                    contentDescription = when {
-                        unityGainDirectPcm -> "USB DAC direct PCM active at unity gain; EQ bypassed"
-                        usbTransportActive -> "USB DAC direct transport active; decoded PCM is not bit-perfect"
-                        else -> "USB DAC"
-                    },
-                    tint = if (usbTransportActive) MaterialTheme.colorScheme.primary else foreground
-                )
-            }
-            NavIcon(Icons.Default.Equalizer, "DSP", destination == Destination.DSP, foreground) { destination = Destination.DSP }
             NavIcon(Icons.Default.Settings, "Settings", destination == Destination.SETTINGS, foreground) {
                 destination = Destination.SETTINGS; settingsPage = SettingsPage.ROOT
             }

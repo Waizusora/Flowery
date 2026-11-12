@@ -47,7 +47,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     } else Heading("Settings", color)
     when(page) {
         SettingsPage.ROOT -> {
-            SettingCard("Audio", "Playback engine and processing", color, muted, Icons.Default.GraphicEq) { navigate(SettingsPage.AUDIO) }
+            SettingCard("Audio", "Output route", color, muted, Icons.Default.GraphicEq) { navigate(SettingsPage.AUDIO) }
             SettingCard("Appearance", "Theme and language", color, muted, Icons.Default.Palette) { navigate(SettingsPage.APPEARANCE) }
             SettingCard("Library", "Folder management and scanning", color, muted, Icons.Default.Folder) { navigate(SettingsPage.LIBRARY) }
             SettingCard("Other", "Battery optimization", color, muted, Icons.Default.Tune) { navigate(SettingsPage.OTHER) }
@@ -79,34 +79,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 }
             }
             HorizontalDivider(color = muted.copy(alpha = .25f))
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("USB DAC", color = color, fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(usbDacDeviceName, color = color, style = MaterialTheme.typography.bodyMedium)
-                    Text(usbDacUiStatus, color = muted, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            val bitPerfectActive = status.contains("BIT PERFECT", ignoreCase = true)
-            val usbDirectActive = status.contains("USB exclusive", ignoreCase = true)
-            val bitPerfectStatus = when {
-                bitPerfectActive -> "ACTIVE · The native USB PCM producer confirmed source-preserving output."
-                status.startsWith("Playback error:", ignoreCase = true) && usbDacConnected ->
-                    "UNAVAILABLE · ${status.removePrefix("Playback error:").trim()}"
-                usbDirectActive -> "NOT ACTIVE · Direct USB playback is selected, but the current source or negotiated output path requires PCM conversion or processing."
-                usbDacConnected && !usbDacPermissionGranted -> "UNAVAILABLE · Connect the DAC and grant Flowery USB access to inspect its capabilities."
-                usbDacConnected -> "NOT ACTIVE · DAC detected. Start playback to evaluate the source format and negotiated DAC profile."
-                else -> "UNAVAILABLE · No USB DAC is available to Flowery. Android-managed output is in use."
-            }
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Bit-perfect detection", color = color, fontWeight = FontWeight.SemiBold)
-                    Text(bitPerfectStatus, color = color, style = MaterialTheme.typography.bodyMedium)
-                    Text("Flowery automatically evaluates the connected USB DAC, its advertised PCM formats and sample rates, the source format, and active processing. Bit-perfect is reported as active only after the native USB PCM producer confirms that the source samples are preserved. EQ, resampling, channel conversion, software gain, or an incompatible DAC profile can make bit-perfect unavailable for the current playback.", color = muted, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
-            SettingCard("USB Diagnostics", "Record USB descriptors, DAC profiles, clock negotiation and playback telemetry", color, muted) { navigate(SettingsPage.USB_DIAGNOSTICS) }
         }
         SettingsPage.AUDIO_INFO -> {
             val usbRoute = status.contains("USB exclusive", ignoreCase = true)
