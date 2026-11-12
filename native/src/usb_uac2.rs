@@ -1,16 +1,42 @@
 //! UAC2 playback clock topology parser.
 //!
-//! Supports a direct Clock Source or one Clock Selector whose inputs are
-//! direct Clock Sources. Clock Multiplier and cascaded selectors are rejected.
+//! Resolves arbitrary Clock Selector / Clock Multiplier chains to Clock Sources.
+//! Cycles, duplicate entities, dangling references and unsupported controls fail closed.
 
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Uac2ClockPath {
+    pub source_entity_id: u8,
+    pub source_controls: u8,
+    /// Selector entities from terminal towards the source, with one-based selected pin.
+    pub selectors: Vec<Uac2SelectorStep>,
+    /// Multiplier entities from terminal towards the source.
+    pub multipliers: Vec<Uac2MultiplierStep>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Uac2SelectorStep {
+    pub entity_id: u8,
+    pub controls: u8,
+    pub input_sources: Vec<u8>,
+    pub selected_pin: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Uac2MultiplierStep {
+    pub entity_id: u8,
+    pub controls: u8,
+    pub input_clock_id: u8,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Uac2ClockInfo {
     pub control_interface_number: u8,
     pub streaming_interface_number: u8,
     pub terminal_link: u8,
+    // Legacy summary fields retained for existing Kotlin callers.
     pub clock_source_entity_id: u8,
     pub clock_controls: u8,
     pub clock_selector_entity_id: u8,
@@ -19,6 +45,8 @@ pub struct Uac2ClockInfo {
     pub selector_source_controls: Vec<u8>,
     pub clock_multiplier_entity_id: u8,
     pub clock_multiplier_controls: u8,
+    // All valid source paths, including choices at every selector in a chain.
+    pub clock_paths: Vec<Uac2ClockPath>,
 }
 
 #[derive(Default)]
@@ -35,6 +63,83 @@ struct AudioControlInterface {
     clock_sources: HashMap<u8, u8>,
     clock_selectors: HashMap<u8, (Vec<u8>, u8)>,
     clock_multipliers: HashMap<u8, (u8, u8)>,
+}
+
+impl AudioControlInterface {
+    fn resolve_paths(
+        &self,
+        entity_id: u8,
+        selectors: &mut Vec<Uac2SelectorStep>,
+        multipliers: &mut Vec<Uac2MultiplierStep>,
+        visited: &mut HashSet<u8>,
+        output: &mut Vec<Uac2ClockPath>,
+    ) -> Result<(), String> {
+        if !visited.insert(entity_id) {
+            return Err(format!("UAC2 clock topology contains a cycle at entity {entity_id}"));
+        }
+
+        if let Some(&controls) = self.clock_sources.get(&entity_id) {
+            if !matches!(controls & 0x03, 0x01 | 0x02) {
+                return Err(format!("UAC2 Clock Source {entity_id} has no usable frequency control"));
+            }
+            output.push(Uac2ClockPath {
+                source_entity_id: entity_id,
+                source_controls: controls,
+                selectors: selectors.clone(),
+                multipliers: multipliers.clone(),
+            });
+        } else if let Some((inputs, controls)) = self.clock_selectors.get(&entity_id) {
+            if inputs.is_empty() || (controls & 0x03) == 0 {
+                return Err(format!("UAC2 Clock Selector {entity_id} has no usable input control"));
+            }
+            for (index, &input_id) in inputs.iter().enumerate() {
+                selectors.push(Uac2SelectorStep {
+                    entity_id,
+                    controls: *controls,
+                    input_sources: inputs.clone(),
+                    selected_pin: (index + 1) as u8,
+                });
+                self.resolve_paths(input_id, selectors, multipliers, visited, output)?;
+                selectors.pop();
+            }
+        } else if let Some(&(input_id, controls)) = self.clock_multipliers.get(&entity_id) {
+            // bmControls bits 1:0 and 3:2 are numerator and denominator controls.
+            if (controls & 0x03) == 0 || (controls & 0x0C) == 0 {
+                return Err(format!("UAC2 Clock Multiplier {entity_id} does not expose numerator and denominator controls"));
+            }
+            multipliers.push(Uac2MultiplierStep { entity_id, controls, input_clock_id: input_id });
+            self.resolve_paths(input_id, selectors, multipliers, visited, output)?;
+            multipliers.pop();
+        } else {
+            return Err(format!("UAC2 clock entity {entity_id} references an unresolved entity"));
+        }
+
+        visited.remove(&entity_id);
+        Ok(())
+    }
+
+    fn validate_all_references(&self) -> Result<(), String> {
+        let mut ids = HashSet::new();
+        for id in self.clock_sources.keys()
+            .chain(self.clock_selectors.keys())
+            .chain(self.clock_multipliers.keys())
+        {
+            if *id == 0 || !ids.insert(*id) {
+                return Err(format!("UAC2 AudioControl interface {} has duplicate or zero clock entity ID {id}", self.interface_number));
+            }
+        }
+        for (&id, (inputs, _)) in &self.clock_selectors {
+            if inputs.is_empty() || inputs.iter().any(|input| !ids.contains(input)) {
+                return Err(format!("UAC2 Clock Selector {id} has an empty or unresolved input reference"));
+            }
+        }
+        for (&id, (input, _)) in &self.clock_multipliers {
+            if !ids.contains(input) {
+                return Err(format!("UAC2 Clock Multiplier {id} references unresolved clock entity {input}"));
+            }
+        }
+        Ok(())
+    }
 }
 
 pub fn parse_playback_clock_info(descriptors: &[u8]) -> Result<Uac2ClockInfo, String> {
@@ -88,23 +193,18 @@ pub fn parse_playback_clock_info_for_interface(
                             continue;
                         };
                         match d[2] {
-                            // UAC2 Input Terminal: bTerminalID, wTerminalType, ..., bCSourceID.
                             0x02 if length >= 8 => {
                                 ac.input_terminal_type.insert(d[3], u16::from_le_bytes([d[4], d[5]]));
                                 ac.input_terminal_clock.insert(d[3], d[7]);
                             }
-                            // UAC2 Clock Source: bClockID at 3, bmControls at 5.
                             0x0A if length >= 8 => { ac.clock_sources.insert(d[3], d[5]); }
-                            // Clock Selector: bClockID, bNrInPins, baCSourceID[], bmControls, iClockSelector.
                             0x0B if length >= 7 => {
                                 let count = d[4] as usize;
                                 let controls_index = 5 + count;
                                 if count > 0 && length >= controls_index + 2 {
-                                    let inputs = d[5..controls_index].to_vec();
-                                    ac.clock_selectors.insert(d[3], (inputs, d[controls_index]));
+                                    ac.clock_selectors.insert(d[3], (d[5..controls_index].to_vec(), d[controls_index]));
                                 }
                             }
-                            // UAC2 Clock Multiplier: bClockID, bCSourceID, bmControls.
                             0x0C if length >= 7 => { ac.clock_multipliers.insert(d[3], (d[4], d[5])); }
                             _ => {}
                         }
@@ -116,73 +216,41 @@ pub fn parse_playback_clock_info_for_interface(
         offset += length;
     }
 
+    for ac in &ac_interfaces { ac.validate_all_references()?; }
+
     let mut matches = Vec::new();
     for alt in streaming {
-        if streaming_interface_number.is_some_and(|number| number != alt.interface_number) {
-            continue;
-        }
+        if streaming_interface_number.is_some_and(|number| number != alt.interface_number) { continue; }
         let Some(terminal_link) = alt.terminal_link else { continue };
         for ac in &ac_interfaces {
-            if ac.input_terminal_type.get(&terminal_link) != Some(&0x0101) {
-                continue;
-            }
+            if ac.input_terminal_type.get(&terminal_link) != Some(&0x0101) { continue; }
             let Some(&clock_id) = ac.input_terminal_clock.get(&terminal_link) else {
-                return Err(format!("UAC2 playback terminal {terminal_link} has no Clock Source link"));
+                return Err(format!("UAC2 playback terminal {terminal_link} has no clock link"));
             };
-
-            let (selector_id, selector_controls, source_ids, source_controls, direct_source, multiplier_id, multiplier_controls) =
-                if let Some((inputs, controls)) = ac.clock_selectors.get(&clock_id) {
-                    if inputs.iter().any(|id| ac.clock_selectors.contains_key(id) || ac.clock_multipliers.contains_key(id)) {
-                        return Err(format!("UAC2 Clock Selector {clock_id} contains a cascaded selector or multiplier; this topology is not supported yet"));
-                    }
-                    let mut controls_by_source = Vec::with_capacity(inputs.len());
-                    for source_id in inputs {
-                        let Some(&source_control) = ac.clock_sources.get(source_id) else {
-                            return Err(format!("UAC2 Clock Selector {clock_id} references unresolved Clock Source {source_id}"));
-                        };
-                        if !matches!(source_control & 0x03, 0x01 | 0x02) {
-                            return Err(format!("UAC2 Clock Source {source_id} has no usable frequency control"));
-                        }
-                        controls_by_source.push(source_control);
-                    }
-                    (clock_id, *controls, inputs.clone(), controls_by_source, 0, 0, 0)
-                } else if let Some(&(source_id, multiplier_controls)) = ac.clock_multipliers.get(&clock_id) {
-                    let Some(&source_controls) = ac.clock_sources.get(&source_id) else {
-                        return Err(format!("UAC2 Clock Multiplier {clock_id} references unresolved Clock Source {source_id}"));
-                    };
-                    if !matches!(source_controls & 0x03, 0x01 | 0x02) {
-                        return Err(format!("UAC2 Clock Multiplier {clock_id} input Clock Source {source_id} has no usable frequency control"));
-                    }
-                    if (multiplier_controls & 0x01) == 0 || (multiplier_controls & 0x04) == 0 {
-                        return Err(format!("UAC2 Clock Multiplier {clock_id} does not expose readable numerator and denominator controls"));
-                    }
-                    (0, 0, Vec::new(), Vec::new(), source_id, clock_id, multiplier_controls)
-                } else {
-                    let Some(&controls) = ac.clock_sources.get(&clock_id) else {
-                        return Err(format!("UAC2 playback terminal {terminal_link} references unresolved clock entity {clock_id}"));
-                    };
-                    if !matches!(controls & 0x03, 0x01 | 0x02) {
-                        return Err(format!("UAC2 Clock Source {clock_id} does not expose usable frequency control"));
-                    }
-                    (0, 0, Vec::new(), Vec::new(), clock_id, 0, 0)
-                };
-
+            let mut paths = Vec::new();
+            ac.resolve_paths(clock_id, &mut Vec::new(), &mut Vec::new(), &mut HashSet::new(), &mut paths)?;
+            if paths.is_empty() { return Err(format!("UAC2 playback terminal {terminal_link} has no clock source path")); }
+            // Legacy fields describe the first candidate; the complete path set is authoritative.
+            let first = &paths[0];
+            let first_selector = first.selectors.first();
+            let first_multiplier = first.multipliers.first();
             matches.push(Uac2ClockInfo {
                 control_interface_number: ac.interface_number,
                 streaming_interface_number: alt.interface_number,
                 terminal_link,
-                clock_source_entity_id: direct_source,
-                clock_controls: if direct_source != 0 { ac.clock_sources[&direct_source] } else { 0 },
-                clock_selector_entity_id: selector_id,
-                clock_selector_controls: selector_controls,
-                selector_clock_sources: source_ids,
-                selector_source_controls: source_controls,
-                clock_multiplier_entity_id: multiplier_id,
-                clock_multiplier_controls: multiplier_controls,
+                clock_source_entity_id: first.source_entity_id,
+                clock_controls: first.source_controls,
+                clock_selector_entity_id: first_selector.map_or(0, |s| s.entity_id),
+                clock_selector_controls: first_selector.map_or(0, |s| s.controls),
+                selector_clock_sources: first_selector.map_or_else(Vec::new, |s| s.input_sources.clone()),
+                selector_source_controls: first_selector.map_or_else(Vec::new, |_| Vec::new()),
+                clock_multiplier_entity_id: first_multiplier.map_or(0, |m| m.entity_id),
+                clock_multiplier_controls: first_multiplier.map_or(0, |m| m.controls),
+                clock_paths: paths,
             });
         }
     }
-    matches.sort_by_key(|v| (v.streaming_interface_number, v.control_interface_number, v.clock_selector_entity_id, v.clock_source_entity_id));
+    matches.sort_by_key(|v| (v.streaming_interface_number, v.control_interface_number));
     matches.dedup();
     match matches.len() {
         1 => Ok(matches.remove(0)),
@@ -215,50 +283,67 @@ mod tests {
         append_playback_terminal(&mut d, 7);
         let info = parse_playback_clock_info(&d).unwrap();
         assert_eq!(info.clock_source_entity_id, 7);
-        assert_eq!(info.clock_selector_entity_id, 0);
-        assert_eq!(info.clock_controls & 0x03, 2);
-        assert_eq!(info.clock_multiplier_entity_id, 0);
+        assert_eq!(info.clock_paths.len(), 1);
+        assert_eq!(info.clock_paths[0].source_entity_id, 7);
     }
 
     #[test]
-    fn parses_selector_inputs_and_controls() {
+    fn resolves_selector_multiplier_source_chain() {
         let mut d = descriptor_prefix();
-        // Selector 9 has two inputs: Clock Sources 7 and 8; host programmable.
-        d.extend_from_slice(&[9,0x24,0x0B,9,2,7,8,2,0]);
-        append_playback_terminal(&mut d, 9);
-        let info = parse_playback_clock_info(&d).unwrap();
-        assert_eq!(info.clock_selector_entity_id, 9);
-        assert_eq!(info.clock_selector_controls & 0x03, 2);
-        assert_eq!(info.selector_clock_sources, vec![7,8]);
-        assert_eq!(info.selector_source_controls, vec![2,2]);
-    }
-
-    #[test]
-    fn rejects_selector_with_unresolved_source() {
-        let mut d = descriptor_prefix();
-        d.extend_from_slice(&[9,0x24,0x0B,9,2,7,99,2,0]);
-        append_playback_terminal(&mut d, 9);
-        assert!(parse_playback_clock_info(&d).unwrap_err().contains("unresolved Clock Source"));
-    }
-
-    #[test]
-    fn resolves_clock_multiplier_input_source() {
-        let mut d = descriptor_prefix();
-        // Multiplier 10 takes Clock Source 7; numerator and denominator are readable.
+        d.extend_from_slice(&[9,0x24,0x0B,9,2,10,11,2,0]);
         d.extend_from_slice(&[7,0x24,0x0C,10,7,0x05,0]);
-        append_playback_terminal(&mut d, 10);
+        d.extend_from_slice(&[7,0x24,0x0C,11,8,0x05,0]);
+        append_playback_terminal(&mut d, 9);
         let info = parse_playback_clock_info(&d).unwrap();
-        assert_eq!(info.clock_source_entity_id, 7);
-        assert_eq!(info.clock_multiplier_entity_id, 10);
-        assert_eq!(info.clock_multiplier_controls & 0x05, 0x05);
+        assert_eq!(info.clock_paths.len(), 2);
+        assert_eq!(info.clock_paths[0].selectors[0].entity_id, 9);
+        assert_eq!(info.clock_paths[0].multipliers[0].entity_id, 10);
+        assert_eq!(info.clock_paths[0].source_entity_id, 7);
+        assert_eq!(info.clock_paths[1].multipliers[0].entity_id, 11);
+        assert_eq!(info.clock_paths[1].source_entity_id, 8);
     }
 
     #[test]
-    fn rejects_clock_multiplier_without_readable_ratio_controls() {
+    fn resolves_multiple_selector_and_multiplier_hops() {
         let mut d = descriptor_prefix();
-        d.extend_from_slice(&[7,0x24,0x0C,10,7,0x00,0]);
-        append_playback_terminal(&mut d, 10);
-        assert!(parse_playback_clock_info(&d).unwrap_err().contains("readable numerator and denominator"));
+        d.extend_from_slice(&[9,0x24,0x0B,9,1,10,2,0]);
+        d.extend_from_slice(&[7,0x24,0x0C,10,11,0x05,0]);
+        d.extend_from_slice(&[7,0x24,0x0C,11,7,0x05,0]);
+        append_playback_terminal(&mut d, 9);
+        let info = parse_playback_clock_info(&d).unwrap();
+        assert_eq!(info.clock_paths[0].multipliers.len(), 2);
+        assert_eq!(info.clock_paths[0].source_entity_id, 7);
     }
 
+    #[test]
+    fn rejects_clock_topology_cycle() {
+        let mut d = descriptor_prefix();
+        d.extend_from_slice(&[7,0x24,0x0C,10,11,0x05,0]);
+        d.extend_from_slice(&[7,0x24,0x0C,11,10,0x05,0]);
+        append_playback_terminal(&mut d, 10);
+        assert!(parse_playback_clock_info(&d).unwrap_err().contains("cycle"));
+    }
+
+    #[test]
+    fn rejects_dangling_selector_reference() {
+        let mut d = descriptor_prefix();
+        d.extend_from_slice(&[8,0x24,0x0B,9,1,99,2,0]);
+        append_playback_terminal(&mut d, 9);
+        assert!(parse_playback_clock_info(&d).unwrap_err().contains("unresolved input"));
+    }
+
+    #[test]
+    fn rejects_truncated_descriptor() {
+        let mut d = descriptor_prefix();
+        d.extend_from_slice(&[9,0x24,0x0C,10,7]);
+        assert!(parse_playback_clock_info(&d).is_err());
+    }
+
+    #[test]
+    fn rejects_duplicate_entity_ids() {
+        let mut d = descriptor_prefix();
+        d.extend_from_slice(&[7,0x24,0x0C,7,8,0x05,0]);
+        append_playback_terminal(&mut d, 7);
+        assert!(parse_playback_clock_info(&d).unwrap_err().contains("duplicate"));
+    }
 }
