@@ -1,4 +1,3 @@
-use crate::write_text_to_java;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::time::Duration;
@@ -13,7 +12,7 @@ use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong, jstring};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 use symphonia::core::audio::SampleBuffer;
 use crate::pcm_format::quantize_signed_pcm;
@@ -64,6 +63,7 @@ fn aaudio_seek_frame_window(
     actual_ms: u64,
     segment_start_ms: u64,
     segment_end_ms: Option<u64>,
+    output_rate: usize,
 ) -> (u64, Option<u64>) {
     let relative_target_ms = actual_ms.saturating_sub(segment_start_ms);
     let target_frame = milliseconds_to_frames(relative_target_ms, output_rate);
@@ -116,7 +116,6 @@ pub(super) struct StreamDecoder {
     source_rate: usize,
     source_bits: u8,
     channels: usize,
-    output_rate: usize,
     input_pending: Vec<f32>,
     eof: bool,
     duration_ms: u64,
@@ -785,9 +784,6 @@ mod tests {
         assert!(!aaudio_seek_request_is_current(&in_flight, epoch.load(Ordering::Acquire), false));
         assert!(aaudio_seek_request_is_current(&newest, epoch.load(Ordering::Acquire), false));
     }
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
     #[test]
     fn stream_format_enables_gapless_packet_trimming() {
         assert!(gapless_format_options().enable_gapless);
