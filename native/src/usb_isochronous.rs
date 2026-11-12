@@ -54,10 +54,11 @@ pub fn build_isochronous_schedule(
     }
     if !(1..=16).contains(&b_interval) { return Err("Isochronous bInterval must be between 1 and 16".into()); }
 
-    let factor = 1u32 << (b_interval - 1);
     let interval_us = match speed {
-        UsbBusSpeed::Full => 1_000u32.checked_mul(factor),
-        UsbBusSpeed::High => 125u32.checked_mul(factor),
+        // Full-speed isochronous bInterval is a linear frame count (1-16 ms).
+        UsbBusSpeed::Full => 1_000u32.checked_mul(u32::from(b_interval)),
+        // High-speed bInterval encodes 2^(bInterval-1) microframes.
+        UsbBusSpeed::High => 125u32.checked_mul(1u32 << (b_interval - 1)),
     }.ok_or("USB service interval overflow")?;
     let max_payload = max_isochronous_payload(raw_max_packet_size, speed)?;
     let frame_bytes = u32::from(channels).checked_mul(u32::from(subslot_bytes))
@@ -115,6 +116,24 @@ mod tests {
     #[test]
     fn rejects_packet_that_exceeds_endpoint_capacity() {
         assert!(build_isochronous_schedule(192_000, 2, 4, 192, 1, UsbBusSpeed::Full, 1).is_err());
+    }
+
+    #[test]
+    fn full_speed_interval_is_linear_frame_count() {
+        let schedule = build_isochronous_schedule(
+            48_000, 2, 2, 384, 2, UsbBusSpeed::Full, 1
+        ).unwrap();
+        assert_eq!(schedule.service_interval_micros, 2_000);
+        assert_eq!(schedule.packets[0].sample_frames, 96);
+    }
+
+    #[test]
+    fn high_speed_interval_doubles_each_binterval_step() {
+        let schedule = build_isochronous_schedule(
+            48_000, 2, 2, 0x0400, 2, UsbBusSpeed::High, 4
+        ).unwrap();
+        assert_eq!(schedule.service_interval_micros, 250);
+        assert_eq!(schedule.packets.iter().map(|p| p.sample_frames).sum::<u32>(), 48);
     }
 
     #[test]
