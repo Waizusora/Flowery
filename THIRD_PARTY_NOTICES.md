@@ -13,6 +13,7 @@ This file identifies the direct third-party dependencies used by Flowery. Transi
 | serde_json | 1.x | MIT OR Apache-2.0 |
 | base64 | 0.22 | MIT OR Apache-2.0 |
 | libc | 0.2 | MIT OR Apache-2.0 |
+| libusb1-sys | 0.7 (vendored libusb) | MIT (bindings); LGPL-2.1-or-later (libusb) |
 
 ## Android dependencies
 
@@ -29,3 +30,7 @@ Flowery uses the Noto Sans variable font for its application typography. The And
 - Upstream source: https://github.com/google/fonts/tree/86aced91de05cd4f96a06838124cca45be337b2b/ofl/notosans
 
 The bundled font covers its supported Latin, Greek, and Cyrillic glyphs. Other scripts use Android's platform font fallback; the Noto collection is modular and no single Noto Sans file covers every Unicode script.
+
+## libusb
+
+Flowery builds the libusb C library through the vendored `libusb1-sys` dependency for Android targets. The Rust bindings are MIT-licensed; the linked libusb library is LGPL-2.1-or-later. Distribution must include the applicable LGPL license text and corresponding source, and must satisfy the LGPL requirements for the application's static native linkage. Review the final packaging and relinking provisions before publishing APKs.
