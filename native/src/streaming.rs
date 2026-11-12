@@ -292,6 +292,33 @@ pub(super) fn decoder_ref(handle: jlong) -> Option<Arc<Mutex<StreamDecoder>>> {
     decoder_registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
 }
 
+/// Decode one bounded chunk and pack it into the exact USB Type I PCM subslot layout.
+#[cfg(target_os = "android")]
+pub(super) fn read_usb_pcm_chunk(
+    handle: jlong,
+    max_frames: usize,
+    valid_bits: u8,
+    subslot_bytes: u8,
+) -> Result<Vec<u8>, String> {
+    if max_frames == 0 || max_frames > 16_384 {
+        return Err("USB PCM chunk frame count must be between 1 and 16384".into());
+    }
+    let decoder = decoder_ref(handle).ok_or("Unknown stream decoder handle")?;
+    let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+    let format = crate::pcm_format::PcmFormat {
+        sample_rate: decoder.source_rate as u32,
+        channels: decoder.channels as u16,
+        valid_bits,
+        subslot_bytes,
+        little_endian: true,
+    }.validate().map_err(str::to_string)?;
+    let samples = decoder.read_frames(max_frames)?;
+    let mut output = Vec::with_capacity(samples.len() * usize::from(subslot_bytes));
+    crate::pcm_format::encode_usb_pcm(&samples, format, &mut output)
+        .map_err(str::to_string)?;
+    Ok(output)
+}
+
 
 #[cfg(target_os = "android")]
 struct StreamPumpWorker {
