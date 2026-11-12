@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -20,6 +21,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val sourceResolver = AudioSourceResolver(context)
 
     private val stopped = AtomicBoolean(false)
+    private val pauseRequested = AtomicBoolean(false)
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
@@ -53,6 +55,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val previousWorker = worker
         stop()
         stopped.set(false)
+        pauseRequested.set(false)
         pendingSeekMs.set(initialPositionMs.coerceAtLeast(0L).takeIf { it > 0L } ?: -1L)
         activeSegmentStartMs = segmentStartMs.coerceAtLeast(0L)
         activeSegmentEndMs = segmentEndMs ?: -1L
@@ -200,7 +203,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
-                if (startPaused) {
+                if (startPaused || pauseRequested.getAndSet(false)) {
                     check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 3).toInt() == 0) {
                         "The native playback session could not enter the paused state after output routing"
                     }
@@ -255,6 +258,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 sessionFailed = true
+                Log.e("FloweryDiagnostics", "PLAYBACK_ENGINE_FAILURE generation=$generation", error)
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 // Closing the native session stops and joins its AAudio decode/output workers.
@@ -305,7 +309,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun pause(): Boolean {
         val session = nativeSessionHandle
-        if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) return false
+        if (session == 0L) {
+            if (stopped.get() || worker?.isAlive != true) return false
+            pauseRequested.set(true)
+            return true
+        }
+        if (NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) return false
         paused = true
         onState("Paused")
         return true
@@ -337,6 +346,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
+        pauseRequested.set(false)
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
