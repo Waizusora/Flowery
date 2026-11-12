@@ -56,7 +56,8 @@ internal fun NowPlayingDestination(
     onRepeat: () -> Unit,
     onSeek: (Long) -> Unit,
     onInspect: (AudioTrackItem) -> Unit,
-    onEdit: () -> Unit
+    onEdit: () -> Unit,
+    onSearchLyrics: () -> Unit
  ) {
             Card(Modifier.fillMaxWidth().aspectRatio(1f), shape = RoundedCornerShape(28.dp),
                 colors = CardDefaults.cardColors(
@@ -66,9 +67,16 @@ internal fun NowPlayingDestination(
                     if (lyricsVisible) {
                         Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 10.dp),
                             horizontalAlignment = Alignment.CenterHorizontally) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = onSearchLyrics) {
+                                    Icon(Icons.Default.Search, contentDescription = null)
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Search lyrics")
+                                }
+                            }
                             if (lyrics.isEmpty()) {
                                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    Text("No synchronized LRC lyrics found.", color = Color(0xFF9CB2BF), textAlign = TextAlign.Center)
+                                    Text("No lyrics loaded. Search LRCLIB.", color = MaterialTheme.colorScheme.onPrimaryContainer, textAlign = TextAlign.Center)
                                 }
                             } else {
                                 BoxWithConstraints(
@@ -83,12 +91,27 @@ internal fun NowPlayingDestination(
                                     ) {
                                     itemsIndexed(lyrics, key = { index, line -> "${line.timeMs}-$index" }) { index, line ->
                                         val active = index == activeLyricIndex
+                                        val activeWordIndex = if (active) LrcParser.currentWordIndex(line, positionMs) else -1
+                                        val wordHighlightColor = MaterialTheme.colorScheme.primary
+                                        val lyricText = buildAnnotatedString {
+                                            if (line.words.isEmpty()) {
+                                                append(line.text.ifBlank { "♪" })
+                                            } else {
+                                                line.words.forEachIndexed { wordIndex, word ->
+                                                    if (wordIndex == activeWordIndex) {
+                                                        withStyle(SpanStyle(color = wordHighlightColor, fontWeight = FontWeight.ExtraBold)) {
+                                                            append(word.text)
+                                                        }
+                                                    } else append(word.text)
+                                                }
+                                            }
+                                        }
                                         Box(
                                             modifier = Modifier.fillMaxWidth().height(88.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                line.text.ifBlank { "♪" },
+                                                lyricText,
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = if (active) 1f else 0.58f),
                                                 fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
                                                 fontSize = if (active) 23.sp else 18.sp,

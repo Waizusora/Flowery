@@ -75,11 +75,19 @@ fun FloweryNavigation(
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
     var lyricsVisible by remember { mutableStateOf(false) }
+    var showLyricsSearch by remember { mutableStateOf(false) }
+    var downloadedLyrics by remember(selectedTrack?.uri) {
+        mutableStateOf(LyricsRepository.load(context, selectedTrack))
+    }
+    val displayLyrics = downloadedLyrics ?: lyrics
     val lyricListState = rememberLazyListState()
-    val activeLyricIndex = remember(lyrics, positionMs) { lyrics.indexOfLast { it.timeMs <= positionMs } }
+    val hasSynchronizedLyrics = displayLyrics.any { it.timeMs > 0L }
+    val activeLyricIndex = remember(displayLyrics, positionMs) {
+        if (hasSynchronizedLyrics) displayLyrics.indexOfLast { it.timeMs <= positionMs } else -1
+    }
     val lyricDensity = LocalDensity.current
-    LaunchedEffect(lyricsVisible, activeLyricIndex, lyrics.size) {
-        if (lyricsVisible && lyrics.isNotEmpty()) {
+    LaunchedEffect(lyricsVisible, activeLyricIndex, displayLyrics.size, hasSynchronizedLyrics) {
+        if (lyricsVisible && hasSynchronizedLyrics && displayLyrics.isNotEmpty()) {
             // Wait for a real, non-zero LazyColumn viewport. A single frame is
             // not sufficient on first entry or after the panel is resized.
             withFrameNanos { }
@@ -148,7 +156,7 @@ fun FloweryNavigation(
                     muted = muted,
                     lyricsVisible = lyricsVisible,
                     lyricListState = lyricListState,
-                    lyrics = lyrics,
+                    lyrics = displayLyrics,
                     activeLyricIndex = activeLyricIndex,
                     currentTag = currentTag,
                     albumArtBytes = albumArtBytes,
@@ -168,7 +176,8 @@ fun FloweryNavigation(
                     onRepeat = onRepeat,
                     onSeek = onSeek,
                     onInspect = onInspect,
-                    onEdit = onEdit
+                    onEdit = onEdit,
+                    onSearchLyrics = { showLyricsSearch = true }
                 )
                 Destination.FOLDERS -> FoldersDestination(
                     folders = folders,
@@ -211,6 +220,16 @@ fun FloweryNavigation(
             Spacer(Modifier.height(8.dp))
         }
     }
+    }
+    if (showLyricsSearch && selectedTrack != null) {
+        LyricsSearchDialog(
+            initialQuery = listOf(displayTitle, displayArtist).filter { it.isNotBlank() }.joinToString(" "),
+            onDismiss = { showLyricsSearch = false },
+            onDownload = { content, extension ->
+                downloadedLyrics = LyricsRepository.save(context, selectedTrack, extension, content)
+                showLyricsSearch = false
+            }
+        )
     }
 }
 

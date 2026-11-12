@@ -1,5 +1,5 @@
 use jni::objects::{JClass, JLongArray, JString};
-use jni::sys::{jint, jstring};
+use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
 use serde::Serialize;
 
@@ -120,6 +120,29 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLrc(
     match env.new_string(encoded) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
 }
 
+fn parse_plain_lyrics(content: &str) -> Vec<LyricLine> {
+    content.lines().map(|line| LyricLine {
+        time_ms: 0,
+        text: line.trim_end_matches('\r').to_owned(),
+        words: Vec::new(),
+    }).collect()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParsePlainLyrics(
+    mut env: JNIEnv, _class: JClass, content: JString,
+) -> jstring {
+    let content: String = match env.get_string(&content) {
+        Ok(value) => value.into(),
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string()); return std::ptr::null_mut(); }
+    };
+    let encoded = match serde_json::to_string(&parse_plain_lyrics(&content)) {
+        Ok(value) => value,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error.to_string()); return std::ptr::null_mut(); }
+    };
+    match env.new_string(encoded) { Ok(value) => value.into_raw(), Err(_) => std::ptr::null_mut() }
+}
+
 /// Finds the final lyric timestamp at or before the requested playback position.
 fn current_lyric_index(timestamps: &[i64], position_ms: i64) -> Option<usize> {
     if position_ms < 0 { return None; }
@@ -141,9 +164,25 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFindCurrentL
     current_lyric_index(&values, position_ms).and_then(|index| i32::try_from(index).ok()).unwrap_or(-1)
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFindCurrentLyricWordIndex(
+    mut env: JNIEnv, _class: JClass, timestamps: JLongArray, position_ms: jlong,
+) -> jint {
+    let length = match env.get_array_length(&timestamps) {
+        Ok(value) => value as usize,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string()); return -1; }
+    };
+    let mut values = vec![0_i64; length];
+    if let Err(error) = env.get_long_array_region(&timestamps, 0, &mut values) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", error.to_string()); return -1;
+    }
+    current_lyric_index(&values, position_ms)
+        .and_then(|index| i32::try_from(index).ok()).unwrap_or(-1)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{current_lyric_index, parse_lrc};
+    use super::{current_lyric_index, parse_lrc, parse_plain_lyrics};
 
     #[test]
     fn parses_multiple_timestamps_and_sorts_entries() {
@@ -198,6 +237,16 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].text, "");
         assert_eq!(lines[1].text, "Next");
+    }
+
+    #[test]
+    fn plain_lyrics_keep_lines_without_timestamps() {
+        let lines = parse_plain_lyrics("Verse one\n\nVerse two\r\n");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].text, "Verse one");
+        assert_eq!(lines[1].text, "");
+        assert_eq!(lines[2].text, "Verse two");
+        assert!(lines.iter().all(|line| line.time_ms == 0 && line.words.is_empty()));
     }
 
     #[test]

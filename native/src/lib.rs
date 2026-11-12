@@ -1,5 +1,6 @@
 mod streaming;
 mod lyrics;
+mod lyrics_api;
 mod library;
 mod catalog;
 mod queue;

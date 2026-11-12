@@ -3,7 +3,12 @@ object NativeAudio {
     init { System.loadLibrary("flowery_audio") }
     external fun nativeEngineVersion(): String
     external fun nativeParseLrc(content: String): String
+    external fun nativeParsePlainLyrics(content: String): String
+    external fun nativeParseLyricsFile(content: String): String
+    external fun nativeSearchLyrics(query: String): String
+    external fun nativeGetLyrics(id: Long): String
     external fun nativeFindCurrentLyricIndex(timestamps: LongArray, positionMs: Long): Int
+    external fun nativeFindCurrentLyricWordIndex(timestamps: LongArray, positionMs: Long): Int
     external fun nativeParseCue(content: String): String
     external fun nativeParseM3u(content: String): String
     external fun nativeParsePls(content: String): String
