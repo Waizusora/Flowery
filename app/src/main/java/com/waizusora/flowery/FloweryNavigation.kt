@@ -2,8 +2,8 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.graphics.BitmapFactory
-import android.widget.Toast
 import android.util.Base64
+import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -94,7 +94,7 @@ fun FloweryNavigation(
             withFrameNanos { }
             val viewportHeight = snapshotFlow { lyricListState.layoutInfo.viewportSize.height }
                 .first { it > 0 }
-            val targetIndex = activeLyricIndex.coerceIn(0, lyrics.lastIndex)
+            val targetIndex = activeLyricIndex.coerceIn(0, displayLyrics.lastIndex)
             val rowHeight = with(lyricDensity) { 88.dp.roundToPx() }
             val centerOffset = ((viewportHeight - rowHeight) / 2).coerceAtLeast(0)
             lyricListState.animateScrollToItem(targetIndex, scrollOffset = -centerOffset)
