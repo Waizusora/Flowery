@@ -71,6 +71,7 @@ fun FloweryNavigation(
             .getBoolean("welcome_complete", false) || folders.isNotEmpty()) Destination.PLAYER else Destination.WELCOME)
     }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
+    val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
     var lyricsVisible by remember { mutableStateOf(false) }
