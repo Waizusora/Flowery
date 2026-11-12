@@ -16,7 +16,15 @@ The player screen is specifically a synchronized-LRC view. It does not currently
 
 The lyrics panel background uses `MaterialTheme.colorScheme.primaryContainer`, so its rose color follows the active light or dark Soft Rose theme. Album artwork no longer determines the lyrics-panel background.
 
-Embedded lyric extraction, remote lyric search, lyric downloads, and writing LRC files are not implemented.
+## Downloaded lyrics
+
+The player can search LRCLIB and retrieve plain-text lyrics, synchronized LRC, and word-synchronized YAML lyrics. Downloads are parsed before they are written to app-private storage and are associated with the selected audio document URI. Unsupported, malformed, or empty lyric payloads are rejected with an in-app error message; an invalid download does not replace a previously saved lyric file. When downloaded lyrics are present, the lyrics view uses that list in preference to sidecar lyrics. Otherwise, it displays the track's sidecar LRC lyrics.
+
+Downloaded lyrics are stored under the application's private files directory. They are not written into the source audio file or uploaded by Flowery.
+
+## Last-selected track restoration
+
+Flowery persists the identity of the last selected track, including playlist or CUE entry details where applicable. On startup, the application resolves that identity against the restored library index and reloads available audio tags and sidecar lyrics. The player displays the embedded title when present, otherwise the indexed track title, and uses `Unknown artist` when artist metadata is absent. This restores track identity and metadata for display; it does not automatically restart audio playback.
 
 ## Audio tags
 

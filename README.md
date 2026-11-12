@@ -10,7 +10,8 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 - Automatic output-route detection from currently connected Android audio devices.
 - AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities.
 - Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
-- Metadata reading/editing and timestamped sidecar LRC lyrics.
+- Metadata reading/editing, timestamped sidecar LRC lyrics, and LRCLIB search/download for plain, synchronized, and word-synchronized lyrics.
+- Persistent last-selected track metadata restoration across application restarts.
 - Queue, seek, shuffle, repeat, and Android media-session controls.
 
 ## Technology
@@ -37,7 +38,9 @@ Flowery reads each file's sample rate and bit depth from its decoded stream meta
 
 ## Lyrics
 
-Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers.
+Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers. Users can search LRCLIB and download plain-text, synchronized LRC, or word-synchronized YAML lyrics. Downloaded lyrics are stored in app-private storage and associated with the selected audio URI; malformed or empty downloads are rejected without terminating the application. The lyrics view uses the downloaded lyric list when available and otherwise falls back to sidecar lyrics.
+
+The last selected track is persisted in app preferences. On application startup, Flowery restores the track selection and reloads its embedded metadata and sidecar lyrics when the document remains accessible. The player title falls back to the indexed track title when embedded title metadata is unavailable, and the artist falls back to `Unknown artist`.
 
 The lyrics panel uses the Soft Rose theme's `primaryContainer` color in light and dark themes.
 

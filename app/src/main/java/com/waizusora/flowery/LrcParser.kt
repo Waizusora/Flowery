@@ -24,6 +24,11 @@ object LrcParser {
         else -> parse(content)
     }
 
+    fun activeLineIndex(lines: List<LyricLine>, positionMs: Long): Int {
+        if (lines.isEmpty()) return -1
+        return lines.indexOfLast { it.timeMs <= positionMs }.coerceAtLeast(0)
+    }
+
     private fun parseEncoded(encoded: String): List<LyricLine> {
         val entries = JSONArray(encoded)
         return buildList(entries.length()) {

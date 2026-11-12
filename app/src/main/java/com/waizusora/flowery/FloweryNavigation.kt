@@ -2,6 +2,7 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.graphics.BitmapFactory
+import android.widget.Toast
 import android.util.Base64
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -83,7 +84,7 @@ fun FloweryNavigation(
     val lyricListState = rememberLazyListState()
     val hasSynchronizedLyrics = displayLyrics.any { it.timeMs > 0L }
     val activeLyricIndex = remember(displayLyrics, positionMs) {
-        if (hasSynchronizedLyrics) displayLyrics.indexOfLast { it.timeMs <= positionMs } else -1
+        if (hasSynchronizedLyrics) LrcParser.activeLineIndex(displayLyrics, positionMs) else -1
     }
     val lyricDensity = LocalDensity.current
     LaunchedEffect(lyricsVisible, activeLyricIndex, displayLyrics.size, hasSynchronizedLyrics) {
@@ -226,8 +227,18 @@ fun FloweryNavigation(
             initialQuery = listOf(displayTitle, displayArtist).filter { it.isNotBlank() }.joinToString(" "),
             onDismiss = { showLyricsSearch = false },
             onDownload = { content, extension ->
-                downloadedLyrics = LyricsRepository.save(context, selectedTrack, extension, content)
-                showLyricsSearch = false
+                runCatching { LyricsRepository.save(context, selectedTrack, extension, content) }
+                    .onSuccess { parsed ->
+                        downloadedLyrics = parsed
+                        showLyricsSearch = false
+                    }
+                    .onFailure { error ->
+                        Toast.makeText(
+                            context,
+                            error.message ?: "Unable to save downloaded lyrics.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
             }
         )
     }

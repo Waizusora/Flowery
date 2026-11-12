@@ -515,7 +515,10 @@ class MainActivity : ComponentActivity() {
                     selectedTrack?.playlistOrder == track.playlistOrder) {
                     currentTag = tag
                     lyrics = parsedLyrics
-                    if (!hasPlaybackSession) status = "Ready to resume · ${track.title}"
+                    nowPlayingTitle = tag?.title?.takeIf { it.isNotBlank() }
+                        ?: track.title.ifBlank { "Unknown track" }
+                    nowPlayingArtist = tag?.artist?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+                    if (!hasPlaybackSession) status = "Ready to resume · $nowPlayingTitle"
                 }
             }
         }

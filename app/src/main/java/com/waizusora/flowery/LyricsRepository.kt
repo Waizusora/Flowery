@@ -12,9 +12,15 @@ internal object LyricsRepository {
 
     fun save(context: Context, track: AudioTrackItem, extension: String, content: String): List<LyricLine> {
         require(extension in setOf("lrc", "txt", "lyricsfile.yaml")) { "Unsupported lyrics format" }
+        require(content.isNotBlank()) { "Downloaded lyrics are empty." }
+        val parsed = runCatching { LrcParser.parseDownloaded(content, extension) }
+            .getOrElse { error ->
+                throw IllegalArgumentException("Downloaded lyrics could not be parsed as .$extension.", error)
+            }
+        require(parsed.isNotEmpty()) { "Downloaded lyrics contain no readable lyric lines." }
         val file = fileFor(context, track, extension)
         file.writeText(content, Charsets.UTF_8)
-        return LrcParser.parseDownloaded(content, extension)
+        return parsed
     }
 
     fun load(context: Context, track: AudioTrackItem?): List<LyricLine>? {
