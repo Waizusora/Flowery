@@ -34,6 +34,14 @@ struct AudioControlInterface {
 /// Resolves the playback terminal's clock source from UAC2 class-specific
 /// descriptors. Only a direct Clock Source connection is currently supported.
 pub fn parse_playback_clock_info(descriptors: &[u8]) -> Result<Uac2ClockInfo, String> {
+    parse_playback_clock_info_for_interface(descriptors, None)
+}
+
+/// Resolves the clock path for a selected AudioStreaming interface.
+pub fn parse_playback_clock_info_for_interface(
+    descriptors: &[u8],
+    streaming_interface_number: Option<u8>,
+) -> Result<Uac2ClockInfo, String> {
     let mut offset = 0usize;
     let mut current_interface: Option<(u8, u8, u8, u8)> = None;
     let mut ac_interfaces = Vec::<AudioControlInterface>::new();
@@ -104,6 +112,9 @@ pub fn parse_playback_clock_info(descriptors: &[u8]) -> Result<Uac2ClockInfo, St
 
     let mut matches = Vec::new();
     for alt in streaming {
+        if streaming_interface_number.is_some_and(|number| number != alt.interface_number) {
+            continue;
+        }
         let Some(terminal_link) = alt.terminal_link else { continue };
         for ac in &ac_interfaces {
             if ac.input_terminal_type.get(&terminal_link) != Some(&0x0101) {
