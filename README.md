@@ -8,6 +8,7 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 
 - Local music libraries through Android's Storage Access Framework (SAF).
 - Automatic output-route detection from currently connected Android audio devices.
+- USB Audio Class discovery through Android USB Host, including VID/PID, Audio Control/Streaming interfaces, and isochronous endpoint direction.
 - AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities.
 - Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
 - Metadata reading/editing, timestamped sidecar LRC lyrics, and LRCLIB search/download for plain, synchronized, and word-synchronized lyrics.
@@ -35,6 +36,12 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 `SAF document → Symphonia decode → source-rate PCM conversion → bounded Rust PCM ring → AAudio → Android audio routing`
 
 Flowery reads each file's sample rate and bit depth from its decoded stream metadata, then configures its AAudio stream at the source sample rate. Android may resample or otherwise convert the stream downstream according to the active device and system audio policy. The AAudio output boundary uses signed integer PCM
+
+## USB audio discovery
+
+Flowery enumerates connected USB Audio Class devices independently from Android's USB audio output routes. The USB inventory reports VID/PID, interface subclass/protocol, and endpoint transfer direction. Android output capabilities are reported separately because the public `AudioDeviceInfo` API does not expose USB VID/PID for a reliable cross-API device match.
+
+An isochronous OUT endpoint is only a candidate indicator. It does not prove that an application can claim the interface or stream USB audio exclusively. Android's public USB Host API does not provide isochronous transfer support, so this discovery feature does not implement direct USB Audio Class streaming or guarantee bit-perfect output. The existing AAudio backend remains the playback backend.
 
 ## Lyrics
 
