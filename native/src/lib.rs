@@ -44,6 +44,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOpenUsbAudio
 
 #[cfg(target_os = "android")]
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbBusSpeed(
+    _env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
+) -> jint {
+    crate::usb_libusb::bus_speed(handle)
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession(
     _env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
 ) {

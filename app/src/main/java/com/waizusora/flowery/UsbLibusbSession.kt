@@ -43,6 +43,20 @@ internal class UsbLibusbSession private constructor(
         }
     }
 
+    /** Returns the negotiated USB bus speed: low, full, high, super, super-plus, or unknown. */
+    @Synchronized
+    fun busSpeed(): String {
+        if (closed) return "unknown"
+        return when (NativeAudio.nativeGetUsbBusSpeed(nativeHandle)) {
+            1 -> "low"
+            2 -> "full"
+            3 -> "high"
+            4 -> "super"
+            5 -> "super-plus"
+            else -> "unknown"
+        }
+    }
+
     @Synchronized
     fun playbackStatus(): String {
         if (closed) return """{"status":2,"error":"USB session is closed"}"""
