@@ -6,7 +6,7 @@ import android.media.AudioManager
 import android.os.Build
 
 internal enum class AndroidOutputTarget(val preferenceValue: String, val displayName: String) {
-    AUX("aux", "AUX"), SPEAKER("speaker", "Speaker"), BLUETOOTH("bluetooth", "Bluetooth");
+    USB("usb", "USB DAC"), AUX("aux", "AUX"), SPEAKER("speaker", "Speaker"), BLUETOOTH("bluetooth", "Bluetooth");
 
     companion object {
         fun fromPreference(value: String?): AndroidOutputTarget =
@@ -45,6 +45,7 @@ internal class AndroidOutputRouteResolver(context: Context) {
     fun resolve(target: AndroidOutputTarget): AndroidOutputRoute {
         val candidates = outputCandidates()
         val selected = when (target) {
+            AndroidOutputTarget.USB -> AndroidOutputRouteSelection.selectUsb(candidates)
             AndroidOutputTarget.AUX -> resolveAux(candidates)
             AndroidOutputTarget.SPEAKER -> resolveSpeaker(candidates)
             AndroidOutputTarget.BLUETOOTH -> resolveBluetooth(candidates)
@@ -65,9 +66,17 @@ internal class AndroidOutputRouteResolver(context: Context) {
 internal object AndroidOutputRouteSelection {
     fun detectCurrent(candidates: List<OutputDeviceCandidate>): AndroidOutputTarget =
         when {
+            selectUsb(candidates) != null -> AndroidOutputTarget.USB
             selectAux(candidates) != null -> AndroidOutputTarget.AUX
             selectBluetooth(candidates) != null -> AndroidOutputTarget.BLUETOOTH
             else -> AndroidOutputTarget.SPEAKER
+        }
+
+    fun selectUsb(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
+        candidates.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_USB_ACCESSORY
         }
 
     fun selectAux(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
