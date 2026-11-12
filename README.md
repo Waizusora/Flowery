@@ -1,19 +1,17 @@
-# Aux Speaker Work Bluetooth untested USB DAC fail
 # Flowery
 
-Flowery is an Android music player focused on local music, transparent audio routing, and high-quality playback. It combines a Jetpack Compose interface with a native Rust audio engine and direct USB DAC support.
+Flowery is an Android music player for local audio libraries. It uses Kotlin and Jetpack Compose for the application interface and a Rust audio engine for decoding, resampling, playback scheduling, and Android AAudio output.
 
-> **Development status:** Flowery is under active development. Automated builds and tests do not guarantee compatibility with every Android device, audio format, or USB DAC. Physical-device testing and external digital capture are still required to verify hardware-level audio behavior.
+> **Development status:** Flowery is under active development. CI validates software builds and automated tests; it does not replace playback testing on physical Android devices.
 
 ## Highlights
 
-- **Local music library** — Add and scan folders through Android's Storage Access Framework (SAF). No MediaStore library is used.
-- **Native playback engine** — Rust handles audio decoding, streaming resampling, equalization, and bounded PCM buffering.
-- **Audio output** — AAudio for Android audio routes and direct USB Audio Class (UAC) transport for supported USB DACs.
-- **Automatic Bit-perfect detection** — No manual toggle. Flowery evaluates the connected, permissioned USB DAC and reports Bit-perfect only after the native playback producer confirms source-preserving output. External digital capture is still needed for hardware verification.
-- **Three-band tone controls** — Bass, Mid, and Treble sliders mapped smoothly onto 31 ISO one-third-octave peaking filters, with ±12 dB gain range, explicit enable/bypass control, and bounded output-queue latency.
-- **Metadata and lyrics** — Read and edit supported tags with Lofty and display synchronized sidecar LRC lyrics.
-- **Playback controls** — Queue, seek, shuffle, repeat, and Android media-session controls. Natural end-of-queue completion stops playback while keeping the player available for replay or track selection.
+- Local music libraries through Android's Storage Access Framework (SAF).
+- Three Android-managed output targets: wired AUX, built-in speaker, and Bluetooth.
+- AAudio output using signed integer PCM: 16-bit for sources up to 16-bit, and packed 24-bit for higher-depth sources on supported Android versions. Older Android versions use 16-bit output.
+- Native Rust streaming decode, resampling, bounded buffering, and playback-session scheduling.
+- Metadata reading/editing and synchronized sidecar LRC lyrics.
+- Queue, seek, shuffle, repeat, and Android media-session controls.
 
 ## Technology
 
@@ -23,9 +21,8 @@ Flowery is an Android music player focused on local music, transparent audio rou
 | UI | Jetpack Compose, Material 3 |
 | Audio decoding | Symphonia (Rust) |
 | Sample-rate conversion | Rubato (Rust) |
-| DSP | Native Rust 31-band ISO one-third-octave equalizer with three-band controls |
-| Android audio output | AAudio |
-| Direct USB audio | C++ libusb transport with Rust playback pipeline |
+| Android audio output | AAudio NDK API |
+| Native integration | Rust JNI via the Android NDK |
 | Audio tags | Lofty |
 | Folder access | Android Storage Access Framework |
 | UI typeface | Noto Sans (SIL Open Font License 1.1) |
@@ -34,21 +31,18 @@ Flowery is an Android music player focused on local music, transparent audio rou
 
 ## Audio pipeline
 
-The standard Android playback path is:
+`SAF document → Symphonia decode → Rubato resampling when required → bounded Rust PCM ring → AAudio → Android audio routing`
 
-`SAF audio file → Symphonia decoder → Rubato resampler (when needed) → 31-band EQ → bounded PCM ring buffer → AAudio`
+Flowery does not open USB devices, request USB permissions, implement UAC1/UAC2, or provide a direct USB DAC output path. Android owns device routing and downstream audio policy for AUX, speaker, and Bluetooth.
 
-For supported USB DACs, Flowery automatically checks connected devices for an active USB permission grant and can select a direct USB audio path. Output profiles are negotiated from the device's advertised capabilities; support depends on the DAC descriptors, source format, and synchronization mode. The user does not enable Bit-perfect manually.
-
-Bit Perfect eligibility is disabled by processing that changes samples, including equalization, software gain, and resampling. A Bit Perfect indicator is not proof of the complete physical USB signal path.
+The application requests integer PCM at the AAudio boundary. Internal decoder and resampler processing may use floating-point samples; that does not mean the output stream is configured as Float32.
 
 ## Build requirements
 
 - JDK 17
 - Android SDK Platform 35 and Build Tools 35.0.0
 - Android NDK 27.2.12479018
-- CMake 3.22.1
-- Rust toolchain compatible with Rubato 5 (rustc 1.87 or newer)
+- Rust toolchain compatible with the pinned dependencies
 - Rust Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
 - `cargo-ndk`
 
@@ -56,23 +50,20 @@ See [BUILDING.md](BUILDING.md) for setup and build instructions.
 
 ## Documentation
 
-- [Architecture](ARCHITECTURE.md) — application and native component design
-- [Audio engine](AUDIO_ENGINE.md) — decoding, DSP, buffering, output, and seeking
-- [Library and metadata](LIBRARY_AND_METADATA.md) — folder scanning, tags, and lyrics
-- [Build instructions](BUILDING.md) — development environment and build steps
-- [Refactor status](docs/REFACTOR_STATUS.md) — implementation progress
-- [Third-party notices](THIRD_PARTY_NOTICES.md) — dependency and font notices
+- [Architecture](ARCHITECTURE.md)
+- [Audio engine](AUDIO_ENGINE.md)
+- [Library and metadata](LIBRARY_AND_METADATA.md)
+- [Build instructions](BUILDING.md)
+- [Refactor status](docs/REFACTOR_STATUS.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Testing and limitations
 
-GitHub Actions builds the Android application and native Rust components and runs the configured automated tests. CI success confirms only that those checks passed; it does not replace testing on physical Android devices and USB DACs.
+GitHub Actions runs native Rust tests, the Kotlin/Rust JNI contract check, Android JVM unit tests, native Android library builds, and debug/release APK packaging. Passing CI does not establish real-device AAudio stability, route switching, or device-specific PCM format support.
 
 Known limitations include:
 
-- Audio format support depends on the codecs enabled in the Symphonia build. A recognized file extension does not guarantee that a file can be decoded.
-- Strict USB Bit-Perfect requires a compatible source-preserving UAC profile, flat EQ, matching PCM format, and confirmed DAC hardware volume. Unsupported formats or USB profile negotiation failures use AAudio instead.
-- Direct USB profile-negotiation failures may fall back to AAudio before the first USB transfer. AAudio requests exclusive sharing first and retries shared mode if exclusive opening fails.
-- USB transport failures after playback has started are reported instead of silently switching output routes.
+- Audio format support depends on the codecs enabled in the Symphonia build.
 - AAudio shared mode may be mixed or resampled by Android.
 - Gapless playback and crossfade are not implemented.
 - Embedded-lyrics extraction, remote lyric search, and lyric downloading are not implemented.
@@ -80,7 +71,4 @@ Known limitations include:
 
 ## License
 
-See the repository's [LICENSE](LICENSE) file and the applicable licenses of third-party dependencies before redistributing Flowery. Dependency notices and the Noto Sans SIL Open Font License 1.1 text are provided in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [LICENSES/NotoSans-OFL.txt](LICENSES/NotoSans-OFL.txt).
-\n\n### Enhanced LRC playback\n\nThe native lyrics parser recognizes enhanced angle-bracket word timestamps as well as standard line timestamps. Timestamp markers are hidden from displayed text and drive word highlighting; the active lyric line remains centered during playback. Valid `[offset:+/-milliseconds]` metadata is applied to line and word timestamps.\n
-
-Playback termination diagnostics and logcat capture instructions are documented in [docs/PLAYBACK_DIAGNOSTICS.md](docs/PLAYBACK_DIAGNOSTICS.md).
+See [LICENSE](LICENSE) and the applicable third-party licenses. Dependency and font notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

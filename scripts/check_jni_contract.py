@@ -35,26 +35,14 @@ def verify(label: str, declared: set[str], exported: set[str]) -> bool:
 
 
 rust_sources = sorted((ROOT / "native" / "src").rglob("*.rs"))
-cpp_sources = sorted((ROOT / "app" / "src" / "main" / "cpp").rglob("*.cpp"))
-
 rust_symbols = exports(
     rust_sources,
     r"Java_com_waizusora_flowery_NativeAudio_(native[A-Za-z0-9_]+)",
 )
-cpp_symbols = exports(
-    cpp_sources,
-    r"Java_com_waizusora_flowery_UsbDacNative_(native[A-Za-z0-9_]+)",
-)
-
 ok = verify(
     "NativeAudio",
     declarations(ROOT / "app/src/main/java/com/waizusora/flowery/NativeAudio.kt"),
     rust_symbols,
 )
-ok = verify(
-    "UsbDacNative",
-    declarations(ROOT / "app/src/main/java/com/waizusora/flowery/UsbDacNative.kt"),
-    cpp_symbols,
-) and ok
 
 raise SystemExit(0 if ok else 1)

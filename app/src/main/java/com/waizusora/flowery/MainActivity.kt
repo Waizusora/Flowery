@@ -113,10 +113,6 @@ class MainActivity : ComponentActivity() {
             }
             .onFailure { error -> Log.e("FloweryDiagnostics", "Unable to read historical process exit reasons", error) }
     }
- else {
-            getParcelableExtra(UsbManager.EXTRA_DEVICE)
-        }
-
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) addFolder(uri)
     }

@@ -6,7 +6,6 @@
 - Gradle 8.9
 - Android SDK Platform 35 and Build Tools 35.0.0
 - Android NDK 27.2.12479018
-- CMake 3.22.1
 - Rust toolchain compatible with Rubato 5 (rustc 1.87 or newer)
 - Rust targets `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
 - `cargo-ndk`
@@ -28,7 +27,7 @@ The CI workflow generates the Cargo lockfile before running locked tests. If you
 
 ## Android APKs
 
-With the Android SDK, NDK and CMake installed:
+With the Android SDK and NDK installed:
 
 ```bash
 gradle --no-daemon assembleDebug assembleRelease
@@ -42,7 +41,7 @@ Gradle reads `FLOWERY_KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY
 
 ## GitHub Actions
 
-`.github/workflows/build.yml` runs on pushes to `main`, pull requests, tags matching `v*`, and manual dispatch. It configures JDK 17, Android SDK/NDK/CMake and Rust Android targets, runs native unit tests, builds native libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, then assembles debug and release APKs. APKs are uploaded as the `flowery-apks` artifact. A `v*` tag also publishes a GitHub Release.
+`.github/workflows/build.yml` runs on pushes to `main`, pull requests, tags matching `v*`, and manual dispatch. It configures JDK 17, Android SDK/NDK and Rust Android targets, runs native unit tests, builds native libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, then assembles debug and release APKs. APKs are uploaded as the `flowery-apks` artifact. A `v*` tag also publishes a GitHub Release.
 
 For signed CI releases, configure repository secrets `KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, and `KEY_PASSWORD`. Without them, CI still builds an unsigned release APK.
 
