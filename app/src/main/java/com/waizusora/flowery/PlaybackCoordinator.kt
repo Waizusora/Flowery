@@ -61,7 +61,9 @@ internal class PlaybackCoordinator(
 
     @Synchronized
     fun pause(): Boolean {
-        if (state() != State.PLAYING || !engine.pause()) return false
+        val current = state()
+        if (current == State.PREPARING) return engine.pause()
+        if (current != State.PLAYING || !engine.pause()) return false
         transition(EVENT_PAUSE)
         return true
     }
