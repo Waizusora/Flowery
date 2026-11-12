@@ -11,6 +11,7 @@ mod pcm_format;
 mod playback_policy;
 mod usb_audio;
 mod usb_isochronous;
+mod usb_feedback;
 #[cfg(target_os = "android")]
 mod usb_libusb;
 #[cfg(target_os = "android")]
