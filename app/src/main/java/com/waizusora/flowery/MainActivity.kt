@@ -254,7 +254,6 @@ class MainActivity : ComponentActivity() {
                 displayTitle = nowPlayingTitle,
                 displayArtist = nowPlayingArtist,
                 lyrics = lyrics,
-                volume = volume,
                 positionMs = playbackPositionMs,
                 durationMs = playbackDurationMs,
                 onAddFolder = { folderPicker.launch(null) },
