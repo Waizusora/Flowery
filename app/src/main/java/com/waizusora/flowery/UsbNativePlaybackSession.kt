@@ -91,7 +91,8 @@ internal class UsbNativePlaybackSession private constructor(
                     lastError = SecurityException("USB permission is required for ${device.productName ?: device.deviceName}")
                     continue
                 }
-                val probe = manager.openDevice(device) ?: run {
+                val probe = manager.openDevice(device)
+                if (probe == null) {
                     lastError = IllegalStateException("Unable to open USB device ${device.deviceName}")
                     continue
                 }
@@ -112,7 +113,8 @@ internal class UsbNativePlaybackSession private constructor(
                     lastError = IllegalStateException(planJson.optString("error", "USB DAC does not advertise the source PCM format"))
                     continue
                 }
-                val plan = planJson.optJSONObject("plan") ?: run {
+                val plan = planJson.optJSONObject("plan")
+                if (plan == null) {
                     lastError = IllegalStateException("Native USB planner returned an incomplete playback plan")
                     continue
                 }
@@ -139,8 +141,9 @@ internal class UsbNativePlaybackSession private constructor(
                 val opened = UsbLibusbSession.open(
                     manager, device, interfaceNumber, alternate
                 )
-                val native = opened.getOrElse {
-                    lastError = it
+                val native = opened.getOrNull()
+                if (native == null) {
+                    lastError = opened.exceptionOrNull()
                     continue
                 }
                 return Result.success(
