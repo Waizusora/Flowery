@@ -7,7 +7,7 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 ## Highlights
 
 - Local music libraries through Android's Storage Access Framework (SAF).
-- Automatic output-route detection from currently connected Android audio devices.
+- Automatic output-route detection from currently connected Android audio devices, with USB DAC priority.
 - USB Audio Class discovery through Android USB Host, including VID/PID, Audio Control/Streaming interfaces, and isochronous endpoint direction.
 - AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities.
 - Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
@@ -37,12 +37,13 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 
 Flowery reads each file's sample rate and bit depth from its decoded stream metadata, then configures its AAudio stream at the source sample rate. Android may resample or otherwise convert the stream downstream according to the active device and system audio policy. The AAudio output boundary uses signed integer PCM
 
-## USB audio discovery
+## USB audio discovery and exclusive output
 
-Flowery enumerates connected USB Audio Class devices independently from Android's USB audio output routes. The USB inventory reports VID/PID, interface subclass/protocol, and endpoint transfer direction. Android output capabilities are reported separately because the public `AudioDeviceInfo` API does not expose USB VID/PID for a reliable cross-API device match.
+Flowery enumerates connected USB Audio Class devices independently from Android's USB audio output routes. When Android exposes a USB DAC as an output device, Flowery selects that route ahead of AUX, Bluetooth, and the built-in speaker, then requests the exact Android output device through AAudio in EXCLUSIVE sharing mode. USB playback is fail-closed: if AAudio cannot open that USB device in EXCLUSIVE mode, Flowery reports an error and does not retry in SHARED mode.
 
-An isochronous OUT endpoint is only a candidate indicator. It does not prove that an application can claim the interface or stream USB audio exclusively. Android's public USB Host API does not provide isochronous transfer support, so this discovery feature does not implement direct USB Audio Class streaming or guarantee bit-perfect output. The existing AAudio backend remains the playback backend.
+This is Android-managed USB audio output through AAudio, not a raw USB Audio Class host driver. It does not claim the USB interface, submit isochronous URBs directly, or bypass Android audio policy. AAudio's EXCLUSIVE sharing mode and integer PCM configuration are necessary route conditions, not proof that the entire device-to-DAC path is bit-perfect; Android vendor DSP, firmware, clocking, and DAC behavior still require physical-device validation.
 
+The USB inventory reports VID/PID, interface subclass/protocol, and endpoint transfer direction. Android output capabilities are reported separately because the public AudioDeviceInfo API does not expose USB VID/PID for a reliable cross-API device match. An isochronous OUT endpoint is only a candidate indicator; it does not prove that an application can claim the interface or stream USB audio directly. Android's public USB Host API does not provide isochronous transfer support.
 ## Lyrics
 
 Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers. Users can search LRCLIB and download plain-text, synchronized LRC, or word-synchronized YAML lyrics. Downloaded lyrics are stored in app-private storage and associated with the selected audio URI; malformed or empty downloads are rejected without terminating the application. The lyrics view uses the downloaded lyric list when available and otherwise falls back to sidecar lyrics.
