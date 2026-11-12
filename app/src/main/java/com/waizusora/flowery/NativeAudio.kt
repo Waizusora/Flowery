@@ -7,7 +7,7 @@ object NativeAudio {
     external fun nativeOpenUsbAudioSession(fileDescriptor: Int, interfaceNumber: Int, alternateSetting: Int): Long
     external fun nativeCloseUsbAudioSession(handle: Long)
     external fun nativeGetUsbBusSpeed(handle: Long): Int
-    external fun nativeStartUsbIsochronousPlayback(session: Long, decoder: Long, endpoint: Int, rawMaxPacketSize: Int, interval: Int, sampleRate: Int, channels: Int, validBits: Int, subslotBytes: Int): Int
+    external fun nativeStartUsbIsochronousPlayback(session: Long, decoder: Long, endpoint: Int, rawMaxPacketSize: Int, interval: Int, sampleRate: Int, channels: Int, validBits: Int, subslotBytes: Int, initialPositionMs: Long): Int
     external fun nativeSeekUsbPlayback(session: Long, decoder: Long, positionMs: Long): Long
     external fun nativePauseUsbPlayback(session: Long): Int
     external fun nativeResumeUsbPlayback(session: Long): Int
