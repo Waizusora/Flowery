@@ -14,8 +14,6 @@ This file identifies the direct third-party dependencies used by Flowery. Transi
 | base64 | 0.22 | MIT OR Apache-2.0 |
 | libc | 0.2 | MIT OR Apache-2.0 |
 
-Rubato and audioadapter-buffers are no longer dependencies. Flowery does not perform application-side sample-rate conversion; it requests the decoded source rate from AAudio and leaves downstream conversion to Android.
-
 ## Android dependencies
 
 The Android application uses AndroidX and Jetpack Compose libraries, including Activity Compose, Compose UI and Material 3, Lifecycle, Room, DataStore, Core KTX, Media, and DocumentFile. These libraries are distributed under the Apache License 2.0. Android platform APIs, including AAudio from the Android NDK, are platform components.
