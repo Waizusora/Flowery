@@ -32,6 +32,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
     @Volatile private var usbPlaybackSession: UsbNativePlaybackSession? = null
+    @Volatile private var usbRouteActive = false
     @Volatile private var paused = false
     private val pendingSeekMs = AtomicLong(-1L)
     @Volatile private var activeSegmentStartMs = 0L
@@ -113,7 +114,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // preference here: the playback stream must follow the currently attached route.
                 val selectedTarget = routeResolver.detectCurrent()
                 if (selectedTarget == AndroidOutputTarget.USB) {
-                    val targetPositionMs = segmentStartMs + initialPositionMs.coerceAtLeast(0L)
+                    usbRouteActive = true
+                    val queuedSeek = pendingSeekMs.getAndSet(-1L)
+                    val relativeStartMs = if (queuedSeek >= 0L) queuedSeek else initialPositionMs
+                    val targetPositionMs = segmentStartMs + relativeStartMs.coerceAtLeast(0L)
                     if (targetPositionMs > 0L) {
                         val seeked = NativeAudio.nativeSeekStreamDecoder(handle, targetPositionMs)
                         check(seeked >= 0L) { "Unable to seek the decoder to the requested USB playback start position" }
@@ -314,6 +318,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPlaybackSession?.let { usb ->
                     runCatching { usb.close() }
                     if (usbPlaybackSession === usb) usbPlaybackSession = null
+                    usbRouteActive = false
                 }
                 if (sessionHandle != 0L) {
                     if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
@@ -345,7 +350,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun seekTo(positionMs: Long) {
         val boundedPosition = positionMs.coerceAtLeast(0L)
-        if (decoderHandle == 0L) {
+        if (decoderHandle == 0L || (usbRouteActive && usbPlaybackSession == null)) {
             pendingSeekMs.set(boundedPosition)
             return
         }
@@ -432,6 +437,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputDurationMs = 0L
         outputSampleRate = 0
         pendingSeekMs.set(-1L)
+        usbRouteActive = false
         activeSegmentStartMs = 0L
         activeSegmentEndMs = -1L
         paused = false
