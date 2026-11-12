@@ -2,7 +2,7 @@ name: Build Flowery
 
 on:
   push:
-    branches: [main, trial]
+    branches: [main, trial, dev]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
