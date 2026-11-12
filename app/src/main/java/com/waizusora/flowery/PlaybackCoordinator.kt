@@ -32,7 +32,10 @@ internal class PlaybackCoordinator(
     private val engine = FloweryPlayer(context) { message ->
         if (!closed.get()) when {
             message.startsWith("Playing") -> transition(EVENT_START)
-            message.startsWith("Paused") -> transition(EVENT_PAUSE)
+            message.startsWith("Paused") -> {
+                if (state() == State.PREPARING) transition(EVENT_START)
+                transition(EVENT_PAUSE)
+            }
             message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
                 transition(EVENT_FAIL)
             message == "Playback finished" -> transition(EVENT_FINISH)
