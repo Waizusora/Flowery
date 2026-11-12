@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -16,7 +17,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private var worker: Thread? = null
     private val volumeController = OutputVolumeController(context)
-    private val diagnostics = UsbPlaybackDiagnostics(context)
     private val sourceResolver = AudioSourceResolver(context)
 
     private val stopped = AtomicBoolean(false)
@@ -30,7 +30,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
     @Volatile private var paused = false
-    private val pendingSeekMs = UsbSeekRequestMailbox()
+    private val pendingSeekMs = AtomicLong(-1L)
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
 
@@ -90,9 +90,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
-                // Normal playback always uses Android-managed output. USB presence and
-                // permissions do not gate decoder/session creation or choose transport.
-                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, false)
+                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
                 check(preparedSession.size == 7) { "Rust returned an invalid prepared playback session" }
                 sessionHandle = preparedSession[0]
                 val sourceRate = preparedSession[2].toInt()
@@ -116,8 +114,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 )
                 val outputRoute = AndroidOutputRouteResolver(context).resolve(selectedTarget)
                 val supportedRates = outputRoute.supportedSampleRates
-                // Android-managed USB, AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
-                // Per-DAC software gain is reserved for the direct libusb route.
+                // Android-managed AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
                 // AAudio receives integer PCM for every Android-managed output target.
@@ -205,7 +202,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "Unable to start the Rust-owned segmented AAudio decode scheduler"
                 }
                 // Forward a seek requested while the decoder/session was still opening.
-                pendingSeekMs.take()?.let { requested ->
+                pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { requested ->
                     val epoch = NativeAudio.nativeRequestPlaybackSessionSeek(
                         sessionHandle,
                         segmentStartMs + requested.coerceAtLeast(0L),
@@ -270,7 +267,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 sessionFailed = true
-                diagnostics.record("PLAYBACK_ERROR type=${error.javaClass.simpleName} message=${error.message ?: "no message"}")
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 // Closing the native session stops and joins its AAudio decode/output workers.
@@ -327,7 +323,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             check(epoch >= 0L) { "The native AAudio session rejected the seek request" }
             onState("Seeking…")
         } else {
-            pendingSeekMs.request(boundedPosition)
+            pendingSeekMs.set(boundedPosition)
             onState("Seeking…")
         }
     }
@@ -363,18 +359,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         return activeWorker !== Thread.currentThread()
     }
 
-    /**
-     * Retries an encoded session close that previously failed to confirm native
-     * transfer reclamation. The pipeline reference is retained until close succeeds.
-     */
-
-
-    /**
-     * Retries a PCM USB teardown that previously failed to confirm native
-     * transfer reclamation or Android connection release.
-     */
-
-
     fun stop() {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
@@ -383,7 +367,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         worker?.interrupt()
         outputDurationMs = 0L
         outputSampleRate = 0
-        pendingSeekMs.clear()
+        pendingSeekMs.set(-1L)
         activeSegmentStartMs = 0L
         activeSegmentEndMs = -1L
         paused = false

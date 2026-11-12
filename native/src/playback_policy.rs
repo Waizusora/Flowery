@@ -1,54 +1,14 @@
 use jni::objects::{JClass, JIntArray};
-use jni::sys::{jboolean, jint, jlong};
+use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 
 const MIN_OUTPUT_RING_CAPACITY_FRAMES: u64 = 32_768;
 const MIN_AAUDIO_QUEUE_TARGET_FRAMES: u64 = 8_192;
 
-const ROUTE_ANDROID_FLOAT32: i32 = 0;
-const ROUTE_USB_ENCODED_AC3: i32 = 1;
-const ROUTE_USB_SOURCE_PRESERVING: i32 = 2;
-const ROUTE_USB_FLOAT32: i32 = 3;
+const ROUTE_ANDROID_AAUDIO: i32 = 0;
 
-pub(super) fn select_playback_route(
-    usb_direct_available: bool,
-    is_ac3: bool,
-    lossless_source: bool,
-    source_bits: i32,
-    channels: i32,
-) -> i32 {
-    if !usb_direct_available {
-        return ROUTE_ANDROID_FLOAT32;
-    }
-    if is_ac3 {
-        return ROUTE_USB_ENCODED_AC3;
-    }
-    if lossless_source
-        && matches!(source_bits, 8 | 16 | 20 | 24 | 32)
-        && (1..=8).contains(&channels)
-    {
-        return ROUTE_USB_SOURCE_PRESERVING;
-    }
-    ROUTE_ANDROID_FLOAT32
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectPlaybackRoute(
-    _env: JNIEnv,
-    _class: JClass,
-    usb_direct_available: jboolean,
-    is_ac3: jboolean,
-    lossless_source: jboolean,
-    source_bits: jint,
-    channels: jint,
-) -> jint {
-    select_playback_route(
-        usb_direct_available != 0,
-        is_ac3 != 0,
-        lossless_source != 0,
-        source_bits,
-        channels,
-    )
+pub(super) fn select_playback_route() -> i32 {
+    ROUTE_ANDROID_AAUDIO
 }
 
 fn select_preferred_sample_rate(source_rate: i32, supported_rates: &[i32]) -> i32 {
@@ -141,19 +101,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackLowW
 mod tests {
     use super::{
         frames_at_milliseconds, low_watermark_frames, ring_capacity_frames,
-        select_playback_route, select_preferred_sample_rate, target_queue_frames,
+        select_preferred_sample_rate, target_queue_frames,
     };
-
-    #[test]
-    fn playback_route_policy_keeps_android_output_and_selects_usb_source_paths() {
-        assert_eq!(select_playback_route(false, false, true, 24, 2), 0);
-        assert_eq!(select_playback_route(true, true, false, 0, 2), 1);
-        assert_eq!(select_playback_route(true, false, true, 24, 2), 2);
-        assert_eq!(select_playback_route(true, false, true, 20, 8), 2);
-        assert_eq!(select_playback_route(true, false, true, 24, 9), 0);
-        assert_eq!(select_playback_route(true, false, false, 16, 2), 0);
-        assert_eq!(select_playback_route(true, false, true, 12, 2), 0);
-    }
 
     #[test]
     fn prefers_the_source_rate_and_otherwise_selects_the_nearest_supported_rate() {

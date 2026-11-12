@@ -26,13 +26,11 @@ object NativeAudio {
     external fun nativeGetPlaybackControllerState(handle: Long): Int
     external fun nativeDestroyPlaybackController(handle: Long)
     external fun nativeSelectPreferredSampleRate(sourceRate: Int, supportedRates: IntArray): Int
-    external fun nativeSelectPlaybackRoute(bitPerfectRequested: Boolean, isAc3: Boolean, losslessSource: Boolean, sourceBits: Int, channels: Int): Int
     external fun nativeRingCapacityFrames(sampleRate: Int): Int
     external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
     external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
-    external fun nativePreparePlaybackSession(decoder: Long, bitPerfectRequested: Boolean): LongArray
     external fun nativePlaybackSessionBeginSeek(session: Long): Long
     external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
     external fun nativePlaybackSessionCommand(session: Long, command: Int): Long
@@ -45,9 +43,6 @@ object NativeAudio {
     external fun nativeCancelPlaybackSession(session: Long)
     external fun nativeClosePlaybackSession(session: Long)
     external fun nativeGetStreamInfo(handle: Long): Long
-    external fun nativeIsAc3Source(handle: Long): Boolean
-    external fun nativeIsIeeeFloat32Source(handle: Long): Boolean
-    external fun nativeGetBitPerfectSourceInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
     external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
@@ -58,8 +53,6 @@ object NativeAudio {
     external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
-    external fun nativeStopUsbPcmProducerWorker(producer: Long): Int
-    external fun nativeStopUsbEncodedProducerWorker(producer: Long)
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
@@ -74,7 +67,6 @@ object NativeAudio {
     external fun nativeGetLastOutputOpenDiagnostics(): LongArray
     external fun nativeTuneOutputBuffer(): Int
     external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int, outputFormat: Int, requireExactRate: Boolean): Int
-    external fun nativeUsbPlaybackDescriptorTrace(descriptors: ByteArray, streamingInterface: Int): String
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeReadTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String): String
     external fun nativeWriteTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): String

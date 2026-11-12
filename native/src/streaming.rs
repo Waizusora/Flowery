@@ -175,13 +175,6 @@ fn apply_eq_samples(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StreamSourceMode {
-    Unselected,
-    DecodedPcm,
-    EncodedPackets,
-}
-
 pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
     decoder: Option<Box<dyn Decoder>>,
@@ -189,7 +182,6 @@ pub(super) struct StreamDecoder {
     source_rate: usize,
     source_bits: u8,
     lossless_source: bool,
-    ieee_float_source: bool,
     codec_type: symphonia::core::codecs::CodecType,
     channels: usize,
     output_rate: usize,
@@ -208,11 +200,6 @@ pub(super) struct StreamDecoder {
     discard_source_frames: u64,
     discard_output_frames: u64,
     consecutive_decode_errors: u32,
-    usb_last_gain: f32,
-    source_mode: StreamSourceMode,
-    native_pcm_pending: VecDeque<u8>,
-    native_pcm_decided: bool,
-    native_pcm_active: bool,
 }
 
 fn gapless_format_options() -> FormatOptions {
@@ -244,7 +231,6 @@ impl StreamDecoder {
             params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8
         };
         let lossless_source = is_lossless_codec(params.codec);
-        let ieee_float_source = params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE;
         // CodecParameters::n_frames includes the encoded stream extent. Delay and
         // padding identify decoded frames that must not contribute to presentation time.
         let duration_ms = presentation_duration_ms(
@@ -265,18 +251,14 @@ impl StreamDecoder {
             })
             .ok_or("Audio channel layout is unavailable in track metadata and codec configuration")?;
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
-        let decoder = match symphonia::default::get_codecs().make(&params, &DecoderOptions::default()) {
-            Ok(decoder) => Some(decoder),
-            Err(_error) if params.codec == symphonia::core::codecs::CODEC_TYPE_EAC3 => None,
-            Err(error) => return Err(format!("Unsupported audio codec: {error}")),
-        };
+        let decoder = Some(symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
+            .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, lossless_source, ieee_float_source, codec_type: params.codec, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0, usb_last_gain: -1.0, source_mode: StreamSourceMode::Unselected,
-            native_pcm_pending: VecDeque::new(), native_pcm_decided: false, native_pcm_active: false,
+            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0 ,
         })
     }
 
@@ -305,9 +287,6 @@ impl StreamDecoder {
         if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.input_pending.clear();
         self.output_pending.clear();
-        self.native_pcm_pending.clear();
-        self.native_pcm_decided = false;
-        self.native_pcm_active = false;
         self.eof = false;
         self.consecutive_decode_errors = 0;
         let actual_ms = timestamp_to_milliseconds(
@@ -320,17 +299,6 @@ impl StreamDecoder {
         let requested_output_frames = milliseconds_to_frames(requested_ms, self.output_rate);
         let actual_output_frames = milliseconds_to_frames(actual_ms, self.output_rate);
         self.source_frames_decoded = actual_source_frames;
-
-        if self.source_mode == StreamSourceMode::EncodedPackets {
-            // Encoded seeking is demuxer/frame-boundary based. No PCM DSP or
-            // resampler state is configured for this exclusive source mode.
-            self.produced_frames = requested_source_frames;
-            self.discard_source_frames = 0;
-            self.discard_output_frames = 0;
-            self.resampler = None;
-            self.resampler_delay_frames = 0;
-            return Ok(actual_ms);
-        }
 
         let rate = self.output_rate;
         let gains = self.gains;
@@ -362,69 +330,11 @@ impl StreamDecoder {
             self.is_ac3_source(),
         )
     }
-    pub(super) fn is_ieee_float32_source(&self) -> bool { self.ieee_float_source }
 
-    pub(super) fn encoded_transport_bytes_per_second(&self, framing_kind: i32) -> Result<u64, String> {
-        match framing_kind {
-            1 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3 => {
-                Err("AC-3 Type-II transport uses the validated descriptor maximum bitrate".into())
-            }
-            2 if self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3 => {
-                (self.source_rate as u64).checked_mul(4)
-                    .ok_or_else(|| "IEC 61937 carrier rate overflow".into())
-            }
-            _ => Err("No encoded transport rate is defined for this source codec and framing".into()),
-        }
-    }
+
+
 
     pub(super) fn begin_encoded_stream(&mut self) -> Result<(), String> {
-        match self.source_mode {
-            StreamSourceMode::Unselected => {
-                self.source_mode = StreamSourceMode::EncodedPackets;
-                Ok(())
-            }
-            StreamSourceMode::EncodedPackets => Ok(()),
-            StreamSourceMode::DecodedPcm => Err("A decoded PCM stream cannot be switched to encoded passthrough".into()),
-        }
-    }
-
-    pub(super) fn validate_ac3_encoded_frame(&self, frame: &[u8]) -> Result<(), String> {
-        let expected_size = crate::usb_encoded_formats::ac3_frame_size(frame)
-            .map_err(str::to_owned)?;
-        if expected_size != frame.len() {
-            return Err("Demuxed AC-3 packet does not contain exactly one complete frame".into());
-        }
-        let frame_rate = crate::usb_encoded_formats::ac3_frame_sample_rate(frame)
-            .map_err(str::to_owned)?;
-        if frame_rate as usize != self.source_rate {
-            return Err("AC-3 frame sample rate does not match the demuxed stream sample rate".into());
-        }
-        Ok(())
-    }
-
-    pub(super) fn validate_encoded_uac1_type_ii(&self, format_type: u8, format_tag: u16) -> Result<(), String> {
-        crate::usb_encoded_formats::validate_uac1_type_ii(format_type, format_tag, self.codec_type)
-            .map_err(str::to_owned)
-    }
-
-    pub(super) fn validate_iec61937_ac3(&self, data_type: u16) -> Result<(), String> {
-        if data_type != crate::usb_encoded_formats::IEC61937_DATATYPE_AC3 ||
-            self.codec_type != symphonia::core::codecs::CODEC_TYPE_EAC3 {
-            return Err("IEC 61937 passthrough is currently restricted to AC-3 source frames and data type 0x0001".into());
-        }
-        Ok(())
-    }
-
-
-    /// This is an exclusive source mode: callers must not interleave it with decode_packet().
-    pub(super) fn read_encoded_packet(&mut self) -> Result<Option<(Vec<u8>, u64, u64)>, String> {
-        match self.source_mode {
-            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::EncodedPackets,
-            StreamSourceMode::EncodedPackets => {}
-            StreamSourceMode::DecodedPcm => {
-                return Err("A stream decoder cannot switch from decoded PCM to encoded packet mode".into());
-            }
-        }
         loop {
             let packet = match self.format.next_packet() {
                 Ok(packet) => packet,
@@ -605,83 +515,7 @@ impl StreamDecoder {
         }
         Ok(result)
     }
-    fn decode_native_pcm_packet(
-        &mut self,
-        format: crate::usb_pcm::PcmFormat,
-    ) -> Result<bool, String> {
-        match self.source_mode {
-            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::DecodedPcm,
-            StreamSourceMode::DecodedPcm => {}
-            StreamSourceMode::EncodedPackets => return Err("Encoded stream cannot be decoded as native PCM".into()),
-        }
-        loop {
-            let packet = match self.format.next_packet() {
-                Ok(packet) => packet,
-                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
-                    self.eof = true;
-                    return Ok(true);
-                }
-                Err(Error::ResetRequired) => {
-                    if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
-                    continue;
-                }
-                Err(Error::IoError(error)) => return Err(format!("Audio stream I/O failed: {error}")),
-                Err(error) => return Err(format!("Audio packet read failed: {error}")),
-            };
-            if packet.track_id() != self.track_id { continue; }
-            let decoder = self.decoder.as_mut().ok_or_else(|| "This codec is available for encoded passthrough only".to_string())?;
-            let decoded = match decoder.decode(&packet) {
-                Ok(decoded) => decoded,
-                Err(Error::DecodeError(reason)) => {
-                    self.consecutive_decode_errors = self.consecutive_decode_errors.saturating_add(1);
-                    if self.consecutive_decode_errors >= 8 {
-                        return Err(format!("Audio decoder rejected 8 consecutive packets: {reason}"));
-                    }
-                    continue;
-                }
-                Err(error) => return Err(format!("Audio packet decode failed: {error}")),
-            };
-            self.consecutive_decode_errors = 0;
-            let decoded_frames = decoded.frames();
-            if decoded.spec().channels.count() != self.channels {
-                return Err("The audio stream changed channel layout mid-track".into());
-            }
-            let discard = self.discard_source_frames.min(decoded_frames as u64) as usize;
-            self.source_frames_decoded = self.source_frames_decoded.saturating_add(decoded_frames as u64);
-            self.discard_source_frames -= discard as u64;
-            if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
-                if !self.ieee_float_source { return Err("IEEE Float32 USB output requires an IEEE Float32 source".into()); }
-                if let symphonia::core::audio::AudioBufferRef::F32(buffer) = decoded.clone() {
-                    let mut samples = Vec::with_capacity((decoded_frames - discard) * self.channels);
-                    for frame in discard..decoded_frames {
-                        for channel in 0..self.channels { samples.push(buffer.chan(channel)[frame]); }
-                    }
-                    self.native_pcm_pending.extend(crate::native_pcm::pack_native_ieee_float32(&samples, format)?);
-                    self.native_pcm_active = true;
-                    self.native_pcm_decided = true;
-                    return Ok(true);
-                }
-                return Err("Symphonia did not return an IEEE Float32 sample plane".into());
-            }
-            let native = crate::native_pcm::from_symphonia_buffer(decoded, format.valid_bits, self.channels, discard);
-            match native {
-                Ok(samples) => {
-                    let packed = crate::native_pcm::pack_native_integer_pcm(&samples, format)?;
-                    self.native_pcm_pending.extend(packed);
-                    self.native_pcm_active = true;
-                    self.native_pcm_decided = true;
-                    return Ok(true);
-                }
-                Err(error) if !self.native_pcm_decided => {
-                    // USB Direct test mode never converts an unsupported decoded
-                    // sample representation to float32. Fail explicitly instead
-                    // of silently changing the PCM representation.
-                    return Err(format!("Decoded source cannot be represented as native integer PCM: {error}"));
-                }
-                Err(error) => return Err(format!("Decoder changed sample representation during native PCM playback: {error}")),
-            }
-        }
-    }
+
 
     fn read_native_pcm_bytes(
         &mut self,
@@ -1660,246 +1494,12 @@ mod tests {
             (22_050, None),
         );
     }
-    #[test]
-    fn uncompressed_wav_pcm_reaches_usb_bytes_bit_exact_without_float_conversion() {
-        let path = std::env::temp_dir().join(format!("flowery-native-pcm-test-{}.wav", std::process::id()));
-        let samples = [-32_768_i16, -1, 0, 1, 32_767, -12_345];
-        let data_bytes = (samples.len() * 2) as u32;
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            file.write_all(b"RIFF").unwrap();
-            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-            file.write_all(b"WAVEfmt ").unwrap();
-            file.write_all(&16_u32.to_le_bytes()).unwrap();
-            file.write_all(&1_u16.to_le_bytes()).unwrap();
-            file.write_all(&2_u16.to_le_bytes()).unwrap();
-            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
-            file.write_all(&(48_000_u32 * 4).to_le_bytes()).unwrap();
-            file.write_all(&4_u16.to_le_bytes()).unwrap();
-            file.write_all(&16_u16.to_le_bytes()).unwrap();
-            file.write_all(b"data").unwrap();
-            file.write_all(&data_bytes.to_le_bytes()).unwrap();
-            for sample in samples { file.write_all(&sample.to_le_bytes()).unwrap(); }
-        }
-
-        let source_file = std::fs::File::open(&path).unwrap();
-        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
-        stream.configure(48_000, &[0.0; 31]).unwrap();
-        let format = crate::usb_pcm::PcmFormat {
-            encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
-            sample_rate: 48_000, channels: 2, valid_bits: 16,
-            subslot_bytes: 2, signed: true, little_endian: true,
-        };
-        let actual = stream.read_usb_pcm(3, 1.0, format).unwrap();
-        let expected: Vec<u8> = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect();
-        assert_eq!(actual, expected);
-        assert!(stream.native_pcm_active());
-
-        // Lossless/lossy classification must not change the integer PCM
-        // transport when the decoder already exposes matching native samples.
-        let classified_source = std::fs::File::open(&path).unwrap();
-        let mut classified_stream = StreamDecoder::new(classified_source.as_raw_fd(), "wav").unwrap();
-        classified_stream.lossless_source = false;
-        classified_stream.configure(48_000, &[0.0; 31]).unwrap();
-        let classified_actual = classified_stream.read_usb_pcm(3, 1.0, format).unwrap();
-        assert_eq!(classified_actual, expected);
-        assert!(classified_stream.native_pcm_active());
-
-        drop(classified_stream);
-        drop(classified_source);
-        drop(stream);
-        drop(source_file);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn ieee_float32_wav_reaches_usb_payload_bit_exact() {
-        let path = std::env::temp_dir().join(format!("flowery-ieee-float32-test-{}.wav", std::process::id()));
-        let patterns = [0x8000_0000_u32, 0x3f80_0000, 0x7fc0_1234, 0x0000_0001, 0xbf00_0000, 0x0000_0000];
-        let data_bytes = (patterns.len() * 4) as u32;
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            file.write_all(b"RIFF").unwrap();
-            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-            file.write_all(b"WAVEfmt ").unwrap();
-            file.write_all(&16_u32.to_le_bytes()).unwrap();
-            file.write_all(&3_u16.to_le_bytes()).unwrap();
-            file.write_all(&2_u16.to_le_bytes()).unwrap();
-            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
-            file.write_all(&(48_000_u32 * 8).to_le_bytes()).unwrap();
-            file.write_all(&8_u16.to_le_bytes()).unwrap();
-            file.write_all(&32_u16.to_le_bytes()).unwrap();
-            file.write_all(b"data").unwrap();
-            file.write_all(&data_bytes.to_le_bytes()).unwrap();
-            for bits in patterns { file.write_all(&bits.to_le_bytes()).unwrap(); }
-        }
-
-        let source_file = std::fs::File::open(&path).unwrap();
-        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
-        assert_eq!(stream.source_bits, 32);
-        assert!(stream.is_ieee_float32_source());
-        stream.configure(48_000, &[0.0; 31]).unwrap();
-        let format = crate::usb_pcm::PcmFormat {
-            encoding: crate::usb_pcm::PcmEncoding::IeeeFloat32,
-            sample_rate: 48_000, channels: 2, valid_bits: 32,
-            subslot_bytes: 4, signed: false, little_endian: true,
-        };
-        let actual = stream.read_usb_pcm(3, 1.0, format).unwrap();
-        let expected: Vec<u8> = patterns.iter().flat_map(|bits| bits.to_le_bytes()).collect();
-        assert_eq!(actual, expected);
-        assert!(stream.native_pcm_active());
-
-        drop(stream);
-        drop(source_file);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn uncompressed_wav_24_and_32_bit_pcm_reach_usb_bytes_bit_exact() {
-        for bits in [24_u16, 32_u16] {
-            let path = std::env::temp_dir().join(format!("flowery-native-pcm-{bits}-{}.wav", std::process::id()));
-            let values = if bits == 24 {
-                vec![-8_388_608_i32, -1, 0, 8_388_607]
-            } else {
-                vec![i32::MIN, -1, 0, i32::MAX]
-            };
-            let subslot = (bits / 8) as usize;
-            let data_bytes = (values.len() * subslot) as u32;
-            {
-                let mut file = std::fs::File::create(&path).unwrap();
-                file.write_all(b"RIFF").unwrap();
-                file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-                file.write_all(b"WAVEfmt ").unwrap();
-                file.write_all(&16_u32.to_le_bytes()).unwrap();
-                file.write_all(&1_u16.to_le_bytes()).unwrap();
-                file.write_all(&2_u16.to_le_bytes()).unwrap();
-                file.write_all(&48_000_u32.to_le_bytes()).unwrap();
-                file.write_all(&(48_000_u32 * 2 * subslot as u32).to_le_bytes()).unwrap();
-                file.write_all(&((2 * subslot) as u16).to_le_bytes()).unwrap();
-                file.write_all(&bits.to_le_bytes()).unwrap();
-                file.write_all(b"data").unwrap();
-                file.write_all(&data_bytes.to_le_bytes()).unwrap();
-                for value in &values {
-                    let bytes = value.to_le_bytes();
-                    file.write_all(&bytes[..subslot]).unwrap();
-                }
-            }
-
-            let source_file = std::fs::File::open(&path).unwrap();
-            let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
-            assert_eq!(stream.source_bits, bits as u8);
-            stream.configure(48_000, &[0.0; 31]).unwrap();
-            let format = crate::usb_pcm::PcmFormat {
-                encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
-                sample_rate: 48_000, channels: 2, valid_bits: bits as u8,
-                subslot_bytes: subslot as u8, signed: true, little_endian: true,
-            };
-            let actual = stream.read_usb_pcm(2, 1.0, format).unwrap();
-            let expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()[..subslot].to_vec()).collect();
-            assert_eq!(actual, expected, "{bits}-bit WAV samples changed in the USB path");
-            assert!(stream.native_pcm_active());
-
-            if bits == 24 {
-                let classified_source = std::fs::File::open(&path).unwrap();
-                let mut classified_stream = StreamDecoder::new(classified_source.as_raw_fd(), "wav").unwrap();
-                classified_stream.lossless_source = false;
-                classified_stream.configure(48_000, &[0.0; 31]).unwrap();
-                let padded_format = crate::usb_pcm::PcmFormat {
-                    encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
-                    sample_rate: 48_000, channels: 2, valid_bits: 24,
-                    subslot_bytes: 4, signed: true, little_endian: true,
-                };
-                let classified_actual = classified_stream.read_usb_pcm(2, 1.0, padded_format).unwrap();
-                let padded_expected: Vec<u8> = values.iter()
-                    .flat_map(|value| (*value).wrapping_shl(8).to_le_bytes())
-                    .collect();
-                assert_eq!(classified_actual, padded_expected, "native integer PCM did not left-justify padded 24-bit samples");
-                assert!(classified_stream.native_pcm_active());
-                drop(classified_stream);
-                drop(classified_source);
-            }
-
-            drop(stream);
-            drop(source_file);
-            std::fs::remove_file(path).unwrap();
-        }
-    }
 
 }
 
 
 #[cfg(test)]
-mod usb_seek_regression_tests {
-    use super::StreamDecoder;
-    use crate::usb_pcm::{PcmEncoding, PcmFormat};
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
 
-    #[test]
-    fn usb_pcm_seek_after_native_decode_resumes_at_requested_frame() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-usb-seek-regression-{}.wav",
-            std::process::id()
-        ));
-        let samples: Vec<(i16, i16)> = (0..256)
-            .map(|frame| (frame as i16, -(frame as i16)))
-            .collect();
-        let data_bytes = (samples.len() * 4) as u32;
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            file.write_all(b"RIFF").unwrap();
-            file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-            file.write_all(b"WAVEfmt ").unwrap();
-            file.write_all(&16_u32.to_le_bytes()).unwrap();
-            file.write_all(&1_u16.to_le_bytes()).unwrap();
-            file.write_all(&2_u16.to_le_bytes()).unwrap();
-            file.write_all(&48_000_u32.to_le_bytes()).unwrap();
-            file.write_all(&(48_000_u32 * 4).to_le_bytes()).unwrap();
-            file.write_all(&4_u16.to_le_bytes()).unwrap();
-            file.write_all(&16_u16.to_le_bytes()).unwrap();
-            file.write_all(b"data").unwrap();
-            file.write_all(&data_bytes.to_le_bytes()).unwrap();
-            for (left, right) in &samples {
-                file.write_all(&left.to_le_bytes()).unwrap();
-                file.write_all(&right.to_le_bytes()).unwrap();
-            }
-        }
-
-        let source = std::fs::File::open(&path).unwrap();
-        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
-        decoder.configure(48_000, &[0.0; 31]).unwrap();
-        let format = PcmFormat {
-            encoding: PcmEncoding::SignedInteger,
-            sample_rate: 48_000,
-            channels: 2,
-            valid_bits: 16,
-            subslot_bytes: 2,
-            signed: true,
-            little_endian: true,
-        };
-
-        let first = decoder.read_usb_pcm(4, 1.0, format).unwrap();
-        let expected_first: Vec<u8> = samples[..4]
-            .iter()
-            .flat_map(|(left, right)| left.to_le_bytes().into_iter().chain(right.to_le_bytes()))
-            .collect();
-        assert_eq!(first, expected_first);
-        assert!(decoder.native_pcm_active());
-
-        assert_eq!(decoder.seek_to(1).unwrap(), 1);
-        let after_seek = decoder.read_usb_pcm(4, 1.0, format).unwrap();
-        let expected_after_seek: Vec<u8> = samples[48..52]
-            .iter()
-            .flat_map(|(left, right)| left.to_le_bytes().into_iter().chain(right.to_le_bytes()))
-            .collect();
-        assert_eq!(after_seek, expected_after_seek);
-        assert!(decoder.native_pcm_active());
-
-        drop(decoder);
-        drop(source);
-        std::fs::remove_file(path).unwrap();
-    }
-}
 
 
 #[cfg(test)]
@@ -1960,37 +1560,7 @@ mod eof_boundary_regression_tests {
     }
 
     #[test]
-    fn native_pcm_usb_reader_drains_final_partial_chunk_once_then_stays_at_eof() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-native-usb-eof-{}.wav",
-            std::process::id()
-        ));
-        write_stereo_pcm_wav(&path, 48_000, 6);
 
-        let source = std::fs::File::open(&path).unwrap();
-        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
-        decoder.configure(48_000, &[0.0; 31]).unwrap();
-        let format = crate::usb_pcm::PcmFormat {
-            encoding: crate::usb_pcm::PcmEncoding::SignedInteger,
-            sample_rate: 48_000,
-            channels: 2,
-            valid_bits: 16,
-            subslot_bytes: 2,
-            signed: true,
-            little_endian: true,
-        };
-
-        let first = decoder.read_usb_pcm(4, 1.0, format).unwrap();
-        let final_chunk = decoder.read_usb_pcm(4, 1.0, format).unwrap();
-        let after_eof = decoder.read_usb_pcm(4, 1.0, format).unwrap();
-        assert_eq!(first.len(), 4 * format.bytes_per_frame());
-        assert_eq!(final_chunk.len(), 2 * format.bytes_per_frame());
-        assert!(after_eof.is_empty(), "native PCM EOF must not repeat or synthesize samples");
-
-        drop(decoder);
-        drop(source);
-        std::fs::remove_file(path).unwrap();
-    }
 }
 
 
