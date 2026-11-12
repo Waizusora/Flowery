@@ -186,7 +186,10 @@ class PlaybackService : Service() {
         Log.i("FloweryDiagnostics", "SERVICE_CREATE pid=${android.os.Process.myPid()}")
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
-            if (message.startsWith("Playing") || message.startsWith("Paused")) outputRouteRestartPending = false
+            if (message.startsWith("Playing") || message.startsWith("Paused") ||
+                message.startsWith("Playback error") || message == "Playback finished") {
+                outputRouteRestartPending = false
+            }
             publishState(message)
             if (message == "Playback finished") {
                 // Completion is reported from the playback worker. Defer queue transitions
@@ -450,17 +453,6 @@ class PlaybackService : Service() {
     private fun scheduleOutputRouteCheck() {
         mainHandler.removeCallbacks(outputRouteCheck)
         mainHandler.postDelayed(outputRouteCheck, 350L)
-    }
-
-    private fun pauseForOutputChange() {
-        resumeAfterFocus = false
-        if (!player.pause()) {
-            publishState("Pause request was rejected")
-            return
-        }
-        playbackState = PlaybackStateCompat.STATE_PAUSED
-        publishSessionState()
-        publishState("Paused · audio output changed. Press Play to resume.")
     }
 
     private fun pausePlayback() {
