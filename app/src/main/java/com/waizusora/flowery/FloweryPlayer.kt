@@ -121,15 +121,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     val queuedSeek = pendingSeekMs.getAndSet(-1L)
                     val relativeStartMs = if (queuedSeek >= 0L) queuedSeek else initialPositionMs
                     val targetPositionMs = segmentStartMs + relativeStartMs.coerceAtLeast(0L)
+                    var actualStartPositionMs = targetPositionMs
                     if (targetPositionMs > 0L) {
-                        val seeked = NativeAudio.nativeSeekStreamDecoder(handle, targetPositionMs)
-                        check(seeked >= 0L) { "Unable to seek the decoder to the requested USB playback start position" }
+                        actualStartPositionMs = NativeAudio.nativeSeekStreamDecoder(handle, targetPositionMs)
+                        check(actualStartPositionMs >= 0L) {
+                            "Unable to seek the decoder to the requested USB playback start position"
+                        }
                     }
                     val directUsb = UsbNativePlaybackSession.open(
                         context, handle, sourceRate, channels, sourceBits
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
-                    directUsb.start(targetPositionMs).getOrThrow()
+                    directUsb.start(actualStartPositionMs).getOrThrow()
                     outputSampleRate = sourceRate
                     val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
@@ -321,8 +324,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbPlaybackSession?.let { usb ->
                     runCatching { usb.close() }
                     if (usbPlaybackSession === usb) usbPlaybackSession = null
-                    usbRouteActive = false
                 }
+                usbRouteActive = false
                 if (sessionHandle != 0L) {
                     if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                     if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
