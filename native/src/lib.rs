@@ -90,6 +90,28 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
 
 #[cfg(target_os = "android")]
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseUsbPlayback(
+    mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
+) -> jint {
+    match crate::usb_stream::set_paused(session, true) {
+        Ok(()) => 0,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeUsbPlayback(
+    mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
+) -> jint {
+    match crate::usb_stream::set_paused(session, false) {
+        Ok(()) => 0,
+        Err(error) => { let _ = env.throw_new("java/lang/IllegalStateException", error); -1 }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPlayback(
     _env: JNIEnv, _class: JClass, session: jni::sys::jlong,
 ) {
@@ -101,11 +123,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPlayb
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbPlaybackStatus(
     mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
 ) -> jstring {
-    let (status, error, position_frames) = crate::usb_stream::status(session);
+    let (status, error, position_frames, paused) = crate::usb_stream::status(session);
     let payload = serde_json::json!({
         "status": status,
         "error": error,
-        "positionFrames": position_frames
+        "positionFrames": position_frames,
+        "paused": paused
     }).to_string();
     write_text_to_java(&mut env, &payload)
 }
