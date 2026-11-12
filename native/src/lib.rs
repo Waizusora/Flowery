@@ -101,8 +101,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPlayb
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbPlaybackStatus(
     mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
 ) -> jstring {
-    let (status, error) = crate::usb_stream::status(session);
-    let payload = serde_json::json!({"status": status, "error": error}).to_string();
+    let (status, error, position_frames) = crate::usb_stream::status(session);
+    let payload = serde_json::json!({
+        "status": status,
+        "error": error,
+        "positionFrames": position_frames
+    }).to_string();
     write_text_to_java(&mut env, &payload)
 }
 
