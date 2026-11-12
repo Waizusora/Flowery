@@ -231,7 +231,30 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
         match crate::usb_audio::plan_pcm_playback(
             &bytes, sample_rate as u32, channels as u8, bit_resolution as u8
         ) {
-            Ok(plan) => serde_json::json!({"ok": true, "plan": plan}),
+            Ok(plan) => {
+                let mut plan_value = match serde_json::to_value(&plan) {
+                    Ok(value) => value,
+                    Err(error) => return write_text_to_java(&mut env, &serde_json::json!({
+                        "ok": false, "error": format!("Unable to serialize USB playback plan: {error}")
+                    }).to_string()),
+                };
+                if plan.requires_uac2_clock_negotiation {
+                    match crate::usb_uac2::parse_playback_clock_info(&bytes) {
+                        Ok(clock) if clock.streaming_interface_number == plan.interface_number => {
+                            plan_value["uac2_control_interface_number"] = serde_json::json!(clock.control_interface_number);
+                            plan_value["uac2_clock_source_entity_id"] = serde_json::json!(clock.clock_source_entity_id);
+                            plan_value["uac2_clock_controls"] = serde_json::json!(clock.clock_controls);
+                        }
+                        Ok(_) => return write_text_to_java(&mut env, &serde_json::json!({
+                            "ok": false, "error": "Resolved UAC2 clock path does not belong to the selected playback interface"
+                        }).to_string()),
+                        Err(error) => return write_text_to_java(&mut env, &serde_json::json!({
+                            "ok": false, "error": error
+                        }).to_string()),
+                    }
+                }
+                serde_json::json!({"ok": true, "plan": plan_value})
+            },
             Err(error) => serde_json::json!({"ok": false, "error": error}),
         }
     };
