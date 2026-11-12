@@ -77,7 +77,6 @@ internal class PlaybackCoordinator(
     fun durationMs(): Long = engine.durationMs()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
     @Synchronized fun setDucked(ducked: Boolean) = engine.setDucked(ducked)
-    @Synchronized fun setEqualizerGains(gains: FloatArray) = engine.setEqualizerGains(gains)
 
     @Synchronized
     fun stop() {
