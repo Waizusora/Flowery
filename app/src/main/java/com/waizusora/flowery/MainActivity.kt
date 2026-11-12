@@ -8,10 +8,8 @@ import android.content.IntentFilter
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.media.MediaMetadataRetriever
-import android.hardware.usb.UsbManager
 import android.os.Bundle
 import android.os.Build
-import android.hardware.usb.UsbDevice
 import android.util.Base64
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -115,14 +113,6 @@ class MainActivity : ComponentActivity() {
             }
             .onFailure { error -> Log.e("FloweryDiagnostics", "Unable to read historical process exit reasons", error) }
     }
-    @Suppress("DEPRECATION")
-    private fun Intent.usbDeviceExtra(): UsbDevice? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
-        } else {
-            getParcelableExtra(UsbManager.EXTRA_DEVICE)
-        }
-
     private val folderPicker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) addFolder(uri)
     }
@@ -147,43 +137,8 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
-    private var usbDacReport by mutableStateOf<String?>(null)
-    private var usbDacInspecting by mutableStateOf(false)
-    private var usbDacUiStatus by mutableStateOf("Checking USB audio devices…")
-    private var usbDacDeviceName by mutableStateOf("No USB DAC detected")
-    private var usbDacConnected by mutableStateOf(false)
-    private var usbDacPermissionGranted by mutableStateOf(false)
-    private var usbDacConnectionReleased = false
-    private var autoUsbPermissionRequestedForLaunch = false
-    private val usbDacController by lazy { UsbDacController(this) }
-    private val usbPermissionReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != UsbDacController.ACTION_USB_PERMISSION) return
-            val device = intent.usbDeviceExtra()
-            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            when {
-                device == null -> {
-                    usbDacInspecting = false
-                    usbDacReport = "Android did not return the USB audio device."
-                }
-                granted -> {
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("usb_auto_reconnect", true).apply()
-                    refreshUsbDacUiState()
-                    inspectUsbDac(device)
-                }
-                else -> {
-                    usbDacInspecting = false
-                    usbDacUiStatus = "USB permission was denied. Tap Sambungkan DAC to try again."
-                    usbDacReport = "USB permission was not granted. Connect the DAC and grant access to inspect its descriptors."
-                }
-            }
-        }
-    }
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
-    private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
-    private var equalizerEnabled by mutableStateOf(true)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -201,13 +156,6 @@ class MainActivity : ComponentActivity() {
                 albumArtBytes = intent.getByteArrayExtra(PlaybackService.EXTRA_CURRENT_ARTWORK)
             }
             if (reportedStatus == "Stopped" || reportedStatus == "Playback finished") hasPlaybackSession = false
-            if (reportedStatus?.startsWith("USB DAC released") == true) {
-                usbDacConnectionReleased = true
-                refreshUsbDacUiState()
-            } else if (reportedStatus?.startsWith("USB exclusive") == true) {
-                usbDacConnectionReleased = false
-                refreshUsbDacUiState()
-            }
             if (intent.hasExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED)) {
                 shuffleEnabled = intent.getBooleanExtra(PlaybackService.EXTRA_SHUFFLE_ENABLED, false)
             }
@@ -277,35 +225,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logPreviousProcessExitReasons()
-        androidx.core.content.ContextCompat.registerReceiver(
-            this, usbPermissionReceiver, IntentFilter(UsbDacController.ACTION_USB_PERMISSION),
-            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
-        )
-        getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-            .putBoolean("usb_diagnostic_recording", false).apply()
         val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-        equalizerEnabled = audioPreferences.getBoolean("equalizer_enabled", true)
-        val legacyGains = listOf(
-            audioPreferences.getFloat("equalizer_bass_db", 0f),
-            audioPreferences.getFloat("equalizer_mid_db", 0f),
-            audioPreferences.getFloat("equalizer_treble_db", 0f)
-        )
-        val migratedGains = IsoGraphicEqualizer.expandLegacyThreeBand(legacyGains)
-        val restoredGains = FloatArray(31) { index ->
-            audioPreferences.getFloat(
-                IsoGraphicEqualizer.preferenceKey(index),
-                migratedGains[index]
-            ).coerceIn(IsoGraphicEqualizer.MIN_GAIN_DB, IsoGraphicEqualizer.MAX_GAIN_DB)
-        }
-        equalizerGains.clear()
-        equalizerGains.addAll(restoredGains.toList())
-        if ((0 until 31).any { !audioPreferences.contains(IsoGraphicEqualizer.preferenceKey(it)) }) {
-            val migration = audioPreferences.edit()
-            restoredGains.forEachIndexed { index, gain ->
-                migration.putFloat(IsoGraphicEqualizer.preferenceKey(index), gain)
-            }
-            migration.apply()
-        }
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -324,13 +244,6 @@ class MainActivity : ComponentActivity() {
                 folders = folders,
                 tracks = tracks,
                 status = status,
-                onUsbDacClick = ::requestUsbDacAccess,
-                usbDacUiStatus = usbDacUiStatus,
-                usbDacDeviceName = usbDacDeviceName,
-                usbDacConnected = usbDacConnected,
-                usbDacPermissionGranted = usbDacPermissionGranted,
-                onConnectUsbDac = ::requestUsbDacAccess,
-                onReleaseUsbDac = ::releaseUsbDac,
                 audioSourceLabel = currentTag?.fileName ?: selectedTrack?.title ?: "No file selected",
                 isPlaying = isPlaying,
                 shuffleEnabled = shuffleEnabled,
@@ -341,40 +254,8 @@ class MainActivity : ComponentActivity() {
                 displayTitle = nowPlayingTitle,
                 displayArtist = nowPlayingArtist,
                 lyrics = lyrics,
-                volume = volume,
                 positionMs = playbackPositionMs,
                 durationMs = playbackDurationMs,
-                equalizerGains = equalizerGains,
-                equalizerEnabled = equalizerEnabled,
-                onBandGain = { index, gain ->
-                    require(index in 0 until IsoGraphicEqualizer.BAND_COUNT) {
-                        "The ISO equalizer band index must be between 0 and 30"
-                    }
-                    val boundedGain = gain.coerceIn(
-                        IsoGraphicEqualizer.MIN_GAIN_DB,
-                        IsoGraphicEqualizer.MAX_GAIN_DB
-                    )
-                    equalizerGains[index] = boundedGain
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putFloat(IsoGraphicEqualizer.preferenceKey(index), boundedGain).apply()
-                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
-                        putExtra(
-                            PlaybackService.EXTRA_GAINS,
-                            if (equalizerEnabled) equalizerGains.toFloatArray() else FloatArray(31)
-                        )
-                    }
-                },
-                onEqualizerEnabled = { enabled ->
-                    equalizerEnabled = enabled
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("equalizer_enabled", enabled).apply()
-                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
-                        putExtra(
-                            PlaybackService.EXTRA_GAINS,
-                            if (enabled) equalizerGains.toFloatArray() else FloatArray(31)
-                        )
-                    }
-                },
                 onAddFolder = { folderPicker.launch(null) },
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -421,44 +302,7 @@ class MainActivity : ComponentActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Waizusora/Flowery/releases")))
                 }
             )
-            usbDacReport?.let { report ->
-                Dialog(
-                    onDismissRequest = { usbDacReport = null },
-                    properties = DialogProperties(usePlatformDefaultWidth = false)
-                ) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).heightIn(max = 720.dp),
-                        shape = RoundedCornerShape(24.dp),
-                        color = MaterialTheme.colorScheme.surface
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(20.dp)) {
-                            Text("USB DAC · Descriptor report", style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold)
-                            Text(
-                                if (usbDacInspecting) "Reading USB descriptors and DAC capabilities…"
-                                else "Detected device information from the connected USB descriptor set.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
-                            )
-                            if (usbDacInspecting) {
-                                androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
-                                Spacer(Modifier.height(12.dp))
-                            }
-                            Text(
-                                report,
-                                modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
-                                    .verticalScroll(rememberScrollState()),
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            Row(Modifier.fillMaxWidth().padding(top = 12.dp),
-                                horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = { usbDacReport = null }) { Text("Close") }
-                            }
-                        }
-                    }
-                }
-            }
+
             infoTag?.let { tag -> TagInfoDialog(tag, onDismiss = { infoTag = null }) }
             editingTag?.let { tag ->
                 TagEditorDialog(
@@ -474,15 +318,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
-        refreshUsbDacUiState()
-        if (!autoUsbPermissionRequestedForLaunch &&
-            getSharedPreferences("flowery_preferences", MODE_PRIVATE).getBoolean("usb_auto_reconnect", false)) {
-            autoUsbPermissionRequestedForLaunch = true
-            val connected = usbDacController.audioDevices().firstOrNull()
-            if (connected != null && !usbDacController.hasPermission(connected.usbDevice)) {
-                requestUsbDacAccess()
-            }
-        }
     }
 
     override fun onStop() {
@@ -491,123 +326,23 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(usbPermissionReceiver)
         io.shutdownNow()
         super.onDestroy()
     }
 
     private fun refreshOutputVolume() {
-        val volumeController = OutputVolumeController(this)
-        val directUsbEnabled = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-            .getBoolean("usb_bit_perfect_enabled", false)
-        val connectedDac = if (directUsbEnabled) usbDacController.audioDevices().singleOrNull() else null
-        if (connectedDac == null) {
-            val restoredVolume = volumeController.systemVolumeFraction()
-            Log.i("FloweryDiagnostics", "VOLUME_UI_SOURCE source=initial_system_restore value=$restoredVolume")
-            volume = restoredVolume
-            return
-        }
-        val restoredSoftwareVolume = volumeController.usbVolume(connectedDac.identity)
-        Log.i(
-            "FloweryDiagnostics",
-            "VOLUME_UI_SOURCE source=initial_usb_restore value=$restoredSoftwareVolume device=${connectedDac.identity}"
-        )
-        volume = restoredSoftwareVolume
-        io.execute {
-            val hardwareVolume = usbDacController.readHardwareVolumeFraction(connectedDac.usbDevice)
-            volumeController.usbProfile(connectedDac.identity, hardwareVolume != null)
-            runOnUiThread {
-                val resolvedVolume = hardwareVolume ?: volumeController.usbVolume(connectedDac.identity)
-                Log.i(
-                    "FloweryDiagnostics",
-                    "VOLUME_UI_SOURCE source=initial_usb_readback value=$resolvedVolume hardwareAvailable=${hardwareVolume != null} " +
-                        "device=${connectedDac.identity}"
-                )
-                volume = resolvedVolume
-            }
-        }
+        val restoredVolume = OutputVolumeController(this).systemVolumeFraction()
+        Log.i("FloweryDiagnostics", "VOLUME_UI_SOURCE source=initial_system_restore value=$restoredVolume")
+        volume = restoredVolume
     }
 
-    private fun refreshUsbDacUiState() {
-        val devices = runCatching { usbDacController.audioDevices() }.getOrDefault(emptyList())
-        val selected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) } ?: devices.firstOrNull()
-        usbDacConnected = selected != null
-        usbDacPermissionGranted = selected?.let { usbDacController.hasPermission(it.usbDevice) } == true
-        usbDacDeviceName = selected?.displayName ?: "No USB Audio Class DAC detected"
-        usbDacUiStatus = when {
-            selected == null -> "Connect a USB DAC to make it available here."
-            usbDacPermissionGranted && usbDacConnectionReleased -> "Flowery has closed its USB connection · another app can request the DAC. Android permission remains until disconnect."
-            usbDacPermissionGranted -> "Android USB permission granted to Flowery · ${selected.identity} · ready for playback"
-            else -> "DAC detected · Android permission is required before Flowery can connect."
-        }
-    }
 
-    private fun releaseUsbDac() {
-        usbDacConnectionReleased = true
-        usbDacUiStatus = "Stopping playback and releasing the USB interface…"
-        sendPlaybackCommand(PlaybackService.ACTION_RELEASE_USB)
-    }
 
-    private fun requestUsbDacAccess() {
-        usbDacConnectionReleased = false
-        val devices = usbDacController.audioDevices()
-        if (devices.isEmpty()) {
-            usbDacConnected = false
-            usbDacPermissionGranted = false
-            usbDacDeviceName = "No USB Audio Class DAC detected"
-            usbDacUiStatus = "Connect a USB DAC first."
-            usbDacInspecting = false
-            usbDacReport = "No USB Audio Class device was detected. Connect a USB DAC and try again."
-            return
-        }
-        val detected = devices.firstOrNull { usbDacController.hasPermission(it.usbDevice) }
-            ?: devices.first()
-        val device = detected.usbDevice
-        if (usbDacController.hasPermission(device)) {
-            refreshUsbDacUiState()
-            inspectUsbDac(device)
-        } else {
-            usbDacUiStatus = "Waiting for Android permission for ${detected.displayName}…"
-            usbDacInspecting = false
-            usbDacReport = "Android is asking whether Flowery may access ${detected.displayName}."
-            usbDacController.requestPermission(device)
-        }
-    }
 
-    private fun inspectUsbDac(device: UsbDevice) {
-        usbDacInspecting = true
-        usbDacReport = buildString {
-            appendLine("Device: ${usbDacController.describeDevice(device)}")
-            appendLine("VID: 0x${device.vendorId.toString(16).uppercase().padStart(4, '0')}")
-            appendLine("PID: 0x${device.productId.toString(16).uppercase().padStart(4, '0')}")
-            appendLine()
-            append("Inspecting raw and parsed USB Audio Class descriptors…")
-        }
-        io.execute {
-            val report = runCatching { usbDacController.inspectDescriptors(device) }
-                .getOrElse { error ->
-                    "USB descriptor inspection failed: ${error.message ?: error.javaClass.simpleName}"
-                }
-            val hardwareVolume = runCatching {
-                usbDacController.readHardwareVolumeFraction(device)
-            }.getOrNull()
-            runOnUiThread {
-                usbDacInspecting = false
-                usbDacReport = report + buildString {
-                    appendLine()
-                    appendLine()
-                    appendLine("DAC hardware volume")
-                    appendLine(
-                        if (hardwareVolume == null) {
-                            "No readable master-channel hardware volume value was reported. This does not rule out vendor-specific controls."
-                        } else {
-                            "Feature Unit master volume is readable. Current level: ${(hardwareVolume * 100f).toInt()}%."
-                        }
-                    )
-                }
-            }
-        }
-    }
+
+
+
+
 
     private fun sendPlaybackCommand(action: String, configure: Intent.() -> Unit = {}) {
         val command = Intent(this, PlaybackService::class.java).setAction(action).apply(configure)
@@ -974,8 +709,6 @@ private fun FloweryApp(
     volume: Float,
     playbackPositionMs: Long,
     playbackDurationMs: Long,
-    equalizerGains: List<Float>,
-    onBandGain: (Int, Float) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit,
     onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -1190,52 +923,6 @@ private fun FloweryApp(
                 }
                 Text("OUTPUT VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
-                Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
-                    shape = RoundedCornerShape(18.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        (0 until IsoGraphicEqualizer.BAND_COUNT).forEach { index ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(48.dp)
-                            ) {
-                                Text(
-                                    String.format(java.util.Locale.ROOT, "%+.1f", equalizerGains.getOrElse(index) { 0f }),
-                                    color = Color.White.copy(alpha = 0.72f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
-                                VerticalEqualizerSlider(
-                                    value = equalizerGains.getOrElse(index) { 0f },
-                                    onValueChange = { onBandGain(index, it) },
-                                    modifier = Modifier.height(176.dp).width(40.dp)
-                                )
-                                Text(
-                                    IsoGraphicEqualizer.formatFrequency(index),
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                }
-                Text(
-                    "Swipe to adjust",
-                    color = Color.White.copy(alpha = 0.68f),
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(18.dp))
             }
         }
     }

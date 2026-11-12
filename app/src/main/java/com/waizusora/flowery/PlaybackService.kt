@@ -37,12 +37,10 @@ class PlaybackService : Service() {
         const val ACTION_PREVIOUS = "com.waizusora.flowery.PREVIOUS"
         const val ACTION_QUEUE = "com.waizusora.flowery.QUEUE"
         const val ACTION_VOLUME = "com.waizusora.flowery.VOLUME"
-        const val ACTION_EQUALIZER = "com.waizusora.flowery.EQUALIZER"
         const val ACTION_SHUFFLE = "com.waizusora.flowery.SHUFFLE"
         const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
         const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
         const val ACTION_UPDATE_METADATA = "com.waizusora.flowery.UPDATE_METADATA"
-        const val ACTION_RELEASE_USB = "com.waizusora.flowery.RELEASE_USB"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_TITLES = "queue_titles"
@@ -62,7 +60,6 @@ class PlaybackService : Service() {
         const val EXTRA_CURRENT_TITLE = "current_title"
         const val EXTRA_CURRENT_ARTIST = "current_artist"
         const val EXTRA_CURRENT_ARTWORK = "current_artwork"
-        const val EXTRA_GAINS = "gains"
         const val EXTRA_POSITION = "position_ms"
         const val EXTRA_DURATION = "duration_ms"
         const val EXTRA_CURRENT_URI = "current_uri"
@@ -108,14 +105,32 @@ class PlaybackService : Service() {
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
+    @Volatile private var outputRouteRestartPending = false
     private val outputRouteCheck = Runnable {
         val current = outputDeviceSnapshot()
         if (current != lastOutputDeviceSnapshot) {
             lastOutputDeviceSnapshot = current
-            if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
-                pauseForOutputChange()
-            } else {
-                publishState("Audio output changed · press Play when ready")
+            val wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING
+            val wasPaused = playbackState == PlaybackStateCompat.STATE_PAUSED
+            val uriText = queue.getOrNull(queueIndex)
+            if (!outputRouteRestartPending && (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
+                outputRouteRestartPending = true
+                val resumePositionMs = player.positionMs()
+                val segmentStartMs = queueCueStarts.getOrNull(queueIndex) ?: 0L
+                val segmentEndMs = queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L }
+                Log.i("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN wasPlaying=$wasPlaying positionMs=$resumePositionMs segmentStartMs=$segmentStartMs segmentEndMs=${segmentEndMs ?: -1L}")
+                publishState("Switching audio output…")
+                io.execute {
+                    runCatching {
+                        player.reopenOutputRoute(Uri.parse(uriText), segmentStartMs, segmentEndMs, resumePositionMs, startPaused = wasPaused)
+                    }.onFailure { error ->
+                        outputRouteRestartPending = false
+                        Log.e("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN_FAILURE", error)
+                        publishState("Playback error: unable to switch audio output: ${error.message}")
+                    }
+                }
+            } else if (uriText.isNullOrBlank()) {
+                publishState("Audio output changed")
             }
         }
     }
@@ -171,6 +186,10 @@ class PlaybackService : Service() {
         Log.i("FloweryDiagnostics", "SERVICE_CREATE pid=${android.os.Process.myPid()}")
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
+            if (message.startsWith("Playing") || message.startsWith("Paused") ||
+                message.startsWith("Playback error") || message == "Playback finished") {
+                outputRouteRestartPending = false
+            }
             publishState(message)
             if (message == "Playback finished") {
                 // Completion is reported from the playback worker. Defer queue transitions
@@ -253,27 +272,10 @@ class PlaybackService : Service() {
                 val requestedVolume = intent.getFloatExtra(EXTRA_VALUE, 1f)
                 io.execute { if (::player.isInitialized) player.setVolume(requestedVolume) }
             }
-            ACTION_EQUALIZER -> intent.getFloatArrayExtra(EXTRA_GAINS)?.let(player::setEqualizerGains)
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
             ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
-            ACTION_RELEASE_USB -> {
-                player.releaseUsb {
-                    mainHandler.post {
-                        resumeAfterFocus = false
-                        hasAudioFocus = false
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
-                        else abandonLegacyAudioFocus()
-                        focusRequest = null
-                        focusListener = null
-                        playbackState = PlaybackStateCompat.STATE_STOPPED
-                        publishSessionState()
-                        publishState("USB DAC released · USB connection closed and interface released")
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
-                    }
-                }
-            }
+
             ACTION_UPDATE_METADATA -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: currentTitle
                 currentArtist = intent.getStringExtra(EXTRA_ARTIST)?.takeIf { it.isNotBlank() } ?: currentArtist
@@ -433,14 +435,15 @@ class PlaybackService : Service() {
             AudioDeviceInfo.TYPE_WIRED_HEADPHONES,
             AudioDeviceInfo.TYPE_LINE_ANALOG,
             AudioDeviceInfo.TYPE_LINE_DIGITAL,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_USB_HEADSET,
             AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
             AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
             AudioDeviceInfo.TYPE_HDMI,
             AudioDeviceInfo.TYPE_HDMI_ARC,
             AudioDeviceInfo.TYPE_HDMI_EARC
-        )
+        ) + if (Build.VERSION.SDK_INT >= 31) setOf(
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER
+        ) else emptySet()
         return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             .filter { it.type in monitoredTypes }
             .map { "${it.type}:${it.id}:${it.productName}" }
@@ -450,17 +453,6 @@ class PlaybackService : Service() {
     private fun scheduleOutputRouteCheck() {
         mainHandler.removeCallbacks(outputRouteCheck)
         mainHandler.postDelayed(outputRouteCheck, 350L)
-    }
-
-    private fun pauseForOutputChange() {
-        resumeAfterFocus = false
-        if (!player.pause()) {
-            publishState("Pause request was rejected")
-            return
-        }
-        playbackState = PlaybackStateCompat.STATE_PAUSED
-        publishSessionState()
-        publishState("Paused · audio output changed. Press Play to resume.")
     }
 
     private fun pausePlayback() {
@@ -564,7 +556,7 @@ class PlaybackService : Service() {
     private fun publishState(message: String) {
         playbackState = when {
             message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
-            message == "Paused" -> PlaybackStateCompat.STATE_PAUSED
+            message.startsWith("Paused") -> PlaybackStateCompat.STATE_PAUSED
             message == "Stopped" || message.startsWith("Playback finished") ||
                 message.startsWith("Playback error:") -> PlaybackStateCompat.STATE_STOPPED
             else -> playbackState

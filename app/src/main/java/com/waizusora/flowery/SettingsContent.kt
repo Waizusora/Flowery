@@ -1,5 +1,10 @@
 package com.waizusora.flowery
 
+import android.media.AudioDeviceCallback
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -25,128 +30,56 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, theme: String,
-    usbDiagnosticRecording: Boolean, usbDiagnosticLogCount: Int, usbDiagnosticDescriptorReport: String,
-    onToggleUsbDiagnosticLog: () -> Unit, onSaveUsbDiagnosticLog: () -> Unit,
     onBack: () -> Unit, navigate: (SettingsPage) -> Unit, changeTheme: (String) -> Unit,
     libraryEncoding: String, availableEncodings: List<String>, changeEncoding: (String) -> Unit,
     battery: () -> Unit, update: () -> Unit, openFolders: () -> Unit,
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
-    usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
-    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
     audioSourceLabel: String) {
+    val context = LocalContext.current
+    val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
+    var detectedOutput by remember(routeResolver) { mutableStateOf(routeResolver.detectCurrent()) }
+    DisposableEffect(routeResolver) {
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) {
+                detectedOutput = routeResolver.detectCurrent()
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) {
+                detectedOutput = routeResolver.detectCurrent()
+            }
+        }
+        val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        manager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        detectedOutput = routeResolver.detectCurrent()
+        onDispose { manager.unregisterAudioDeviceCallback(callback) }
+    }
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
-            SettingsPage.AUDIO -> "Audio"; SettingsPage.AUDIO_INFO -> "Information Audio"; SettingsPage.USB_DIAGNOSTICS -> "USB Diagnostics"; SettingsPage.LIBRARY -> "Library"
+            SettingsPage.AUDIO -> "Audio"; SettingsPage.LIBRARY -> "Library"
             SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
             SettingsPage.TRANSLATOR -> "Translator"; SettingsPage.CONTRIBUTORS -> "Contributor"; SettingsPage.ROOT -> "Settings"
         }, color)
     } else Heading("Settings", color)
     when(page) {
         SettingsPage.ROOT -> {
-            SettingCard("Audio", "Playback engine and processing", color, muted, Icons.Default.GraphicEq) { navigate(SettingsPage.AUDIO) }
+            SettingCard("Audio", "Output route", color, muted, Icons.Default.GraphicEq) { navigate(SettingsPage.AUDIO) }
             SettingCard("Appearance", "Theme and language", color, muted, Icons.Default.Palette) { navigate(SettingsPage.APPEARANCE) }
             SettingCard("Library", "Folder management and scanning", color, muted, Icons.Default.Folder) { navigate(SettingsPage.LIBRARY) }
             SettingCard("Other", "Battery optimization", color, muted, Icons.Default.Tune) { navigate(SettingsPage.OTHER) }
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("USB DAC", color = color, fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.titleMedium)
-                    Text(usbDacDeviceName, color = color, style = MaterialTheme.typography.bodyMedium)
-                    Text(usbDacUiStatus, color = muted, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            val bitPerfectActive = status.contains("BIT PERFECT", ignoreCase = true)
-            val usbDirectActive = status.contains("USB exclusive", ignoreCase = true)
-            val bitPerfectStatus = when {
-                bitPerfectActive -> "ACTIVE · The native USB PCM producer confirmed source-preserving output."
-                status.startsWith("Playback error:", ignoreCase = true) && usbDacConnected ->
-                    "UNAVAILABLE · ${status.removePrefix("Playback error:").trim()}"
-                usbDirectActive -> "NOT ACTIVE · Direct USB playback is selected, but the current source or negotiated output path requires PCM conversion or processing."
-                usbDacConnected && !usbDacPermissionGranted -> "UNAVAILABLE · Connect the DAC and grant Flowery USB access to inspect its capabilities."
-                usbDacConnected -> "NOT ACTIVE · DAC detected. Start playback to evaluate the source format and negotiated DAC profile."
-                else -> "UNAVAILABLE · No USB DAC is available to Flowery. Android-managed output is in use."
-            }
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Bit-perfect detection", color = color, fontWeight = FontWeight.SemiBold)
-                    Text(bitPerfectStatus, color = color, style = MaterialTheme.typography.bodyMedium)
-                    Text("Flowery automatically evaluates the connected USB DAC, its advertised PCM formats and sample rates, the source format, and active processing. Bit-perfect is reported as active only after the native USB PCM producer confirms that the source samples are preserved. EQ, resampling, channel conversion, software gain, or an incompatible DAC profile can make bit-perfect unavailable for the current playback.", color = muted, style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            SettingCard("Information Audio", "Decoding, resampling, equalizer and output", color, muted) { navigate(SettingsPage.AUDIO_INFO) }
-            SettingCard("USB Diagnostics", "Record USB descriptors, DAC profiles, clock negotiation and playback telemetry", color, muted) { navigate(SettingsPage.USB_DIAGNOSTICS) }
+            Text("OUTPUT ROUTE", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Text(detectedOutput.displayName, color = color,
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            HorizontalDivider(color = muted.copy(alpha = .25f))
         }
-        SettingsPage.AUDIO_INFO -> {
-            val usbRoute = status.contains("USB exclusive", ignoreCase = true)
-            val bitPerfectRoute = status.contains("BIT PERFECT", ignoreCase = true) ||
-                status.contains("Bit Perfect", ignoreCase = true)
-            Text("Flowery automatically selects the active route from the source format, DSP state, negotiated DAC profile and output device.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            Detail("Source file", audioSourceLabel, color, muted)
-            AudioFlowCard(
-                title = "BIT PERFECT · source-preserving route",
-                active = usbRoute && bitPerfectRoute,
-                subtitle = if (usbRoute && bitPerfectRoute) "Active now" else "Available when source, DAC and processing conditions match",
-                stages = listOf(
-                    "$audioSourceLabel · lossless integer PCM or IEEE Float32 WAV",
-                    "Symphonia · format-aware decoding without sample conversion",
-                    "Native sample representation · integer bits or Float32 bit patterns",
-                    "Rust USB PCM producer · bounded queue",
-                    "C++ libusb · isochronous USB transfer",
-                    "USB DAC · negotiated sample rate, channels and encoding"
-                ),
-                color = color, muted = muted
-            )
-            AudioFlowCard(
-                title = "DSP / decoded route",
-                active = !bitPerfectRoute,
-                subtitle = if (!bitPerfectRoute) "Active or selected fallback" else "Standby · selected when processing or conversion is required",
-                stages = listOf(
-                    "$audioSourceLabel · supported audio format",
-                    "Symphonia · decode to float32 PCM",
-                    "Rubato · sample-rate conversion when required",
-                    "31-band ISO equalizer · gain, volume and other DSP",
-                    if (usbRoute) "Rust PCM producer · quantize to negotiated DAC integer format" else "AAudio · float32 output ring buffer",
-                    if (usbRoute) "C++ libusb · USB transfer → DAC" else "Android audio route · speaker, AUX or Bluetooth"
-                ),
-                color = color, muted = muted
-            )
-            Detail("Playback status", status, color, muted)
-            Detail("Route detection", "The highlighted route follows Flowery's current playback status. Bit Perfect is shown only when the native producer confirms an eligible source-to-DAC path; otherwise the decoded/DSP route is used.", color, muted)
-            Detail("Runtime telemetry", "AAudio callback and output telemetry plus USB descriptor, clock and transport events are available in Settings → Audio → USB Diagnostics → Record Log.", color, muted)
-        }
-        SettingsPage.USB_DIAGNOSTICS -> {
-            Text("Record Log captures connected DAC descriptors, descriptor-derived playback profiles, UAC2 clock ranges, AAudio runtime telemetry, and direct USB/libusb events in one file.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onToggleUsbDiagnosticLog, modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.buttonColors(containerColor = if (usbDiagnosticRecording) Color(0xFFB44758) else MaterialTheme.colorScheme.primary)) {
-                    Icon(if (usbDiagnosticRecording) Icons.Default.Stop else Icons.Default.FiberManualRecord, contentDescription = null)
-                    Text(if (usbDiagnosticRecording) "  Stop Log" else "  Record Log")
-                }
-                Button(onClick = onSaveUsbDiagnosticLog, enabled = !usbDiagnosticRecording &&
-                    (usbDiagnosticLogCount > 0 || usbDiagnosticDescriptorReport.isNotBlank()),
-                    modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                    Icon(Icons.Default.Save, contentDescription = null)
-                    Text("  Save Log")
-                }
-            }
-            Text(if (usbDiagnosticRecording)
-                "Recording. Connect or use the DAC, reproduce the issue, then stop and save the log."
-            else "Start recording before reproducing a USB DAC issue. Descriptor inspection runs at the start of the recording session.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            Text("AAudio telemetry samples: $usbDiagnosticLogCount", color = muted, style = MaterialTheme.typography.labelSmall)
-            Detail("Descriptor capture", if (usbDiagnosticDescriptorReport.isBlank()) "Not captured yet" else "Captured or pending", color, muted)
-            Text("The log is the single diagnostic export. It includes descriptor and clock capability evidence, actual AAudio output state, and USB transport failures where available.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-        }
+
+
         SettingsPage.LIBRARY -> {
             Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleSmall)
@@ -259,11 +192,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         SettingsPage.OPEN_SOURCE -> {
             Text("Direct dependencies · versions and declared licenses", color = muted)
             Detail("Symphonia", "0.5.4 · audio demuxing and decoding · MPL-2.0", color, muted)
-            Detail("Rubato", "5.0.1 · streaming sample-rate conversion · MIT OR Apache-2.0", color, muted)
             Detail("Lofty", "0.25.5 · audio metadata and tag editing · MIT OR Apache-2.0", color, muted)
-            Detail("libusb", "1.0.30-0 · USB host transport · LGPL-2.1-or-later", color, muted)
             Detail("jni", "0.21 · Rust/JVM native interface · MIT OR Apache-2.0", color, muted)
-            Detail("audioadapter-buffers", "5.1 · audio buffer adapters · MIT OR Apache-2.0", color, muted)
             Detail("serde / serde_json", "1.x · serialization and JSON · MIT OR Apache-2.0", color, muted)
             Detail("base64", "0.22 · Base64 encoding · MIT OR Apache-2.0", color, muted)
             Detail("libc", "0.2 · native platform bindings · MIT OR Apache-2.0", color, muted)
@@ -276,8 +206,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             Detail("Android media", "androidx.media:media 1.7.0 · Apache-2.0", color, muted)
             Detail("Document provider", "androidx.documentfile:documentfile 1.0.1 · Apache-2.0", color, muted)
             Detail("AAudio", "Android NDK platform API · Android platform component", color, muted)
-            Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
-                style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.TRANSLATOR -> Text("Translator credits will be listed when localization work begins.", color = muted)
         SettingsPage.CONTRIBUTORS -> Text("Contributor credits will be listed when contributions are recorded and confirmed.", color = muted)

@@ -2,7 +2,7 @@ name: Build Flowery
 
 on:
   push:
-    branches: [main]
+    branches: [main, trial]
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -24,21 +24,21 @@ jobs:
       KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_PASSWORD || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.9"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
 
@@ -47,7 +47,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           for attempt in 1 2 3; do
-            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"; then
+            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"; then
               exit 0
             fi
             if [[ "$attempt" -lt 3 ]]; then
@@ -69,11 +69,6 @@ jobs:
       - name: Run native unit tests
         working-directory: native
         run: cargo test --locked
-
-      - name: Run native USB session control tests
-        run: |
-          c++ -std=c++17 -Wall -Wextra -Werror -pthread -I app/src/main/cpp app/src/test/cpp/usb_session_control_test.cpp -o "$RUNNER_TEMP/usb_session_control_test"
-          "$RUNNER_TEMP/usb_session_control_test"
 
       - name: Verify Kotlin and native JNI declarations
         run: python3 scripts/check_jni_contract.py
@@ -103,7 +98,7 @@ jobs:
         run: gradle --no-daemon assembleDebug assembleRelease
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flowery-apks
           path: app/build/outputs/apk/**/*.apk
@@ -117,12 +112,12 @@ jobs:
       contents: write
     steps:
       - name: Download APKs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: flowery-apks
           path: release-apks
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release-apks/**/*.apk

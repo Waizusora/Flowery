@@ -128,25 +128,18 @@ pub(super) fn transition_session_phase(session: &SessionState, next: i32) -> boo
 /// Creates a native playback session and selects its output route from decoder metadata.
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlaybackSession(
-    mut env: JNIEnv, _class: JClass, decoder_handle: jlong, usb_direct_available: jboolean,
+    mut env: JNIEnv, _class: JClass, decoder_handle: jlong,
 ) -> jlongArray {
     let Some(decoder) = decoder_ref(decoder_handle) else {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return std::ptr::null_mut();
     };
-    let (source_rate, channels, source_bits, lossless_source, source_is_ac3) = {
+    let (source_rate, channels, source_bits) = {
         let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.playback_metadata()
     };
-    let is_ac3 = usb_direct_available != 0 && source_is_ac3;
-    let route = select_playback_route(
-        usb_direct_available != 0,
-        is_ac3,
-        lossless_source,
-        source_bits as i32,
-        channels as i32,
-    );
-    let output = match env.new_long_array(7) {
+    let route = select_playback_route();
+    let output = match env.new_long_array(5) {
         Ok(value) => value,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -167,14 +160,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
         return std::ptr::null_mut();
     }
-    let values: [jlong; 7] = [
+    let values: [jlong; 5] = [
         session_handle,
         route as jlong,
         source_rate as jlong,
         channels as jlong,
         source_bits as jlong,
-        if lossless_source { 1 } else { 0 },
-        if is_ac3 { 1 } else { 0 },
     ];
     if env.set_long_array_region(&output, 0, &values).is_err() {
         registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&session_handle);
@@ -418,7 +409,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackS
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekError(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
+    env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jstring {
     let detail = session_ref(handle)
         .map(|session| session.seek_error.lock().unwrap_or_else(|error| error.into_inner()).clone())

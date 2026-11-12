@@ -32,7 +32,10 @@ internal class PlaybackCoordinator(
     private val engine = FloweryPlayer(context) { message ->
         if (!closed.get()) when {
             message.startsWith("Playing") -> transition(EVENT_START)
-            message.startsWith("Paused") -> transition(EVENT_PAUSE)
+            message.startsWith("Paused") -> {
+                if (state() == State.PREPARING) transition(EVENT_START)
+                transition(EVENT_PAUSE)
+            }
             message.startsWith("Unable") || message.startsWith("Error") || message.startsWith("Playback error") ->
                 transition(EVENT_FAIL)
             message == "Playback finished" -> transition(EVENT_FINISH)
@@ -71,13 +74,24 @@ internal class PlaybackCoordinator(
     }
 
     @Synchronized fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
+
+    @Synchronized
+    fun reopenOutputRoute(
+        uri: Uri,
+        segmentStartMs: Long,
+        segmentEndMs: Long?,
+        positionMs: Long,
+        startPaused: Boolean,
+    ) {
+        transition(EVENT_PREPARE)
+        engine.play(uri, segmentStartMs, segmentEndMs, startPaused, initialPositionMs = positionMs)
+    }
     fun currentVolumeFraction(): Float = engine.currentVolumeFraction()
 
     fun positionMs(): Long = engine.positionMs()
     fun durationMs(): Long = engine.durationMs()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
     @Synchronized fun setDucked(ducked: Boolean) = engine.setDucked(ducked)
-    @Synchronized fun setEqualizerGains(gains: FloatArray) = engine.setEqualizerGains(gains)
 
     @Synchronized
     fun stop() {
@@ -86,11 +100,8 @@ internal class PlaybackCoordinator(
         transition(EVENT_FINISH)
     }
 
-    /**
-     * Retries retained USB teardown until the engine confirms that its worker
-     * and native USB resources have been released. A failed close must not be
-     * reported as a completed playback shutdown.
-     */
+
+
     private fun awaitEngineTeardown(): Boolean {
         while (true) {
             if (engine.stopAndJoin(Long.MAX_VALUE)) return true
@@ -103,21 +114,11 @@ internal class PlaybackCoordinator(
         }
     }
 
-    @Synchronized
-    fun releaseUsb(onReleased: () -> Unit) {
-        transition(EVENT_STOP)
-        thread(name = "FloweryUsbRelease") {
-            if (!awaitEngineTeardown()) return@thread
-            transition(EVENT_FINISH)
-            onReleased()
-        }
-    }
 
     fun close(onClosed: () -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
         transition(EVENT_STOP)
-        // Do not block Android's service lifecycle thread while the worker releases native handles.
-        // The cleanup thread retries fail-closed USB teardown before destroying the controller.
+        // Keep the service lifecycle thread non-blocking while the worker releases native handles.
         thread(name = "FloweryPlaybackControllerCleanup") {
             if (!awaitEngineTeardown()) return@thread
             transition(EVENT_FINISH)

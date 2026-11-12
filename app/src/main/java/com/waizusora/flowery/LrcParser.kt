@@ -11,7 +11,20 @@ object LrcParser {
      * Kotlin converts the structured result into UI-facing lyric models.
      */
     fun parse(content: String): List<LyricLine> {
-        val encoded = NativeAudio.nativeParseLrc(content)
+        return parseEncoded(NativeAudio.nativeParseLrc(content))
+    }
+
+    fun parsePlain(content: String): List<LyricLine> = parseEncoded(NativeAudio.nativeParsePlainLyrics(content))
+
+    fun parseLyricsFile(content: String): List<LyricLine> = parseEncoded(NativeAudio.nativeParseLyricsFile(content))
+
+    fun parseDownloaded(content: String, extension: String): List<LyricLine> = when (extension) {
+        "txt" -> parsePlain(content)
+        "lyricsfile.yaml" -> parseLyricsFile(content)
+        else -> parse(content)
+    }
+
+    private fun parseEncoded(encoded: String): List<LyricLine> {
         val entries = JSONArray(encoded)
         return buildList(entries.length()) {
             for (index in 0 until entries.length()) {
@@ -32,6 +45,12 @@ object LrcParser {
                 )
             }
         }
+    }
+
+    fun currentWordIndex(line: LyricLine, positionMs: Long): Int {
+        if (line.words.isEmpty()) return -1
+        val timestamps = LongArray(line.words.size) { index -> line.words[index].timeMs }
+        return NativeAudio.nativeFindCurrentLyricWordIndex(timestamps, positionMs)
     }
 
     /**
