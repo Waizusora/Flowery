@@ -103,6 +103,10 @@ class PlaybackService : Service() {
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
+    @Volatile private var playRequestGeneration = 0L
+    private var lastPublishedMetadataDuration = -1L
+    private var lastPublishedMetadataTitle = ""
+    private var lastPublishedMetadataArtist = ""
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
     @Volatile private var outputRouteRestartPending = false
@@ -153,14 +157,11 @@ class PlaybackService : Service() {
             if (::player.isInitialized) {
                 val position = player.positionMs()
                 val duration = player.durationMs()
-                if (::session.isInitialized && duration > 0L) {
-                    val metadata = MediaMetadataCompat.Builder()
-                        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-                        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-                        .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, duration)
-                    session.setMetadata(metadata.build())
+                if (::session.isInitialized) {
+                    if (duration > 0L && duration != lastPublishedMetadataDuration) {
+                        publishTrackMetadata(duration)
+                    }
                     publishSessionState(position)
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
                 }
                 sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
                     .putExtra(EXTRA_POSITION, position)
@@ -373,59 +374,103 @@ class PlaybackService : Service() {
     }
 
     private fun playCurrent() {
-        val uriText = queue.getOrNull(queueIndex) ?: run {
-            Log.e("FloweryDiagnostics", "PLAY_CURRENT_ABORT queueSize=${queue.size} index=$queueIndex; selected item is missing")
+        val selectedIndex = queueIndex
+        val uriText = queue.getOrNull(selectedIndex) ?: run {
+            Log.e("FloweryDiagnostics", "PLAY_CURRENT_ABORT queueSize=${queue.size} index=$selectedIndex; selected item is missing")
             return
         }
-        Log.i("FloweryDiagnostics", "PLAY_CURRENT index=$queueIndex queueSize=${queue.size} title=${queueTitles.getOrNull(queueIndex).orEmpty()} repeat=$repeatMode shuffle=$shuffle")
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_start index=$queueIndex")
+        val requestGeneration = ++playRequestGeneration
+        val uri = Uri.parse(uriText)
+        val segmentStartMs = queueCueStarts.getOrNull(selectedIndex) ?: 0L
+        val segmentEndMs = queueCueEnds.getOrNull(selectedIndex)?.takeIf { it > 0L }
+        val virtualEntry = !queueCuePlaylists.getOrNull(selectedIndex).isNullOrBlank() ||
+            !queuePlaylistNames.getOrNull(selectedIndex).isNullOrBlank()
+        val fallbackTitle = queueTitles.getOrNull(selectedIndex)
+            ?.takeIf { it.isNotBlank() }
+            ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
+        val fallbackArtist = queueArtists.getOrNull(selectedIndex)
+            ?.takeIf { it.isNotBlank() && it != "Local music" }
+            ?: "Unknown artist"
+
+        Log.i("FloweryDiagnostics", "PLAY_CURRENT index=$selectedIndex queueSize=${queue.size} title=$fallbackTitle repeat=$repeatMode shuffle=$shuffle")
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_start index=$selectedIndex")
         val focusAccepted = requestFocus()
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_done accepted=$focusAccepted index=$queueIndex")
+        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_done accepted=$focusAccepted index=$selectedIndex")
         if (!focusAccepted) {
             publishState("Playback could not start because audio focus was denied")
             return
         }
-        val uri = Uri.parse(uriText)
-        currentTitle = queueTitles.getOrNull(queueIndex)
-            ?.takeIf { it.isNotBlank() }
-            ?: Uri.decode(uri.lastPathSegment.orEmpty()).substringBeforeLast('.').ifBlank { "Unknown track" }
-        currentArtist = queueArtists.getOrNull(queueIndex)?.takeIf { it.isNotBlank() && it != "Local music" } ?: "Unknown artist"
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$queueIndex")
-        runCatching {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(this, uri)
-                val embeddedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
-                val embeddedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
-                val virtualEntry = !queueCuePlaylists.getOrNull(queueIndex).isNullOrBlank() ||
-                    !queuePlaylistNames.getOrNull(queueIndex).isNullOrBlank()
-                if (!virtualEntry) currentTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: currentTitle
-                if (currentArtist == "Unknown artist") currentArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: currentArtist
-            } finally { retriever.release() }
-        }
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_done index=$queueIndex artwork=omitted_from_media_session")
-        val metadataBuilder = MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
-            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, player.durationMs())
-        session.setMetadata(metadataBuilder.build())
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_published index=$queueIndex")
+
+        currentTitle = fallbackTitle
+        currentArtist = fallbackArtist
+        publishTrackMetadata(0L)
         startForeground(NOTIFICATION_ID, buildNotification())
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=foreground_started index=$queueIndex")
-        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=worker_submit index=$queueIndex")
+
+        // SAF metadata extraction can block on document providers. Keep it off the
+        // service callback thread so Android SystemUI media commands stay responsive.
         io.execute {
-            Log.i("FloweryDiagnostics", "PLAY_PHASE phase=worker_enter index=$queueIndex")
-            try {
-                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$queueIndex")
-                player.play(uri, queueCueStarts.getOrNull(queueIndex) ?: 0L, queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L })
-                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$queueIndex")
-                playbackState = PlaybackStateCompat.STATE_PLAYING
-                publishSessionState()
-            } catch (error: Throwable) {
-                Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$queueIndex queueSize=${queue.size} title=$currentTitle", error)
-                publishState("Unable to load file: ${error.message}")
+            var resolvedTitle = fallbackTitle
+            var resolvedArtist = fallbackArtist
+            Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$selectedIndex")
+            runCatching {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(this, uri)
+                    val embeddedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                    val embeddedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    if (!virtualEntry) resolvedTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: resolvedTitle
+                    if (resolvedArtist == "Unknown artist") {
+                        resolvedArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: resolvedArtist
+                    }
+                } finally {
+                    retriever.release()
+                }
+            }.onFailure { error ->
+                Log.w("FloweryDiagnostics", "PLAY_METADATA_READ_FAILURE index=$selectedIndex", error)
+            }
+
+            mainHandler.post {
+                if (requestGeneration != playRequestGeneration) return@post
+                currentTitle = resolvedTitle
+                currentArtist = resolvedArtist
+                publishTrackMetadata(0L)
+                getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+
+                io.execute {
+                    if (requestGeneration != playRequestGeneration) return@execute
+                    try {
+                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
+                        player.play(uri, segmentStartMs, segmentEndMs)
+                        if (requestGeneration != playRequestGeneration) return@execute
+                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex")
+                        playbackState = PlaybackStateCompat.STATE_PLAYING
+                        publishSessionState()
+                    } catch (error: Throwable) {
+                        if (requestGeneration == playRequestGeneration) {
+                            Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$selectedIndex queueSize=${queue.size} title=$currentTitle", error)
+                            publishState("Unable to load file: ${error.message}")
+                        }
+                    }
+                }
             }
         }
+    }
+
+    private fun publishTrackMetadata(durationMs: Long) {
+        if (!::session.isInitialized) return
+        if (durationMs == lastPublishedMetadataDuration &&
+            currentTitle == lastPublishedMetadataTitle &&
+            currentArtist == lastPublishedMetadataArtist
+        ) return
+
+        session.setMetadata(MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs.coerceAtLeast(0L))
+            .build())
+        lastPublishedMetadataDuration = durationMs
+        lastPublishedMetadataTitle = currentTitle
+        lastPublishedMetadataArtist = currentArtist
     }
 
     private fun outputDeviceSnapshot(): List<String> {
