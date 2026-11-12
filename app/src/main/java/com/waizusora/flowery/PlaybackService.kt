@@ -481,6 +481,7 @@ class PlaybackService : Service() {
     }
 
     private fun stopPlayback() {
+        playRequestGeneration++
         Log.w("FloweryDiagnostics", "STOP_PLAYBACK index=$queueIndex queueSize=${queue.size} repeat=$repeatMode shuffle=$shuffle")
         player.stop()
         resumeAfterFocus = false
@@ -502,6 +503,7 @@ class PlaybackService : Service() {
      * of another track; explicit user stop continues to use stopPlayback().
      */
     private fun finishQueuePlayback() {
+        playRequestGeneration++
         Log.i("FloweryDiagnostics", "QUEUE_FINISHED index=$queueIndex queueSize=${queue.size}; service_retained=true")
         player.stop()
         resumeAfterFocus = false

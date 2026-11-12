@@ -12,7 +12,7 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 - Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
 - Metadata reading/editing, timestamped sidecar LRC lyrics, and LRCLIB search/download for plain, synchronized, and word-synchronized lyrics.
 - Persistent last-selected track metadata restoration across application restarts.
-- Queue, seek, shuffle, repeat, and Android media-session controls.
+- Queue, seek, shuffle, repeat, and Android media-session controls. Media metadata is published when track details or duration change; periodic playback updates are limited to session position/state to avoid unnecessary SystemUI refreshes.
 
 ## Technology
 

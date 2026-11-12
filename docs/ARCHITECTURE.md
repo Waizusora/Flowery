@@ -6,7 +6,7 @@
 | --- | --- |
 | `app/src/main/java` | Android UI, library access, playback service, route selection, and device-change handling |
 | `AndroidOutputRouteResolver.kt` | Detects connected Android outputs and resolves AUX, speaker, or Bluetooth device IDs |
-| `PlaybackService.kt` | Owns the media session, queue, audio-device callback, and output-route reopen orchestration |
+| `PlaybackService.kt` | Owns the media session, queue, audio-device callback, output-route reopen orchestration, and event-driven media metadata publication |
 | `PlaybackCoordinator.kt` | Coordinates playback lifecycle and reopens the active track at a captured position |
 | `native/src/lib.rs` | JNI entry points and native module registration |
 | `native/src/streaming.rs` | Incremental Symphonia decode and source-rate PCM frame production |
@@ -19,6 +19,10 @@
 `SAF descriptor → Symphonia → source-rate PCM conversion → bounded PCM ring → AAudio → Android audio system`
 
 Flowery detects the source sample rate and bit depth from the decoded stream. It does not run an application-side resampler. Android may resample or otherwise convert audio downstream according to the active route.
+
+## Android media-session controls
+
+`PlaybackService` handles SystemUI media-session commands on the service callback thread. Embedded audio metadata is read asynchronously because SAF document providers may block while opening or extracting tags. A monotonically increasing playback request generation prevents a delayed metadata result from replacing the metadata or playback request for a newer queue selection. Media-session metadata is published only when the selected title, artist, or duration changes; the periodic progress task updates playback position and state without repeatedly replacing session metadata or reposting the notification.
 
 ## Output routing
 
