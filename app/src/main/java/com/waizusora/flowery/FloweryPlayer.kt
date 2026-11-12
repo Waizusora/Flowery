@@ -112,8 +112,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
                 // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
                 val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
-                val targetRate = sourceRate
-                check(targetRate > 0) {
+                val sourceRate = sourceRate
+                check(sourceRate > 0) {
                     "Unable to negotiate the selected Android output sample rate. " +
                         "target=${outputRoute.target}, device=${outputRoute.deviceName ?: "system default"}, deviceId=$deviceId, " +
                         "sourceRate=$sourceRate, channels=$channels. " +
@@ -122,9 +122,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(targetRate)
+                val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(sourceRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
-                    targetRate, channels,
+                    sourceRate, channels,
                     softwareVolume,
                     deviceId,
                     requireExclusive = true, // Prefer AAudio EXCLUSIVE; native open retries SHARED if exclusive is unavailable.
@@ -160,7 +160,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     throw IllegalStateException("$reason $device; $details")
                 }
-                outputSampleRate = targetRate
+                outputSampleRate = sourceRate
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
@@ -173,11 +173,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     else -> "unknown sharing mode"
                 }
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
-                onState("Playing · Rust AAudio $sharingName · ${targetRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
+                onState("Playing · Rust AAudio $sharingName · ${sourceRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
                 // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
-                    targetRate, outputRingCapacityFrames
+                    sourceRate, outputRingCapacityFrames
                 )
                 var lastReportedSeekPositionMs = -1L
                 check(NativeAudio.nativeStartSegmentedStreamPump(
