@@ -100,11 +100,14 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "The native playback session could not enter the running state"
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                val selectedTarget = AndroidOutputTarget.fromPreference(
-                    context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
-                        .getString("audio_output_route", "speaker")
-                )
-                val outputRoute = AndroidOutputRouteResolver(context).resolve(selectedTarget)
+                val routeResolver = AndroidOutputRouteResolver(context)
+                // Select the connected Android output automatically. Do not use a stale
+                // preference here: the playback stream must follow the currently attached route.
+                val selectedTarget = routeResolver.detectCurrent()
+                val outputRoute = routeResolver.resolve(selectedTarget)
+                check(selectedTarget == AndroidOutputTarget.SPEAKER || outputRoute.deviceId > 0) {
+                    "The selected ${selectedTarget.displayName} output is not currently available."
+                }
                 // Android-managed AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
