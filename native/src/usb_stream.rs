@@ -362,6 +362,7 @@ pub(super) fn start(
     channels: u8,
     valid_bits: u8,
     subslot_bytes: u8,
+    initial_position_ms: u64,
 ) -> Result<(), String> {
     use crate::usb_isochronous::{max_isochronous_payload, UsbBusSpeed};
 
@@ -422,7 +423,13 @@ pub(super) fn start(
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
         max_packet_bytes, interval_us,
     };
-    spawn_worker(session_handle, session, decoder_handle, config, false, 0)
+    let initial_position_frames = (u128::from(initial_position_ms)
+        .saturating_mul(u128::from(sample_rate)) / 1_000)
+        .min(u128::from(u64::MAX)) as u64;
+    spawn_worker(
+        session_handle, session, decoder_handle, config, false,
+        initial_position_frames,
+    )
 }
 
 #[cfg(target_os = "android")]
