@@ -672,12 +672,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
 }
 
 #[no_mangle]
-
-
-#[no_mangle]
-
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInfo(
     _env: JNIEnv, _class: JClass, handle: jlong
 ) -> jlong {
@@ -685,9 +679,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
     let decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
     (((decoder.source_rate as u64)<<32) | decoder.channels as u64) as jlong
 }
-
-#[no_mangle]
-
 
 #[no_mangle]
 #[allow(non_snake_case)]
