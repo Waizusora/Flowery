@@ -68,6 +68,28 @@ internal class UsbLibusbSession private constructor(
     @Synchronized
     fun resumePlayback(): Result<Unit> = setPlaybackPaused(false)
 
+    /**
+     * Stops and drains the active isochronous transfers, seeks the decoder, and
+     * restarts the stream with its existing endpoint and PCM configuration.
+     * Returns the decoder's resolved seek position in milliseconds.
+     */
+    @Synchronized
+    fun seekPlayback(decoderHandle: Long, positionMs: Long): Result<Long> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        if (decoderHandle <= 0L || positionMs < 0L) {
+            return Result.failure(IllegalArgumentException("Invalid USB seek parameters"))
+        }
+        return try {
+            val actualPosition = NativeAudio.nativeSeekUsbPlayback(
+                nativeHandle, decoderHandle, positionMs
+            )
+            if (actualPosition >= 0L) Result.success(actualPosition)
+            else Result.failure(IllegalStateException("Native USB seek failed"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     private fun setPlaybackPaused(paused: Boolean): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB session is closed"))
         return try {
