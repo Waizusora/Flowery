@@ -169,7 +169,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(selectedTarget == AndroidOutputTarget.SPEAKER || outputRoute.deviceId > 0) {
                     "The selected ${selectedTarget.displayName} output is not currently available."
                 }
-                // USB DAC, AUX, speaker, and Bluetooth use Android-managed AAudio routing.
+                // AUX, speaker, and Bluetooth use Android-managed AAudio routing; USB returned above to libusb.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
                 // AAudio receives integer PCM for every Android-managed output target.
