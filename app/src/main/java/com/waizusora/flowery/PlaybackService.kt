@@ -437,7 +437,10 @@ class PlaybackService : Service() {
             AudioDeviceInfo.TYPE_HDMI,
             AudioDeviceInfo.TYPE_HDMI_ARC,
             AudioDeviceInfo.TYPE_HDMI_EARC
-        )
+        ) + if (Build.VERSION.SDK_INT >= 31) setOf(
+            AudioDeviceInfo.TYPE_BLE_HEADSET,
+            AudioDeviceInfo.TYPE_BLE_SPEAKER
+        ) else emptySet()
         return audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
             .filter { it.type in monitoredTypes }
             .map { "${it.type}:${it.id}:${it.productName}" }
