@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.content.Context
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
@@ -65,6 +66,56 @@ internal class UsbAudioDeviceScanner(context: Context) {
 
     private val audioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+
+    /**
+     * Reads raw USB descriptors when the user has already granted USB permission.
+     * This does not claim interfaces or start streaming.
+     */
+    fun readNativeDescriptorReport(deviceName: String): String {
+        val device = usbManager.deviceList[deviceName]
+            ?: return """{"ok":false,"error":"USB device is no longer connected"}"""
+        if (!usbManager.hasPermission(device)) {
+            return """{"ok":false,"error":"USB permission is required before reading raw descriptors"}"""
+        }
+        val connection: UsbDeviceConnection = usbManager.openDevice(device)
+            ?: return """{"ok":false,"error":"Android could not open the USB device"}"""
+        return try {
+            NativeAudio.nativeParseUsbAudioDescriptors(connection.rawDescriptors)
+        } catch (error: Exception) {
+            """{"ok":false,"error":${org.json.JSONObject.quote(error.message ?: "Descriptor read failed")}}"""
+        } finally {
+            connection.close()
+        }
+    }
+
+    /**
+     * Plans a descriptor-compatible PCM alternate. UAC2 clock negotiation and
+     * actual interface claiming/isochronous transport are separate operations.
+     */
+    fun planNativePlayback(
+        deviceName: String,
+        sampleRate: Int,
+        channels: Int,
+        bitResolution: Int
+    ): String {
+        val device = usbManager.deviceList[deviceName]
+            ?: return """{"ok":false,"error":"USB device is no longer connected"}"""
+        if (!usbManager.hasPermission(device)) {
+            return """{"ok":false,"error":"USB permission is required before planning playback"}"""
+        }
+        val connection = usbManager.openDevice(device)
+            ?: return """{"ok":false,"error":"Android could not open the USB device"}"""
+        return try {
+            NativeAudio.nativePlanUsbAudioPlayback(
+                connection.rawDescriptors, sampleRate, channels, bitResolution
+            )
+        } catch (error: Exception) {
+            """{"ok":false,"error":${org.json.JSONObject.quote(error.message ?: "USB planning failed")}}"""
+        } finally {
+            connection.close()
+        }
+    }
 
     fun scan(): UsbAudioScanResult {
         val usbDevices = usbManager.deviceList.values
