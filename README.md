@@ -82,3 +82,6 @@ GitHub Actions runs native Rust tests, the Kotlin/Rust JNI contract check, Andro
 ## License
 
 See [LICENSE](LICENSE) and the applicable third-party licenses. Dependency and font notices are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+
+Experimental USB transport status: the Android libusb FD bridge now includes an asynchronous isochronous OUT transfer ring with completion callbacks, packet-level status validation, bounded PCM refill, cancellation, and session-owned teardown. It is an initial transport implementation only. Explicit feedback endpoint polling, UAC2 clock entity negotiation, and hardware validation are not complete; do not treat this path as bit-perfect or production-ready.
