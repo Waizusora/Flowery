@@ -104,6 +104,9 @@ fun FloweryNavigation(
         label = "folder-refresh-rotation"
     )
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
+    var outputRoute by remember(context) {
+        mutableStateOf(AndroidOutputTarget.fromPreference(prefs.getString("audio_output_route", "speaker")))
+    }
     var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
@@ -323,6 +326,11 @@ fun FloweryNavigation(
                     onConnectUsbDac = onConnectUsbDac,
                     onReleaseUsbDac = onReleaseUsbDac,
                     audioSourceLabel = audioSourceLabel,
+                    outputRoute = outputRoute,
+                    onOutputRouteChange = { selected ->
+                        outputRoute = selected
+                        prefs.edit().putString("audio_output_route", selected.preferenceValue).apply()
+                    },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.AUDIO_INFO, SettingsPage.USB_DIAGNOSTICS -> SettingsPage.AUDIO

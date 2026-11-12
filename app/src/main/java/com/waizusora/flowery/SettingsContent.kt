@@ -35,7 +35,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
     usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
     usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
-    audioSourceLabel: String) {
+    audioSourceLabel: String, outputRoute: AndroidOutputTarget, onOutputRouteChange: (AndroidOutputTarget) -> Unit) {
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
@@ -54,6 +54,31 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> {
+            Text("OUTPUT ROUTE", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Text("Choose where Flowery sends normal playback. Android manages the selected device through AAudio.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
+            listOf(
+                AndroidOutputTarget.AUX to ("AUX" to "Wired headphones, headset or analog line output"),
+                AndroidOutputTarget.SPEAKER to ("Speaker" to "Built-in device speaker"),
+                AndroidOutputTarget.BLUETOOTH to ("Bluetooth" to "Bluetooth audio devices")
+            ).forEach { (target, labels) ->
+                Row(
+                    Modifier.fillMaxWidth().clickable { onOutputRouteChange(target) }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    RadioButton(
+                        selected = outputRoute == target,
+                        onClick = { onOutputRouteChange(target) }
+                    )
+                    Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                        Text(labels.first, color = color, fontWeight = FontWeight.Medium)
+                        Text(labels.second, color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            HorizontalDivider(color = muted.copy(alpha = .25f))
             Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .06f))) {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("USB DAC", color = color, fontWeight = FontWeight.SemiBold,
