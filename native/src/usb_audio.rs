@@ -118,15 +118,15 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                 if let Some(a) = current.as_mut() {
                     if a.subclass == 0x02 {
                         match d[2] {
-                            // AS_GENERAL: UAC1 has channels at byte 4; UAC2 uses bmFormats.
-                            0x01 if a.protocol == 0x00 && length >= 7 => {
-                                a.channels = Some(d[4]);
-                            }
-                            // FORMAT_TYPE: UAC1 Type I descriptor.
+                            // UAC1 AS_GENERAL contains terminal link, delay, and format tag.
+                            // Channel count and PCM container details are in FORMAT_TYPE_I.
+                            0x01 if a.protocol == 0x00 => {}
+                            // FORMAT_TYPE_I: format, channels, subframe size, bit resolution, rate count.
                             0x02 if a.protocol == 0x00 && length >= 8 => {
                                 a.format_type = Some(d[3]);
-                                a.subslot_bytes = Some(d[4]);
-                                a.bit_resolution = Some(d[5]);
+                                a.channels = Some(d[4]);
+                                a.subslot_bytes = Some(d[5]);
+                                a.bit_resolution = Some(d[6]);
                                 let count = d[7] as usize;
                                 if count == 0 && length >= 14 {
                                     let min = le24(d, 8);
@@ -180,6 +180,70 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
     result
 }
 
+
+/// Selects a descriptor-advertised PCM playback alternate. This is a planning
+/// result only: it does not claim the USB interface or submit isochronous URBs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsbAudioStreamPlan {
+    pub interface_number: u8,
+    pub alternate_setting: u8,
+    pub endpoint_address: u8,
+    pub max_packet_size: u16,
+    pub interval: u8,
+    pub sample_rate: u32,
+    pub channels: u8,
+    pub subslot_bytes: u8,
+    pub bit_resolution: u8,
+    pub requires_uac2_clock_negotiation: bool,
+}
+
+pub fn plan_pcm_playback(
+    descriptors: &[u8],
+    sample_rate: u32,
+    channels: u8,
+    bit_resolution: u8,
+) -> Result<UsbAudioStreamPlan, String> {
+    if sample_rate == 0 || channels == 0 || bit_resolution == 0 {
+        return Err("Requested PCM parameters must be non-zero".to_string());
+    }
+    let parsed = parse_configuration_descriptors(descriptors);
+    for format in parsed.formats {
+        let (Some(format_channels), Some(subslot_bytes), Some(bits), Some(endpoint), Some(packet), Some(interval)) = (
+            format.channels, format.subslot_bytes, format.bit_resolution,
+            format.endpoint_address, format.max_packet_size, format.interval
+        ) else { continue };
+
+        if format.format_type != Some(1)
+            || format_channels != channels
+            || bits != bit_resolution
+            || subslot_bytes.saturating_mul(8) < bits
+        {
+            continue;
+        }
+        let rate_supported = format.sample_rates.contains(&sample_rate)
+            || format.continuous_rate_range
+                .map(|(min, max)| sample_rate >= min && sample_rate <= max)
+                .unwrap_or(false);
+        if !rate_supported { continue; }
+
+        return Ok(UsbAudioStreamPlan {
+            interface_number: format.interface_number,
+            alternate_setting: format.alternate_setting,
+            endpoint_address: endpoint,
+            max_packet_size: packet,
+            interval,
+            sample_rate,
+            channels,
+            subslot_bytes,
+            bit_resolution: bits,
+            requires_uac2_clock_negotiation: format.protocol == 0x20,
+        });
+    }
+    Err(format!(
+        "No advertised PCM Type I playback alternate matches {sample_rate} Hz, {channels} channel(s), {bit_resolution}-bit"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,7 +254,7 @@ mod tests {
             9, 4, 1, 0, 0, 1, 2, 0, 0, // AudioControl interface
             9, 4, 2, 1, 1, 1, 2, 0, 0, // AudioStreaming alt 1
             7, 0x24, 1, 1, 1, 1, 0, // AS_GENERAL, stereo
-            14, 0x24, 2, 1, 2, 16, 0, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00, // 44.1/48 kHz
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00, // stereo, 16-bit, 44.1/48 kHz
             7, 5, 0x01, 0x01, 0x00, 0x04, 1, // Iso OUT
         ];
         let parsed = parse_configuration_descriptors(&descriptors);
