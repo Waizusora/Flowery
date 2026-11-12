@@ -286,7 +286,8 @@ internal class UsbNativePlaybackSession private constructor(
                         selectorSources,
                         selectorSourceControls,
                         if (isUac2 && clockMultiplierEntity != 0) clockMultiplierEntity else null,
-                        if (isUac2) clockMultiplierControls else null
+                        if (isUac2) clockMultiplierControls else null,
+                        clockPaths
                     )
                 )
             }
