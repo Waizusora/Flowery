@@ -95,7 +95,7 @@ internal class UsbLibusbSession internal constructor(
             fun supportsRate(sourceId: Int, rate: Int): Boolean {
                 val entityIndex = (sourceId shl 8) or controlInterfaceNumber
                 val range = ByteArray(2 + 12 * 32)
-                val length = connection.controlTransfer(0xA1, 0x02, 0x0100, entityIndex, range, range.size, 1_000)
+                val length = controlTransfer.transfer(0xA1, 0x02, 0x0100, entityIndex, range, range.size, 1_000)
                 if (length < 2) return false
                 val count = (range[0].toInt() and 0xFF) or ((range[1].toInt() and 0xFF) shl 8)
                 if (count !in 1..32 || length < 2 + count * 12) return false
@@ -114,7 +114,7 @@ internal class UsbLibusbSession internal constructor(
                 if (!supportsRate(sourceId, rate)) return false
                 val sourceIndex = (sourceId shl 8) or controlInterfaceNumber
                 val current = ByteArray(4)
-                val length = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, current, 4, 1_000)
+                val length = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, current, 4, 1_000)
                 if (length != 4) return false
                 return readU32(current, 0) == rate.toLong() || (controls and 0x03) == 0x02
             }
@@ -136,7 +136,7 @@ internal class UsbLibusbSession internal constructor(
                         val index = (multiplier.entityId shl 8) or controlInterfaceNumber
                         fun readRatio(control: Int): Long? {
                             val bytes = ByteArray(4)
-                            val length = connection.controlTransfer(0xA1, 0x01, control shl 8, index, bytes, 4, 1_000)
+                            val length = controlTransfer.transfer(0xA1, 0x01, control shl 8, index, bytes, 4, 1_000)
                             return if (length == 4) readU32(bytes, 0) else null
                         }
                         val numerator = readRatio(1)
@@ -157,7 +157,7 @@ internal class UsbLibusbSession internal constructor(
                     }
                     val sourceIndex = (path.sourceEntityId shl 8) or controlInterfaceNumber
                     val sourceCurrentBytes = ByteArray(4)
-                    if (connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, sourceCurrentBytes, 4, 1_000) != 4) {
+                    if (controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, sourceCurrentBytes, 4, 1_000) != 4) {
                         failures += "source GET_CUR failed"; continue
                     }
                     val oldSourceRate = readU32(sourceCurrentBytes, 0)
@@ -177,7 +177,7 @@ internal class UsbLibusbSession internal constructor(
                         }
                         val selectorIndex = (selector.entityId shl 8) or controlInterfaceNumber
                         val active = ByteArray(1)
-                        if (connection.controlTransfer(0xA1, 0x01, 0x0100, selectorIndex, active, 1, 1_000) != 1) {
+                        if (controlTransfer.transfer(0xA1, 0x01, 0x0100, selectorIndex, active, 1, 1_000) != 1) {
                             failures += "selector GET_CUR failed"; valid = false; break
                         }
                         val oldPin = active[0].toInt() and 0xFF
@@ -202,9 +202,9 @@ internal class UsbLibusbSession internal constructor(
                                 val oldRate = oldSourceRate.toInt()
                                 val payload = byteArrayOf(oldRate.toByte(), (oldRate ushr 8).toByte(),
                                     (oldRate ushr 16).toByte(), (oldRate ushr 24).toByte())
-                                val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
+                                val written = controlTransfer.transfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
                                 val verify = ByteArray(4)
-                                val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
+                                val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
                                 if (written != 4 || read != 4 || readU32(verify, 0) != oldSourceRate) {
                                     rollbackErrors += "clock source restore failed"
                                 }
@@ -215,9 +215,9 @@ internal class UsbLibusbSession internal constructor(
                         for (change in attemptedSelectors.asReversed()) {
                             try {
                                 val payload = byteArrayOf(change.oldPin.toByte())
-                                val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
+                                val written = controlTransfer.transfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
                                 val verify = ByteArray(1)
-                                val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
+                                val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
                                 if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.oldPin) {
                                     rollbackErrors += "clock selector " + change.index + " restore failed"
                                 }
@@ -234,9 +234,9 @@ internal class UsbLibusbSession internal constructor(
                         for (change in selectorChanges) {
                             attemptedSelectors += change
                             val payload = byteArrayOf(change.newPin.toByte())
-                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
+                            val written = controlTransfer.transfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
                             val verify = ByteArray(1)
-                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
+                            val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
                             if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.newPin) {
                                 mutationFailure = "clock selector SET_CUR/verification failed"; break
                             }
@@ -246,9 +246,9 @@ internal class UsbLibusbSession internal constructor(
                             val rate = sourceRate.toInt()
                             val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
                                 (rate ushr 16).toByte(), (rate ushr 24).toByte())
-                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
+                            val written = controlTransfer.transfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
                             val verify = ByteArray(4)
-                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
+                            val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
                             if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
                                 mutationFailure = "clock source SET_CUR/verification failed"
                             }
@@ -287,7 +287,7 @@ internal class UsbLibusbSession internal constructor(
                 }
                 val selectorIndex = (clockSelectorEntityId shl 8) or controlInterfaceNumber
                 val currentPin = ByteArray(1)
-                val currentLength = connection.controlTransfer(
+                val currentLength = controlTransfer.transfer(
                     0xA1, 0x01, 0x0100, selectorIndex, currentPin, 1, 1_000
                 )
                 if (currentLength != 1) {
@@ -311,14 +311,14 @@ internal class UsbLibusbSession internal constructor(
                         return Result.failure(IllegalStateException("UAC2 Clock Selector is read-only and its active clock does not support $sampleRate Hz"))
                     }
                     val requestedPin = byteArrayOf((chosenIndex + 1).toByte())
-                    val written = connection.controlTransfer(
+                    val written = controlTransfer.transfer(
                         0x21, 0x01, 0x0100, selectorIndex, requestedPin, 1, 1_000
                     )
                     if (written != 1) {
                         return Result.failure(IllegalStateException("UAC2 Clock Selector SET_CUR failed: controlTransfer=$written"))
                     }
                     val verified = ByteArray(1)
-                    val verifiedLength = connection.controlTransfer(
+                    val verifiedLength = controlTransfer.transfer(
                         0xA1, 0x01, 0x0100, selectorIndex, verified, 1, 1_000
                     )
                     if (verifiedLength != 1 || (verified[0].toInt() and 0xFF) != chosenIndex + 1) {
@@ -340,7 +340,7 @@ internal class UsbLibusbSession internal constructor(
                 val multiplierIndex = (clockMultiplierEntityId shl 8) or controlInterfaceNumber
                 fun readMultiplierControl(selector: Int): Long? {
                     val value = ByteArray(4)
-                    val length = connection.controlTransfer(
+                    val length = controlTransfer.transfer(
                         0xA1, 0x01, selector shl 8, multiplierIndex, value, value.size, 1_000
                     )
                     return if (length == 4) readU32(value, 0) else null
@@ -369,7 +369,7 @@ internal class UsbLibusbSession internal constructor(
 
             val index = (selectedClockSource shl 8) or controlInterfaceNumber
             val current = ByteArray(4)
-            val currentLength = connection.controlTransfer(
+            val currentLength = controlTransfer.transfer(
                 0xA1, 0x01, 0x0100, index, current, current.size, 1_000
             )
             if (currentLength != 4) {
@@ -387,12 +387,12 @@ internal class UsbLibusbSession internal constructor(
                 ((sourceSampleRate ushr 16) and 0xFF).toByte(),
                 ((sourceSampleRate ushr 24) and 0xFF).toByte()
             )
-            val written = connection.controlTransfer(0x21, 0x01, 0x0100, index, payload, payload.size, 1_000)
+            val written = controlTransfer.transfer(0x21, 0x01, 0x0100, index, payload, payload.size, 1_000)
             if (written != payload.size) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source SET_CUR failed: controlTransfer=$written"))
             }
             val verified = ByteArray(4)
-            val verifiedLength = connection.controlTransfer(0xA1, 0x01, 0x0100, index, verified, verified.size, 1_000)
+            val verifiedLength = controlTransfer.transfer(0xA1, 0x01, 0x0100, index, verified, verified.size, 1_000)
             if (verifiedLength != 4 || readU32(verified, 0) != sourceSampleRate.toLong()) {
                 val actual = if (verifiedLength == 4) readU32(verified, 0).toString() else "unavailable"
                 return Result.failure(IllegalStateException("UAC2 Clock Source did not confirm $sourceSampleRate Hz after SET_CUR (current=$actual)"))
