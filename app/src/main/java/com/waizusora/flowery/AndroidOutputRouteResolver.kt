@@ -5,8 +5,8 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 
-internal enum class AndroidOutputTarget(val preferenceValue: String) {
-    AUX("aux"), SPEAKER("speaker"), BLUETOOTH("bluetooth");
+internal enum class AndroidOutputTarget(val preferenceValue: String, val displayName: String) {
+    AUX("aux", "AUX"), SPEAKER("speaker", "Speaker"), BLUETOOTH("bluetooth", "Bluetooth");
 
     companion object {
         fun fromPreference(value: String?): AndroidOutputTarget =
@@ -31,14 +31,19 @@ internal class AndroidOutputRouteResolver(context: Context) {
     private val audioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
+    private fun outputCandidates() = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
+        OutputDeviceCandidate(
+            id = device.id,
+            type = device.type,
+            productName = device.productName?.toString(),
+        )
+    }
+
+    fun detectCurrent(): AndroidOutputTarget =
+        AndroidOutputRouteSelection.detectCurrent(outputCandidates())
+
     fun resolve(target: AndroidOutputTarget): AndroidOutputRoute {
-        val candidates = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
-            OutputDeviceCandidate(
-                id = device.id,
-                type = device.type,
-                productName = device.productName?.toString(),
-            )
-        }
+        val candidates = outputCandidates()
         val selected = when (target) {
             AndroidOutputTarget.AUX -> resolveAux(candidates)
             AndroidOutputTarget.SPEAKER -> resolveSpeaker(candidates)
@@ -58,6 +63,13 @@ internal class AndroidOutputRouteResolver(context: Context) {
 }
 
 internal object AndroidOutputRouteSelection {
+    fun detectCurrent(candidates: List<OutputDeviceCandidate>): AndroidOutputTarget =
+        when {
+            selectAux(candidates) != null -> AndroidOutputTarget.AUX
+            selectBluetooth(candidates) != null -> AndroidOutputTarget.BLUETOOTH
+            else -> AndroidOutputTarget.SPEAKER
+        }
+
     fun selectAux(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
         candidates.firstOrNull {
             it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
