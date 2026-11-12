@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn parses_uac1_stereo_pcm_playback_and_discrete_rates() {
         let descriptors = [
-            9, 4, 1, 0, 0, 1, 2, 0, 0, // AudioControl interface
+            9, 4, 1, 0, 0, 1, 1, 0, 0, // AudioControl interface
             9, 4, 2, 1, 1, 1, 2, 0, 0, // AudioStreaming alt 1
             7, 0x24, 1, 1, 1, 1, 0, // AS_GENERAL, stereo
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00, // stereo, 16-bit, 44.1/48 kHz
