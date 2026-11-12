@@ -1,5 +1,4 @@
 use crate::write_text_to_java;
-use std::collections::VecDeque;
 use std::fs::File;
 use std::io::ErrorKind;
 use std::time::Duration;
@@ -13,11 +12,9 @@ use std::thread::{self, JoinHandle};
 use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
-use audioadapter_buffers::direct::InterleavedSlice;
-use jni::objects::{JClass, JFloatArray, JString};
+use jni::objects::{JClass, JString};
 use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
-use rubato::{Fft, FixedSync, Resampler};
 use symphonia::core::audio::SampleBuffer;
 use crate::pcm_format::quantize_signed_pcm;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
@@ -26,18 +23,6 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
-
-const FREQUENCIES: [f32; 31] = [20.0,25.0,31.5,40.0,50.0,63.0,80.0,100.0,125.0,160.0,200.0,250.0,315.0,400.0,500.0,630.0,800.0,1000.0,1250.0,1600.0,2000.0,2500.0,3150.0,4000.0,5000.0,6300.0,8000.0,10000.0,12500.0,16000.0,20000.0];
-
-// ISO one-third-octave bandwidth: Q = 1 / (2^(1/6) - 2^(-1/6)).
-const EQ_BAND_Q: f32 = 4.318_473;
-
-#[derive(Clone, Copy, Default)]
-struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
-
-#[derive(Clone, Copy, Default)]
-struct BiquadCoefficients { b0:f32, b1:f32, b2:f32, a1:f32, a2:f32 }
-
 
 fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
     let cookie = extra_data?;
@@ -123,45 +108,7 @@ fn presentation_duration_ms(
         .unwrap_or(0)
 }
 
-fn make_coefficients(frequency: f32, gain_db: f32, sample_rate: usize) -> BiquadCoefficients {
-    if frequency >= sample_rate as f32 * 0.49 { return BiquadCoefficients { b0:1.0, ..Default::default() }; }
-    let a = 10.0_f32.powf(gain_db.clamp(-12.0,12.0) / 40.0);
-    let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate as f32;
-    let alpha = omega.sin() / (2.0 * EQ_BAND_Q);
-    let cosine = omega.cos();
-    let a0 = 1.0 + alpha / a;
-    BiquadCoefficients {
-        b0: (1.0 + alpha * a) / a0,
-        b1: (-2.0 * cosine) / a0,
-        b2: (1.0 - alpha * a) / a0,
-        a1: (-2.0 * cosine) / a0,
-        a2: (1.0 - alpha / a) / a0,
-    }
-}
 
-fn apply_eq_samples(
-    samples: &mut [f32],
-    channels: usize,
-    coefficients: &[BiquadCoefficients; 31],
-    state: &mut Vec<[BiquadState; 31]>,
-) {
-    for (index, sample) in samples.iter_mut().enumerate() {
-        let channel = index % channels;
-        let mut value = *sample;
-        for band in 0..31 {
-            let c = coefficients[band];
-            let z = &mut state[channel][band];
-            let filtered = c.b0 * value + c.b1 * z.x1 + c.b2 * z.x2
-                - c.a1 * z.y1 - c.a2 * z.y2;
-            z.x2 = z.x1;
-            z.x1 = value;
-            z.y2 = z.y1;
-            z.y1 = filtered;
-            value = filtered;
-        }
-        *sample = value;
-    }
-}
 
 pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
@@ -171,20 +118,13 @@ pub(super) struct StreamDecoder {
     source_bits: u8,
     channels: usize,
     output_rate: usize,
-    resampler: Option<Fft<f32>>,
     input_pending: Vec<f32>,
-    output_pending: VecDeque<f32>,
     eof: bool,
-    gains: [f32;31],
-    coefficients: [BiquadCoefficients;31],
-    eq_state: Vec<[BiquadState;31]>,
     produced_frames: u64,
     source_frames_decoded: u64,
     duration_ms: u64,
-    resampler_delay_frames: usize,
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
-    discard_output_frames: u64,
     consecutive_decode_errors: u32,
 }
 
@@ -240,27 +180,10 @@ impl StreamDecoder {
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
             format, decoder, track_id, source_rate, source_bits, channels, output_rate: source_rate,
-            resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
-            eof: false, gains: [0.0;31],
-            coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
-            eq_state: vec![[BiquadState::default();31]; channels], produced_frames: 0, source_frames_decoded: 0, duration_ms, resampler_delay_frames: 0, time_base, discard_source_frames: 0, discard_output_frames: 0, consecutive_decode_errors: 0 ,
+            input_pending: Vec::new(), eof: false, produced_frames: 0,
+            source_frames_decoded: 0, duration_ms, time_base, discard_source_frames: 0,
+            consecutive_decode_errors: 0,
         })
-    }
-
-    fn configure(&mut self, output_rate: usize, gains: &[f32]) -> Result<(),String> {
-        if output_rate == 0 || gains.len() != 31 {
-            return Err("Invalid streaming DSP configuration".into());
-        }
-        self.output_rate = output_rate;
-        self.gains.copy_from_slice(gains);
-        self.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], self.gains[i], output_rate));
-        self.eq_state = vec![[BiquadState::default();31]; self.channels];
-        self.resampler = if output_rate != self.source_rate {
-            Some(Fft::<f32>::new(self.source_rate, output_rate, 1024, self.channels, FixedSync::Both)
-                .map_err(|e| format!("Rubato initialization failed: {e}"))?)
-        } else { None };
-        self.resampler_delay_frames = self.resampler.as_ref().map(|r| r.output_delay()).unwrap_or(0);
-        Ok(())
     }
 
     pub(super) fn seek_to(&mut self, position_ms: u64) -> Result<u64,String> {
@@ -271,35 +194,14 @@ impl StreamDecoder {
         ).map_err(|e| format!("Container seek failed: {e}"))?;
         if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.input_pending.clear();
-        self.output_pending.clear();
         self.eof = false;
         self.consecutive_decode_errors = 0;
-        let actual_ms = timestamp_to_milliseconds(
-            seeked.actual_ts,
-            self.time_base,
-            requested_ms,
-        );
+        let actual_ms = timestamp_to_milliseconds(seeked.actual_ts, self.time_base, requested_ms);
         let actual_source_frames = milliseconds_to_frames(actual_ms, self.source_rate);
         let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
-        let requested_output_frames = milliseconds_to_frames(requested_ms, self.output_rate);
-        let actual_output_frames = milliseconds_to_frames(actual_ms, self.output_rate);
         self.source_frames_decoded = actual_source_frames;
-
-        let rate = self.output_rate;
-        let gains = self.gains;
-        self.configure(rate, &gains)?;
-
-        if self.resampler.is_some() {
-            // Keep the container seek preroll so Rubato can rebuild its filter history.
-            // Discard converted output up to the requested presentation timestamp instead.
-            self.produced_frames = actual_output_frames;
-            self.discard_source_frames = 0;
-            self.discard_output_frames = requested_output_frames.saturating_sub(actual_output_frames);
-        } else {
-            self.produced_frames = requested_output_frames;
-            self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
-            self.discard_output_frames = 0;
-        }
+        self.produced_frames = requested_source_frames;
+        self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
         Ok(requested_ms)
     }
 
@@ -364,107 +266,18 @@ impl StreamDecoder {
         }
     }
 
-    fn apply_eq(&mut self, samples: &mut [f32]) {
-        // A flat EQ must be a true bypass: even unity biquad arithmetic can alter
-        // low-order sample bits and invalidate source-sample preservation.
-        if self.gains.iter().all(|gain| *gain == 0.0) { return; }
-        apply_eq_samples(samples, self.channels, &self.coefficients, &mut self.eq_state);
-    }
-
-    fn produce_resampled_chunk(&mut self) -> Result<bool,String> {
-        let input_frames = self.resampler.as_ref().ok_or("Resampler is not configured")?.input_frames_next();
-        while self.input_pending.len() / self.channels < input_frames && !self.eof {
-            self.decode_packet()?;
-        }
-        let available = self.input_pending.len() / self.channels;
-        if available == 0 {
-            if !self.eof { return Ok(false); }
-            let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
-                / self.source_rate as u128) as u64;
-            if self.produced_frames >= expected_frames { return Ok(false); }
-        }
-        let mut input = vec![0.0_f32; input_frames * self.channels];
-        let take_frames = available.min(input_frames);
-        let take_samples = take_frames * self.channels;
-        input[..take_samples].copy_from_slice(&self.input_pending[..take_samples]);
-        self.input_pending.drain(..take_samples);
-        let resampler = self.resampler.as_mut().ok_or("Resampler is not configured")?;
-        let output_frames = resampler.output_frames_next();
-        let mut output = vec![0.0_f32; output_frames * self.channels];
-        let input_adapter = InterleavedSlice::new(&input, self.channels, input_frames)
-            .map_err(|e| format!("Rubato input adapter failed: {e}"))?;
-        let mut output_adapter = InterleavedSlice::new_mut(&mut output, self.channels, output_frames)
-            .map_err(|e| format!("Rubato output adapter failed: {e}"))?;
-        let (_, written) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, None)
-            .map_err(|e| format!("Rubato streaming resample failed: {e}"))?;
-        output.truncate(written * self.channels);
-        let delay_samples = self.resampler_delay_frames.min(written) * self.channels;
-        if delay_samples > 0 {
-            output.drain(..delay_samples);
-            self.resampler_delay_frames -= delay_samples / self.channels;
-        }
-        if self.discard_output_frames > 0 && !output.is_empty() {
-            let discard = self.discard_output_frames.min((output.len() / self.channels) as u64) as usize;
-            output.drain(..discard * self.channels);
-            self.discard_output_frames -= discard as u64;
-            self.produced_frames += discard as u64;
-        }
-        if self.eof && self.input_pending.is_empty() {
-            let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
-                / self.source_rate as u128) as u64;
-            let remaining_frames = expected_frames.saturating_sub(self.produced_frames) as usize;
-            output.truncate(output.len().min(remaining_frames * self.channels));
-        }
-        self.apply_eq(&mut output);
-        self.produced_frames += (output.len() / self.channels) as u64;
-        self.output_pending.extend(output);
-        // A chunk may be consumed entirely by startup-delay or seek-preroll trimming.
-        // Report progress so read_frames continues producing instead of mistaking it for EOF.
-        Ok(true)
-    }
-
     fn read_frames(&mut self, requested: usize) -> Result<Vec<f32>,String> {
-        let mut result = Vec::with_capacity(requested * self.channels);
-        while result.len() < requested * self.channels {
-            if !self.output_pending.is_empty() {
-                let needed = requested * self.channels - result.len();
-                let take = needed.min(self.output_pending.len());
-                result.extend(self.output_pending.drain(..take));
-                continue;
-            }
-            if self.eof && self.input_pending.is_empty() {
-                if self.resampler.is_none() { break; }
-                let expected_frames = (self.source_frames_decoded as u128 * self.output_rate as u128
-                    / self.source_rate as u128) as u64;
-                if self.produced_frames >= expected_frames { break; }
-            }
-            if let Some(resampler) = self.resampler.as_ref() {
-                let _ = resampler;
-                if !self.produce_resampled_chunk()? { break; }
-            } else {
-                while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
-                if self.input_pending.is_empty() { break; }
-                let take = (requested * self.channels - result.len()).min(self.input_pending.len());
-                let mut chunk: Vec<f32> = self.input_pending.drain(..take).collect();
-                self.apply_eq(&mut chunk);
-                self.produced_frames += (chunk.len() / self.channels) as u64;
-                result.extend(chunk);
-            }
-        }
-        Ok(result)
+        while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
+        if self.input_pending.is_empty() { return Ok(Vec::new()); }
+        let take = (requested * self.channels).min(self.input_pending.len());
+        let samples: Vec<f32> = self.input_pending.drain(..take).collect();
+        self.produced_frames += (samples.len() / self.channels) as u64;
+        Ok(samples)
     }
 
 
 
 
-}
-
-fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],String> {
-    let len=env.get_array_length(array).map_err(|e|e.to_string())? as usize;
-    if len!=31 { return Err("31 equalizer gains are required".into()); }
-    let mut values=vec![0.0_f32;31];
-    env.get_float_array_region(array,0,&mut values).map_err(|e|e.to_string())?;
-    let mut gains=[0.0_f32;31]; gains.copy_from_slice(&values); Ok(gains)
 }
 
 static STREAM_DECODERS: OnceLock<Mutex<HashMap<i64, Arc<Mutex<StreamDecoder>>>>> = OnceLock::new();
@@ -692,31 +505,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamDur
     let duration = decoder.lock().unwrap_or_else(|error| error.into_inner()).duration_ms as jlong;
     duration
 }
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeConfigureStreamDecoder(
-    mut env: JNIEnv, _class: JClass, handle: jlong, output_rate: jint, gains: JFloatArray
-) -> jint {
-    let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
-    let Some(decoder) = decoder_ref(handle) else { return -1; };
-    let result = { let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner()); guard.configure(output_rate as usize,&gains) };
-    match result {
-        Ok(())=>0,Err(e)=>{let _=env.throw_new("java/lang/IllegalStateException",e);-1}
-    }
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeUpdateStreamGains(
-    mut env: JNIEnv, _class: JClass, handle: jlong, gains: JFloatArray
-) -> jint {
-    let gains=match gains_from_java(&mut env,&gains) { Ok(v)=>v,Err(e)=>{let _=env.throw_new("java/lang/IllegalArgumentException",e);return -1;} };
-    let Some(decoder) = decoder_ref(handle) else { return -1; };
-    let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
-    decoder.gains.copy_from_slice(&gains);
-    decoder.coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], decoder.gains[i], decoder.output_rate));
-    0
-}
-
 
 /// Starts a Rust-owned scheduler that incrementally decodes into the bounded AAudio ring.
 /// total_frames < 0 means decode until the source reaches EOF.
@@ -1105,121 +893,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn equalizer_state_is_continuous_across_chunk_boundaries() {
-        let coefficients = std::array::from_fn(|i| make_coefficients(FREQUENCIES[i], 4.5, 48_000));
-        let input: Vec<f32> = (0..4096)
-            .map(|i| ((i as f32) * 0.031).sin() * 0.4)
-            .collect();
-
-        let mut whole = input.clone();
-        let mut whole_state = vec![[BiquadState::default(); 31]; 2];
-        apply_eq_samples(&mut whole, 2, &coefficients, &mut whole_state);
-
-        let mut chunked = input.clone();
-        let mut chunk_state = vec![[BiquadState::default(); 31]; 2];
-        for chunk in chunked.chunks_mut(514) {
-            apply_eq_samples(chunk, 2, &coefficients, &mut chunk_state);
-        }
-
-        for (a, b) in whole.iter().zip(chunked.iter()) {
-            assert!((a - b).abs() < 1.0e-6, "chunk boundary changed filter output");
-        }
-    }
-
-    #[test]
-    fn wav_seek_discards_preroll_and_resumes_at_requested_time() {
-        let path = std::env::temp_dir().join(format!("flowery-seek-test-{}.wav", std::process::id()));
-        let sample_rate = 48_000u32;
-        let channels = 2u16;
-        let frames = 48_000u32;
-        let data_bytes = frames * channels as u32 * 2;
-        {
-            let mut file = std::fs::File::create(&path).unwrap();
-            file.write_all(b"RIFF").unwrap();
-            file.write_all(&(36 + data_bytes).to_le_bytes()).unwrap();
-            file.write_all(b"WAVEfmt ").unwrap();
-            file.write_all(&16u32.to_le_bytes()).unwrap();
-            file.write_all(&1u16.to_le_bytes()).unwrap();
-            file.write_all(&channels.to_le_bytes()).unwrap();
-            file.write_all(&sample_rate.to_le_bytes()).unwrap();
-            file.write_all(&(sample_rate * channels as u32 * 2).to_le_bytes()).unwrap();
-            file.write_all(&(channels * 2).to_le_bytes()).unwrap();
-            file.write_all(&16u16.to_le_bytes()).unwrap();
-            file.write_all(b"data").unwrap();
-            file.write_all(&data_bytes.to_le_bytes()).unwrap();
-            for frame in 0..frames {
-                let value = (frame % 30_000) as i16;
-                file.write_all(&value.to_le_bytes()).unwrap();
-                file.write_all(&value.to_le_bytes()).unwrap();
-            }
-        }
-
-        let source_file = std::fs::File::open(&path).unwrap();
-        let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
-        assert_eq!(stream.source_bits, 16);
-        stream.configure(48_000, &[0.0; 31]).unwrap();
-        assert_eq!(stream.read_frames(128).unwrap().len(), 256);
-        assert_eq!(stream.seek_to(500).unwrap(), 500);
-        let resumed = stream.read_frames(8).unwrap();
-        assert_eq!(resumed.len(), 16);
-        let expected = 24_000.0 / 32_768.0;
-        assert!((resumed[0] - expected).abs() < 0.03);
-
-        // A converted seek must retain decoder preroll to rebuild Rubato's filter history.
-        // The output blocks before the target timestamp are discarded internally.
-        stream.configure(44_100, &[0.0; 31]).unwrap();
-        assert_eq!(stream.seek_to(500).unwrap(), 500);
-        let converted = stream.read_frames(8).unwrap();
-        assert_eq!(converted.len(), 16);
-        assert!((converted[0] - expected).abs() < 0.02);
-        drop(stream);
-        drop(source_file);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    fn biquad_magnitude_db(coefficients: BiquadCoefficients, frequency: f32, sample_rate: f32) -> f32 {
-        let omega = 2.0 * std::f32::consts::PI * frequency / sample_rate;
-        let cos1 = omega.cos();
-        let sin1 = -omega.sin();
-        let cos2 = (2.0 * omega).cos();
-        let sin2 = -(2.0 * omega).sin();
-
-        let numerator_real = coefficients.b0 + coefficients.b1 * cos1 + coefficients.b2 * cos2;
-        let numerator_imag = coefficients.b1 * sin1 + coefficients.b2 * sin2;
-        let denominator_real = 1.0 + coefficients.a1 * cos1 + coefficients.a2 * cos2;
-        let denominator_imag = coefficients.a1 * sin1 + coefficients.a2 * sin2;
-        let numerator_magnitude = (numerator_real * numerator_real + numerator_imag * numerator_imag).sqrt();
-        let denominator_magnitude = (denominator_real * denominator_real + denominator_imag * denominator_imag).sqrt();
-        20.0 * (numerator_magnitude / denominator_magnitude).log10()
-    }
-
-    #[test]
-    fn equalizer_uses_strict_iso_one_third_octave_q() {
-        let expected_q = 1.0
-            / (2.0_f32.powf(1.0 / 6.0) - 2.0_f32.powf(-1.0 / 6.0));
-        assert!((EQ_BAND_Q - expected_q).abs() < 0.001);
-
-        let center_hz = 1_000.0;
-        let sample_rate = 48_000.0;
-        let coefficients = make_coefficients(center_hz, 12.0, sample_rate as usize);
-        let center_gain = biquad_magnitude_db(coefficients, center_hz, sample_rate);
-        assert!((center_gain - 12.0).abs() < 0.1, "center gain should match the requested dB value");
-    }
-
-    #[test]
-    fn equalizer_coefficients_remain_finite_at_supported_rates() {
-        for rate in [8_000usize, 22_050, 44_100, 48_000, 96_000, 192_000] {
-            for frequency in FREQUENCIES {
-                for gain in [-12.0, -6.0, 0.0, 6.0, 12.0] {
-                    let c = make_coefficients(frequency, gain, rate);
-                    assert!(c.b0.is_finite() && c.b1.is_finite() && c.b2.is_finite());
-                    assert!(c.a1.is_finite() && c.a2.is_finite());
-                }
-            }
-        }
-    }
-
+    
+    
+    
+    
+    
     #[test]
     fn aaudio_seek_target_is_clamped_to_the_active_segment() {
         let bounded = crate::playback_session::AAudioSeekRequest {
@@ -1289,274 +967,7 @@ mod tests {
 
 
 
-#[cfg(test)]
-mod eof_boundary_regression_tests {
-    use super::StreamDecoder;
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
-    fn write_stereo_pcm_wav(path: &std::path::Path, sample_rate: u32, frames: u32) {
-        let data_bytes = frames * 4;
-        let mut file = std::fs::File::create(path).unwrap();
-        file.write_all(b"RIFF").unwrap();
-        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-        file.write_all(b"WAVEfmt ").unwrap();
-        file.write_all(&16_u32.to_le_bytes()).unwrap();
-        file.write_all(&1_u16.to_le_bytes()).unwrap();
-        file.write_all(&2_u16.to_le_bytes()).unwrap();
-        file.write_all(&sample_rate.to_le_bytes()).unwrap();
-        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
-        file.write_all(&4_u16.to_le_bytes()).unwrap();
-        file.write_all(&16_u16.to_le_bytes()).unwrap();
-        file.write_all(b"data").unwrap();
-        file.write_all(&data_bytes.to_le_bytes()).unwrap();
-        for frame in 0..frames {
-            let sample = (frame % 30_000) as i16;
-            file.write_all(&sample.to_le_bytes()).unwrap();
-            file.write_all(&sample.to_le_bytes()).unwrap();
-        }
-    }
-
-    #[test]
-    fn resampled_short_stream_emits_exact_converted_frame_count_at_eof() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-resampled-eof-{}.wav",
-            std::process::id()
-        ));
-        write_stereo_pcm_wav(&path, 44_100, 441);
-
-        let source = std::fs::File::open(&path).unwrap();
-        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
-        decoder.configure(48_000, &[0.0; 31]).unwrap();
-
-        let mut total_frames = 0_usize;
-        loop {
-            let chunk = decoder.read_frames(17).unwrap();
-            if chunk.is_empty() {
-                break;
-            }
-            assert_eq!(chunk.len() % 2, 0, "decoder emitted a partial stereo frame");
-            total_frames += chunk.len() / 2;
-        }
-        assert_eq!(total_frames, 480, "resampler truncated or extended the final stream");
-        assert!(decoder.read_frames(17).unwrap().is_empty(), "EOF must remain stable on repeated reads");
-
-        drop(decoder);
-        drop(source);
-        std::fs::remove_file(path).unwrap();
-    }
 
 
-}
 
 
-#[cfg(test)]
-mod chunk_boundary_continuity_tests {
-    use super::StreamDecoder;
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
-    fn write_test_wav(path: &std::path::Path) {
-        let frames = 8_192_u32;
-        let sample_rate = 44_100_u32;
-        let data_bytes = frames * 4;
-        let mut file = std::fs::File::create(path).unwrap();
-        file.write_all(b"RIFF").unwrap();
-        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-        file.write_all(b"WAVEfmt ").unwrap();
-        file.write_all(&16_u32.to_le_bytes()).unwrap();
-        file.write_all(&1_u16.to_le_bytes()).unwrap();
-        file.write_all(&2_u16.to_le_bytes()).unwrap();
-        file.write_all(&sample_rate.to_le_bytes()).unwrap();
-        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
-        file.write_all(&4_u16.to_le_bytes()).unwrap();
-        file.write_all(&16_u16.to_le_bytes()).unwrap();
-        file.write_all(b"data").unwrap();
-        file.write_all(&data_bytes.to_le_bytes()).unwrap();
-        for frame in 0..frames {
-            let left = ((frame * 97) % 30_000) as i16 - 15_000;
-            let right = ((frame * 193) % 28_000) as i16 - 14_000;
-            file.write_all(&left.to_le_bytes()).unwrap();
-            file.write_all(&right.to_le_bytes()).unwrap();
-        }
-    }
-
-    fn render(path: &std::path::Path, request_frames: usize) -> Vec<f32> {
-        let source = std::fs::File::open(path).unwrap();
-        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
-        let mut gains = [0.0_f32; 31];
-        gains[10] = 3.0;
-        gains[20] = -2.0;
-        decoder.configure(48_000, &gains).unwrap();
-
-        let mut rendered = Vec::new();
-        loop {
-            let chunk = decoder.read_frames(request_frames).unwrap();
-            if chunk.is_empty() {
-                break;
-            }
-            assert_eq!(chunk.len() % 2, 0, "decoder split an interleaved stereo frame");
-            rendered.extend(chunk);
-        }
-        rendered
-    }
-
-    #[test]
-    fn resampler_and_equalizer_output_is_independent_of_consumer_chunk_size() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-chunk-continuity-{}.wav",
-            std::process::id()
-        ));
-        write_test_wav(&path);
-
-        let small_reads = render(&path, 7);
-        let irregular_reads = render(&path, 127);
-        let large_reads = render(&path, 1_024);
-
-        assert!(!small_reads.is_empty());
-        assert_eq!(small_reads.len(), irregular_reads.len());
-        assert_eq!(small_reads.len(), large_reads.len());
-        assert_eq!(small_reads, irregular_reads,
-            "resampler/EQ state changed with irregular consumer chunk boundaries");
-        assert_eq!(small_reads, large_reads,
-            "resampler/EQ state changed with large consumer chunk boundaries");
-
-        drop(small_reads);
-        drop(irregular_reads);
-        drop(large_reads);
-        std::fs::remove_file(path).unwrap();
-    }
-}
-
-
-#[cfg(test)]
-mod seek_dsp_state_regression_tests {
-    use super::StreamDecoder;
-    use std::io::Write;
-    use std::os::fd::AsRawFd;
-
-    fn write_seek_signal(path: &std::path::Path) {
-        let frames = 48_000_u32;
-        let sample_rate = 48_000_u32;
-        let data_bytes = frames * 4;
-        let mut file = std::fs::File::create(path).unwrap();
-        file.write_all(b"RIFF").unwrap();
-        file.write_all(&(36_u32 + data_bytes).to_le_bytes()).unwrap();
-        file.write_all(b"WAVEfmt ").unwrap();
-        file.write_all(&16_u32.to_le_bytes()).unwrap();
-        file.write_all(&1_u16.to_le_bytes()).unwrap();
-        file.write_all(&2_u16.to_le_bytes()).unwrap();
-        file.write_all(&sample_rate.to_le_bytes()).unwrap();
-        file.write_all(&(sample_rate * 4).to_le_bytes()).unwrap();
-        file.write_all(&4_u16.to_le_bytes()).unwrap();
-        file.write_all(&16_u16.to_le_bytes()).unwrap();
-        file.write_all(b"data").unwrap();
-        file.write_all(&data_bytes.to_le_bytes()).unwrap();
-        for frame in 0..frames {
-            let phase = frame as f32 * 0.031;
-            let left = (phase.sin() * 24_000.0) as i16;
-            let right = ((phase * 0.73).sin() * 20_000.0) as i16;
-            file.write_all(&left.to_le_bytes()).unwrap();
-            file.write_all(&right.to_le_bytes()).unwrap();
-        }
-    }
-
-    fn configured_decoder_at_rate(
-        path: &std::path::Path,
-        output_rate: usize,
-    ) -> (std::fs::File, StreamDecoder) {
-        let source = std::fs::File::open(path).unwrap();
-        let mut decoder = StreamDecoder::new(source.as_raw_fd(), "wav").unwrap();
-        let mut gains = [0.0_f32; 31];
-        gains[8] = 5.0;
-        gains[17] = -4.0;
-        gains[24] = 3.0;
-        decoder.configure(output_rate, &gains).unwrap();
-        (source, decoder)
-    }
-
-    fn configured_decoder(path: &std::path::Path) -> (std::fs::File, StreamDecoder) {
-        configured_decoder_at_rate(path, 48_000)
-    }
-
-    #[test]
-    fn seek_resets_eq_history_and_discards_pre_seek_pcm_state() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-seek-eq-state-{}.wav",
-            std::process::id()
-        ));
-        write_seek_signal(&path);
-
-        let (source_after_playback, mut after_playback) = configured_decoder(&path);
-        let priming = after_playback.read_frames(4_096).unwrap();
-        assert_eq!(priming.len(), 8_192);
-        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
-        let resumed_after_seek = after_playback.read_frames(256).unwrap();
-
-        let (source_fresh, mut fresh) = configured_decoder(&path);
-        assert_eq!(fresh.seek_to(500).unwrap(), 500);
-        let resumed_fresh = fresh.read_frames(256).unwrap();
-
-        assert_eq!(resumed_after_seek, resumed_fresh,
-            "seek output retained EQ history or pending PCM from the previous playback position");
-
-        // Seeking to the presentation end must drain immediately, and a later
-        // backward seek must clear the decoder's EOF state and resume normally.
-        assert_eq!(after_playback.seek_to(1_000).unwrap(), 1_000);
-        assert!(after_playback.read_frames(256).unwrap().is_empty(),
-            "seeking to the track duration must not emit samples beyond EOF");
-        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
-        assert_eq!(after_playback.read_frames(256).unwrap(), resumed_fresh,
-            "a backward seek after EOF must reset EOF and DSP state");
-
-        drop(after_playback);
-        drop(fresh);
-        drop(source_after_playback);
-        drop(source_fresh);
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn resampled_seek_rebuilds_rubato_and_eq_state() {
-        let path = std::env::temp_dir().join(format!(
-            "flowery-resampled-seek-state-{}.wav",
-            std::process::id()
-        ));
-        write_seek_signal(&path);
-
-        let (source_after_playback, mut after_playback) =
-            configured_decoder_at_rate(&path, 44_100);
-        let priming = after_playback.read_frames(4_096).unwrap();
-        assert_eq!(priming.len(), 8_192);
-        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
-        let resumed_after_seek = after_playback.read_frames(256).unwrap();
-
-        let (source_fresh, mut fresh) = configured_decoder_at_rate(&path, 44_100);
-        assert_eq!(fresh.seek_to(500).unwrap(), 500);
-        let resumed_fresh = fresh.read_frames(256).unwrap();
-
-        assert_eq!(resumed_after_seek.len(), 512);
-        assert_eq!(
-            resumed_after_seek, resumed_fresh,
-            "resampled seek retained prior Rubato or EQ state"
-        );
-
-        assert_eq!(after_playback.seek_to(1_000).unwrap(), 1_000);
-        assert!(
-            after_playback.read_frames(256).unwrap().is_empty(),
-            "resampled seek to the presentation duration must not emit samples beyond EOF"
-        );
-        assert_eq!(after_playback.seek_to(500).unwrap(), 500);
-        assert_eq!(
-            after_playback.read_frames(256).unwrap(),
-            resumed_fresh,
-            "resampled backward seek after EOF must rebuild Rubato and EQ state"
-        );
-
-        drop(after_playback);
-        drop(fresh);
-        drop(source_after_playback);
-        drop(source_fresh);
-        std::fs::remove_file(path).unwrap();
-    }
-}
