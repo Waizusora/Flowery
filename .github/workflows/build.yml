@@ -24,21 +24,21 @@ jobs:
       KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_PASSWORD || '' }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.9"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
           packages: platform-tools
 
@@ -98,7 +98,7 @@ jobs:
         run: gradle --no-daemon assembleDebug assembleRelease
 
       - name: Upload APKs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: flowery-apks
           path: app/build/outputs/apk/**/*.apk
@@ -112,12 +112,12 @@ jobs:
       contents: write
     steps:
       - name: Download APKs
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: flowery-apks
           path: release-apks
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release-apks/**/*.apk
