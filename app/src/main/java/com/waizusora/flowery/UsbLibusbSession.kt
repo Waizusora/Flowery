@@ -54,6 +54,7 @@ internal class UsbLibusbSession private constructor(
         if (!closed) NativeAudio.nativeStopUsbPlayback(nativeHandle)
     }
 
+    @Synchronized
     override fun close() {
         if (closed) return
         closed = true
