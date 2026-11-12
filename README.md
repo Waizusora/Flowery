@@ -55,8 +55,7 @@ See [BUILDING.md](docs/BUILDING.md) for setup and build instructions.
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
-- [Audio engine](AUDIO_ENGINE.md)
-- [Library, metadata, and lyrics](LIBRARY_AND_METADATA.md)
+- [Library, metadata, and lyrics](docs/LIBRARY_AND_METADATA.md)
 - [Build instructions](docs/BUILDING.md)
 - [UI theme](docs/UI_THEME.md)
 - [Playback diagnostics](docs/PLAYBACK_DIAGNOSTICS.md)
