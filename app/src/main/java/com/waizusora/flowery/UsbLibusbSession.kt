@@ -17,6 +17,33 @@ internal class UsbLibusbSession private constructor(
 ) : Closeable {
     private var closed = false
 
+    /**
+     * Applies the descriptor-advertised UAC1 endpoint sampling frequency.
+     * UAC2 clock controls are deliberately not inferred from endpoint data.
+     */
+    @Synchronized
+    fun setUac1SampleRate(endpointAddress: Int, sampleRate: Int): Result<Unit> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        if (endpointAddress !in 1..127 || sampleRate !in 1..0xFFFFFF) {
+            return Result.failure(IllegalArgumentException("Invalid UAC1 endpoint sampling frequency"))
+        }
+        val payload = byteArrayOf(
+            (sampleRate and 0xFF).toByte(),
+            ((sampleRate shr 8) and 0xFF).toByte(),
+            ((sampleRate shr 16) and 0xFF).toByte()
+        )
+        return try {
+            val transferred = connection.controlTransfer(
+                0x22, 0x01, 0x0100, endpointAddress,
+                payload, payload.size, 1_000
+            )
+            if (transferred == payload.size) Result.success(Unit)
+            else Result.failure(IllegalStateException("UAC1 SET_CUR sampling frequency failed: controlTransfer=$transferred"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
     @Synchronized
     fun startPlayback(
         decoderHandle: Long,
