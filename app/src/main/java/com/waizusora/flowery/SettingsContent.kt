@@ -1,5 +1,10 @@
 package com.waizusora.flowery
 
+import android.media.AudioDeviceCallback
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -31,7 +36,24 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
-    audioSourceLabel: String, outputRoute: AndroidOutputTarget, onOutputRouteChange: (AndroidOutputTarget) -> Unit) {
+    audioSourceLabel: String) {
+    val context = LocalContext.current
+    val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
+    var detectedOutput by remember(routeResolver) { mutableStateOf(routeResolver.detectCurrent()) }
+    DisposableEffect(routeResolver) {
+        val callback = object : AudioDeviceCallback() {
+            override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) {
+                detectedOutput = routeResolver.detectCurrent()
+            }
+            override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) {
+                detectedOutput = routeResolver.detectCurrent()
+            }
+        }
+        val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+        manager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
+        detectedOutput = routeResolver.detectCurrent()
+        onDispose { manager.unregisterAudioDeviceCallback(callback) }
+    }
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
@@ -52,28 +74,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         SettingsPage.AUDIO -> {
             Text("OUTPUT ROUTE", color = color, fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleSmall)
-            Text("Choose where Flowery sends normal playback. Android manages the selected device through AAudio.",
-                color = muted, style = MaterialTheme.typography.bodySmall)
-            listOf(
-                AndroidOutputTarget.AUX to ("AUX" to "Wired headphones, headset or analog line output"),
-                AndroidOutputTarget.SPEAKER to ("Speaker" to "Built-in device speaker"),
-                AndroidOutputTarget.BLUETOOTH to ("Bluetooth" to "Bluetooth audio devices")
-            ).forEach { (target, labels) ->
-                Row(
-                    Modifier.fillMaxWidth().clickable { onOutputRouteChange(target) }
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = outputRoute == target,
-                        onClick = { onOutputRouteChange(target) }
-                    )
-                    Column(Modifier.weight(1f).padding(start = 8.dp)) {
-                        Text(labels.first, color = color, fontWeight = FontWeight.Medium)
-                        Text(labels.second, color = muted, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
+            Text(detectedOutput.displayName, color = color,
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
             HorizontalDivider(color = muted.copy(alpha = .25f))
         }
 
@@ -204,8 +206,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             Detail("Android media", "androidx.media:media 1.7.0 · Apache-2.0", color, muted)
             Detail("Document provider", "androidx.documentfile:documentfile 1.0.1 · Apache-2.0", color, muted)
             Detail("AAudio", "Android NDK platform API · Android platform component", color, muted)
-            Text("Consult the exact dependency versions and bundled license notices for the complete license inventory, including transitive dependencies.", color = muted,
-                style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.TRANSLATOR -> Text("Translator credits will be listed when localization work begins.", color = muted)
         SettingsPage.CONTRIBUTORS -> Text("Contributor credits will be listed when contributions are recorded and confirmed.", color = muted)
