@@ -71,6 +71,19 @@ internal class PlaybackCoordinator(
     }
 
     @Synchronized fun seekTo(positionMs: Long) = engine.seekTo(positionMs)
+
+    @Synchronized
+    fun reopenOutputRoute(
+        uri: Uri,
+        segmentStartMs: Long,
+        segmentEndMs: Long?,
+        positionMs: Long,
+        startPaused: Boolean,
+    ) {
+        transition(EVENT_PREPARE)
+        engine.play(uri, segmentStartMs, segmentEndMs, startPaused)
+        engine.seekTo(positionMs)
+    }
     fun currentVolumeFraction(): Float = engine.currentVolumeFraction()
 
     fun positionMs(): Long = engine.positionMs()
