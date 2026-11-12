@@ -298,6 +298,9 @@ fn run_worker(
                 if let Err(message) = submit_feedback(&mut slot) {
                     set_error(&error, &status, message);
                     unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
+                    for audio_slot in slots.drain(..) {
+                        unsafe { libusb1_sys::libusb_free_transfer(audio_slot.transfer); }
+                    }
                     return;
                 }
                 Some(slot)
