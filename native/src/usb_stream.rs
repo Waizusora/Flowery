@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(target_os = "android")]
-use crate::usb_feedback::{FeedbackBusSpeed, FeedbackRateTracker};
+use crate::usb_feedback::{FeedbackBusSpeed, FeedbackRateTracker, PacketFrameScheduler};
 
 #[cfg(target_os = "android")]
 const TRANSFER_RING_SIZE: usize = 4;
@@ -175,7 +175,7 @@ fn fill_and_submit(
     slot: &mut TransferSlot,
     config: StreamConfig,
     decoder_handle: i64,
-    phase: &mut u64,
+    scheduler: &mut PacketFrameScheduler,
     eof: &mut bool,
     feedback_rate_hz: Option<f64>,
 ) -> Result<(), String> {
@@ -188,14 +188,10 @@ fn fill_and_submit(
     let mut offset = 0usize;
     let mut audio_frames = 0u64;
     for packet_index in 0..PACKETS_PER_TRANSFER {
-        let rate_millihz = (feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)) * 1_000.0)
-            .round() as u64;
-        let numerator = rate_millihz
-            .checked_mul(u64::from(config.interval_us))
-            .ok_or("USB service interval frame calculation overflow")?;
-        *phase = phase.checked_add(numerator).ok_or("USB frame phase overflow")?;
-        let frames = (*phase / 1_000_000_000) as usize;
-        *phase %= 1_000_000_000;
+        let frames = scheduler.next_frames(
+            feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)),
+            config.interval_us,
+        )?;
         let expected = frames.checked_mul(frame_bytes).ok_or("USB packet byte count overflow")?;
         if expected > config.max_packet_bytes as usize {
             return Err(format!(
@@ -318,11 +314,11 @@ fn run_worker(
     let mut feedback_tracker = FeedbackRateTracker::new(0.25).expect("valid feedback smoothing");
     let mut feedback_rate_hz: Option<f64> = None;
     let mut feedback_cancelling = false;
-    let mut phase = 0_u64;
+    let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
     for slot in &mut slots {
         if eof || paused.load(Ordering::Acquire) { break; }
-        if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof, feedback_rate_hz) {
+        if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
             set_error(&error, &status, message);
             break;
         }
