@@ -12,7 +12,7 @@
 | `native/src/lib.rs` | JNI entry points and native module registration |
 | `native/src/streaming.rs` | Incremental Symphonia decode and source-rate PCM frame production |
 | `native/src/pcm_format.rs` | Generic signed-integer PCM format and quantization contract |
-| `native/src/aaudio.rs` | Android AAudio output backend, including requested-device selection and verification |
+| `native/src/aaudio.rs` | Android AAudio output backend, including requested-device selection, sharing-mode verification, and fail-closed exclusive mode |
 | `native/src/playback_session.rs` | Playback lifecycle, seek coordination, and worker ownership |
 
 ## Data flow
@@ -27,7 +27,7 @@ Flowery detects the source sample rate and bit depth from the decoded stream. It
 
 ## Output routing
 
-The application exposes three Android-managed targets: AUX, built-in speaker, and Bluetooth. On playback start, the route resolver detects connected devices; AUX has priority over Bluetooth, and speaker is the fallback.
+The application resolves Android-managed output targets: USB DAC, AUX, built-in speaker, and Bluetooth. On playback start, the route resolver detects connected devices; USB has priority, followed by AUX, Bluetooth, and speaker as the fallback.
 
 The playback service monitors Android output-device additions and removals. If the monitored device snapshot changes while playback is active or paused, it reopens the current track on the newly resolved output, retaining the playback position and play/pause state. The current track or folder does not need to be selected again. Android continues to own system routing and downstream conversion.
 
@@ -35,9 +35,11 @@ The playback service monitors Android output-device additions and removals. If t
 
 `UsbAudioDeviceScanner` enumerates devices exposed by Android USB Host and retains devices with Audio Class interfaces (or an Audio Class device-level declaration). It records Audio Control and Audio Streaming interface presence, interface protocol, alternate setting, and endpoint address, direction, transfer type, and maximum packet size. Audio outputs exposed by `AudioManager` are collected separately.
 
-The two inventories are not joined by name or list position: `AudioDeviceInfo` does not expose USB VID/PID, so a reliable public-API association is unavailable. The presence of an isochronous OUT endpoint is reported only as a potential exclusive-output candidate. It is not proof of exclusive access, a supported streaming format, or bit-perfect playback.
+The two inventories are not joined by name or list position: `AudioDeviceInfo` does not expose USB VID/PID, so a reliable public-API association is unavailable. The presence of an isochronous OUT endpoint is reported only as a potential direct-USB streaming candidate. It is not proof of exclusive access, a supported streaming format, or bit-perfect playback.
 
-Android's public USB Host transfer API does not expose isochronous transfers. This implementation therefore provides discovery only; it does not claim USB Audio Class streaming, interface exclusivity, sample-rate negotiation, or bit-perfect verification. A future direct USB backend requires a native USB transport/driver with isochronous support and device-level validation. The existing AAudio backend remains unchanged.
+When Android exposes a USB DAC through AudioManager, Flowery selects its Android output device ID and requests AAudio EXCLUSIVE sharing mode with the source sample rate and integer PCM format. For USB routes, failure to obtain EXCLUSIVE mode is terminal: the native backend does not retry in SHARED mode. The opened stream's actual device ID, sharing mode, sample rate, channel count, and PCM format are checked before playback.
+
+This is Android-managed USB audio output, not direct USB Audio Class transport. Android's public USB Host transfer API does not expose isochronous transfers. The application does not claim the USB interface, submit isochronous transfers, negotiate UAC clocks, or bypass Android audio policy. AAudio EXCLUSIVE mode is not proof of bit-perfect output because downstream vendor DSP, system policy, USB scheduling, and DAC implementation still require physical-device validation. A future raw USB backend would require a native isochronous-capable transport such as libusb, device permission handoff, and per-device testing.
 
 ## PCM boundary
 
