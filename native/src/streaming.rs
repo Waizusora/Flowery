@@ -456,6 +456,8 @@ impl StreamDecoder {
 
 
 
+}
+
 fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],String> {
     let len=env.get_array_length(array).map_err(|e|e.to_string())? as usize;
     if len!=31 { return Err("31 equalizer gains are required".into()); }
