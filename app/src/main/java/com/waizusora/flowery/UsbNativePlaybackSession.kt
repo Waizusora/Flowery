@@ -35,7 +35,11 @@ internal class UsbNativePlaybackSession private constructor(
     private val feedbackMaxPacketSize: Int,
     private val uac2ControlInterface: Int?,
     private val uac2ClockSourceEntity: Int?,
-    private val uac2ClockControls: Int?
+    private val uac2ClockControls: Int?,
+    private val uac2ClockSelectorEntity: Int?,
+    private val uac2ClockSelectorControls: Int?,
+    private val uac2SelectorClockSources: IntArray,
+    private val uac2SelectorSourceControls: IntArray
 ) : Closeable {
     private var closed = false
 
@@ -46,7 +50,11 @@ internal class UsbNativePlaybackSession private constructor(
                 uac2ControlInterface ?: return Result.failure(IllegalStateException("UAC2 control interface is missing")),
                 uac2ClockSourceEntity,
                 uac2ClockControls ?: 0,
-                sampleRate
+                sampleRate,
+                uac2ClockSelectorEntity ?: 0,
+                uac2ClockSelectorControls ?: 0,
+                uac2SelectorClockSources,
+                uac2SelectorSourceControls
             )
         } else {
             usb.setUac1SampleRate(endpoint, sampleRate)
@@ -200,12 +208,24 @@ internal class UsbNativePlaybackSession private constructor(
                 val clockControlInterface = if (isUac2) plan.optInt("uac2_control_interface_number", -1) else -1
                 val clockSourceEntity = if (isUac2) plan.optInt("uac2_clock_source_entity_id", -1) else -1
                 val clockControls = if (isUac2) plan.optInt("uac2_clock_controls", -1) else -1
+                val clockSelectorEntity = if (isUac2) plan.optInt("uac2_clock_selector_entity_id", 0) else 0
+                val clockSelectorControls = if (isUac2) plan.optInt("uac2_clock_selector_controls", 0) else 0
+                val selectorSourcesJson = if (isUac2) plan.optJSONArray("uac2_selector_clock_sources") else null
+                val selectorControlsJson = if (isUac2) plan.optJSONArray("uac2_selector_source_controls") else null
+                val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
+                val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits !in 1..32 ||
                     (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
                     (isUac2 && (clockControlInterface !in 0..255 || clockSourceEntity !in 1..255 ||
-                        clockControls !in 0..255 || (clockControls and 0x03) !in 1..2))
+                        clockControls !in 0..255 ||
+                        (clockSelectorEntity !in 0..255 || clockSelectorControls !in 0..255 ||
+                            selectorSources.size != selectorSourceControls.size ||
+                            selectorSources.any { it !in 1..255 } ||
+                            selectorSourceControls.any { it !in 0..255 } ||
+                            (clockSelectorEntity != 0 && (selectorSources.isEmpty() ||
+                                (clockSelectorControls and 0x03) !in 1..2)))))
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
                     continue
@@ -225,7 +245,11 @@ internal class UsbNativePlaybackSession private constructor(
                         interval, channels, bits, subslot, feedbackEndpoint, feedbackPacket,
                         if (isUac2) clockControlInterface else null,
                         if (isUac2) clockSourceEntity else null,
-                        if (isUac2) clockControls else null
+                        if (isUac2) clockControls else null,
+                        if (isUac2 && clockSelectorEntity != 0) clockSelectorEntity else null,
+                        if (isUac2) clockSelectorControls else null,
+                        selectorSources,
+                        selectorSourceControls
                     )
                 )
             }
