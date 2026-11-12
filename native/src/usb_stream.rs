@@ -349,7 +349,7 @@ fn run_worker(
         if !cancelling && !paused.load(Ordering::Acquire) && !eof {
             for slot in &mut slots {
                 if !slot.submitted {
-                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof, feedback_rate_hz) {
+                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
                         set_error(&error, &status, message); break;
                     }
                     if eof { break; }
