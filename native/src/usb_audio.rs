@@ -386,6 +386,25 @@ mod tests {
     }
 
     #[test]
+    fn plans_uac2_pcm_and_defers_rate_validation_to_clock_source() {
+        let descriptors = [
+            9, 4, 0, 0, 0, 1, 1, 0x20, 0, // UAC2 AudioControl
+            8, 0x24, 0x0A, 7, 0x03, 0x02, 0, 0, // Clock Source 7
+            17, 0x24, 0x02, 1, 0x01, 0x01, 0, 7, 2, 3, 0, 0, 0, 0, 0, 0, 0, // USB Streaming Input Terminal
+            9, 4, 1, 1, 1, 1, 2, 0x20, 0, // UAC2 AudioStreaming alt 1
+            16, 0x24, 0x01, 1, 0, 1, 0, 0, 0, 0, 2, 3, 0, 0, 0, 0, // AS_GENERAL
+            6, 0x24, 0x02, 1, 4, 24, // Type I, 4-byte subslot, 24 valid bits
+            7, 5, 0x01, 0x09, 0x00, 0x14, 1, // Adaptive isochronous OUT
+        ];
+        let plan = plan_pcm_playback(&descriptors, 48_000, 2, 24).unwrap();
+        assert_eq!(plan.interface_number, 1);
+        assert_eq!(plan.channels, 2);
+        assert_eq!(plan.subslot_bytes, 4);
+        assert_eq!(plan.bit_resolution, 24);
+        assert!(plan.requires_uac2_clock_negotiation);
+    }
+
+    #[test]
     fn preserves_high_speed_packet_multiplier_bits() {
         let descriptors = [
             9, 4, 1, 0, 0, 1, 2, 0x20, 0,
