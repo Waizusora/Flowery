@@ -19,7 +19,6 @@ internal data class AndroidOutputRoute(
     val deviceId: Int,
     val deviceName: String?,
     val deviceType: Int?,
-    val supportedSampleRates: IntArray,
 )
 
 internal data class OutputDeviceCandidate(
@@ -49,8 +48,7 @@ internal class AndroidOutputRouteResolver(context: Context) {
             AndroidOutputTarget.SPEAKER -> resolveSpeaker(candidates)
             AndroidOutputTarget.BLUETOOTH -> resolveBluetooth(candidates)
         }
-        return AndroidOutputRoute(target, selected?.id ?: 0, selected?.productName,
-            selected?.type, selected?.sampleRates ?: intArrayOf())
+        return AndroidOutputRoute(target, selected?.id ?: 0, selected?.productName, selected?.type)
     }
 
     private fun resolveAux(candidates: List<OutputDeviceCandidate>) =
