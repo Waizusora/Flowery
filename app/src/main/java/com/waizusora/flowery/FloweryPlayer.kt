@@ -199,10 +199,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 activeUsbDeviceKey = null
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
-                // Android mixer BIT_PERFECT is not used as a fallback. When the user enables
-                // USB Bit-Perfect, playback has already taken the direct USB transport path.
-                // Shared Android output is handled by Rust AAudio. USB exclusive playback
-                // uses the separate libusb path above and never falls back to Android mixer mode.
+                // AAudio receives integer PCM for every Android-managed output target.
                 // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
                 // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
                 val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
@@ -252,27 +249,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "actualChannels=${attempt[8]}, actualFormat=${attempt[9]}, " +
                             "failureStage=$failureStage"
                     } else "native open diagnostics unavailable"
-                    val device = if (outputRoute.isUsbOutput) {
-                        "product=${outputRoute.deviceName ?: "unknown"}, id=${outputRoute.deviceId}, " +
-                            "type=${outputRoute.deviceType}, address=${outputRoute.deviceAddress ?: "unknown"}, " +
-                            "rates=${outputRoute.supportedSampleRates.joinToString().ifEmpty { "unknown" }}"
-                    } else "no USB output device selected"
-                    val usbHost = diagnostics.hostDeviceSummary()
-                    val reason = if (opened == -10001 && deviceId != 0) {
-                        "Android did not provide the required USB DAC EXCLUSIVE mode."
-                    } else if (deviceId != 0) {
-                        "Unable to open the Android shared USB audio output (error $opened)."
+                    val device = "target=${outputRoute.target}, product=${outputRoute.deviceName ?: "system default"}, id=${outputRoute.deviceId}, type=${outputRoute.deviceType}"
+                    val reason = if (opened == -10001) {
+                        "AAudio could not open the requested Android output in EXCLUSIVE mode."
                     } else {
-                        "Unable to open Android system SHARED output (error $opened)."
+                        "Unable to open the selected Android AAudio output (error $opened)."
                     }
-                    throw IllegalStateException("$reason $device; $usbHost; $details")
+                    throw IllegalStateException("$reason $device; $details")
                 }
                 outputSampleRate = targetRate
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
 
-                val routeName = if (outputRoute.isUsbOutput) "USB DAC" else "system output"
+                val routeName = outputRoute.target.name
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
                 val sharingName = when (outputInfo.getOrNull(9)?.toInt()) {
                     0 -> "EXCLUSIVE"
