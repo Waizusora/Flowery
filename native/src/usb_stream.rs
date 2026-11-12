@@ -246,7 +246,7 @@ fn run_worker(
     let mut phase = 0_u64;
     let mut eof = false;
     for slot in &mut slots {
-        if eof { break; }
+        if eof || paused.load(Ordering::Acquire) { break; }
         if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
             set_error(&error, &status, message);
             break;
@@ -322,10 +322,11 @@ fn spawn_worker(
     decoder_handle: i64,
     config: StreamConfig,
     initially_paused: bool,
+    initial_position_frames: u64,
 ) -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
-    let played_frames = Arc::new(AtomicU64::new(0));
+    let played_frames = Arc::new(AtomicU64::new(initial_position_frames));
     let paused = Arc::new(AtomicBool::new(initially_paused));
     let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
@@ -421,7 +422,7 @@ pub(super) fn start(
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
         max_packet_bytes, interval_us,
     };
-    spawn_worker(session_handle, session, decoder_handle, config, false)
+    spawn_worker(session_handle, session, decoder_handle, config, false, 0)
 }
 
 #[cfg(target_os = "android")]
@@ -448,7 +449,13 @@ pub(super) fn seek(
     stop_worker_locked(session_handle);
     let actual_position = decoder.lock().unwrap_or_else(|e| e.into_inner())
         .seek_to(position_ms)?;
-    spawn_worker(session_handle, session, decoder_handle, config, was_paused)?;
+    let initial_position_frames = (u128::from(actual_position)
+        .saturating_mul(u128::from(config.sample_rate)) / 1_000)
+        .min(u128::from(u64::MAX)) as u64;
+    spawn_worker(
+        session_handle, session, decoder_handle, config, was_paused,
+        initial_position_frames,
+    )?;
     Ok(actual_position)
 }
 
