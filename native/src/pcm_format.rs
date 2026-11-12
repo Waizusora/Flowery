@@ -69,7 +69,8 @@ pub(super) fn encode_usb_pcm(
     for sample in samples {
         let normalized = if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 };
         let quantized = ((normalized as f64 * scale).round() as i64).clamp(minimum, maximum);
-        let packed = (quantized << padding) as u32;
+        let valid_mask = (1_u64 << format.valid_bits) - 1;
+        let packed = (((quantized as u64) & valid_mask) << padding) as u32;
         let bytes = packed.to_le_bytes();
         output.extend_from_slice(&bytes[..usize::from(format.subslot_bytes)]);
     }
