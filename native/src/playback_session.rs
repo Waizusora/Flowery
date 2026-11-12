@@ -203,7 +203,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSessionBeginSeek(
-    env: JNIEnv, _class: JClass, handle: jlong,
+    mut env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jlong {
     let Some(session) = session_ref(handle) else {
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
@@ -409,7 +409,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackS
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetPlaybackSessionSeekError(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
+    env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jni::sys::jstring {
     let detail = session_ref(handle)
         .map(|session| session.seek_error.lock().unwrap_or_else(|error| error.into_inner()).clone())
