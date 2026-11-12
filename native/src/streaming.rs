@@ -1,4 +1,5 @@
 use std::fs::File;
+#[cfg(target_os = "android")]
 use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
@@ -18,8 +19,10 @@ use jni::sys::{jint, jlong};
 #[cfg(target_os = "android")]
 use jni::sys::jstring;
 use jni::JNIEnv;
+#[cfg(target_os = "android")]
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
+#[cfg(target_os = "android")]
 use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
