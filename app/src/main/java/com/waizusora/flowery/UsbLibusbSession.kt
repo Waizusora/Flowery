@@ -44,6 +44,92 @@ internal class UsbLibusbSession private constructor(
         }
     }
 
+    /**
+     * Negotiates a UAC2 Clock Source frequency using the entity ID resolved
+     * from AudioControl descriptors. The advertised GET_RANGE is authoritative.
+     */
+    @Synchronized
+    fun negotiateUac2Clock(
+        controlInterfaceNumber: Int,
+        clockSourceEntityId: Int,
+        clockControls: Int,
+        sampleRate: Int
+    ): Result<Unit> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        if (controlInterfaceNumber !in 0..255 || clockSourceEntityId !in 1..255 ||
+            clockControls !in 0..255 || sampleRate <= 0) {
+            return Result.failure(IllegalArgumentException("Invalid UAC2 clock negotiation parameters"))
+        }
+        val frequencyControl = clockControls and 0x03
+        if (frequencyControl != 0x01 && frequencyControl != 0x02) {
+            return Result.failure(IllegalStateException("UAC2 Clock Source does not expose a usable frequency control"))
+        }
+        return try {
+            val index = (clockSourceEntityId shl 8) or controlInterfaceNumber
+            val range = ByteArray(2 + 12 * 32)
+            val rangeLength = connection.controlTransfer(
+                0xA1, 0x02, 0x0100, index, range, range.size, 1_000
+            )
+            if (rangeLength < 2) {
+                return Result.failure(IllegalStateException("UAC2 Clock Source GET_RANGE failed: controlTransfer=$rangeLength"))
+            }
+            val subRanges = (range[0].toInt() and 0xFF) or ((range[1].toInt() and 0xFF) shl 8)
+            if (subRanges !in 1..32 || rangeLength < 2 + subRanges * 12) {
+                return Result.failure(IllegalStateException("UAC2 Clock Source returned an invalid frequency range"))
+            }
+            var supported = false
+            for (i in 0 until subRanges) {
+                val offset = 2 + i * 12
+                val minimum = readU32(range, offset)
+                val maximum = readU32(range, offset + 4)
+                val resolution = readU32(range, offset + 8)
+                if (minimum <= sampleRate.toLong() && sampleRate.toLong() <= maximum &&
+                    (resolution == 0L || (sampleRate.toLong() - minimum) % resolution == 0L)) {
+                    supported = true
+                    break
+                }
+            }
+            if (!supported) {
+                return Result.failure(IllegalArgumentException("USB DAC Clock Source does not advertise $sampleRate Hz"))
+            }
+
+            val current = ByteArray(4)
+            val currentLength = connection.controlTransfer(
+                0xA1, 0x01, 0x0100, index, current, current.size, 1_000
+            )
+            if (currentLength != 4) {
+                return Result.failure(IllegalStateException("UAC2 Clock Source GET_CUR failed: controlTransfer=$currentLength"))
+            }
+            val currentRate = readU32(current, 0)
+            if (currentRate == sampleRate.toLong()) return Result.success(Unit)
+            if (frequencyControl != 0x02) {
+                return Result.failure(IllegalStateException("UAC2 Clock Source is read-only at $currentRate Hz; requested $sampleRate Hz"))
+            }
+
+            val payload = byteArrayOf(
+                (sampleRate and 0xFF).toByte(),
+                ((sampleRate ushr 8) and 0xFF).toByte(),
+                ((sampleRate ushr 16) and 0xFF).toByte(),
+                ((sampleRate ushr 24) and 0xFF).toByte()
+            )
+            val written = connection.controlTransfer(
+                0x21, 0x01, 0x0100, index, payload, payload.size, 1_000
+            )
+            if (written != payload.size) {
+                return Result.failure(IllegalStateException("UAC2 Clock Source SET_CUR failed: controlTransfer=$written"))
+            }
+            Result.success(Unit)
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    private fun readU32(bytes: ByteArray, offset: Int): Long =
+        (bytes[offset].toLong() and 0xFF) or
+            ((bytes[offset + 1].toLong() and 0xFF) shl 8) or
+            ((bytes[offset + 2].toLong() and 0xFF) shl 16) or
+            ((bytes[offset + 3].toLong() and 0xFF) shl 24)
+
     @Synchronized
     fun startPlayback(
         decoderHandle: Long,
