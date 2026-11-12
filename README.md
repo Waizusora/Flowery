@@ -37,7 +37,7 @@ Flowery reads each file's sample rate and bit depth from its decoded stream meta
 
 ## Lyrics
 
-Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers, but the current player screen highlights lyrics by line rather than animating individual words. The player displays a message when no synchronized sidecar LRC is available; it does not currently provide a separate plain-text lyrics mode, embedded-lyrics extraction, remote lyric search, or lyric downloading.
+Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers.
 
 The lyrics panel uses the Soft Rose theme's `primaryContainer` color in light and dark themes.
 
@@ -60,8 +60,6 @@ See [BUILDING.md](docs/BUILDING.md) for setup and build instructions.
 - [Build instructions](docs/BUILDING.md)
 - [UI theme](docs/UI_THEME.md)
 - [Playback diagnostics](docs/PLAYBACK_DIAGNOSTICS.md)
-- [Manual test log](docs/MANUAL_TEST_LOG.md)
-- [Refactor status](docs/REFACTOR_STATUS.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Testing and limitations
