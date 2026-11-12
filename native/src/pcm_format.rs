@@ -43,9 +43,42 @@ impl PcmFormat {
     }
 }
 
+/// Pack decoded normalized float samples into little-endian USB Audio Class PCM.
+/// Valid sample bits are left-aligned in each subslot, as required by Type I PCM.
+pub(super) fn encode_usb_pcm(
+    samples: &[f32],
+    format: PcmFormat,
+    output: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    let format = format.validate()?;
+    if !matches!(format.valid_bits, 16 | 20 | 24 | 32) {
+        return Err("USB PCM encoder supports signed 16/20/24/32-bit samples");
+    }
+    let channels = usize::from(format.channels);
+    if samples.len() % channels != 0 {
+        return Err("Decoded PCM sample count is not channel-frame aligned");
+    }
+    let required = samples.len().checked_mul(usize::from(format.subslot_bytes))
+        .ok_or("USB PCM output size overflow")?;
+    output.clear();
+    output.reserve(required);
+    let scale = (1_i64 << (format.valid_bits - 1)) as f64;
+    let minimum = -(1_i64 << (format.valid_bits - 1));
+    let maximum = (1_i64 << (format.valid_bits - 1)) - 1;
+    let padding = format.subslot_bytes * 8 - format.valid_bits;
+    for sample in samples {
+        let normalized = if sample.is_finite() { sample.clamp(-1.0, 1.0) } else { 0.0 };
+        let quantized = ((normalized as f64 * scale).round() as i64).clamp(minimum, maximum);
+        let packed = (quantized << padding) as u32;
+        let bytes = packed.to_le_bytes();
+        output.extend_from_slice(&bytes[..usize::from(format.subslot_bytes)]);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::PcmFormat;
+    use super::{encode_usb_pcm, PcmFormat};
 
     #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
@@ -65,4 +98,21 @@ mod tests {
         let invalid = PcmFormat { sample_rate: 0, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true };
         assert!(invalid.validate().is_err());
     }
+    #[test]
+    fn encodes_24_valid_bits_left_aligned_in_32_bit_subslot() {
+        let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 24, subslot_bytes: 4, little_endian: true };
+        let mut output = Vec::new();
+        encode_usb_pcm(&[0.0, -1.0, 0.5, 1.0], format, &mut output).unwrap();
+        assert_eq!(&output[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&output[4..8], &[0, 0, 0, 0x80]);
+        assert_eq!(&output[8..12], &[0, 0, 0, 0x40]);
+        assert_eq!(&output[12..16], &[0, 0, 0, 0x7f]);
+    }
+
+    #[test]
+    fn rejects_unaligned_pcm_sample_count() {
+        let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        assert!(encode_usb_pcm(&[0.0], format, &mut Vec::new()).is_err());
+    }
+
 }
