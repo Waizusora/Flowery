@@ -11,7 +11,9 @@
 | `PlaybackCoordinator.kt` | Coordinates playback lifecycle and reopens the active track at a captured position |
 | `native/src/lib.rs` | JNI entry points and native module registration |
 | `native/src/streaming.rs` | Incremental Symphonia decode and source-rate PCM frame production |
-| `native/src/pcm_format.rs` | Generic signed-integer PCM format and quantization contract |\n| `native/src/usb_audio.rs` | Vendor-independent UAC1/UAC2 configuration descriptor parsing and playback alternate discovery |
+| `native/src/pcm_format.rs` | Generic signed-integer PCM format and quantization contract |
+| `native/src/usb_audio.rs` | Vendor-independent UAC1/UAC2 configuration descriptor parsing and playback alternate discovery |
+| `native/src/usb_isochronous.rs` | Full/high-speed isochronous PCM packet scheduling primitives |
 | `native/src/aaudio.rs` | Android AAudio output backend, including requested-device selection, sharing-mode verification, and fail-closed exclusive mode |
 | `native/src/playback_session.rs` | Playback lifecycle, seek coordination, and worker ownership |
 
