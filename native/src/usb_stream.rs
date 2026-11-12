@@ -15,6 +15,9 @@ use std::{
 };
 
 #[cfg(target_os = "android")]
+use crate::usb_feedback::{FeedbackBusSpeed, FeedbackRateTracker};
+
+#[cfg(target_os = "android")]
 const TRANSFER_RING_SIZE: usize = 4;
 #[cfg(target_os = "android")]
 const PACKETS_PER_TRANSFER: usize = 8;
@@ -31,6 +34,14 @@ struct TransferSlot {
     signal: Box<TransferSignal>,
     submitted: bool,
     audio_frames: u64,
+}
+
+#[cfg(target_os = "android")]
+struct FeedbackSlot {
+    transfer: *mut libusb1_sys::libusb_transfer,
+    buffer: Vec<u8>,
+    signal: Box<TransferSignal>,
+    submitted: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -54,6 +65,9 @@ struct StreamConfig {
     subslot_bytes: u8,
     max_packet_bytes: u32,
     interval_us: u32,
+    feedback_endpoint: Option<u8>,
+    feedback_packet_bytes: Option<u16>,
+    feedback_speed: FeedbackBusSpeed,
 }
 
 #[cfg(target_os = "android")]
@@ -125,12 +139,45 @@ fn create_slot(
 }
 
 #[cfg(target_os = "android")]
+fn create_feedback_slot(
+    handle: *mut libusb1_sys::libusb_device_handle,
+    endpoint: u8,
+    packet_bytes: u16,
+) -> Result<FeedbackSlot, String> {
+    let mut buffer = vec![0_u8; usize::from(packet_bytes)];
+    let signal = Box::new(TransferSignal { completed: AtomicBool::new(false) });
+    let transfer = unsafe { libusb1_sys::libusb_alloc_transfer(1) };
+    if transfer.is_null() {
+        return Err("libusb_alloc_transfer failed for the feedback endpoint".into());
+    }
+    unsafe {
+        libusb1_sys::libusb_fill_iso_transfer(
+            transfer, handle, endpoint, buffer.as_mut_ptr(), buffer.len() as i32,
+            1, transfer_callback, (&*signal as *const TransferSignal).cast_mut().cast(), 0,
+        );
+    }
+    Ok(FeedbackSlot { transfer, buffer, signal, submitted: false })
+}
+
+#[cfg(target_os = "android")]
+fn submit_feedback(slot: &mut FeedbackSlot) -> Result<(), String> {
+    slot.signal.completed.store(false, Ordering::Release);
+    let result = unsafe { libusb1_sys::libusb_submit_transfer(slot.transfer) };
+    if result != 0 {
+        return Err(format!("Unable to submit USB feedback transfer: libusb error {result}"));
+    }
+    slot.submitted = true;
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
 fn fill_and_submit(
     slot: &mut TransferSlot,
     config: StreamConfig,
     decoder_handle: i64,
     phase: &mut u64,
     eof: &mut bool,
+    feedback_rate_hz: Option<f64>,
 ) -> Result<(), String> {
     let frame_bytes = usize::from(config.channels)
         .checked_mul(usize::from(config.subslot_bytes))
@@ -141,12 +188,14 @@ fn fill_and_submit(
     let mut offset = 0usize;
     let mut audio_frames = 0u64;
     for packet_index in 0..PACKETS_PER_TRANSFER {
-        let numerator = u64::from(config.sample_rate)
+        let rate_millihz = (feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)) * 1_000.0)
+            .round() as u64;
+        let numerator = rate_millihz
             .checked_mul(u64::from(config.interval_us))
             .ok_or("USB service interval frame calculation overflow")?;
         *phase = phase.checked_add(numerator).ok_or("USB frame phase overflow")?;
-        let frames = (*phase / 1_000_000) as usize;
-        *phase %= 1_000_000;
+        let frames = (*phase / 1_000_000_000) as usize;
+        *phase %= 1_000_000_000;
         let expected = frames.checked_mul(frame_bytes).ok_or("USB packet byte count overflow")?;
         if expected > config.max_packet_bytes as usize {
             return Err(format!(
@@ -243,11 +292,34 @@ fn run_worker(
         }
     }
 
+    let mut feedback_slot = match (config.feedback_endpoint, config.feedback_packet_bytes) {
+        (Some(endpoint), Some(packet_bytes)) => match create_feedback_slot(session.handle, endpoint, packet_bytes) {
+            Ok(mut slot) => {
+                if let Err(message) = submit_feedback(&mut slot) {
+                    set_error(&error, &status, message);
+                    unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
+                    return;
+                }
+                Some(slot)
+            }
+            Err(message) => {
+                set_error(&error, &status, message);
+                for slot in slots.drain(..) {
+                    unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
+                }
+                return;
+            }
+        },
+        _ => None,
+    };
+    let mut feedback_tracker = FeedbackRateTracker::new(0.25).expect("valid feedback smoothing");
+    let mut feedback_rate_hz: Option<f64> = None;
+    let mut feedback_cancelling = false;
     let mut phase = 0_u64;
     let mut eof = false;
     for slot in &mut slots {
         if eof || paused.load(Ordering::Acquire) { break; }
-        if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
+        if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof, feedback_rate_hz) {
             set_error(&error, &status, message);
             break;
         }
@@ -261,19 +333,33 @@ fn run_worker(
                 for slot in &slots {
                     if slot.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) }; }
                 }
+                if let Some(feedback) = feedback_slot.as_mut() {
+                    if feedback.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) }; }
+                    feedback_cancelling = true;
+                }
+            }
+        }
+        if eof && !slots.iter().any(|slot| slot.submitted) {
+            if let Some(feedback) = feedback_slot.as_mut() {
+                if feedback.submitted && !feedback_cancelling {
+                    let _ = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
+                    feedback_cancelling = true;
+                }
             }
         }
         if !cancelling && !paused.load(Ordering::Acquire) && !eof {
             for slot in &mut slots {
                 if !slot.submitted {
-                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
+                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof, feedback_rate_hz) {
                         set_error(&error, &status, message); break;
                     }
                     if eof { break; }
                 }
             }
         }
-        if !slots.iter().any(|slot| slot.submitted) {
+        let audio_pending = slots.iter().any(|slot| slot.submitted);
+        let feedback_pending = feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
+        if !audio_pending && !feedback_pending {
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
             thread::sleep(Duration::from_millis(1)); continue;
         }
@@ -281,6 +367,47 @@ fn run_worker(
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
         if event_result < 0 && event_result != -10 {
             set_error(&error, &status, format!("libusb event handling failed with code {event_result}")); continue;
+        }
+        if let Some(feedback) = feedback_slot.as_mut() {
+            if feedback.submitted && feedback.signal.completed.swap(false, Ordering::AcqRel) {
+                feedback.submitted = false;
+                if !cancelling && !feedback_cancelling {
+                    let transfer_status = unsafe { (*feedback.transfer).status };
+                    let descriptor = unsafe { &*(*feedback.transfer).iso_packet_desc.as_ptr() };
+                    if transfer_status != 0 || descriptor.status != 0 {
+                        set_error(&error, &status, format!(
+                            "USB feedback transfer failed (transfer status {transfer_status}, packet status {})",
+                            descriptor.status
+                        ));
+                    } else if descriptor.actual_length as usize != feedback.buffer.len() {
+                        set_error(&error, &status, format!(
+                            "USB feedback packet length mismatch: received {}, expected {}",
+                            descriptor.actual_length, feedback.buffer.len()
+                        ));
+                    } else {
+                        match crate::usb_feedback::decode_feedback_rate_hz(&feedback.buffer, config.feedback_speed) {
+                            Ok(measured) => {
+                                let lower = f64::from(config.sample_rate) * 0.75;
+                                let upper = f64::from(config.sample_rate) * 1.50;
+                                if measured < lower || measured > upper {
+                                    set_error(&error, &status, format!(
+                                        "USB feedback rate {measured:.2} Hz is outside the allowed range for nominal {} Hz",
+                                        config.sample_rate
+                                    ));
+                                } else if let Ok(estimate) = feedback_tracker.update(measured) {
+                                    feedback_rate_hz = Some(estimate);
+                                }
+                            }
+                            Err(message) => set_error(&error, &status, message),
+                        }
+                    }
+                    if status.load(Ordering::Acquire) >= 0 && !eof {
+                        if let Err(message) = submit_feedback(feedback) {
+                            set_error(&error, &status, message);
+                        }
+                    }
+                }
+            }
         }
         for slot in &mut slots {
             if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) { continue; }
@@ -292,6 +419,9 @@ fn run_worker(
         }
     }
 
+    if let Some(feedback) = feedback_slot {
+        unsafe { libusb1_sys::libusb_free_transfer(feedback.transfer); }
+    }
     for slot in slots {
         unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
     }
