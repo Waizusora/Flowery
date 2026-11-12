@@ -25,7 +25,6 @@ object NativeAudio {
     external fun nativeTransitionPlaybackController(handle: Long, event: Int): Int
     external fun nativeGetPlaybackControllerState(handle: Long): Int
     external fun nativeDestroyPlaybackController(handle: Long)
-    external fun nativeSelectPreferredSampleRate(sourceRate: Int, supportedRates: IntArray): Int
     external fun nativeRingCapacityFrames(sampleRate: Int): Int
     external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
@@ -45,8 +44,6 @@ object NativeAudio {
     external fun nativeClosePlaybackSession(session: Long)
     external fun nativeGetStreamInfo(handle: Long): Long
     external fun nativeGetStreamDurationMs(handle: Long): Long
-    external fun nativeConfigureStreamDecoder(handle: Long, outputRate: Int, bandGainsDb: FloatArray): Int
-    external fun nativeUpdateStreamGains(handle: Long, bandGainsDb: FloatArray): Int
     external fun nativeStartStreamPump(handle: Long, session: Long, maxFrames: Int, totalFrames: Long): Int
     external fun nativeStartSegmentedStreamPump(handle: Long, session: Long, maxFrames: Int, segmentStartMs: Long, segmentEndMs: Long): Int
     external fun nativeGetStreamPumpStatus(handle: Long): Int
@@ -67,7 +64,6 @@ object NativeAudio {
     external fun nativeGetOutputDiagnostics(): LongArray
     external fun nativeGetLastOutputOpenDiagnostics(): LongArray
     external fun nativeTuneOutputBuffer(): Int
-    external fun nativeSelectOutputSampleRate(requestedRate: Int, channels: Int, deviceId: Int, outputFormat: Int, requireExactRate: Boolean): Int
     external fun nativeReadTags(encodedAudio: ByteArray, extension: String, tempDirectory: String): String
     external fun nativeReadTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String): String
     external fun nativeWriteTagsFromFd(fileDescriptor: Int, extension: String, tempDirectory: String, title: String, artist: String, album: String, albumArtist: String, genre: String, year: String, track: String, disc: String, comment: String, composer: String, lyrics: String): String
