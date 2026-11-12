@@ -18,8 +18,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Owns one class-compliant USB Audio playback stream.
  *
- * The first transport iteration intentionally enables UAC1 only. UAC2 is
- * rejected until the clock-source entity is parsed and negotiated correctly.
+ * UAC1 endpoint frequency and UAC2 Clock Source frequency are negotiated
+ * before the native isochronous stream is started.
  */
 internal class UsbNativePlaybackSession private constructor(
     private val usb: UsbLibusbSession,
@@ -32,13 +32,26 @@ internal class UsbNativePlaybackSession private constructor(
     private val validBits: Int,
     private val subslotBytes: Int,
     private val feedbackEndpoint: Int,
-    private val feedbackMaxPacketSize: Int
+    private val feedbackMaxPacketSize: Int,
+    private val uac2ControlInterface: Int?,
+    private val uac2ClockSourceEntity: Int?,
+    private val uac2ClockControls: Int?
 ) : Closeable {
     private var closed = false
 
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
-        return usb.setUac1SampleRate(endpoint, sampleRate).fold(
+        val negotiation = if (uac2ClockSourceEntity != null) {
+            usb.negotiateUac2Clock(
+                uac2ControlInterface ?: return Result.failure(IllegalStateException("UAC2 control interface is missing")),
+                uac2ClockSourceEntity,
+                uac2ClockControls ?: 0,
+                sampleRate
+            )
+        } else {
+            usb.setUac1SampleRate(endpoint, sampleRate)
+        }
+        return negotiation.fold(
             onSuccess = {
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
@@ -174,11 +187,6 @@ internal class UsbNativePlaybackSession private constructor(
                     lastError = IllegalStateException("Native USB planner returned an incomplete playback plan")
                     continue
                 }
-                if (plan.optBoolean("requires_uac2_clock_negotiation")) {
-                    lastError = IllegalStateException("This DAC uses UAC2. Native playback is held back until its clock-source entity can be negotiated; no guessed clock ID is used.")
-                    continue
-                }
-
                 val interfaceNumber = plan.optInt("interface_number", -1)
                 val alternate = plan.optInt("alternate_setting", -1)
                 val endpoint = plan.optInt("endpoint_address", -1)
@@ -188,10 +196,16 @@ internal class UsbNativePlaybackSession private constructor(
                 val bits = plan.optInt("bit_resolution", -1)
                 val feedbackEndpoint = plan.optInt("feedback_endpoint_address", 0)
                 val feedbackPacket = plan.optInt("feedback_max_packet_size", 0)
+                val isUac2 = plan.optBoolean("requires_uac2_clock_negotiation")
+                val clockControlInterface = if (isUac2) plan.optInt("uac2_control_interface_number", -1) else -1
+                val clockSourceEntity = if (isUac2) plan.optInt("uac2_clock_source_entity_id", -1) else -1
+                val clockControls = if (isUac2) plan.optInt("uac2_clock_controls", -1) else -1
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits !in 1..32 ||
-                    (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4))
+                    (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
+                    (isUac2 && (clockControlInterface !in 0..255 || clockSourceEntity !in 1..255 ||
+                        clockControls !in 0..255 || (clockControls and 0x03) !in 1..2))
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
                     continue
@@ -208,7 +222,10 @@ internal class UsbNativePlaybackSession private constructor(
                 return Result.success(
                     UsbNativePlaybackSession(
                         native, decoderHandle, sampleRate, endpoint, packet,
-                        interval, channels, bits, subslot, feedbackEndpoint, feedbackPacket
+                        interval, channels, bits, subslot, feedbackEndpoint, feedbackPacket,
+                        if (isUac2) clockControlInterface else null,
+                        if (isUac2) clockSourceEntity else null,
+                        if (isUac2) clockControls else null
                     )
                 )
             }
