@@ -19,6 +19,29 @@ use jni::sys::{jbyteArray, jint, jstring};
 use jni::JNIEnv;
 
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbAudioDescriptors(
+    mut env: JNIEnv,
+    _class: JClass,
+    descriptors: JByteArray,
+) -> jstring {
+    let bytes = match jbytes(&mut env, &descriptors) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let parsed = crate::usb_audio::parse_configuration_descriptors(&bytes);
+    match serde_json::to_string(&parsed) {
+        Ok(json) => write_text_to_java(&mut env, &json),
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersion(
     env: JNIEnv,
     _class: JClass,
