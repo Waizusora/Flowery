@@ -7,7 +7,7 @@ import org.junit.Test
 
 class AndroidOutputRouteSelectionTest {
     private fun device(id: Int, type: Int, name: String) =
-        OutputDeviceCandidate(id, type, name, intArrayOf(44_100, 48_000))
+        OutputDeviceCandidate(id, type, name)
 
     @Test fun resolvesAuxFromWiredAnalogOutputs() {
         val selected = AndroidOutputRouteSelection.selectAux(listOf(
