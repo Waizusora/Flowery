@@ -20,6 +20,8 @@ pub struct UsbAudioFormat {
     pub max_packet_size: Option<u16>,
     pub interval: Option<u8>,
     pub feedback_endpoint_address: Option<u8>,
+    pub feedback_max_packet_size: Option<u16>,
+    pub feedback_interval: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -45,6 +47,8 @@ struct Alternate {
     max_packet_size: Option<u16>,
     interval: Option<u8>,
     feedback_endpoint_address: Option<u8>,
+    feedback_max_packet_size: Option<u16>,
+    feedback_interval: Option<u8>,
 }
 
 fn le24(b: &[u8], i: usize) -> Option<u32> {
@@ -78,6 +82,8 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     max_packet_size: a.max_packet_size,
                     interval: a.interval,
                     feedback_endpoint_address: a.feedback_endpoint_address,
+                    feedback_max_packet_size: a.feedback_max_packet_size,
+                    feedback_interval: a.feedback_interval,
                 });
             }
         }
@@ -170,6 +176,8 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                         let usage = (d[3] >> 4) & 0x03;
                         if is_input && usage == 0x01 {
                             a.feedback_endpoint_address = Some(d[2]);
+                            a.feedback_max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
+                            a.feedback_interval = Some(d[6]);
                         } else if !is_input {
                             a.endpoint_address = Some(d[2]);
                             a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
@@ -208,6 +216,8 @@ pub struct UsbAudioStreamPlan {
     pub bit_resolution: u8,
     pub requires_uac2_clock_negotiation: bool,
     pub feedback_endpoint_address: Option<u8>,
+    pub feedback_max_packet_size: Option<u16>,
+    pub feedback_interval: Option<u8>,
 }
 
 pub fn plan_pcm_playback(
@@ -251,6 +261,8 @@ pub fn plan_pcm_playback(
             bit_resolution: bits,
             requires_uac2_clock_negotiation: format.protocol == 0x20,
             feedback_endpoint_address: format.feedback_endpoint_address,
+            feedback_max_packet_size: format.feedback_max_packet_size,
+            feedback_interval: format.feedback_interval,
         });
     }
     Err(format!(
