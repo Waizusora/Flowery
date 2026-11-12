@@ -2,6 +2,7 @@ package com.waizusora.flowery
 
 import android.media.AudioDeviceCallback
 import android.media.AudioManager
+import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.ui.platform.LocalContext
@@ -39,20 +40,48 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     audioSourceLabel: String) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
+    val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
     var detectedOutput by remember(routeResolver) { mutableStateOf(routeResolver.detectCurrent()) }
-    DisposableEffect(routeResolver) {
+    var usbAudioScan by remember(usbAudioScanner) { mutableStateOf(usbAudioScanner.scan()) }
+    DisposableEffect(routeResolver, usbAudioScanner) {
+        val refreshAudioState = {
+            detectedOutput = routeResolver.detectCurrent()
+            usbAudioScan = usbAudioScanner.scan()
+        }
         val callback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(addedDevices: Array<out android.media.AudioDeviceInfo>) {
-                detectedOutput = routeResolver.detectCurrent()
+                refreshAudioState()
             }
             override fun onAudioDevicesRemoved(removedDevices: Array<out android.media.AudioDeviceInfo>) {
-                detectedOutput = routeResolver.detectCurrent()
+                refreshAudioState()
             }
         }
         val manager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
         manager.registerAudioDeviceCallback(callback, Handler(Looper.getMainLooper()))
-        detectedOutput = routeResolver.detectCurrent()
-        onDispose { manager.unregisterAudioDeviceCallback(callback) }
+
+        val usbReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(receiverContext: android.content.Context, intent: android.content.Intent) {
+                if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED ||
+                    intent.action == UsbManager.ACTION_USB_DEVICE_DETACHED
+                ) refreshAudioState()
+            }
+        }
+        val usbFilter = android.content.IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            context.registerReceiver(usbReceiver, usbFilter, android.content.Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            context.registerReceiver(usbReceiver, usbFilter)
+        }
+
+        refreshAudioState()
+        onDispose {
+            manager.unregisterAudioDeviceCallback(callback)
+            runCatching { context.unregisterReceiver(usbReceiver) }
+        }
     }
     var encodingExpanded by remember(page) { mutableStateOf(false) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
@@ -77,6 +106,52 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             Text(detectedOutput.displayName, color = color,
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
             HorizontalDivider(color = muted.copy(alpha = .25f))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("USB AUDIO DEVICES", modifier = Modifier.weight(1f), color = color,
+                    fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = { usbAudioScan = usbAudioScanner.scan() }) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Text(" RESCAN")
+                }
+            }
+            if (usbAudioScan.usbDevices.isEmpty()) {
+                Text("No USB Audio Class devices detected.", color = muted,
+                    style = MaterialTheme.typography.bodySmall)
+            } else {
+                usbAudioScan.usbDevices.forEach { device ->
+                    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(device.productName, color = color, fontWeight = FontWeight.Medium,
+                            style = MaterialTheme.typography.titleMedium)
+                        Text("VID: %04X · PID: %04X".format(device.vendorId, device.productId),
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text("Audio Control: ${if (device.hasAudioControl) "Yes" else "No"} · " +
+                            "Audio Streaming: ${if (device.hasAudioStreaming) "Yes" else "No"}",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text("Isochronous OUT: ${if (device.hasIsochronousOutput) "Yes" else "No"} · " +
+                            "Isochronous IN: ${if (device.hasIsochronousInput) "Yes" else "No"}",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                        Text(
+                            if (device.isPotentialExclusiveOutput) "Potential exclusive output · not verified"
+                            else "Exclusive output capability not established",
+                            color = muted, style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    HorizontalDivider(color = muted.copy(alpha = .16f))
+                }
+            }
+            Text("Android USB audio outputs: ${usbAudioScan.androidOutputs.size}",
+                color = color, style = MaterialTheme.typography.labelMedium)
+            usbAudioScan.androidOutputs.forEach { output ->
+                Text("${output.productName} · type ${output.type} · rates " +
+                    output.sampleRates.joinToString().ifBlank { "unspecified" },
+                    color = muted, style = MaterialTheme.typography.bodySmall)
+            }
+            Text(
+                "Detection does not enable direct USB streaming or prove bit-perfect playback. " +
+                    "Android's public USB Host API does not expose isochronous streaming transfers.",
+                color = muted, style = MaterialTheme.typography.bodySmall
+            )
         }
 
 
