@@ -105,14 +105,32 @@ class PlaybackService : Service() {
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
+    @Volatile private var outputRouteRestartPending = false
     private val outputRouteCheck = Runnable {
         val current = outputDeviceSnapshot()
         if (current != lastOutputDeviceSnapshot) {
             lastOutputDeviceSnapshot = current
-            if (playbackState == PlaybackStateCompat.STATE_PLAYING) {
-                pauseForOutputChange()
-            } else {
-                publishState("Audio output changed · press Play when ready")
+            val wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING
+            val wasPaused = playbackState == PlaybackStateCompat.STATE_PAUSED
+            val uriText = queue.getOrNull(queueIndex)
+            if (!outputRouteRestartPending && (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
+                outputRouteRestartPending = true
+                val resumePositionMs = player.positionMs()
+                val segmentStartMs = queueCueStarts.getOrNull(queueIndex) ?: 0L
+                val segmentEndMs = queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L }
+                Log.i("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN wasPlaying=$wasPlaying positionMs=$resumePositionMs segmentStartMs=$segmentStartMs segmentEndMs=${segmentEndMs ?: -1L}")
+                publishState("Switching audio output…")
+                io.execute {
+                    runCatching {
+                        player.reopenOutputRoute(Uri.parse(uriText), segmentStartMs, segmentEndMs, resumePositionMs, startPaused = wasPaused)
+                    }.onFailure { error ->
+                        outputRouteRestartPending = false
+                        Log.e("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN_FAILURE", error)
+                        publishState("Playback error: unable to switch audio output: ${error.message}")
+                    }
+                }
+            } else if (uriText.isNullOrBlank()) {
+                publishState("Audio output changed")
             }
         }
     }
@@ -168,6 +186,7 @@ class PlaybackService : Service() {
         Log.i("FloweryDiagnostics", "SERVICE_CREATE pid=${android.os.Process.myPid()}")
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
+            if (message.startsWith("Playing") || message.startsWith("Paused")) outputRouteRestartPending = false
             publishState(message)
             if (message == "Playback finished") {
                 // Completion is reported from the playback worker. Defer queue transitions
@@ -542,7 +561,7 @@ class PlaybackService : Service() {
     private fun publishState(message: String) {
         playbackState = when {
             message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
-            message == "Paused" -> PlaybackStateCompat.STATE_PAUSED
+            message.startsWith("Paused") -> PlaybackStateCompat.STATE_PAUSED
             message == "Stopped" || message.startsWith("Playback finished") ||
                 message.startsWith("Playback error:") -> PlaybackStateCompat.STATE_STOPPED
             else -> playbackState
