@@ -11,14 +11,31 @@ import java.io.Closeable
  * Do not open UsbAudioControlSession for the same interface while this object is
  * active: libusb owns interface claiming and alternate-setting selection.
  */
+internal fun interface UsbControlTransfer {
+    fun transfer(
+        requestType: Int,
+        request: Int,
+        value: Int,
+        index: Int,
+        buffer: ByteArray,
+        length: Int,
+        timeoutMs: Int
+    ): Int
+}
+
 internal data class Uac2ClockPath(val sourceEntityId: Int, val sourceControls: Int, val selectors: List<Uac2ClockSelectorStep>, val multipliers: List<Uac2ClockMultiplierStep>)
 internal data class Uac2ClockSelectorStep(val entityId: Int, val controls: Int, val selectedPin: Int)
 internal data class Uac2ClockMultiplierStep(val entityId: Int, val controls: Int)
 
-internal class UsbLibusbSession private constructor(
-    private val connection: UsbDeviceConnection,
-    private val nativeHandle: Long
+internal class UsbLibusbSession internal constructor(
+    private val connection: UsbDeviceConnection?,
+    private val nativeHandle: Long,
+    transferOverride: UsbControlTransfer? = null
 ) : Closeable {
+    private val controlTransfer: UsbControlTransfer = transferOverride ?: UsbControlTransfer { requestType, request, value, index, buffer, length, timeoutMs ->
+        val usbConnection = connection ?: throw IllegalStateException("USB control connection is unavailable")
+        usbConnection.controlTransfer(requestType, request, value, index, buffer, length, timeoutMs)
+    }
     private var closed = false
     private var pendingClockRollback: (() -> List<String>)? = null
 
@@ -38,7 +55,7 @@ internal class UsbLibusbSession private constructor(
             ((sampleRate shr 16) and 0xFF).toByte()
         )
         return try {
-            val transferred = connection.controlTransfer(
+            val transferred = controlTransfer.transfer(
                 0x22, 0x01, 0x0100, endpointAddress,
                 payload, payload.size, 1_000
             )
@@ -518,7 +535,7 @@ internal class UsbLibusbSession private constructor(
             NativeAudio.nativeCloseUsbAudioSession(nativeHandle)
         } finally {
             // libusb_wrap_sys_device does not own or close this descriptor.
-            connection.close()
+            connection?.close()
         }
     }
 
