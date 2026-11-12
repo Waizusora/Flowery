@@ -64,7 +64,6 @@ fn aaudio_seek_frame_window(
     actual_ms: u64,
     segment_start_ms: u64,
     segment_end_ms: Option<u64>,
-    output_rate: usize,
 ) -> (u64, Option<u64>) {
     let relative_target_ms = actual_ms.saturating_sub(segment_start_ms);
     let target_frame = milliseconds_to_frames(relative_target_ms, output_rate);
@@ -120,7 +119,6 @@ pub(super) struct StreamDecoder {
     output_rate: usize,
     input_pending: Vec<f32>,
     eof: bool,
-    produced_frames: u64,
     duration_ms: u64,
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
@@ -178,8 +176,8 @@ impl StreamDecoder {
         let decoder = Some(symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, channels, output_rate: source_rate,
-            input_pending: Vec::new(), eof: false, produced_frames: 0,
+            format, decoder, track_id, source_rate, source_bits, channels,
+            input_pending: Vec::new(), eof: false,
             duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
         })
@@ -198,7 +196,6 @@ impl StreamDecoder {
         let actual_ms = timestamp_to_milliseconds(seeked.actual_ts, self.time_base, requested_ms);
         let actual_source_frames = milliseconds_to_frames(actual_ms, self.source_rate);
         let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
-        self.produced_frames = requested_source_frames;
         self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
         Ok(requested_ms)
     }
@@ -268,7 +265,6 @@ impl StreamDecoder {
         if self.input_pending.is_empty() { return Ok(Vec::new()); }
         let take = (requested * self.channels).min(self.input_pending.len());
         let samples: Vec<f32> = self.input_pending.drain(..take).collect();
-        self.produced_frames += (samples.len() / self.channels) as u64;
         Ok(samples)
     }
 
@@ -395,8 +391,8 @@ pub(super) fn process_aaudio_seek(
     }
     let decoder_handle = session.decoder_handle;
     let decoder = Arc::clone(&session.decoder);
-    let output_rate = decoder.lock().unwrap_or_else(|error| error.into_inner()).output_rate;
-    if output_rate == 0 {
+    let source_rate = decoder.lock().unwrap_or_else(|error| error.into_inner()).source_rate;
+    if source_rate == 0 {
         return Err("The stream decoder has not been configured".into());
     }
     let target_ms = clamp_aaudio_seek_target(&request);
@@ -426,7 +422,7 @@ pub(super) fn process_aaudio_seek(
         actual.max(0) as u64,
         request.segment_start_ms as u64,
         (request.segment_end_ms >= 0).then_some(request.segment_end_ms as u64),
-        output_rate,
+        source_rate,
     );
     if !aaudio_seek_request_is_current(
         &request, session.epoch.load(Ordering::Acquire), session.cancelled.load(Ordering::Acquire),
@@ -643,11 +639,11 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartSegment
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session does not own an active decoder");
         return -1;
     }
-    let (output_rate, duration_ms) = {
+    let (source_rate, duration_ms) = {
         let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
-        (guard.output_rate, guard.duration_ms)
+        (guard.source_rate, guard.duration_ms)
     };
-    if output_rate == 0 {
+    if source_rate == 0 {
         let _ = env.throw_new("java/lang/IllegalStateException", "The stream decoder has not been configured");
         return -1;
     }
@@ -662,8 +658,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartSegment
         }
     };
     let effective_end = if segment_end_ms >= 0 { segment_end_ms as u64 } else { duration_ms };
-    let start_frame = milliseconds_to_frames(actual_start, output_rate);
-    let end_frame = milliseconds_to_frames(effective_end.max(actual_start), output_rate);
+    let start_frame = milliseconds_to_frames(actual_start, source_rate);
+    let end_frame = milliseconds_to_frames(effective_end.max(actual_start), source_rate);
     let frame_limit = if segment_end_ms >= 0 || duration_ms > 0 {
         Some(end_frame.saturating_sub(start_frame))
     } else { None };
