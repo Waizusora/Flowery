@@ -162,35 +162,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 sourceDescriptor = openedSourceDescriptor
                 val extension = openedSourceDescriptor.extension
-                val usbController = UsbDacController(context)
-                val usbDirectAvailable = usbController.audioDevices().any { device ->
-                    usbController.hasPermission(device.usbDevice)
-                }
-                diagnostics.record(
-                    "PLAY_REQUEST extension=${extension} usbDirectAvailable=${usbDirectAvailable} " +
-                        "segmentStartMs=${segmentStartMs} segmentEndMs=${segmentEndMs ?: "none"}"
-                )
-                if (usbDirectAvailable) {
-                    diagnostics.record("USB_AUTO_DETECTION result=permissioned_audio_device_found")
-                    onState("USB DAC detected · evaluating source and DAC capabilities…")
-                } else {
-                    diagnostics.record("USB_AUTO_DETECTION result=direct_transport_unavailable fallback=android_route")
-                }
 
                 handle = NativeAudio.nativeCreateStreamDecoder(openedSourceDescriptor.fileDescriptor, extension)
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
 
-                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, usbDirectAvailable)
+                // Normal playback always uses Android-managed output. USB presence and
+                // permissions do not gate decoder/session creation or choose transport.
+                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle, false)
                 check(preparedSession.size == 7) { "Rust returned an invalid prepared playback session" }
                 sessionHandle = preparedSession[0]
-                val playbackRoute = preparedSession[1].toInt()
                 val sourceRate = preparedSession[2].toInt()
                 val channels = preparedSession[3].toInt()
                 val sourceBits = preparedSession[4].toInt()
-                val losslessSource = preparedSession[5] != 0L
-                val isAc3Source = preparedSession[6] != 0L
                 check(sessionHandle != 0L) { "The native playback session could not be created" }
                 check(sourceRate > 0 && channels in 1..8) {
                     "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels."
@@ -203,34 +188,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "The native playback session could not enter the running state"
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                check(usbDirectAvailable) {
-                    "USB Direct is the only enabled output route. Connect and grant permission to a USB DAC."
-                }
-                when (playbackRoute) {
-                    1 -> {
-                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_UAC1_ENCODED_AC3 extension=${extension}")
-                        usbPlaybackMode = true
-                        onState("Playing · USB Direct · preparing encoded output…")
-                        playUsbEncodedDirect(handle, sourceRate, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                        return@thread
-                    }
-                    2 -> {
-                        diagnostics.record("ROUTE_SELECTED route=LIBUSB_PCM_INTEGER sourceBits=${sourceBits} sampleRate=${sourceRate}")
-                        usbPlaybackMode = true
-                        onState("Playing · USB Direct · preparing decoded integer PCM…")
-                        playUsbDecodedDirect(handle, sourceRate, sourceBits, channels, generation, segmentStartMs, segmentEndMs, sessionHandle)
-                        return@thread
-                    }
-                    3 -> throw IllegalStateException(
-                        "This source currently requires the float32 decoder path; USB Direct integer PCM cannot represent it without conversion."
-                    )
-                    0 -> throw IllegalStateException(
-                        "No USB Direct PCM route is available for this source. AAudio fallback is disabled."
-                    )
-                    else -> throw IllegalStateException("Rust returned an unknown playback route: $playbackRoute")
-                }
-
-                val outputRoute = AndroidOutputRouteResolver(context).resolve()
+                val selectedTarget = AndroidOutputTarget.fromPreference(
+                    context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
+                        .getString("audio_output_route", "speaker")
+                )
+                val outputRoute = AndroidOutputRouteResolver(context).resolve(selectedTarget)
                 val supportedRates = outputRoute.supportedSampleRates
                 // Android-managed USB, AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
                 // Per-DAC software gain is reserved for the direct libusb route.
@@ -249,15 +211,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     preferredRate, channels, deviceId, outputFormat, false
                 )
                 check(targetRate > 0) {
-                    "Unable to negotiate the selected USB DAC sample rate. " +
-                        "device=${outputRoute.deviceName ?: "unknown"}, deviceId=$deviceId, " +
+                    "Unable to negotiate the selected Android output sample rate. " +
+                        "target=${outputRoute.target}, device=${outputRoute.deviceName ?: "system default"}, deviceId=$deviceId, " +
                         "sourceRate=$sourceRate, preferredRate=$preferredRate, channels=$channels. " +
-                        "The app did not fall back to the phone output."
+                        "Check that the selected Android output is connected."
                 }
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
-                    "Unable to configure the streaming resampler and equalizer"
+                    "Unable to configure the streaming resampler"
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(targetRate)

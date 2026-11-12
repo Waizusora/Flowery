@@ -5,69 +5,81 @@ import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 
+internal enum class AndroidOutputTarget(val preferenceValue: String) {
+    AUX("aux"), SPEAKER("speaker"), BLUETOOTH("bluetooth");
+
+    companion object {
+        fun fromPreference(value: String?): AndroidOutputTarget =
+            entries.firstOrNull { it.preferenceValue == value } ?: SPEAKER
+    }
+}
+
 internal data class AndroidOutputRoute(
+    val target: AndroidOutputTarget,
     val deviceId: Int,
     val deviceName: String?,
     val deviceType: Int?,
-    val deviceAddress: String?,
     val supportedSampleRates: IntArray,
-) {
-    val isUsbOutput: Boolean get() = deviceType != null
-}
-
-/**
- * Resolves the Android-managed output route used by the shared AAudio path.
- *
- * Direct libusb playback is selected by the Rust playback session before this
- * resolver is consulted. This class does not claim USB interfaces or promise
- * exclusive access to Android-managed USB audio devices.
- */
-internal class AndroidOutputRouteResolver(context: Context) {
-    private val audioManager =
-        context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-    fun resolve(): AndroidOutputRoute {
-        val candidates = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
-            .filter {
-                it.type == AudioDeviceInfo.TYPE_USB_DEVICE ||
-                    it.type == AudioDeviceInfo.TYPE_USB_HEADSET
-            }
-            .map {
-                OutputDeviceCandidate(
-                    id = it.id,
-                    type = it.type,
-                    productName = it.productName?.toString(),
-                    address = runCatching { it.address }.getOrNull(),
-                    sampleRates = if (Build.VERSION.SDK_INT >= 28) {
-                        it.sampleRates?.filter { rate -> rate > 0 }?.toIntArray() ?: intArrayOf()
-                    } else intArrayOf(),
-                )
-            }
-        val selected = AndroidOutputRouteSelection.selectUsbOutput(candidates, Build.VERSION.SDK_INT)
-        return AndroidOutputRoute(
-            deviceId = selected?.id ?: 0,
-            deviceName = selected?.productName,
-            deviceType = selected?.type,
-            deviceAddress = selected?.address,
-            supportedSampleRates = selected?.sampleRates ?: intArrayOf(),
-        )
-    }
-}
+)
 
 internal data class OutputDeviceCandidate(
     val id: Int,
     val type: Int,
     val productName: String?,
-    val address: String?,
     val sampleRates: IntArray,
 )
 
-internal object AndroidOutputRouteSelection {
-    fun selectUsbOutput(
-        candidates: List<OutputDeviceCandidate>,
-        apiLevel: Int,
-    ): OutputDeviceCandidate? {
-        if (apiLevel < 28) return null
-        return candidates.firstOrNull { it.sampleRates.isNotEmpty() } ?: candidates.firstOrNull()
+internal class AndroidOutputRouteResolver(context: Context) {
+    private val audioManager =
+        context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    fun resolve(target: AndroidOutputTarget): AndroidOutputRoute {
+        val candidates = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS).map { device ->
+            OutputDeviceCandidate(
+                id = device.id,
+                type = device.type,
+                productName = device.productName?.toString(),
+                sampleRates = if (Build.VERSION.SDK_INT >= 28) {
+                    device.sampleRates?.filter { it > 0 }?.toIntArray() ?: intArrayOf()
+                } else intArrayOf(),
+            )
+        }
+        val selected = when (target) {
+            AndroidOutputTarget.AUX -> resolveAux(candidates)
+            AndroidOutputTarget.SPEAKER -> resolveSpeaker(candidates)
+            AndroidOutputTarget.BLUETOOTH -> resolveBluetooth(candidates)
+        }
+        return AndroidOutputRoute(target, selected?.id ?: 0, selected?.productName,
+            selected?.type, selected?.sampleRates ?: intArrayOf())
     }
+
+    private fun resolveAux(candidates: List<OutputDeviceCandidate>) =
+        AndroidOutputRouteSelection.selectAux(candidates)
+
+    private fun resolveSpeaker(candidates: List<OutputDeviceCandidate>) =
+        AndroidOutputRouteSelection.selectSpeaker(candidates)
+
+    private fun resolveBluetooth(candidates: List<OutputDeviceCandidate>) =
+        AndroidOutputRouteSelection.selectBluetooth(candidates)
+}
+
+internal object AndroidOutputRouteSelection {
+    fun selectAux(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
+        candidates.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_LINE_ANALOG
+        }
+
+    fun selectSpeaker(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
+        candidates.firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+
+    fun selectBluetooth(candidates: List<OutputDeviceCandidate>): OutputDeviceCandidate? =
+        candidates.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                (Build.VERSION.SDK_INT >= 31 &&
+                    (it.type == AudioDeviceInfo.TYPE_BLE_HEADSET ||
+                        it.type == AudioDeviceInfo.TYPE_BLE_SPEAKER))
+        }
 }
