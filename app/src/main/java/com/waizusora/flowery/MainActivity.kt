@@ -139,8 +139,6 @@ class MainActivity : ComponentActivity() {
     private var volume by mutableStateOf(1f)
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
-    private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }
-    private var equalizerEnabled by mutableStateOf(true)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -228,28 +226,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         logPreviousProcessExitReasons()
         val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-        equalizerEnabled = audioPreferences.getBoolean("equalizer_enabled", true)
-        val legacyGains = listOf(
-            audioPreferences.getFloat("equalizer_bass_db", 0f),
-            audioPreferences.getFloat("equalizer_mid_db", 0f),
-            audioPreferences.getFloat("equalizer_treble_db", 0f)
-        )
-        val migratedGains = IsoGraphicEqualizer.expandLegacyThreeBand(legacyGains)
-        val restoredGains = FloatArray(31) { index ->
-            audioPreferences.getFloat(
-                IsoGraphicEqualizer.preferenceKey(index),
-                migratedGains[index]
-            ).coerceIn(IsoGraphicEqualizer.MIN_GAIN_DB, IsoGraphicEqualizer.MAX_GAIN_DB)
-        }
-        equalizerGains.clear()
-        equalizerGains.addAll(restoredGains.toList())
-        if ((0 until 31).any { !audioPreferences.contains(IsoGraphicEqualizer.preferenceKey(it)) }) {
-            val migration = audioPreferences.edit()
-            restoredGains.forEachIndexed { index, gain ->
-                migration.putFloat(IsoGraphicEqualizer.preferenceKey(index), gain)
-            }
-            migration.apply()
-        }
         restoreFolders()
         restoreScannedTracks()
         restoreLastPlayedTrack()
@@ -281,37 +257,6 @@ class MainActivity : ComponentActivity() {
                 volume = volume,
                 positionMs = playbackPositionMs,
                 durationMs = playbackDurationMs,
-                equalizerGains = equalizerGains,
-                equalizerEnabled = equalizerEnabled,
-                onBandGain = { index, gain ->
-                    require(index in 0 until IsoGraphicEqualizer.BAND_COUNT) {
-                        "The ISO equalizer band index must be between 0 and 30"
-                    }
-                    val boundedGain = gain.coerceIn(
-                        IsoGraphicEqualizer.MIN_GAIN_DB,
-                        IsoGraphicEqualizer.MAX_GAIN_DB
-                    )
-                    equalizerGains[index] = boundedGain
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putFloat(IsoGraphicEqualizer.preferenceKey(index), boundedGain).apply()
-                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
-                        putExtra(
-                            PlaybackService.EXTRA_GAINS,
-                            if (equalizerEnabled) equalizerGains.toFloatArray() else FloatArray(31)
-                        )
-                    }
-                },
-                onEqualizerEnabled = { enabled ->
-                    equalizerEnabled = enabled
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("equalizer_enabled", enabled).apply()
-                    sendPlaybackCommand(PlaybackService.ACTION_EQUALIZER) {
-                        putExtra(
-                            PlaybackService.EXTRA_GAINS,
-                            if (enabled) equalizerGains.toFloatArray() else FloatArray(31)
-                        )
-                    }
-                },
                 onAddFolder = { folderPicker.launch(null) },
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
@@ -765,8 +710,6 @@ private fun FloweryApp(
     volume: Float,
     playbackPositionMs: Long,
     playbackDurationMs: Long,
-    equalizerGains: List<Float>,
-    onBandGain: (Int, Float) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit,
     onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -981,52 +924,6 @@ private fun FloweryApp(
                 }
                 Text("OUTPUT VOLUME", color = Color.White)
                 Slider(value = volume, onValueChange = onVolume)
-                Text("31-BAND ISO EQUALIZER · ±12 dB", color = Color.White, fontWeight = FontWeight.Bold)
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF111214)),
-                    shape = RoundedCornerShape(18.dp)
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalAlignment = Alignment.Bottom
-                    ) {
-                        (0 until IsoGraphicEqualizer.BAND_COUNT).forEach { index ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(48.dp)
-                            ) {
-                                Text(
-                                    String.format(java.util.Locale.ROOT, "%+.1f", equalizerGains.getOrElse(index) { 0f }),
-                                    color = Color.White.copy(alpha = 0.72f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
-                                VerticalEqualizerSlider(
-                                    value = equalizerGains.getOrElse(index) { 0f },
-                                    onValueChange = { onBandGain(index, it) },
-                                    modifier = Modifier.height(176.dp).width(40.dp)
-                                )
-                                Text(
-                                    IsoGraphicEqualizer.formatFrequency(index),
-                                    color = Color.White,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    maxLines = 1
-                                )
-                            }
-                        }
-                    }
-                }
-                Text(
-                    "Swipe to adjust",
-                    color = Color.White.copy(alpha = 0.68f),
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(18.dp))
             }
         }
     }
