@@ -56,7 +56,7 @@ object NativeAudio {
     external fun nativeStopStreamPump(handle: Long)
     external fun nativeSeekStreamDecoder(handle: Long, positionMs: Long): Long
     external fun nativeCloseStreamDecoder(handle: Long)
-    external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, outputFormat: Int, capacityFrames: Int): Int
+    external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, failOnShared: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
     external fun nativeGetOutputSchedulerStatus(session: Long): Int
