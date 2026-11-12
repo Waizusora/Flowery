@@ -5,7 +5,7 @@
 //! Runtime clock selection and isochronous transfer scheduling belong to the USB
 //! transport layer and must be validated against the selected interface/alternate.
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct UsbAudioFormat {
     pub interface_number: u8,
     pub alternate_setting: u8,
@@ -22,7 +22,7 @@ pub struct UsbAudioFormat {
     pub feedback_endpoint_address: Option<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct UsbAudioParseResult {
     pub uac_version: Option<&'static str>,
     pub formats: Vec<UsbAudioFormat>,
