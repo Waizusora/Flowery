@@ -353,6 +353,20 @@ mod tests {
         assert_eq!(plan.feedback_endpoint_address, Some(0x81));
         assert_eq!(plan.feedback_max_packet_size, Some(3));
         assert_eq!(plan.feedback_interval, Some(1));
+        assert_eq!(plan.synchronization_type, Some(1));
+    }
+
+    #[test]
+    fn rejects_asynchronous_out_without_explicit_feedback() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+        ];
+        let error = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap_err();
+        assert!(error.contains("no explicit feedback endpoint"));
     }
 
     #[test]
