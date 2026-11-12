@@ -289,18 +289,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     /**
      * Sends original AC-3 frames through a descriptor-matched UAC1 encoded profile.
-     * This path bypasses PCM decoding, EQ, gain, resampling, and the PCM USB writer.
      */
 
 
     /**
-     * Sends Symphonia-decoded PCM directly to USB without Android's AudioTrack/AAudio
      * mixer. Float samples are quantized to the DAC's negotiated integer PCM format;
      * this is not source-bit-perfect passthrough.
      */
 
 
-    /** Returns the latest cached volume; USB control transfers run on the playback worker. */
     fun currentVolumeFraction(): Float = volumeController.systemVolumeFraction()
 
     fun positionMs(): Long {

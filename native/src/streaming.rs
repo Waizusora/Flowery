@@ -328,7 +328,7 @@ impl StreamDecoder {
                 Err(e) => return Err(format!("Audio packet read failed: {e}")),
             };
             if packet.track_id() != self.track_id { continue; }
-            let decoder = self.decoder.as_mut().ok_or_else(|| "This codec is available for encoded passthrough only; no PCM decoder is registered".to_string())?;
+            let decoder = self.decoder.as_mut().ok_or_else(|| "No PCM decoder is registered for this codec".to_string())?;
             match decoder.decode(&packet) {
                 Ok(decoded) => {
                     self.consecutive_decode_errors = 0;
@@ -353,8 +353,7 @@ impl StreamDecoder {
                     self.consecutive_decode_errors = self.consecutive_decode_errors.saturating_add(1);
                     if self.consecutive_decode_errors >= 8 {
                         return Err(format!(
-                            "Audio decoder rejected 8 consecutive packets (codec {:?}); last error: {reason}",
-                            self.codec_type
+                            "Audio decoder rejected 8 consecutive packets; last error: {reason}",
                         ));
                     }
                     continue;
@@ -673,20 +672,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekStreamDe
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsIeeeFloat32Source(
-    _env: JNIEnv, _class: JClass, handle: jlong,
-) -> jni::sys::jboolean {
-    let Some(decoder) = decoder_ref(handle) else { return jni::sys::JNI_FALSE; };
-    if decoder.lock().unwrap_or_else(|error| error.into_inner()).is_ieee_float32_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
-}
+
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsAc3Source(
-    _env: JNIEnv, _class: JClass, handle: jlong,
-) -> jni::sys::jboolean {
-    let Some(decoder) = decoder_ref(handle) else { return jni::sys::JNI_FALSE; };
-    if decoder.lock().unwrap_or_else(|error| error.into_inner()).is_ac3_source() { jni::sys::JNI_TRUE } else { jni::sys::JNI_FALSE }
-}
+
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInfo(
@@ -698,14 +687,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamInf
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetBitPerfectSourceInfo(
-    _env: JNIEnv, _class: JClass, handle: jlong
-) -> jlong {
-    let Some(decoder) = decoder_ref(handle) else { return 0; };
-    let decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
-    let lossless = if decoder.lossless_source { 1_u64 } else { 0_u64 };
-    ((lossless << 32) | decoder.source_bits as u64) as jlong
-}
+
 
 #[no_mangle]
 #[allow(non_snake_case)]
@@ -1182,7 +1164,6 @@ mod tests {
         let source_file = std::fs::File::open(&path).unwrap();
         let mut stream = StreamDecoder::new(source_file.as_raw_fd(), "wav").unwrap();
         assert_eq!(stream.source_bits, 16);
-        assert!(stream.lossless_source, "PCM WAV must be classified as lossless");
         stream.configure(48_000, &[0.0; 31]).unwrap();
         assert_eq!(stream.read_frames(128).unwrap().len(), 256);
         assert_eq!(stream.seek_to(500).unwrap(), 500);
