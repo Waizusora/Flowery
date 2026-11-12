@@ -41,6 +41,44 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbAudi
     }
 }
 
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudioPlayback(
+    mut env: JNIEnv,
+    _class: JClass,
+    descriptors: JByteArray,
+    sample_rate: jint,
+    channels: jint,
+    bit_resolution: jint,
+) -> jstring {
+    let bytes = match jbytes(&mut env, &descriptors) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let result = if sample_rate <= 0 || channels <= 0 || channels > u8::MAX as jint
+        || bit_resolution <= 0 || bit_resolution > u8::MAX as jint
+    {
+        serde_json::json!({"ok": false, "error": "Invalid PCM parameters"})
+    } else {
+        match crate::usb_audio::plan_pcm_playback(
+            &bytes, sample_rate as u32, channels as u8, bit_resolution as u8
+        ) {
+            Ok(plan) => serde_json::json!({"ok": true, "plan": plan}),
+            Err(error) => serde_json::json!({"ok": false, "error": error}),
+        }
+    };
+    match serde_json::to_string(&result) {
+        Ok(json) => write_text_to_java(&mut env, &json),
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error.to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersion(
     env: JNIEnv,
