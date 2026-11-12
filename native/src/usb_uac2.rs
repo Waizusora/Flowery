@@ -104,7 +104,7 @@ impl AudioControlInterface {
             }
         } else if let Some(&(input_id, controls)) = self.clock_multipliers.get(&entity_id) {
             // bmControls bits 1:0 and 3:2 are numerator and denominator controls.
-            if (controls & 0x03) == 0 || (controls & 0x0C) == 0 {
+            if (controls & 0x03) != 0x01 || (controls & 0x0C) != 0x04 {
                 return Err(format!("UAC2 Clock Multiplier {entity_id} does not expose numerator and denominator controls"));
             }
             multipliers.push(Uac2MultiplierStep { entity_id, controls, input_clock_id: input_id });
@@ -197,15 +197,25 @@ pub fn parse_playback_clock_info_for_interface(
                                 ac.input_terminal_type.insert(d[3], u16::from_le_bytes([d[4], d[5]]));
                                 ac.input_terminal_clock.insert(d[3], d[7]);
                             }
-                            0x0A if length >= 8 => { ac.clock_sources.insert(d[3], d[5]); }
+                            0x0A if length >= 8 => {
+                                if ac.clock_sources.insert(d[3], d[5]).is_some() {
+                                    return Err(format!("Duplicate UAC2 Clock Source entity ID {}", d[3]));
+                                }
+                            }
                             0x0B if length >= 7 => {
                                 let count = d[4] as usize;
                                 let controls_index = 5 + count;
                                 if count > 0 && length >= controls_index + 2 {
-                                    ac.clock_selectors.insert(d[3], (d[5..controls_index].to_vec(), d[controls_index]));
+                                    if ac.clock_selectors.insert(d[3], (d[5..controls_index].to_vec(), d[controls_index])).is_some() {
+                                        return Err(format!("Duplicate UAC2 Clock Selector entity ID {}", d[3]));
+                                    }
                                 }
                             }
-                            0x0C if length >= 7 => { ac.clock_multipliers.insert(d[3], (d[4], d[5])); }
+                            0x0C if length >= 7 => {
+                                if ac.clock_multipliers.insert(d[3], (d[4], d[5])).is_some() {
+                                    return Err(format!("Duplicate UAC2 Clock Multiplier entity ID {}", d[3]));
+                                }
+                            }
                             _ => {}
                         }
                     }
