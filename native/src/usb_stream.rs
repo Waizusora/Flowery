@@ -172,7 +172,7 @@ fn fill_and_submit(
 
         let descriptor = unsafe { (*slot.transfer).iso_packet_desc.as_mut_ptr().add(packet_index) };
         unsafe { (*descriptor).length = expected as u32; }
-        offset = offset.checked_add(config.max_packet_bytes as usize)
+        offset = offset.checked_add(expected)
             .ok_or("USB packet buffer offset overflow")?;
     }
 
@@ -236,6 +236,7 @@ fn run_worker(
     let mut phase = 0_u64;
     let mut eof = false;
     for slot in &mut slots {
+        if eof { break; }
         if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut phase, &mut eof) {
             set_error(&error, &status, message);
             break;
