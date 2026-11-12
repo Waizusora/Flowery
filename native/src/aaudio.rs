@@ -50,7 +50,7 @@ extern "C" {
     fn AAudioStream_setBufferSizeInFrames(stream: *mut AAudioStream, frames: i32) -> i32;
 }
 
-const OK:i32=0; const INVALID_STATE:i32=-895; const INVALID_FORMAT:i32=-898;
+const OK:i32=0; const INVALID_STATE:i32=-895; const DEVICE_SELECTION_UNAVAILABLE:i32=-896; const DEVICE_MISMATCH:i32=-897; const INVALID_FORMAT:i32=-898;
 
 fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
     let (valid_bits, subslot_bytes) = match format {
@@ -104,10 +104,15 @@ impl Engine {
         if result!=OK || builder.is_null(){return result;}
         AAudioStreamBuilder_setDirection(builder,0);
         if device>0 {
-            if let Ok(name)=std::ffi::CString::new("AAudioStreamBuilder_setDeviceId") {
-                let symbol=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr());
-                if !symbol.is_null(){let setter:unsafe extern "C" fn(*mut AAudioStreamBuilder,i32)=std::mem::transmute(symbol);setter(builder,device);}
+            let name=std::ffi::CString::new("AAudioStreamBuilder_setDeviceId").unwrap();
+            let symbol=libc::dlsym(libc::RTLD_DEFAULT,name.as_ptr());
+            if symbol.is_null() {
+                AAudioStreamBuilder_delete(builder);
+                self.last_open[10]=5; // Explicit device selection is unavailable on this Android runtime.
+                return DEVICE_SELECTION_UNAVAILABLE;
             }
+            let setter:unsafe extern "C" fn(*mut AAudioStreamBuilder,i32)=std::mem::transmute(symbol);
+            setter(builder,device);
         }
         AAudioStreamBuilder_setFormat(builder,out.format);
         AAudioStreamBuilder_setSampleRate(builder,rate);
@@ -120,6 +125,14 @@ impl Engine {
         result=AAudioStreamBuilder_openStream(builder,&mut self.stream);
         AAudioStreamBuilder_delete(builder);
         if result!=OK {return result;}
+        let actual_device=AAudioStream_getDeviceId(self.stream);
+        self.last_open[5]=actual_device as i64;
+        if device>0 && actual_device!=device {
+            let _=AAudioStream_close(self.stream);
+            self.stream=ptr::null_mut();
+            self.last_open[10]=6; // Android opened a different output than the requested device.
+            return DEVICE_MISMATCH;
+        }
         if AAudioStream_getSharingMode(self.stream)!=sharing ||
            AAudioStream_getFormat(self.stream)!=out.format ||
            AAudioStream_getChannelCount(self.stream)!=out.channels as i32 ||
