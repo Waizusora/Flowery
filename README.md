@@ -1,6 +1,6 @@
 # Flowery
 
-Flowery is an Android music player for local audio libraries. It uses Kotlin and Jetpack Compose for the application interface and a Rust audio engine for decoding, resampling, playback scheduling, and Android AAudio output.
+Flowery is an Android music player for local audio libraries. It uses Kotlin and Jetpack Compose for the application interface and a Rust audio engine for source-format decoding, playback scheduling, and Android AAudio output.
 
 > **Development status:** Flowery is under active development. CI validates software builds and automated tests; it does not replace playback testing on physical Android devices.
 
@@ -8,8 +8,8 @@ Flowery is an Android music player for local audio libraries. It uses Kotlin and
 
 - Local music libraries through Android's Storage Access Framework (SAF).
 - Three Android-managed output targets: wired AUX, built-in speaker, and Bluetooth.
-- AAudio output using signed integer PCM: 16-bit for sources up to 16-bit, and packed 24-bit for higher-depth sources on supported Android versions. Older Android versions use 16-bit output.
-- Native Rust streaming decode, resampling, bounded buffering, and playback-session scheduling.
+- AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities.
+- Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
 - Metadata reading/editing and synchronized sidecar LRC lyrics.
 - Queue, seek, shuffle, repeat, and Android media-session controls.
 
@@ -20,7 +20,7 @@ Flowery is an Android music player for local audio libraries. It uses Kotlin and
 | Android app | Kotlin, Android SDK 35, minSdk 26 |
 | UI | Jetpack Compose, Material 3 |
 | Audio decoding | Symphonia (Rust) |
-| Sample-rate conversion | Rubato (Rust) |
+| Sample-rate handling | Preserve the decoded source sample rate; Android manages downstream conversion |
 | Android audio output | AAudio NDK API |
 | Native integration | Rust JNI via the Android NDK |
 | Audio tags | Lofty |
@@ -31,11 +31,11 @@ Flowery is an Android music player for local audio libraries. It uses Kotlin and
 
 ## Audio pipeline
 
-`SAF document → Symphonia decode → Rubato resampling when required → bounded Rust PCM ring → AAudio → Android audio routing`
+`SAF document → Symphonia decode → source-rate PCM conversion → bounded Rust PCM ring → AAudio → Android audio routing`
 
 Flowery does not open USB devices, request USB permissions, implement UAC1/UAC2, or provide a direct USB DAC output path. Android owns device routing and downstream audio policy for AUX, speaker, and Bluetooth.
 
-The application requests integer PCM at the AAudio boundary. Internal decoder and resampler processing may use floating-point samples; that does not mean the output stream is configured as Float32.
+Flowery reads each file's sample rate and bit depth from its decoded stream metadata, then configures its AAudio stream at the source sample rate. Flowery does not resample audio internally. Android may resample or otherwise convert the stream downstream according to the active device and system audio policy. The AAudio output boundary uses signed integer PCM; Float32 is not requested as the output format.
 
 ## Build requirements
 
