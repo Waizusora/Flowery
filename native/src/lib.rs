@@ -10,6 +10,7 @@ mod playlists;
 mod pcm_format;
 mod playback_policy;
 mod usb_audio;
+mod usb_isochronous;
 #[cfg(target_os = "android")]
 mod aaudio;
 use base64::Engine;
