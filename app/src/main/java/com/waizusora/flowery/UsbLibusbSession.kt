@@ -17,6 +17,43 @@ internal class UsbLibusbSession private constructor(
 ) : Closeable {
     private var closed = false
 
+    @Synchronized
+    fun startPlayback(
+        decoderHandle: Long,
+        endpointAddress: Int,
+        rawMaxPacketSize: Int,
+        interval: Int,
+        highSpeed: Boolean,
+        sampleRate: Int,
+        channels: Int,
+        validBits: Int,
+        subslotBytes: Int
+    ): Result<Unit> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        return try {
+            val result = NativeAudio.nativeStartUsbIsochronousPlayback(
+                nativeHandle, decoderHandle, endpointAddress, rawMaxPacketSize,
+                interval, if (highSpeed) 1 else 0, sampleRate, channels,
+                validBits, subslotBytes
+            )
+            if (result == 0) Result.success(Unit)
+            else Result.failure(IllegalStateException("Native USB playback failed to start"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+
+    @Synchronized
+    fun playbackStatus(): String {
+        if (closed) return """{"status":2,"error":"USB session is closed"}"""
+        return NativeAudio.nativeGetUsbPlaybackStatus(nativeHandle)
+    }
+
+    @Synchronized
+    fun stopPlayback() {
+        if (!closed) NativeAudio.nativeStopUsbPlayback(nativeHandle)
+    }
+
     override fun close() {
         if (closed) return
         closed = true
