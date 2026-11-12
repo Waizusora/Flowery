@@ -49,10 +49,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
 
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false) {
+    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L) {
         val previousWorker = worker
         stop()
         stopped.set(false)
+        pendingSeekMs.set(initialPositionMs.coerceAtLeast(0L).takeIf { it > 0L } ?: -1L)
         activeSegmentStartMs = segmentStartMs.coerceAtLeast(0L)
         activeSegmentEndMs = segmentEndMs ?: -1L
         val generation = playbackGeneration.incrementAndGet()
