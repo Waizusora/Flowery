@@ -67,14 +67,15 @@ Do not place signing material in source control. Keep keystore files and passwor
 ## GitHub Actions
 
 The workflow at `.github/workflows/build.yml` runs for:
-- Pushes to `main`.
+
+- Pushes to `main` and `trial`.
 - Pull requests.
 - Tags matching `v*`.
 - Manual workflow dispatch.
 
-The workflow installs the pinned Android SDK/NDK/CMake packages, configures JDK 17 and Rust Android targets, generates the native Cargo lockfile, runs Rust unit tests, builds native libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, and assembles debug and release APKs.
+The build job configures JDK 17 and Gradle 8.9, installs Android SDK Platform 35, Build Tools 35.0.0, and NDK 27.2.12479018, then installs Rust stable with Android targets. It generates the native Cargo lockfile, runs native Rust unit tests, checks the Kotlin/native JNI contract, installs `cargo-ndk`, runs Android JVM unit tests, builds native libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, and assembles debug and release APKs.
 
-The workflow uploads the APKs as the `flowery-apks` artifact. A tag matching `v*` also publishes the release APK through GitHub Releases.
+The workflow uploads APKs as the `flowery-apks` artifact. A tag matching `v*` also publishes the release APK through GitHub Releases.
 
 Configure these repository secrets for signed CI releases:
 
