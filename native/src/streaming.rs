@@ -121,7 +121,6 @@ pub(super) struct StreamDecoder {
     input_pending: Vec<f32>,
     eof: bool,
     produced_frames: u64,
-    source_frames_decoded: u64,
     duration_ms: u64,
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
@@ -181,7 +180,7 @@ impl StreamDecoder {
         Ok(Self {
             format, decoder, track_id, source_rate, source_bits, channels, output_rate: source_rate,
             input_pending: Vec::new(), eof: false, produced_frames: 0,
-            source_frames_decoded: 0, duration_ms, time_base, discard_source_frames: 0,
+            duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
         })
     }
@@ -199,7 +198,6 @@ impl StreamDecoder {
         let actual_ms = timestamp_to_milliseconds(seeked.actual_ts, self.time_base, requested_ms);
         let actual_source_frames = milliseconds_to_frames(actual_ms, self.source_rate);
         let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
-        self.source_frames_decoded = actual_source_frames;
         self.produced_frames = requested_source_frames;
         self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
         Ok(requested_ms)
@@ -248,7 +246,6 @@ impl StreamDecoder {
                         samples.drain(..discard_samples);
                         self.discard_source_frames -= (discard_samples / self.channels) as u64;
                     }
-                    self.source_frames_decoded += decoded_frames;
                     self.input_pending.extend_from_slice(&samples);
                     return Ok(true);
                 }
@@ -961,13 +958,3 @@ mod tests {
     }
 
 }
-
-
-#[cfg(test)]
-
-
-
-
-
-
-
