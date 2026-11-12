@@ -137,6 +137,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         2 -> "open_stream"
                         3 -> "sharing_mode_mismatch"
                         4 -> "pcm_format_mismatch"
+                        5 -> "device_selection_api_unavailable"
+                        6 -> "requested_device_not_opened"
                         else -> "unknown"
                     }
                     val details = if (attempt.size >= 11) {
