@@ -442,8 +442,8 @@ class PlaybackService : Service() {
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
                         player.play(uri, segmentStartMs, segmentEndMs)
                         if (requestGeneration != playRequestGeneration) return@execute
-                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex")
-                        playbackState = PlaybackStateCompat.STATE_PLAYING
+                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
+                        playbackState = PlaybackStateCompat.STATE_CONNECTING
                         publishSessionState()
                     } catch (error: Throwable) {
                         if (requestGeneration == playRequestGeneration) {
