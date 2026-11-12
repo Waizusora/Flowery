@@ -59,6 +59,8 @@ struct StreamConfig {
 #[cfg(target_os = "android")]
 struct UsbStreamWorker {
     session: i64,
+    decoder_handle: i64,
+    config: StreamConfig,
     stop: Arc<AtomicBool>,
     status: Arc<AtomicI32>,
     played_frames: Arc<AtomicU64>,
@@ -314,6 +316,41 @@ pub(super) fn stop_session(session: i64) {
 }
 
 #[cfg(target_os = "android")]
+fn spawn_worker(
+    session_handle: i64,
+    session: Arc<crate::usb_libusb::UsbSession>,
+    decoder_handle: i64,
+    config: StreamConfig,
+    initially_paused: bool,
+) -> Result<(), String> {
+    let stop = Arc::new(AtomicBool::new(false));
+    let status = Arc::new(AtomicI32::new(0));
+    let played_frames = Arc::new(AtomicU64::new(0));
+    let paused = Arc::new(AtomicBool::new(initially_paused));
+    let error = Arc::new(Mutex::new(String::new()));
+    let thread_stop = Arc::clone(&stop);
+    let thread_status = Arc::clone(&status);
+    let thread_played_frames = Arc::clone(&played_frames);
+    let thread_paused = Arc::clone(&paused);
+    let thread_error = Arc::clone(&error);
+    let worker_thread = thread::Builder::new()
+        .name("flowery-usb-iso-out".into())
+        .spawn(move || run_worker(
+            session, decoder_handle, config, thread_stop, thread_status,
+            thread_played_frames, thread_paused, thread_error,
+        ))
+        .map_err(|e| e.to_string())?;
+    workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
+        session_handle,
+        UsbStreamWorker {
+            session: session_handle, decoder_handle, config,
+            stop, status, played_frames, paused, error, thread: worker_thread,
+        },
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
 pub(super) fn start(
     session_handle: i64,
     decoder_handle: i64,
@@ -380,31 +417,39 @@ pub(super) fn start(
     }
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     stop_worker_locked(session_handle);
-    let stop = Arc::new(AtomicBool::new(false));
-    let status = Arc::new(AtomicI32::new(0));
-    let played_frames = Arc::new(AtomicU64::new(0));
-    let paused = Arc::new(AtomicBool::new(false));
-    let error = Arc::new(Mutex::new(String::new()));
-    let thread_stop = Arc::clone(&stop);
-    let thread_status = Arc::clone(&status);
-    let thread_played_frames = Arc::clone(&played_frames);
-    let thread_paused = Arc::clone(&paused);
-    let thread_error = Arc::clone(&error);
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
         max_packet_bytes, interval_us,
     };
-    let worker_thread = thread::Builder::new()
-        .name("flowery-usb-iso-out".into())
-        .spawn(move || run_worker(
-            session, decoder_handle, config, thread_stop, thread_status, thread_played_frames, thread_paused, thread_error,
-        ))
-        .map_err(|e| e.to_string())?;
-    workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
-        session_handle,
-        UsbStreamWorker { session: session_handle, stop, status, played_frames, paused, error, thread: worker_thread },
-    );
-    Ok(())
+    spawn_worker(session_handle, session, decoder_handle, config, false)
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn seek(
+    session_handle: i64,
+    decoder_handle: i64,
+    position_ms: u64,
+) -> Result<u64, String> {
+    let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
+    let (saved_decoder, config, was_paused) = {
+        let map = workers().lock().unwrap_or_else(|e| e.into_inner());
+        let worker = map.get(&session_handle).ok_or("USB stream worker is not running")?;
+        (worker.decoder_handle, worker.config, worker.paused.load(Ordering::Acquire))
+    };
+    if saved_decoder != decoder_handle {
+        return Err("USB seek decoder does not match the active stream".into());
+    }
+    let session = crate::usb_libusb::session_ref(session_handle)
+        .ok_or("Unknown USB session handle")?;
+    let decoder = crate::streaming::decoder_ref(decoder_handle)
+        .ok_or("Unknown stream decoder handle")?;
+
+    // Joining the worker drains cancellation callbacks before touching decoder state.
+    stop_worker_locked(session_handle);
+    let actual_position = decoder.lock().unwrap_or_else(|e| e.into_inner())
+        .seek_to(position_ms)?;
+    spawn_worker(session_handle, session, decoder_handle, config, was_paused)?;
+    Ok(actual_position)
 }
 
 #[cfg(target_os = "android")]
