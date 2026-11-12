@@ -81,8 +81,7 @@ internal class PlaybackCoordinator(
         startPaused: Boolean,
     ) {
         transition(EVENT_PREPARE)
-        engine.play(uri, segmentStartMs, segmentEndMs, startPaused)
-        engine.seekTo(positionMs)
+        engine.play(uri, segmentStartMs, segmentEndMs, startPaused, initialPositionMs = positionMs)
     }
     fun currentVolumeFraction(): Float = engine.currentVolumeFraction()
 
