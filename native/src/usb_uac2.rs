@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn rejects_selector_with_unresolved_source() {
         let mut d = descriptor_prefix();
-        d.extend_from_slice(&[8,0x24,0x0B,9,2,7,99,2,0]);
+        d.extend_from_slice(&[9,0x24,0x0B,9,2,7,99,2,0]);
         append_playback_terminal(&mut d, 9);
         assert!(parse_playback_clock_info(&d).unwrap_err().contains("unresolved Clock Source"));
     }
