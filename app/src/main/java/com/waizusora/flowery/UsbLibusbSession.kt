@@ -63,6 +63,23 @@ internal class UsbLibusbSession private constructor(
     }
 
     @Synchronized
+    fun pausePlayback(): Result<Unit> = setPlaybackPaused(true)
+
+    @Synchronized
+    fun resumePlayback(): Result<Unit> = setPlaybackPaused(false)
+
+    private fun setPlaybackPaused(paused: Boolean): Result<Unit> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        return try {
+            val result = if (paused) NativeAudio.nativePauseUsbPlayback(nativeHandle)
+                else NativeAudio.nativeResumeUsbPlayback(nativeHandle)
+            if (result == 0) Result.success(Unit)
+            else Result.failure(IllegalStateException("Unable to change USB playback pause state"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
+    }
+    @Synchronized
     fun stopPlayback() {
         if (!closed) NativeAudio.nativeStopUsbPlayback(nativeHandle)
     }
