@@ -393,13 +393,12 @@ pub(super) fn start(
         other => return Err(format!("Unsupported libusb bus speed value {other}")),
     };
     let max_packet_bytes = max_isochronous_payload(raw_max_packet_size, speed)?;
-    let factor = 1_u32 << (interval - 1);
-    let base_interval_us = match speed {
-        UsbBusSpeed::Full => 1_000_u32,
-        UsbBusSpeed::High => 125_u32,
-    };
-    let interval_us = base_interval_us
-        .checked_mul(factor).ok_or("USB service interval overflow")?;
+    let interval_us = match speed {
+        // Full-speed isochronous bInterval is a linear frame count.
+        UsbBusSpeed::Full => 1_000_u32.checked_mul(u32::from(interval)),
+        // High-speed bInterval encodes an exponential microframe interval.
+        UsbBusSpeed::High => 125_u32.checked_mul(1_u32 << (interval - 1)),
+    }.ok_or("USB service interval overflow")?;
     let max_frames = (u64::from(sample_rate) * u64::from(interval_us) + 999_999) / 1_000_000;
     let needed = max_frames * u64::from(channels) * u64::from(subslot_bytes);
     if needed > u64::from(max_packet_bytes) {
