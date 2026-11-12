@@ -1,3 +1,17 @@
+/// Converts normalized floating-point samples to signed integer PCM with saturation.
+/// Kept for unit tests; production output quantizes directly in the AAudio callback.
+#[cfg(test)]
+pub(super) fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
+    if !sample.is_finite() || !gain.is_finite() || !(1..=32).contains(&valid_bits) {
+        return 0;
+    }
+    let scale = (1_i64 << (valid_bits - 1)) as f32;
+    let minimum = -(1_i64 << (valid_bits - 1));
+    let maximum = (1_i64 << (valid_bits - 1)) - 1;
+    let scaled = (sample.clamp(-1.0, 1.0) * gain.clamp(0.0, 1.0) * scale).round();
+    (scaled as i64).clamp(minimum, maximum)
+}
+
 /// Platform-neutral signed integer PCM layout used at native output boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PcmFormat {
