@@ -26,23 +26,6 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeEngineVersio
     version.into_raw()
 }
 
-
-
-#[no_mangle]
-
-
-#[no_mangle]
-
-
-#[no_mangle]
-
-
-#[no_mangle]
-
-
-#[no_mangle]
-
-
 use lofty::config::WriteOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::tag::{ItemKey, Tag};
