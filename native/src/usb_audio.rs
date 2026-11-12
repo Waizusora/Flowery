@@ -19,6 +19,7 @@ pub struct UsbAudioFormat {
     pub endpoint_address: Option<u8>,
     pub max_packet_size: Option<u16>,
     pub interval: Option<u8>,
+    pub synchronization_type: Option<u8>,
     pub feedback_endpoint_address: Option<u8>,
     pub feedback_max_packet_size: Option<u16>,
     pub feedback_interval: Option<u8>,
@@ -46,6 +47,7 @@ struct Alternate {
     endpoint_address: Option<u8>,
     max_packet_size: Option<u16>,
     interval: Option<u8>,
+    synchronization_type: Option<u8>,
     feedback_endpoint_address: Option<u8>,
     feedback_max_packet_size: Option<u16>,
     feedback_interval: Option<u8>,
@@ -81,6 +83,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     endpoint_address: a.endpoint_address,
                     max_packet_size: a.max_packet_size,
                     interval: a.interval,
+                    synchronization_type: a.synchronization_type,
                     feedback_endpoint_address: a.feedback_endpoint_address,
                     feedback_max_packet_size: a.feedback_max_packet_size,
                     feedback_interval: a.feedback_interval,
@@ -180,6 +183,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                             a.feedback_interval = Some(d[6]);
                         } else if !is_input {
                             a.endpoint_address = Some(d[2]);
+                            a.synchronization_type = Some((d[3] >> 2) & 0x03);
                             a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
                             a.interval = Some(d[6]);
                         }
@@ -207,6 +211,7 @@ pub struct UsbAudioStreamPlan {
     pub endpoint_address: u8,
     pub max_packet_size: u16,
     pub interval: u8,
+    pub synchronization_type: Option<u8>,
     pub sample_rate: u32,
     pub channels: u8,
     pub subslot_bytes: u8,
@@ -227,6 +232,7 @@ pub fn plan_pcm_playback(
         return Err("Requested PCM parameters must be non-zero".to_string());
     }
     let parsed = parse_configuration_descriptors(descriptors);
+    let mut missing_async_feedback = false;
     for format in parsed.formats {
         let (Some(format_channels), Some(subslot_bytes), Some(bits), Some(endpoint), Some(packet), Some(interval)) = (
             format.channels, format.subslot_bytes, format.bit_resolution,
@@ -245,6 +251,10 @@ pub fn plan_pcm_playback(
                 .map(|(min, max)| sample_rate >= min && sample_rate <= max)
                 .unwrap_or(false);
         if !rate_supported { continue; }
+        if format.synchronization_type == Some(1) && format.feedback_endpoint_address.is_none() {
+            missing_async_feedback = true;
+            continue;
+        }
 
         return Ok(UsbAudioStreamPlan {
             interface_number: format.interface_number,
@@ -252,6 +262,7 @@ pub fn plan_pcm_playback(
             endpoint_address: endpoint,
             max_packet_size: packet,
             interval,
+            synchronization_type: format.synchronization_type,
             sample_rate,
             channels,
             subslot_bytes,
@@ -261,6 +272,9 @@ pub fn plan_pcm_playback(
             feedback_max_packet_size: format.feedback_max_packet_size,
             feedback_interval: format.feedback_interval,
         });
+    }
+    if missing_async_feedback {
+        return Err("The matching asynchronous USB Audio OUT endpoint has no explicit feedback endpoint; implicit feedback is not supported yet".into());
     }
     Err(format!(
         "No advertised PCM Type I playback alternate matches {sample_rate} Hz, {channels} channel(s), {bit_resolution}-bit"
