@@ -1,4 +1,4 @@
-use jni::objects::{JClass, JIntArray};
+use jni::objects::JClass;
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
 
@@ -9,19 +9,6 @@ const ROUTE_ANDROID_AAUDIO: i32 = 0;
 
 pub(super) fn select_playback_route() -> i32 {
     ROUTE_ANDROID_AAUDIO
-}
-
-fn select_preferred_sample_rate(source_rate: i32, supported_rates: &[i32]) -> i32 {
-    if source_rate <= 0 {
-        return 0;
-    }
-    let valid: Vec<i32> = supported_rates.iter().copied().filter(|rate| *rate > 0).collect();
-    if valid.contains(&source_rate) {
-        return source_rate;
-    }
-    valid.into_iter()
-        .min_by_key(|rate| (i64::from(*rate) - i64::from(source_rate)).abs())
-        .unwrap_or(source_rate)
 }
 
 fn ring_capacity_frames(sample_rate: i32) -> i32 {
@@ -62,21 +49,6 @@ fn low_watermark_frames(sample_rate: i32, capacity_frames: i32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectPreferredSampleRate(
-    env: JNIEnv, _class: JClass, source_rate: jint, rates: JIntArray,
-) -> jint {
-    let length = match env.get_array_length(&rates) {
-        Ok(value) => value as usize,
-        Err(_) => return 0,
-    };
-    let mut values = vec![0_i32; length];
-    if env.get_int_array_region(&rates, 0, &mut values).is_err() {
-        return 0;
-    }
-    select_preferred_sample_rate(source_rate, &values)
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeRingCapacityFrames(
     _env: JNIEnv, _class: JClass, sample_rate: jint,
 ) -> jint {
@@ -101,17 +73,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackLowW
 mod tests {
     use super::{
         frames_at_milliseconds, low_watermark_frames, ring_capacity_frames,
-        select_preferred_sample_rate, target_queue_frames,
+        target_queue_frames,
     };
 
-    #[test]
-    fn prefers_the_source_rate_and_otherwise_selects_the_nearest_supported_rate() {
-        assert_eq!(select_preferred_sample_rate(44_100, &[48_000, 44_100, 96_000]), 44_100);
-        assert_eq!(select_preferred_sample_rate(48_000, &[44_100, 96_000]), 44_100);
-        assert_eq!(select_preferred_sample_rate(48_000, &[]), 48_000);
-        assert_eq!(select_preferred_sample_rate(0, &[44_100]), 0);
-    }
-
+    
     #[test]
     fn ring_capacity_is_power_of_two_and_covers_two_seconds() {
         assert_eq!(ring_capacity_frames(44_100), 131_072);
