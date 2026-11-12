@@ -12,12 +12,41 @@ mod playback_policy;
 mod usb_audio;
 mod usb_isochronous;
 #[cfg(target_os = "android")]
+mod usb_libusb;
+#[cfg(target_os = "android")]
 mod aaudio;
 use base64::Engine;
 
 use jni::objects::{JByteArray, JClass, JString};
 use jni::sys::{jbyteArray, jint, jstring};
 use jni::JNIEnv;
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeOpenUsbAudioSession(
+    mut env: JNIEnv, _class: JClass, fd: jint, interface_number: jint, alternate_setting: jint,
+) -> jni::sys::jlong {
+    if !(0..=255).contains(&interface_number) || !(0..=255).contains(&alternate_setting) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "USB interface and alternate setting must fit in one byte");
+        return 0;
+    }
+    match crate::usb_libusb::open_android_fd(fd, interface_number as u8, alternate_setting as u8) {
+        Ok(handle) => handle as jni::sys::jlong,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            0
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession(
+    _env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
+) {
+    crate::usb_libusb::close_session(handle);
+}
+
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseUsbAudioDescriptors(
