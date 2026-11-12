@@ -315,4 +315,32 @@ mod tests {
         assert!(plan_pcm_playback(&descriptors, 96_000, 2, 24).is_err());
     }
 
+    #[test]
+    fn associates_explicit_feedback_endpoint_with_playback_alternate() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+        ];
+        let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
+        assert_eq!(plan.endpoint_address, 0x01);
+        assert_eq!(plan.feedback_endpoint_address, Some(0x81));
+    }
+
+    #[test]
+    fn preserves_high_speed_packet_multiplier_bits() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0x20, 0,
+            9, 4, 2, 1, 1, 1, 2, 0x20, 0,
+            16, 0x24, 1, 1, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+            6, 0x24, 2, 1, 4, 24,
+            7, 5, 0x01, 0x05, 0x00, 0x14, 1,
+        ];
+        let parsed = parse_configuration_descriptors(&descriptors);
+        assert_eq!(parsed.formats[0].max_packet_size, Some(0x1400));
+    }
+
 }
