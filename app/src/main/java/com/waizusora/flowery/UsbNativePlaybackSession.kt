@@ -68,11 +68,28 @@ internal class UsbNativePlaybackSession private constructor(
         }
         return negotiation.fold(
             onSuccess = {
-                usb.startPlayback(
+                val started = usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
                     sampleRate, channels, validBits, subslotBytes, feedbackEndpoint,
                     feedbackMaxPacketSize, initialPositionMs
                 )
+                if (started.isSuccess) {
+                    if (uac2ClockSourceEntity != null) usb.commitClockNegotiation()
+                    started
+                } else if (uac2ClockSourceEntity != null) {
+                    val rollback = usb.rollbackClockNegotiation()
+                    if (rollback.isFailure) {
+                        Result.failure(IllegalStateException(
+                            (started.exceptionOrNull()?.message ?: "Native USB playback failed to start") +
+                                "; " + (rollback.exceptionOrNull()?.message ?: "UAC2 clock rollback failed"),
+                            rollback.exceptionOrNull()
+                        ))
+                    } else {
+                        started
+                    }
+                } else {
+                    started
+                }
             },
             onFailure = { Result.failure(it) }
         )
