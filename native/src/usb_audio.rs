@@ -268,9 +268,21 @@ pub fn plan_pcm_playback(
             subslot_bytes,
             bit_resolution: bits,
             requires_uac2_clock_negotiation: format.protocol == 0x20,
-            feedback_endpoint_address: format.feedback_endpoint_address,
-            feedback_max_packet_size: format.feedback_max_packet_size,
-            feedback_interval: format.feedback_interval,
+            feedback_endpoint_address: if format.synchronization_type == Some(1) {
+                format.feedback_endpoint_address
+            } else {
+                None
+            },
+            feedback_max_packet_size: if format.synchronization_type == Some(1) {
+                format.feedback_max_packet_size
+            } else {
+                None
+            },
+            feedback_interval: if format.synchronization_type == Some(1) {
+                format.feedback_interval
+            } else {
+                None
+            },
         });
     }
     if missing_async_feedback {
