@@ -1345,7 +1345,6 @@ mod eof_boundary_regression_tests {
         std::fs::remove_file(path).unwrap();
     }
 
-    #[test]
 
 }
 
