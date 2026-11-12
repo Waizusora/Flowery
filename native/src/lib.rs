@@ -90,6 +90,25 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
 
 #[cfg(target_os = "android")]
 #[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSeekUsbPlayback(
+    mut env: JNIEnv, _class: JClass,
+    session: jni::sys::jlong, decoder: jni::sys::jlong, position_ms: jlong,
+) -> jlong {
+    if session <= 0 || decoder <= 0 || position_ms < 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB seek parameters");
+        return -1;
+    }
+    match crate::usb_stream::seek(session, decoder, position_ms as u64) {
+        Ok(position) => position.min(jlong::MAX as u64) as jlong,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePauseUsbPlayback(
     mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
 ) -> jint {
