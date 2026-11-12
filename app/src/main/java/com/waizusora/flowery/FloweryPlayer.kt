@@ -122,7 +122,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         context, handle, sourceRate, channels, sourceBits
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
-                    directUsb.start().getOrThrow()
+                    directUsb.start(targetPositionMs).getOrThrow()
                     outputSampleRate = sourceRate
                     val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
