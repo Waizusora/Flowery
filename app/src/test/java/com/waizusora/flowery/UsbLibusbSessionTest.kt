@@ -7,6 +7,8 @@ import org.junit.Test
 class UsbLibusbSessionTest {
     private class FakeUsbControl : UsbControlTransfer {
         var selectorPin = 1
+        var secondSelectorPin = 1
+        var failSelectorRestore = false
         var sourceRate = 44_100
         val writes = mutableListOf<String>()
         var failNextSourceWrite = false
@@ -31,8 +33,8 @@ class UsbLibusbSessionTest {
                 return 14
             }
             if (requestType == 0xA1 && request == 0x01 && value == 0x0100) {
-                if (entityId == 5) {
-                    buffer[0] = selectorPin.toByte()
+                if (entityId == 5 || entityId == 6) {
+                    buffer[0] = (if (entityId == 5) selectorPin else secondSelectorPin).toByte()
                     return 1
                 }
                 if (entityId == 9) {
@@ -41,9 +43,11 @@ class UsbLibusbSessionTest {
                 }
             }
             if (requestType == 0x21 && request == 0x01 && value == 0x0100) {
-                if (entityId == 5) {
-                    selectorPin = buffer[0].toInt() and 0xFF
-                    writes += "selector:$selectorPin"
+                if (entityId == 5 || entityId == 6) {
+                    val pin = buffer[0].toInt() and 0xFF
+                    if (entityId == 5 && pin == 1 && failSelectorRestore) return -1
+                    if (entityId == 5) selectorPin = pin else secondSelectorPin = pin
+                    writes += "selector$entityId:$pin"
                     return 1
                 }
                 if (entityId == 9) {
@@ -126,4 +130,50 @@ class UsbLibusbSessionTest {
         assertEquals(44_100, fake.sourceRate)
         assertEquals(listOf("selector:2", "source:44100", "selector:1"), fake.writes)
     }
+
+    @Test
+    fun rollsBackMultipleSelectorsInReverseOrder() {
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(
+                Uac2ClockSelectorStep(5, 2, 2),
+                Uac2ClockSelectorStep(6, 2, 3)
+            ),
+            multipliers = emptyList()
+        )
+
+        assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
+        assertEquals(2, fake.selectorPin)
+        assertEquals(3, fake.secondSelectorPin)
+        assertTrue(session.rollbackClockNegotiation().isSuccess)
+        assertEquals(1, fake.selectorPin)
+        assertEquals(1, fake.secondSelectorPin)
+        assertEquals(
+            listOf("selector5:2", "selector6:3", "source:48000", "source:44100", "selector6:1", "selector5:1"),
+            fake.writes
+        )
+    }
+
+    @Test
+    fun reportsFatalWhenClockRollbackCannotRestoreDeviceState() {
+        val fake = FakeUsbControl().apply { failSelectorRestore = true }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            multipliers = emptyList()
+        )
+
+        assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
+        val rollback = session.rollbackClockNegotiation()
+        assertTrue(rollback.isFailure)
+        assertTrue(rollback.exceptionOrNull()?.message?.contains("FATAL") == true)
+        assertEquals(2, fake.selectorPin)
+        assertEquals(44_100, fake.sourceRate)
+    }
+
 }
