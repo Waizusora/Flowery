@@ -1,60 +1,123 @@
-#!/usr/bin/env python3
-"""Verify that Kotlin JNI declarations match the native exported symbols."""
+name: Build Flowery
 
-from pathlib import Path
-import re
-import sys
+on:
+  push:
+    branches: [main, trial]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
 
-ROOT = Path(__file__).resolve().parents[1]
+permissions:
+  contents: read
 
+concurrency:
+  group: flowery-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
-def declarations(path: Path) -> set[str]:
-    source = path.read_text(encoding="utf-8")
-    return set(re.findall(r"external\s+fun\s+(native[A-Za-z0-9_]+)\s*\(", source))
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      KEYSTORE_BASE64: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEYSTORE_BASE64 || '' }}
+      KEYSTORE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEYSTORE_PASSWORD || '' }}
+      KEY_ALIAS: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_ALIAS || '' }}
+      KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.KEY_PASSWORD || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
-def exports(paths: list[Path], pattern: str) -> set[str]:
-    symbols: set[str] = set()
-    for path in paths:
-        source = path.read_text(encoding="utf-8")
-        symbols.update(re.findall(pattern, source))
-    return symbols
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
-def verify(label: str, declared: set[str], exported: set[str]) -> bool:
-    missing = sorted(declared - exported)
-    stale = sorted(exported - declared)
-    if not missing and not stale:
-        print(f"{label}: {len(declared)} JNI declarations match native exports")
-        return True
-    if missing:
-        print(f"{label}: missing native exports: {', '.join(missing)}", file=sys.stderr)
-    if stale:
-        print(f"{label}: native exports without Kotlin declarations: {', '.join(stale)}", file=sys.stderr)
-    return False
+      - name: Install Android NDK and SDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          for attempt in 1 2 3; do
+            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "Android SDK package installation failed; retrying ($attempt/3)."
+              sleep 15
+            fi
+          done
+          exit 1
 
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
 
-rust_sources = sorted((ROOT / "native" / "src").rglob("*.rs"))
-cpp_sources = sorted((ROOT / "app" / "src" / "main" / "cpp").rglob("*.cpp"))
+      - name: Generate native dependency lockfile
+        working-directory: native
+        run: cargo generate-lockfile
 
-rust_symbols = exports(
-    rust_sources,
-    r"Java_com_waizusora_flowery_NativeAudio_(native[A-Za-z0-9_]+)",
-)
-cpp_symbols = exports(
-    cpp_sources,
-    r"Java_com_waizusora_flowery_UsbDacNative_(native[A-Za-z0-9_]+)",
-)
+      - name: Run native unit tests
+        working-directory: native
+        run: cargo test --locked
 
-ok = verify(
-    "NativeAudio",
-    declarations(ROOT / "app/src/main/java/com/waizusora/flowery/NativeAudio.kt"),
-    rust_symbols,
-)
-ok = verify(
-    "UsbDacNative",
-    declarations(ROOT / "app/src/main/java/com/waizusora/flowery/UsbDacNative.kt"),
-    cpp_symbols,
-) and ok
+      - name: Verify Kotlin and native JNI declarations
+        run: python3 scripts/check_jni_contract.py
 
-raise SystemExit(0 if ok else 1)
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Run Android unit tests
+        run: gradle --no-daemon testDebugUnitTest
+
+      - name: Build native libraries
+        working-directory: native
+        run: cargo ndk --platform 26 -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
+
+      - name: Configure release signing
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [[ -n "$KEYSTORE_BASE64" ]]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/flowery-release.jks"
+            echo "FLOWERY_KEYSTORE_PATH=$RUNNER_TEMP/flowery-release.jks" >> "$GITHUB_ENV"
+          else
+            echo "Signing secrets are not configured; the release APK will be unsigned."
+          fi
+
+      - name: Build debug and release APKs
+        run: gradle --no-daemon assembleDebug assembleRelease
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: flowery-apks
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download APKs
+        uses: actions/download-artifact@v4
+        with:
+          name: flowery-apks
+          path: release-apks
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-apks/**/*.apk
