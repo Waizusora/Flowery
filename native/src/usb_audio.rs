@@ -182,9 +182,6 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                             a.endpoint_address = Some(d[2]);
                             a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
                             a.interval = Some(d[6]);
-                            if length >= 9 && d[8] != 0 {
-                                a.feedback_endpoint_address = Some(d[8]);
-                            }
                         }
                     }
                 }
@@ -340,6 +337,8 @@ mod tests {
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.endpoint_address, 0x01);
         assert_eq!(plan.feedback_endpoint_address, Some(0x81));
+        assert_eq!(plan.feedback_max_packet_size, Some(3));
+        assert_eq!(plan.feedback_interval, Some(1));
     }
 
     #[test]
