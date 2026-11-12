@@ -19,6 +19,7 @@ pub struct UsbAudioFormat {
     pub endpoint_address: Option<u8>,
     pub max_packet_size: Option<u16>,
     pub interval: Option<u8>,
+    pub feedback_endpoint_address: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +44,7 @@ struct Alternate {
     endpoint_address: Option<u8>,
     max_packet_size: Option<u16>,
     interval: Option<u8>,
+    feedback_endpoint_address: Option<u8>,
 }
 
 fn le24(b: &[u8], i: usize) -> Option<u32> {
@@ -75,6 +77,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     endpoint_address: a.endpoint_address,
                     max_packet_size: a.max_packet_size,
                     interval: a.interval,
+                    feedback_endpoint_address: a.feedback_endpoint_address,
                 });
             }
         }
@@ -162,10 +165,19 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
             }
             0x05 if length >= 7 => {
                 if let Some(a) = current.as_mut() {
-                    if a.subclass == 0x02 && d[2] & 0x80 == 0 && (d[3] & 0x03) == 0x01 {
-                        a.endpoint_address = Some(d[2]);
-                        a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]) & 0x07ff);
-                        a.interval = Some(d[6]);
+                    if a.subclass == 0x02 && (d[3] & 0x03) == 0x01 {
+                        let is_input = d[2] & 0x80 != 0;
+                        let usage = (d[3] >> 4) & 0x03;
+                        if is_input && usage == 0x01 {
+                            a.feedback_endpoint_address = Some(d[2]);
+                        } else if !is_input {
+                            a.endpoint_address = Some(d[2]);
+                            a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
+                            a.interval = Some(d[6]);
+                            if length >= 9 && d[8] != 0 {
+                                a.feedback_endpoint_address = Some(d[8]);
+                            }
+                        }
                     }
                 }
             }
@@ -195,6 +207,7 @@ pub struct UsbAudioStreamPlan {
     pub subslot_bytes: u8,
     pub bit_resolution: u8,
     pub requires_uac2_clock_negotiation: bool,
+    pub feedback_endpoint_address: Option<u8>,
 }
 
 pub fn plan_pcm_playback(
@@ -237,6 +250,7 @@ pub fn plan_pcm_playback(
             subslot_bytes,
             bit_resolution: bits,
             requires_uac2_clock_negotiation: format.protocol == 0x20,
+            feedback_endpoint_address: format.feedback_endpoint_address,
         });
     }
     Err(format!(
