@@ -103,49 +103,144 @@ internal class UsbLibusbSession private constructor(
             if (clockPaths.isNotEmpty()) {
                 val failures = mutableListOf<String>()
                 for (path in clockPaths) {
-                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2) { failures += "invalid source"; continue }
+                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2) {
+                        failures += "invalid source controls"
+                        continue
+                    }
                     var sourceRate = sampleRate.toLong()
                     var valid = true
                     for (multiplier in path.multipliers) {
-                        if (multiplier.entityId !in 1..255 || (multiplier.controls and 0x01) == 0 || (multiplier.controls and 0x04) == 0) { failures += "invalid multiplier controls"; valid = false; break }
-                        val idx = (multiplier.entityId shl 8) or controlInterfaceNumber
-                        fun readRatio(selector: Int): Long? { val b = ByteArray(4); val n = connection.controlTransfer(0xA1,0x01,selector shl 8,idx,b,4,1000); return if(n==4) readU32(b,0) else null }
-                        val num = readRatio(1); val den = readRatio(2)
-                        if (num == null || den == null || num == 0L || den == 0L) { failures += "invalid multiplier ratio"; valid = false; break }
-                        val scaled = runCatching { Math.multiplyExact(sourceRate, den) }.getOrNull()
-                        if (scaled == null || scaled % num != 0L) { failures += "non-integral multiplier rate"; valid = false; break }
-                        sourceRate = scaled / num
+                        if (multiplier.entityId !in 1..255 ||
+                            (multiplier.controls and 0x01) == 0 ||
+                            (multiplier.controls and 0x04) == 0) {
+                            failures += "invalid multiplier controls"; valid = false; break
+                        }
+                        val index = (multiplier.entityId shl 8) or controlInterfaceNumber
+                        fun readRatio(control: Int): Long? {
+                            val bytes = ByteArray(4)
+                            val length = connection.controlTransfer(0xA1, 0x01, control shl 8, index, bytes, 4, 1_000)
+                            return if (length == 4) readU32(bytes, 0) else null
+                        }
+                        val numerator = readRatio(1)
+                        val denominator = readRatio(2)
+                        if (numerator == null || denominator == null || numerator == 0L || denominator == 0L) {
+                            failures += "unable to read a valid multiplier ratio"; valid = false; break
+                        }
+                        val scaled = runCatching { Math.multiplyExact(sourceRate, denominator) }.getOrNull()
+                        if (scaled == null || scaled % numerator != 0L) {
+                            failures += "multiplier requires a non-integral source rate"; valid = false; break
+                        }
+                        sourceRate = scaled / numerator
                     }
-                    if (!valid || sourceRate !in 1..Int.MAX_VALUE.toLong() || !supportsRate(path.sourceEntityId, sourceRate.toInt())) continue
+                    if (!valid || sourceRate !in 1..Int.MAX_VALUE.toLong()) continue
+                    if (!supportsRate(path.sourceEntityId, sourceRate.toInt())) {
+                        failures += "source " + path.sourceEntityId + " does not advertise " + sourceRate + " Hz"
+                        continue
+                    }
                     val sourceIndex = (path.sourceEntityId shl 8) or controlInterfaceNumber
-                    val currentBytes = ByteArray(4)
-                    if (connection.controlTransfer(0xA1,0x01,0x0100,sourceIndex,currentBytes,4,1000) != 4) continue
-                    val currentRate = readU32(currentBytes,0)
-                    if (currentRate != sourceRate && (path.sourceControls and 0x03) != 2) continue
+                    val sourceCurrentBytes = ByteArray(4)
+                    if (connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, sourceCurrentBytes, 4, 1_000) != 4) {
+                        failures += "source GET_CUR failed"; continue
+                    }
+                    val oldSourceRate = readU32(sourceCurrentBytes, 0)
+                    if (oldSourceRate !in 1..Int.MAX_VALUE.toLong()) {
+                        failures += "source returned an invalid current rate"; continue
+                    }
+                    if (oldSourceRate != sourceRate && (path.sourceControls and 0x03) != 2) {
+                        failures += "source frequency is read-only"; continue
+                    }
+
+                    data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
+                    val selectorChanges = mutableListOf<SelectorChange>()
                     for (selector in path.selectors) {
-                        if (selector.entityId !in 1..255 || selector.selectedPin !in 1..255 || (selector.controls and 0x03) !in 1..2) { valid=false; break }
-                        val idx = (selector.entityId shl 8) or controlInterfaceNumber
+                        if (selector.entityId !in 1..255 || selector.selectedPin !in 1..255 ||
+                            (selector.controls and 0x03) !in 1..2) {
+                            failures += "invalid selector descriptor controls"; valid = false; break
+                        }
+                        val selectorIndex = (selector.entityId shl 8) or controlInterfaceNumber
                         val active = ByteArray(1)
-                        if (connection.controlTransfer(0xA1,0x01,0x0100,idx,active,1,1000) != 1) { valid=false; break }
-                        if ((active[0].toInt() and 0xFF) != selector.selectedPin) {
-                            if ((selector.controls and 0x03) != 2) { valid=false; break }
-                            val requested = byteArrayOf(selector.selectedPin.toByte())
-                            if (connection.controlTransfer(0x21,0x01,0x0100,idx,requested,1,1000) != 1) { valid=false; break }
-                            val verify = ByteArray(1)
-                            if (connection.controlTransfer(0xA1,0x01,0x0100,idx,verify,1,1000) != 1 || (verify[0].toInt() and 0xFF) != selector.selectedPin) { valid=false; break }
+                        if (connection.controlTransfer(0xA1, 0x01, 0x0100, selectorIndex, active, 1, 1_000) != 1) {
+                            failures += "selector GET_CUR failed"; valid = false; break
+                        }
+                        val oldPin = active[0].toInt() and 0xFF
+                        if (oldPin !in 1..255) {
+                            failures += "selector returned an invalid pin"; valid = false; break
+                        }
+                        if (oldPin != selector.selectedPin) {
+                            if ((selector.controls and 0x03) != 2) {
+                                failures += "selector is read-only"; valid = false; break
+                            }
+                            selectorChanges += SelectorChange(selectorIndex, oldPin, selector.selectedPin)
                         }
                     }
                     if (!valid) continue
-                    if (currentRate != sourceRate) {
+
+                    val attemptedSelectors = mutableListOf<SelectorChange>()
+                    var sourceWriteAttempted = false
+                    fun restoreState(): List<String> {
+                        val rollbackErrors = mutableListOf<String>()
+                        if (sourceWriteAttempted && oldSourceRate != sourceRate) {
+                            val oldRate = oldSourceRate.toInt()
+                            val payload = byteArrayOf(oldRate.toByte(), (oldRate ushr 8).toByte(),
+                                (oldRate ushr 16).toByte(), (oldRate ushr 24).toByte())
+                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
+                            val verify = ByteArray(4)
+                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
+                            if (written != 4 || read != 4 || readU32(verify, 0) != oldSourceRate) {
+                                rollbackErrors += "clock source restore failed"
+                            }
+                        }
+                        for (change in attemptedSelectors.asReversed()) {
+                            val payload = byteArrayOf(change.oldPin.toByte())
+                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
+                            val verify = ByteArray(1)
+                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
+                            if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.oldPin) {
+                                rollbackErrors += "clock selector " + change.index + " restore failed"
+                            }
+                        }
+                        return rollbackErrors
+                    }
+
+                    var mutationFailure: String? = null
+                    for (change in selectorChanges) {
+                        attemptedSelectors += change
+                        val payload = byteArrayOf(change.newPin.toByte())
+                        val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
+                        val verify = ByteArray(1)
+                        val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
+                        if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.newPin) {
+                            mutationFailure = "clock selector SET_CUR/verification failed"; break
+                        }
+                    }
+                    if (mutationFailure == null && oldSourceRate != sourceRate) {
+                        sourceWriteAttempted = true
                         val rate = sourceRate.toInt()
-                        val payload = byteArrayOf(rate.toByte(),(rate ushr 8).toByte(),(rate ushr 16).toByte(),(rate ushr 24).toByte())
-                        if (connection.controlTransfer(0x21,0x01,0x0100,sourceIndex,payload,4,1000) != 4) continue
+                        val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
+                            (rate ushr 16).toByte(), (rate ushr 24).toByte())
+                        val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
                         val verify = ByteArray(4)
-                        if (connection.controlTransfer(0xA1,0x01,0x0100,sourceIndex,verify,4,1000) != 4 || readU32(verify,0) != sourceRate) continue
+                        val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
+                        if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
+                            mutationFailure = "clock source SET_CUR/verification failed"
+                        }
+                    }
+                    if (mutationFailure != null) {
+                        val rollbackErrors = restoreState()
+                        if (rollbackErrors.isNotEmpty()) {
+                            return Result.failure(IllegalStateException(
+                                "FATAL: UAC2 clock negotiation failed (" + mutationFailure +
+                                    "); rollback could not restore device state: " + rollbackErrors.joinToString()
+                            ))
+                        }
+                        failures += mutationFailure
+                        continue
                     }
                     return Result.success(Unit)
                 }
-                return Result.failure(IllegalStateException("No UAC2 clock path can produce $sampleRate Hz: ${failures.joinToString()}"))
+                return Result.failure(IllegalStateException(
+                    "No UAC2 clock path can produce " + sampleRate + " Hz: " + failures.joinToString()
+                ))
             }
 
             var selectedClockSource = clockSourceEntityId
