@@ -143,7 +143,7 @@ pub fn parse_playback_clock_info_for_interface(
                         }
                         controls_by_source.push(source_control);
                     }
-                    (*(&clock_id), *controls, inputs.clone(), controls_by_source, 0)
+                    (clock_id, *controls, inputs.clone(), controls_by_source, 0)
                 } else if ac.clock_multipliers.contains_key(&clock_id) {
                     return Err(format!("UAC2 playback clock path uses Clock Multiplier entity {clock_id}; multiplier negotiation is not implemented"));
                 } else {
@@ -210,7 +210,7 @@ mod tests {
     fn parses_selector_inputs_and_controls() {
         let mut d = descriptor_prefix();
         // Selector 9 has two inputs: Clock Sources 7 and 8; host programmable.
-        d.extend_from_slice(&[8,0x24,0x0B,9,2,7,8,2,0]);
+        d.extend_from_slice(&[9,0x24,0x0B,9,2,7,8,2,0]);
         append_playback_terminal(&mut d, 9);
         let info = parse_playback_clock_info(&d).unwrap();
         assert_eq!(info.clock_selector_entity_id, 9);
