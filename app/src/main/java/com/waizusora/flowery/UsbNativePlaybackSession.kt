@@ -214,19 +214,26 @@ internal class UsbNativePlaybackSession private constructor(
                 val selectorControlsJson = if (isUac2) plan.optJSONArray("uac2_selector_source_controls") else null
                 val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
+                val invalidUac2ClockPlan = isUac2 && (
+                    clockControlInterface !in 0..255 ||
+                        clockSourceEntity !in 0..255 ||
+                        clockControls !in 0..255 ||
+                        (clockSelectorEntity == 0 && clockSourceEntity == 0) ||
+                        clockSelectorEntity !in 0..255 ||
+                        clockSelectorControls !in 0..255 ||
+                        selectorSources.size != selectorSourceControls.size ||
+                        selectorSources.any { it !in 1..255 } ||
+                        selectorSourceControls.any { it !in 0..255 } ||
+                        (clockSelectorEntity != 0 && (
+                            selectorSources.isEmpty() ||
+                                (clockSelectorControls and 0x03) !in 1..2
+                            ))
+                    )
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits !in 1..32 ||
                     (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
-                    (isUac2 && (clockControlInterface !in 0..255 || clockSourceEntity !in 0..255 ||
-                        clockControls !in 0..255 ||
-                        (clockSelectorEntity == 0 && clockSourceEntity == 0) ||
-                        (clockSelectorEntity !in 0..255 || clockSelectorControls !in 0..255 ||
-                            selectorSources.size != selectorSourceControls.size ||
-                            selectorSources.any { it !in 1..255 } ||
-                            selectorSourceControls.any { it !in 0..255 } ||
-                            (clockSelectorEntity != 0 && (selectorSources.isEmpty() ||
-                                (clockSelectorControls and 0x03) !in 1..2))))
+                    invalidUac2ClockPlan
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
                     continue
