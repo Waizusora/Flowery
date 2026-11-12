@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::time::Duration;
 use std::collections::HashMap;
+use crate::write_text_to_java;
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(target_os = "android")]
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -12,10 +13,9 @@ use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
 
 use jni::objects::{JClass, JString};
-use jni::sys::{jint, jlong};
+use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
 use symphonia::core::audio::SampleBuffer;
-use crate::pcm_format::quantize_signed_pcm;
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
