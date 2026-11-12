@@ -362,6 +362,8 @@ pub(super) fn start(
     channels: u8,
     valid_bits: u8,
     subslot_bytes: u8,
+    feedback_endpoint: u8,
+    feedback_max_packet_size: u16,
     initial_position_ms: u64,
 ) -> Result<(), String> {
     use crate::usb_isochronous::{max_isochronous_payload, UsbBusSpeed};
@@ -418,9 +420,26 @@ pub(super) fn start(
     }
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     stop_worker_locked(session_handle);
+    let feedback_endpoint = if feedback_endpoint == 0 { None } else { Some(feedback_endpoint) };
+    let feedback_packet_bytes = if feedback_endpoint.is_some() {
+        let expected = match speed { UsbBusSpeed::Full => 3, UsbBusSpeed::High => 4 };
+        if u32::from(feedback_max_packet_size) != expected {
+            return Err(format!("Feedback endpoint packet size must be {expected} bytes for this USB bus speed"));
+        }
+        Some(feedback_max_packet_size)
+    } else {
+        if feedback_max_packet_size != 0 {
+            return Err("Feedback packet size was provided without a feedback endpoint".into());
+        }
+        None
+    };
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes,
-        max_packet_bytes, interval_us,
+        max_packet_bytes, interval_us, feedback_endpoint, feedback_packet_bytes,
+        feedback_speed: match speed {
+            UsbBusSpeed::Full => FeedbackBusSpeed::Full,
+            UsbBusSpeed::High => FeedbackBusSpeed::High,
+        },
     };
     let initial_position_frames = (u128::from(initial_position_ms)
         .saturating_mul(u128::from(sample_rate)) / 1_000)
