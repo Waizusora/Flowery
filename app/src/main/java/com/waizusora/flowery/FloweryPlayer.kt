@@ -23,8 +23,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
-    @Volatile private var bandGainsDb = FloatArray(31)
-    @Volatile private var equalizerRevision = 0
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
@@ -33,12 +31,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val pendingSeekMs = AtomicLong(-1L)
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
-
-    fun setEqualizerGains(gains: FloatArray) {
-        require(gains.size == 31) { "The ISO equalizer requires 31 bands" }
-        bandGainsDb = gains.copyOf()
-        equalizerRevision++
-    }
 
     fun setVolume(value: Float) {
         volumeController.setSystemVolume(value.coerceIn(0f, 1f))
@@ -113,7 +105,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         .getString("audio_output_route", "speaker")
                 )
                 val outputRoute = AndroidOutputRouteResolver(context).resolve(selectedTarget)
-                val supportedRates = outputRoute.supportedSampleRates
                 // Android-managed AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
@@ -121,21 +112,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
                 // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
                 val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
-                val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates)
-                val targetRate = NativeAudio.nativeSelectOutputSampleRate(
-                    preferredRate, channels, deviceId, outputFormat, false
-                )
+                val targetRate = sourceRate
                 check(targetRate > 0) {
                     "Unable to negotiate the selected Android output sample rate. " +
                         "target=${outputRoute.target}, device=${outputRoute.deviceName ?: "system default"}, deviceId=$deviceId, " +
-                        "sourceRate=$sourceRate, preferredRate=$preferredRate, channels=$channels. " +
+                        "sourceRate=$sourceRate, channels=$channels. " +
                         "Check that the selected Android output is connected."
                 }
 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                check(NativeAudio.nativeConfigureStreamDecoder(handle, targetRate, bandGainsDb) == 0) {
-                    "Unable to configure the streaming resampler"
-                }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(targetRate)
                 val opened = NativeAudio.nativeStartStreamOutput(
@@ -194,7 +179,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
                     targetRate, outputRingCapacityFrames
                 )
-                var appliedEqualizerRevision = equalizerRevision
                 var lastReportedSeekPositionMs = -1L
                 check(NativeAudio.nativeStartSegmentedStreamPump(
                     handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentStartMs, segmentEndMs ?: -1L
@@ -216,12 +200,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
-                    if (appliedEqualizerRevision != equalizerRevision) {
-                        check(NativeAudio.nativeUpdateStreamGains(handle, bandGainsDb) == 0) {
-                            "Unable to update streaming equalizer"
-                        }
-                        appliedEqualizerRevision = equalizerRevision
-                    }
                     val completedSeekPosition = NativeAudio.nativeGetPlaybackSessionSeekPosition(sessionHandle)
                     if (completedSeekPosition >= 0L && completedSeekPosition != lastReportedSeekPositionMs) {
                         lastReportedSeekPositionMs = completedSeekPosition
@@ -280,23 +258,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     NativeAudio.nativeCloseStreamDecoder(handle)
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
-                if (playbackGeneration.get() == generation) {
-                }
                 sourceDescriptor?.close()
             }
         }
     }
-
-    /**
-     * Sends original AC-3 frames through a descriptor-matched UAC1 encoded profile.
-     */
-
-
-    /**
-     * mixer. Float samples are quantized to the DAC's negotiated integer PCM format;
-     * this is not source-bit-perfect passthrough.
-     */
-
 
     fun currentVolumeFraction(): Float = volumeController.systemVolumeFraction()
 
