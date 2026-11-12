@@ -10,6 +10,7 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.Closeable
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
@@ -41,7 +42,8 @@ internal class UsbNativePlaybackSession private constructor(
     private val uac2SelectorClockSources: IntArray,
     private val uac2SelectorSourceControls: IntArray,
     private val uac2ClockMultiplierEntity: Int?,
-    private val uac2ClockMultiplierControls: Int?
+    private val uac2ClockMultiplierControls: Int?,
+    private val uac2ClockPaths: List<Uac2ClockPath>
 ) : Closeable {
     private var closed = false
 
@@ -58,7 +60,8 @@ internal class UsbNativePlaybackSession private constructor(
                 uac2SelectorClockSources,
                 uac2SelectorSourceControls,
                 uac2ClockMultiplierEntity ?: 0,
-                uac2ClockMultiplierControls ?: 0
+                uac2ClockMultiplierControls ?: 0,
+                uac2ClockPaths
             )
         } else {
             usb.setUac1SampleRate(endpoint, sampleRate)
@@ -218,8 +221,36 @@ internal class UsbNativePlaybackSession private constructor(
                 val selectorControlsJson = if (isUac2) plan.optJSONArray("uac2_selector_source_controls") else null
                 val clockMultiplierEntity = if (isUac2) plan.optInt("uac2_clock_multiplier_entity_id", 0) else 0
                 val clockMultiplierControls = if (isUac2) plan.optInt("uac2_clock_multiplier_controls", 0) else 0
+                val clockPathsJson = if (isUac2) plan.optJSONArray("uac2_clock_paths") else null
+                val clockPaths = mutableListOf<Uac2ClockPath>()
+                if (clockPathsJson != null) for (pathIndex in 0 until clockPathsJson.length()) {
+                    val pathObject = clockPathsJson.optJSONObject(pathIndex) ?: continue
+                    val selectorsJson = pathObject.optJSONArray("selectors") ?: JSONArray()
+                    val multipliersJson = pathObject.optJSONArray("multipliers") ?: JSONArray()
+                    val selectors = (0 until selectorsJson.length()).mapNotNull { index ->
+                        selectorsJson.optJSONObject(index)?.let { item ->
+                            Uac2ClockSelectorStep(item.optInt("entity_id", -1), item.optInt("controls", -1), item.optInt("selected_pin", -1))
+                        }
+                    }
+                    val multipliers = (0 until multipliersJson.length()).mapNotNull { index ->
+                        multipliersJson.optJSONObject(index)?.let { item ->
+                            Uac2ClockMultiplierStep(item.optInt("entity_id", -1), item.optInt("controls", -1))
+                        }
+                    }
+                    clockPaths += Uac2ClockPath(
+                        pathObject.optInt("source_entity_id", -1),
+                        pathObject.optInt("source_controls", -1),
+                        selectors,
+                        multipliers
+                    )
+                }
                 val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
+                val invalidClockPaths = isUac2 && (clockPaths.isEmpty() || clockPaths.any { path ->
+                    path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
+                        path.selectors.any { it.entityId !in 1..255 || it.selectedPin !in 1..255 || (it.controls and 0x03) !in 1..2 } ||
+                        path.multipliers.any { it.entityId !in 1..255 || (it.controls and 0x01) == 0 || (it.controls and 0x04) == 0 }
+                })
                 val invalidUac2ClockPlan = isUac2 && (
                     clockControlInterface !in 0..255 ||
                         clockSourceEntity !in 0..255 ||
@@ -236,11 +267,7 @@ internal class UsbNativePlaybackSession private constructor(
                             )) ||
                         clockMultiplierEntity !in 0..255 ||
                         clockMultiplierControls !in 0..255 ||
-                        (clockMultiplierEntity != 0 && (
-                            clockSelectorEntity != 0 || clockSourceEntity == 0 ||
-                                (clockMultiplierControls and 0x01) == 0 ||
-                                (clockMultiplierControls and 0x04) == 0
-                            ))
+                        invalidClockPaths
                     )
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
