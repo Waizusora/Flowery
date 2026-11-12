@@ -155,6 +155,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         onState("Playing · native USB audio · ${sourceRate} Hz · ${channels} ch")
                     }
                     while (!stopped.get() && playbackGeneration.get() == generation) {
+                        pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { requested ->
+                            val actual = directUsb.seek(segmentStartMs + requested.coerceAtLeast(0L)).getOrThrow()
+                            onState("Seeking · ${actual / 1000}s")
+                        }
                         val usbStatus = directUsb.status()
                         when (usbStatus.optInt("status", -1)) {
                             0 -> Thread.sleep(8)
@@ -365,9 +369,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             pendingSeekMs.set(boundedPosition)
             return
         }
-        usbPlaybackSession?.let { usb ->
-            val actual = usb.seek(activeSegmentStartMs + boundedPosition).getOrThrow()
-            onState("Seeking · ${actual / 1000}s")
+        usbPlaybackSession?.let {
+            pendingSeekMs.set(boundedPosition)
+            onState("Seeking…")
             return
         }
         val session = nativeSessionHandle
