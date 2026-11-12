@@ -316,7 +316,6 @@ pub(super) fn start(
     endpoint: u8,
     raw_max_packet_size: u16,
     interval: u8,
-    high_speed: bool,
     sample_rate: u32,
     channels: u8,
     valid_bits: u8,
@@ -335,7 +334,20 @@ pub(super) fn start(
         return Err("Invalid USB PCM subslot format".into());
     }
 
-    let speed = if high_speed { UsbBusSpeed::High } else { UsbBusSpeed::Full };
+    let session = crate::usb_libusb::session_ref(session_handle)
+        .ok_or("Unknown USB session handle")?;
+    let device = unsafe { libusb1_sys::libusb_get_device(session.handle) };
+    if device.is_null() {
+        return Err("libusb could not resolve the opened USB device".into());
+    }
+    let negotiated_speed = unsafe { libusb1_sys::libusb_get_device_speed(device) };
+    let speed = match negotiated_speed {
+        2 => UsbBusSpeed::Full,
+        3 | 4 | 5 => UsbBusSpeed::High,
+        0 => return Err("USB bus speed is unknown; refusing to guess the isochronous schedule".into()),
+        1 => return Err("Low-Speed USB does not support this audio streaming mode".into()),
+        other => return Err(format!("Unsupported libusb bus speed value {other}")),
+    };
     let max_packet_bytes = max_isochronous_payload(raw_max_packet_size, speed)?;
     let factor = 1_u32 << (interval - 1);
     let interval_us = if high_speed { 125_u32 } else { 1_000_u32 }
@@ -357,9 +369,6 @@ pub(super) fn start(
             ));
         }
     }
-    let session = crate::usb_libusb::session_ref(session_handle)
-        .ok_or("Unknown USB session handle")?;
-
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     stop_worker_locked(session_handle);
     let stop = Arc::new(AtomicBool::new(false));

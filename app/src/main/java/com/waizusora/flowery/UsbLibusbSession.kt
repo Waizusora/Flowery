@@ -23,7 +23,6 @@ internal class UsbLibusbSession private constructor(
         endpointAddress: Int,
         rawMaxPacketSize: Int,
         interval: Int,
-        highSpeed: Boolean,
         sampleRate: Int,
         channels: Int,
         validBits: Int,
@@ -33,7 +32,7 @@ internal class UsbLibusbSession private constructor(
         return try {
             val result = NativeAudio.nativeStartUsbIsochronousPlayback(
                 nativeHandle, decoderHandle, endpointAddress, rawMaxPacketSize,
-                interval, if (highSpeed) 1 else 0, sampleRate, channels,
+                interval, sampleRate, channels,
                 validBits, subslotBytes
             )
             if (result == 0) Result.success(Unit)
