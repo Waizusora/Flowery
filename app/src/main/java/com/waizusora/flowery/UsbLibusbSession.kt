@@ -54,6 +54,8 @@ internal class UsbLibusbSession private constructor(
         channels: Int,
         validBits: Int,
         subslotBytes: Int,
+        feedbackEndpointAddress: Int,
+        feedbackMaxPacketSize: Int,
         initialPositionMs: Long = 0L
     ): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB session is closed"))
@@ -61,7 +63,8 @@ internal class UsbLibusbSession private constructor(
             val result = NativeAudio.nativeStartUsbIsochronousPlayback(
                 nativeHandle, decoderHandle, endpointAddress, rawMaxPacketSize,
                 interval, sampleRate, channels,
-                validBits, subslotBytes, initialPositionMs
+                validBits, subslotBytes, feedbackEndpointAddress,
+                feedbackMaxPacketSize, initialPositionMs
             )
             if (result == 0) Result.success(Unit)
             else Result.failure(IllegalStateException("Native USB playback failed to start"))
