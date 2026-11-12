@@ -15,6 +15,8 @@ mod usb_feedback;
 #[cfg(target_os = "android")]
 mod usb_libusb;
 #[cfg(target_os = "android")]
+mod usb_stream;
+#[cfg(target_os = "android")]
 mod aaudio;
 use base64::Engine;
 
@@ -46,6 +48,54 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudi
     _env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
 ) {
     crate::usb_libusb::close_session(handle);
+}
+
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsochronousPlayback(
+    mut env: JNIEnv, _class: JClass,
+    session: jni::sys::jlong, decoder: jni::sys::jlong,
+    endpoint: jint, raw_max_packet_size: jint, interval: jint, high_speed: jint,
+    sample_rate: jint, channels: jint, valid_bits: jint, subslot_bytes: jint,
+) -> jint {
+    if session <= 0 || decoder <= 0 || !(0..=255).contains(&endpoint)
+        || !(0..=u16::MAX as jint).contains(&raw_max_packet_size)
+        || !(1..=16).contains(&interval) || !(0..=1).contains(&high_speed)
+        || sample_rate <= 0 || !(1..=8).contains(&channels)
+        || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native USB playback parameters");
+        return -1;
+    }
+    match crate::usb_stream::start(
+        session, decoder, endpoint as u8, raw_max_packet_size as u16,
+        interval as u8, high_speed != 0, sample_rate as u32,
+        channels as u8, valid_bits as u8, subslot_bytes as u8,
+    ) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPlayback(
+    _env: JNIEnv, _class: JClass, session: jni::sys::jlong,
+) {
+    crate::usb_stream::stop_session(session);
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbPlaybackStatus(
+    mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
+) -> jstring {
+    let (status, error) = crate::usb_stream::status(session);
+    let payload = serde_json::json!({"status": status, "error": error}).to_string();
+    write_text_to_java(&mut env, &payload)
 }
 
 #[cfg(target_os = "android")]
