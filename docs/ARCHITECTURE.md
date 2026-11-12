@@ -47,3 +47,10 @@ This is Android-managed USB audio output, not direct USB Audio Class transport. 
 ## PCM boundary
 
 The decoder may use floating-point working samples internally. The AAudio stream is configured for signed-integer PCM. The PCM format contract is generic and is not coupled to a specific transport.
+
+
+## Experimental asynchronous USB OUT transport
+
+The Android native transport now owns a bounded ring of four libusb isochronous OUT transfers, each containing eight service packets. Completion callbacks only publish an atomic completion flag; the worker thread validates transfer and per-packet status, refills PCM, resubmits transfers, and drains cancellations before the session releases the interface. The worker validates decoder sample rate/channel count against the selected plan and rejects endpoint packet capacities that cannot carry the nominal PCM payload.
+
+This is not yet a complete generic UAC implementation. The current worker uses the nominal sample-rate schedule and does not poll explicit feedback endpoints, negotiate UAC2 clock sources/ranges, or implement implicit feedback. UAC2 devices that require clock negotiation and asynchronous endpoints requiring feedback must not be assumed to stream correctly. The PCM producer currently uses the existing floating-point decoder path, so bit-perfect preservation is not guaranteed. No physical DAC validation has been completed.
