@@ -203,7 +203,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreatePlayba
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSessionBeginSeek(
-    mut env: JNIEnv, _class: JClass, handle: jlong,
+    env: JNIEnv, _class: JClass, handle: jlong,
 ) -> jlong {
     let Some(session) = session_ref(handle) else {
         let _ = env.throw_new("java/lang/IllegalStateException", "Playback session is no longer valid");
