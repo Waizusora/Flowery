@@ -30,6 +30,7 @@ object NativeAudio {
     external fun nativeFramesAtMilliseconds(milliseconds: Long, sampleRate: Int): Long
     external fun nativePlaybackLowWatermarkFrames(sampleRate: Int, capacityFrames: Int): Int
     external fun nativeCreateStreamDecoder(fileDescriptor: Int, extension: String): Long
+    external fun nativePreparePlaybackSession(decoder: Long): LongArray
     external fun nativeCreatePlaybackSession(decoder: Long, route: Int): Long
     external fun nativePlaybackSessionBeginSeek(session: Long): Long
     external fun nativePlaybackSessionSetPhase(session: Long, phase: Int): Int
