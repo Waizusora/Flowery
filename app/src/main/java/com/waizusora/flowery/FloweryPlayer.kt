@@ -22,6 +22,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private val stopped = AtomicBoolean(false)
     private val pauseRequested = AtomicBoolean(false)
+    private val outputLifecycleLock = Any()
+    @Volatile private var outputReady = false
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
@@ -56,6 +58,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stop()
         stopped.set(false)
         pauseRequested.set(false)
+        outputReady = false
         pendingSeekMs.set(initialPositionMs.coerceAtLeast(0L).takeIf { it > 0L } ?: -1L)
         activeSegmentStartMs = segmentStartMs.coerceAtLeast(0L)
         activeSegmentEndMs = segmentEndMs ?: -1L
@@ -203,7 +206,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
-                if (startPaused || pauseRequested.getAndSet(false)) {
+                val shouldStartPaused = synchronized(outputLifecycleLock) {
+                    outputReady = true
+                    pauseRequested.getAndSet(false)
+                }
+                if (startPaused || shouldStartPaused) {
                     check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 3).toInt() == 0) {
                         "The native playback session could not enter the paused state after output routing"
                     }
@@ -308,16 +315,21 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun pause(): Boolean {
-        val session = nativeSessionHandle
-        if (session == 0L) {
-            if (stopped.get() || worker?.isAlive != true) return false
-            pauseRequested.set(true)
-            return true
+        val accepted = synchronized(outputLifecycleLock) {
+            if (!outputReady) {
+                if (stopped.get() || worker?.isAlive != true) return false
+                pauseRequested.set(true)
+                return@synchronized true
+            }
+            val session = nativeSessionHandle
+            if (session == 0L || NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) {
+                return@synchronized false
+            }
+            paused = true
+            true
         }
-        if (NativeAudio.nativePlaybackSessionCommand(session, 3).toInt() != 0) return false
-        paused = true
-        onState("Paused")
-        return true
+        if (accepted && outputReady) onState("Paused")
+        return accepted
     }
 
     fun resume(): Boolean {
@@ -347,6 +359,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         pauseRequested.set(false)
+        synchronized(outputLifecycleLock) { outputReady = false }
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
