@@ -1,26 +1,28 @@
 //! Android USB Host file-descriptor bridge backed by libusb.
 //!
-//! The Java UsbDeviceConnection must remain open for the entire native session.
-//! libusb_close() does not close the Android-owned file descriptor.
+//! The Java UsbDeviceConnection owns the file descriptor and must remain open
+//! until every native transfer has been cancelled and drained.
 
 #[cfg(target_os = "android")]
 use std::collections::HashMap;
 #[cfg(target_os = "android")]
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(target_os = "android")]
 use std::sync::atomic::{AtomicI64, Ordering};
 
 #[cfg(target_os = "android")]
-struct UsbSession {
-    context: *mut libusb1_sys::libusb_context,
-    handle: *mut libusb1_sys::libusb_device_handle,
-    interface_number: u8,
+pub(super) struct UsbSession {
+    pub(super) context: *mut libusb1_sys::libusb_context,
+    pub(super) handle: *mut libusb1_sys::libusb_device_handle,
+    pub(super) interface_number: u8,
 }
 
-// The session is only accessed while holding the registry mutex. libusb event
-// handling and transfer callbacks will be serialized by the owning worker.
+// libusb handles are only used by the serialized owner worker. The Arc keeps
+// the context and handle alive until that worker has drained all callbacks.
 #[cfg(target_os = "android")]
 unsafe impl Send for UsbSession {}
+#[cfg(target_os = "android")]
+unsafe impl Sync for UsbSession {}
 
 #[cfg(target_os = "android")]
 impl Drop for UsbSession {
@@ -45,11 +47,17 @@ impl Drop for UsbSession {
 #[cfg(target_os = "android")]
 static NEXT_SESSION: AtomicI64 = AtomicI64::new(1);
 #[cfg(target_os = "android")]
-static SESSIONS: OnceLock<Mutex<HashMap<i64, UsbSession>>> = OnceLock::new();
+static SESSIONS: OnceLock<Mutex<HashMap<i64, Arc<UsbSession>>>> = OnceLock::new();
 
 #[cfg(target_os = "android")]
-fn sessions() -> &'static Mutex<HashMap<i64, UsbSession>> {
+fn sessions() -> &'static Mutex<HashMap<i64, Arc<UsbSession>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn session_ref(session: i64) -> Option<Arc<UsbSession>> {
+    if session <= 0 { return None; }
+    sessions().lock().unwrap_or_else(|e| e.into_inner()).get(&session).cloned()
 }
 
 /// Wrap an already permission-authorized Android USB fd. The fd remains owned
@@ -63,12 +71,19 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
     let mut context = std::ptr::null_mut();
     let init = unsafe { libusb1_sys::libusb_init(&mut context) };
     if init != 0 || context.is_null() {
+        if !context.is_null() { unsafe { libusb1_sys::libusb_exit(context); } }
         return Err(format!("libusb_init failed with code {init}"));
     }
 
     let mut handle = std::ptr::null_mut();
+    // libusb_wrap_sys_device takes a pointer-sized system handle, represented
+    // by the fd value cast to the pointer type in libusb1-sys 0.7.
     let wrapped = unsafe {
-        libusb1_sys::libusb_wrap_sys_device(context, fd as isize, &mut handle)
+        libusb1_sys::libusb_wrap_sys_device(
+            context,
+            fd as usize as *mut libc::c_int,
+            &mut handle,
+        )
     };
     if wrapped != 0 || handle.is_null() {
         unsafe { libusb1_sys::libusb_exit(context); }
@@ -113,7 +128,7 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
     }
     sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(
         session,
-        UsbSession { context, handle, interface_number },
+        Arc::new(UsbSession { context, handle, interface_number }),
     );
     Ok(session)
 }
@@ -121,5 +136,6 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
 #[cfg(target_os = "android")]
 pub fn close_session(session: i64) {
     if session <= 0 { return; }
+    crate::usb_stream::stop_session(session);
     sessions().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
 }
