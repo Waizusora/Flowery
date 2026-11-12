@@ -59,7 +59,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val previousWorker = worker
         stop()
         stopped.set(false)
-        pauseRequested.set(false)
+        pauseRequested.set(startPaused)
         outputReady = false
         pendingSeekMs.set(initialPositionMs.coerceAtLeast(0L).takeIf { it > 0L } ?: -1L)
         activeSegmentStartMs = segmentStartMs.coerceAtLeast(0L)
@@ -412,6 +412,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun resume(): Boolean {
+        if (usbRouteActive && !outputReady) {
+            pauseRequested.set(false)
+            paused = false
+            onState("Playing · native USB audio")
+            return true
+        }
         usbPlaybackSession?.let { usb ->
             if (usb.resume().isFailure) return false
             paused = false
