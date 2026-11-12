@@ -253,20 +253,7 @@ internal class UsbNativePlaybackSession private constructor(
                 })
                 val invalidUac2ClockPlan = isUac2 && (
                     clockControlInterface !in 0..255 ||
-                        clockSourceEntity !in 0..255 ||
-                        clockControls !in 0..255 ||
-                        (clockSelectorEntity == 0 && clockSourceEntity == 0) ||
-                        clockSelectorEntity !in 0..255 ||
-                        clockSelectorControls !in 0..255 ||
-                        selectorSources.size != selectorSourceControls.size ||
-                        selectorSources.any { it !in 1..255 } ||
-                        selectorSourceControls.any { it !in 0..255 } ||
-                        (clockSelectorEntity != 0 && (
-                            selectorSources.isEmpty() ||
-                                (clockSelectorControls and 0x03) !in 1..2
-                            )) ||
-                        clockMultiplierEntity !in 0..255 ||
-                        clockMultiplierControls !in 0..255 ||
+                        clockPaths.isEmpty() ||
                         invalidClockPaths
                     )
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
