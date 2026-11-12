@@ -90,6 +90,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 decoderHandle = handle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 check(handle != 0L) { "The native decoder could not be created" }
+                usbRouteActive = AndroidOutputRouteResolver(context).detectCurrent() == AndroidOutputTarget.USB
 
                 val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
                 check(preparedSession.size == 5) { "Rust returned an invalid prepared playback session" }
@@ -113,6 +114,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // Select the connected Android output automatically. Do not use a stale
                 // preference here: the playback stream must follow the currently attached route.
                 val selectedTarget = routeResolver.detectCurrent()
+                usbRouteActive = selectedTarget == AndroidOutputTarget.USB
                 if (selectedTarget == AndroidOutputTarget.USB) {
                     check(segmentEndMs == null) {
                         "Native USB playback currently does not support bounded CUE segments; refusing to play past the selected segment."
