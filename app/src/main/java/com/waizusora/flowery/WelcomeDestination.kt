@@ -71,8 +71,6 @@ internal fun WelcomeDestination(
                     "Granted only to folders you choose. You can add or remove folders later.", foreground, muted)
                 PermissionInfoRow(Icons.Default.Notifications, "Notifications",
                     "Optional on Android 13 and newer. Allows playback controls to appear in the notification shade and lockscreen.", foreground, muted)
-                PermissionInfoRow(Icons.Default.Usb, "USB DAC access",
-                    "Android asks separately when you connect and enable a compatible USB DAC.", foreground, muted)
                 PermissionInfoRow(Icons.Default.BatteryFull, "Battery optimization",
                     "Optional. You can review it in Settings if background playback is interrupted.", foreground, muted)
                 if (android.os.Build.VERSION.SDK_INT >= 33) {
