@@ -66,12 +66,14 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
     session: jni::sys::jlong, decoder: jni::sys::jlong,
     endpoint: jint, raw_max_packet_size: jint, interval: jint,
     sample_rate: jint, channels: jint, valid_bits: jint, subslot_bytes: jint,
+    initial_position_ms: jlong,
 ) -> jint {
     if session <= 0 || decoder <= 0 || !(0..=255).contains(&endpoint)
         || !(0..=u16::MAX as jint).contains(&raw_max_packet_size)
         || !(1..=16).contains(&interval)
         || sample_rate <= 0 || !(1..=8).contains(&channels)
-        || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes) {
+        || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
+        || initial_position_ms < 0 {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid native USB playback parameters");
         return -1;
     }
@@ -79,6 +81,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
         session, decoder, endpoint as u8, raw_max_packet_size as u16,
         interval as u8, sample_rate as u32,
         channels as u8, valid_bits as u8, subslot_bytes as u8,
+        initial_position_ms as u64,
     ) {
         Ok(()) => 0,
         Err(error) => {
