@@ -6,9 +6,15 @@ Flowery uses the Android Storage Access Framework (SAF), not MediaStore. Users s
 
 Rust owns audio classification, same-directory sidecar matching, playlist parsing and association, root-confined path resolution, virtual-track construction, CUE time-range calculation, and catalog deduplication. Kotlin traverses SAF trees, reads playlist text using the selected charset, and maps Rust catalog URI values back to Android `Uri` models. Rust parses CUE/M3U/M3U8/PLS entries, resolves paths within the selected root, and builds virtual playlist tracks; recognizing an extension is only a discovery filter and does not guarantee that Symphonia can decode the file.
 
-## Sidecar LRC
+## Sidecar LRC and synchronized lyrics
 
-The scanner associates a sidecar `.lrc` file when its base filename matches the audio filename in the same directory, ignoring case. `LrcParser` accepts `[minutes:seconds]` timestamps with an optional one-to-three-digit fractional component. Multiple timestamps on one line create multiple lyric entries. Entries are sorted by time, and the current line is the last timestamp not greater than the current playback position.
+The scanner associates a sidecar `.lrc` file when its base filename matches the audio filename in the same directory, ignoring case. The parser accepts line timestamps in `[minutes:seconds]` form with an optional one-to-three-digit fractional component. It accepts multiple timestamps on one line, applies the optional `[offset:...]` metadata value, and sorts parsed entries by timestamp. A line without a valid line timestamp is not emitted as a synchronized lyric line.
+
+Enhanced LRC word markers in `<minutes:seconds.fraction>` form are also parsed and retained as per-word timing data. The current player UI uses the line timestamps to choose the active line from the playback position and scrolls the list to that line. It visually distinguishes the active line from surrounding lines; it does not currently animate or highlight individual words using the parsed word timings.
+
+The player screen is specifically a synchronized-LRC view. It does not currently offer a separate plain-text lyrics mode. When no synchronized LRC lines are available, it displays `No synchronized LRC lyrics found.` The former `LYRICS LRC` and `Synced Lyric` captions have been removed; they were static UI labels, not controls or detection indicators.
+
+The lyrics panel background uses `MaterialTheme.colorScheme.primaryContainer`, so its rose color follows the active light or dark Soft Rose theme. Album artwork no longer determines the lyrics-panel background.
 
 Embedded lyric extraction, remote lyric search, lyric downloads, and writing LRC files are not implemented.
 
