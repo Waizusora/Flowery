@@ -91,7 +91,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(handle != 0L) { "The native decoder could not be created" }
 
                 val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
-                check(preparedSession.size == 7) { "Rust returned an invalid prepared playback session" }
+                check(preparedSession.size == 5) { "Rust returned an invalid prepared playback session" }
                 sessionHandle = preparedSession[0]
                 val sourceRate = preparedSession[2].toInt()
                 val channels = preparedSession[3].toInt()

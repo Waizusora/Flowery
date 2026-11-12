@@ -134,7 +134,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return std::ptr::null_mut();
     };
-    let (source_rate, channels, source_bits, _lossless_source, _source_is_ac3) = {
+    let (source_rate, channels, source_bits) = {
         let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.playback_metadata()
     };

@@ -37,20 +37,7 @@ struct BiquadState { x1:f32, x2:f32, y1:f32, y2:f32 }
 #[derive(Clone, Copy, Default)]
 struct BiquadCoefficients { b0:f32, b1:f32, b2:f32, a1:f32, a2:f32 }
 
-fn is_lossless_codec(codec: symphonia::core::codecs::CodecType) -> bool {
-    use symphonia::core::codecs::*;
-    matches!(codec,
-        CODEC_TYPE_PCM_S32LE | CODEC_TYPE_PCM_S32LE_PLANAR | CODEC_TYPE_PCM_S32BE | CODEC_TYPE_PCM_S32BE_PLANAR |
-        CODEC_TYPE_PCM_S24LE | CODEC_TYPE_PCM_S24LE_PLANAR | CODEC_TYPE_PCM_S24BE | CODEC_TYPE_PCM_S24BE_PLANAR |
-        CODEC_TYPE_PCM_S16LE | CODEC_TYPE_PCM_S16LE_PLANAR | CODEC_TYPE_PCM_S16BE | CODEC_TYPE_PCM_S16BE_PLANAR |
-        CODEC_TYPE_PCM_S8 | CODEC_TYPE_PCM_S8_PLANAR |
-        CODEC_TYPE_PCM_U32LE | CODEC_TYPE_PCM_U32LE_PLANAR | CODEC_TYPE_PCM_U32BE | CODEC_TYPE_PCM_U32BE_PLANAR |
-        CODEC_TYPE_PCM_U24LE | CODEC_TYPE_PCM_U24LE_PLANAR | CODEC_TYPE_PCM_U24BE | CODEC_TYPE_PCM_U24BE_PLANAR |
-        CODEC_TYPE_PCM_U16LE | CODEC_TYPE_PCM_U16LE_PLANAR | CODEC_TYPE_PCM_U16BE | CODEC_TYPE_PCM_U16BE_PLANAR |
-        CODEC_TYPE_PCM_U8 | CODEC_TYPE_PCM_U8_PLANAR |
-        CODEC_TYPE_FLAC | CODEC_TYPE_WAVPACK | CODEC_TYPE_MONKEYS_AUDIO | CODEC_TYPE_ALAC | CODEC_TYPE_TTA
-    )
-}
+
 fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
     let cookie = extra_data?;
     // Symphonia's ALAC decoder accepts the 24-byte mandatory configuration
@@ -181,8 +168,6 @@ pub(super) struct StreamDecoder {
     track_id: u32,
     source_rate: usize,
     source_bits: u8,
-    lossless_source: bool,
-    codec_type: symphonia::core::codecs::CodecType,
     channels: usize,
     output_rate: usize,
     resampler: Option<Fft<f32>>,
@@ -230,7 +215,6 @@ impl StreamDecoder {
         } else {
             params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8
         };
-        let lossless_source = is_lossless_codec(params.codec);
         // CodecParameters::n_frames includes the encoded stream extent. Delay and
         // padding identify decoded frames that must not contribute to presentation time.
         let duration_ms = presentation_duration_ms(
@@ -254,7 +238,7 @@ impl StreamDecoder {
         let decoder = Some(symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, lossless_source, codec_type: params.codec, channels, output_rate: source_rate,
+            format, decoder, track_id, source_rate, source_bits, channels, output_rate: source_rate,
             resampler: None, input_pending: Vec::new(), output_pending: VecDeque::new(),
             eof: false, gains: [0.0;31],
             coefficients: [BiquadCoefficients { b0:1.0, ..BiquadCoefficients::default() };31],
@@ -318,63 +302,17 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
-    pub(super) fn is_ac3_source(&self) -> bool {
-        self.codec_type == symphonia::core::codecs::CODEC_TYPE_EAC3
-    }
-    pub(super) fn playback_metadata(&self) -> (usize, usize, u8, bool, bool) {
-        (
-            self.source_rate,
-            self.channels,
-            self.source_bits,
-            self.lossless_source,
-            self.is_ac3_source(),
-        )
+
+    pub(super) fn playback_metadata(&self) -> (usize, usize, u8) {
+        (self.source_rate, self.channels, self.source_bits)
     }
 
 
 
 
-    pub(super) fn begin_encoded_stream(&mut self) -> Result<(), String> {
-        loop {
-            let packet = match self.format.next_packet() {
-                Ok(packet) => packet,
-                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => return Ok(None),
-                Err(Error::ResetRequired) => continue,
-                Err(Error::IoError(error)) => return Err(format!("Compressed packet I/O failed: {error}")),
-                Err(error) => return Err(format!("Compressed packet read failed: {error}")),
-            };
-            if packet.track_id() != self.track_id { continue; }
-            if packet.data.is_empty() {
-                return Err("The demuxer returned an empty compressed packet".into());
-            }
-            let timestamp_us = self.time_base
-                .map(|base| {
-                    let time = base.calc_time(packet.ts());
-                    ((time.seconds as u128 * 1_000_000)
-                        + (time.frac as f64 * 1_000_000.0) as u128)
-                        .min(u64::MAX as u128) as u64
-                })
-                .unwrap_or(0);
-            let duration_us = self.time_base
-                .map(|base| {
-                    let time = base.calc_time(packet.dur());
-                    ((time.seconds as u128 * 1_000_000)
-                        + (time.frac as f64 * 1_000_000.0) as u128)
-                        .min(u64::MAX as u128) as u64
-                })
-                .unwrap_or(0);
-            return Ok(Some((packet.data.to_vec(), timestamp_us, duration_us)));
-        }
-    }
+
 
     fn decode_packet(&mut self) -> Result<bool,String> {
-        match self.source_mode {
-            StreamSourceMode::Unselected => self.source_mode = StreamSourceMode::DecodedPcm,
-            StreamSourceMode::DecodedPcm => {}
-            StreamSourceMode::EncodedPackets => {
-                return Err("A stream decoder cannot switch from encoded packet mode to decoded PCM".into());
-            }
-        }
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
@@ -517,133 +455,7 @@ impl StreamDecoder {
     }
 
 
-    fn read_native_pcm_bytes(
-        &mut self,
-        max_frames: usize,
-        format: crate::usb_pcm::PcmFormat,
-    ) -> Result<Option<Vec<u8>>, String> {
-        let required = max_frames.saturating_mul(format.bytes_per_frame());
-        while self.native_pcm_pending.len() < required && !self.eof
-            && (!self.native_pcm_decided || self.native_pcm_active)
-        {
-            if !self.decode_native_pcm_packet(format)? { return Ok(None); }
-            if self.native_pcm_active { self.native_pcm_decided = true; }
-        }
-        if !self.native_pcm_active { return Ok(None); }
-        let count = required.min(self.native_pcm_pending.len());
-        Ok(Some(self.native_pcm_pending.drain(..count).collect()))
-    }
 
-    fn move_native_remainder_to_float(&mut self, format: crate::usb_pcm::PcmFormat) {
-        if !self.native_pcm_active { return; }
-        let bytes_per_sample = format.subslot_bytes as usize;
-        let bytes: Vec<u8> = self.native_pcm_pending.drain(..).collect();
-        if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
-            for sample in bytes.chunks_exact(4) {
-                self.input_pending.push(f32::from_bits(u32::from_le_bytes([sample[0],sample[1],sample[2],sample[3]])));
-            }
-        } else {
-            let scale = (1_u64 << (format.valid_bits - 1)) as f32;
-            for sample in bytes.chunks_exact(bytes_per_sample) {
-                let mut raw = [0_u8; 4]; raw[..bytes_per_sample].copy_from_slice(sample);
-                let padding_bits = bytes_per_sample as u32 * 8 - format.valid_bits as u32;
-                let aligned = u32::from_le_bytes(raw) >> padding_bits;
-                let signed = if format.valid_bits == 32 { aligned as i32 } else {
-                    let sign_shift = 32 - format.valid_bits as u32; ((aligned << sign_shift) as i32) >> sign_shift
-                };
-                self.input_pending.push(signed as f32 / scale);
-            }
-        }
-        debug_assert_eq!(self.input_pending.len() % self.channels, 0);
-        self.native_pcm_active = false;
-        self.native_pcm_decided = true;
-    }
-
-    pub(super) fn native_pcm_active(&self) -> bool {
-        self.native_pcm_active
-    }
-
-    pub(super) fn read_usb_pcm(
-        &mut self,
-        max_frames: usize,
-        target_gain: f32,
-        format: crate::usb_pcm::PcmFormat,
-    ) -> Result<Vec<u8>, String> {
-        let format = format.validate().map_err(str::to_string)?;
-        if self.channels != format.channels as usize || max_frames == 0 || !target_gain.is_finite() {
-            return Err("Invalid direct USB PCM read configuration".into());
-        }
-        let requirements = crate::native_pcm::BitPerfectRequirements {
-            source_rate: self.source_rate as u32,
-            output_rate: self.output_rate as u32,
-            source_channels: self.channels as u16,
-            output_channels: format.channels,
-            source_valid_bits: self.source_bits,
-            dsp_enabled: self.gains.iter().any(|gain| *gain != 0.0),
-            software_gain_unity: target_gain == 1.0,
-            channel_mapping_unchanged: true,
-            resampling_disabled: self.resampler.is_none(),
-        };
-        let native_eligible = match format.encoding {
-            crate::usb_pcm::PcmEncoding::SignedInteger => matches!(format.valid_bits, 8 | 16 | 20 | 24 | 32)
-                && crate::native_pcm::is_bit_perfect_eligible(requirements, format),
-            crate::usb_pcm::PcmEncoding::IeeeFloat32 => self.ieee_float_source
-                && format.valid_bits == 32 && format.subslot_bytes == 4
-                && crate::native_pcm::is_bit_perfect_eligible(requirements, format),
-        };
-
-        if native_eligible && (!self.native_pcm_decided || self.native_pcm_active) {
-            if let Some(bytes) = self.read_native_pcm_bytes(max_frames, format)? {
-                self.produced_frames = self.produced_frames.saturating_add(
-                    (bytes.len() / format.bytes_per_frame()) as u64
-                );
-                self.usb_last_gain = 1.0;
-                return Ok(bytes);
-            }
-        } else if !native_eligible {
-            return Err(
-                "USB Direct integer PCM requires matching source/output rate, bit depth, channels, unity gain, and no DSP/resampling."
-                    .into(),
-            );
-        }
-
-        let samples = self.read_frames(max_frames)?;
-        let gain = target_gain.clamp(0.0, 1.0);
-        let start_gain = if self.usb_last_gain < 0.0 { gain } else { self.usb_last_gain };
-        let sample_count = samples.len();
-        let total_frames = sample_count / self.channels;
-        let mut packed = Vec::with_capacity(sample_count.saturating_mul(format.subslot_bytes as usize));
-        for (index, sample) in samples.into_iter().enumerate() {
-            // Apply one gain value to every channel in the same audio frame.
-            // A sample-index ramp would give left/right channels different gains.
-            let frame_index = index / self.channels;
-            let fraction = if total_frames <= 1 { 1.0 } else { (frame_index + 1) as f32 / total_frames as f32 };
-            let ramp_gain = start_gain + (gain - start_gain) * fraction;
-            if format.encoding == crate::usb_pcm::PcmEncoding::IeeeFloat32 {
-                packed.extend_from_slice(&(sample * ramp_gain).to_le_bytes());
-            } else {
-                let value = quantize_signed_pcm(sample, ramp_gain, format.valid_bits);
-                let subslot_shift = (format.subslot_bytes as u32 * 8) - format.valid_bits as u32;
-                let encoded = (value as i32).wrapping_shl(subslot_shift) as u32;
-                for byte in 0..format.subslot_bytes { packed.push((encoded >> (byte * 8)) as u8); }
-            }
-        }
-        self.usb_last_gain = gain;
-        Ok(packed)
-    }
-
-}
-
-fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64 {
-    if !sample.is_finite() || !gain.is_finite() || !(2..=32).contains(&valid_bits) {
-        return 0;
-    }
-    let value = (sample * gain.clamp(0.0, 1.0)).clamp(-1.0, 1.0);
-    let negative_limit = -(1_i64 << (valid_bits - 1));
-    let positive_limit = (1_i64 << (valid_bits - 1)) - 1;
-    let scale = (1_u64 << (valid_bits - 1)) as f64;
-    ((value as f64 * scale).round() as i64).clamp(negative_limit, positive_limit)
-}
 
 fn gains_from_java(env: &mut JNIEnv, array: &JFloatArray) -> Result<[f32;31],String> {
     let len=env.get_array_length(array).map_err(|e|e.to_string())? as usize;
