@@ -49,7 +49,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * duckGain)
     }
 
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null) {
+    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false) {
         val previousWorker = worker
         stop()
         stopped.set(false)
@@ -196,6 +196,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
                 }
+                if (startPaused) {
+                    check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 3).toInt() == 0) {
+                        "The native playback session could not enter the paused state after output routing"
+                    }
+                    paused = true
+                    onState("Paused · audio output changed")
+                }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
                     val completedSeekPosition = NativeAudio.nativeGetPlaybackSessionSeekPosition(sessionHandle)
                     if (completedSeekPosition >= 0L && completedSeekPosition != lastReportedSeekPositionMs) {
@@ -271,8 +278,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun durationMs(): Long = outputDurationMs
 
     fun seekTo(positionMs: Long) {
-        if (decoderHandle == 0L) return
         val boundedPosition = positionMs.coerceAtLeast(0L)
+        if (decoderHandle == 0L) {
+            pendingSeekMs.set(boundedPosition)
+            return
+        }
         val session = nativeSessionHandle
         if (session != 0L) {
             val epoch = NativeAudio.nativeRequestPlaybackSessionSeek(
