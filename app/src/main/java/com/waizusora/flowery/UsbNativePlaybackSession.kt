@@ -25,13 +25,13 @@ internal class UsbNativePlaybackSession private constructor(
 ) : Closeable {
     private var closed = false
 
-    fun start(): Result<Unit> {
+    fun start(initialPositionMs: Long = 0L): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
         return usb.setUac1SampleRate(endpoint, sampleRate).fold(
             onSuccess = {
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
-                    sampleRate, channels, validBits, subslotBytes
+                    sampleRate, channels, validBits, subslotBytes, initialPositionMs
                 )
             },
             onFailure = { Result.failure(it) }
