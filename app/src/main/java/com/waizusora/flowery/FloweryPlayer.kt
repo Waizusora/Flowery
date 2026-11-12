@@ -114,6 +114,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // preference here: the playback stream must follow the currently attached route.
                 val selectedTarget = routeResolver.detectCurrent()
                 if (selectedTarget == AndroidOutputTarget.USB) {
+                    check(segmentEndMs == null) {
+                        "Native USB playback currently does not support bounded CUE segments; refusing to play past the selected segment."
+                    }
                     usbRouteActive = true
                     val queuedSeek = pendingSeekMs.getAndSet(-1L)
                     val relativeStartMs = if (queuedSeek >= 0L) queuedSeek else initialPositionMs
