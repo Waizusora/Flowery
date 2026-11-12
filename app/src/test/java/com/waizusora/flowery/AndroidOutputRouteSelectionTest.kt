@@ -37,6 +37,23 @@ class AndroidOutputRouteSelectionTest {
         assertNull(AndroidOutputRouteSelection.selectBluetooth(emptyList()))
     }
 
+    @Test fun detectsConnectedOutputAutomatically() {
+        assertEquals(AndroidOutputTarget.SPEAKER, AndroidOutputRouteSelection.detectCurrent(emptyList()))
+        assertEquals(AndroidOutputTarget.AUX, AndroidOutputRouteSelection.detectCurrent(listOf(
+            device(3, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, "Wired")
+        )))
+        assertEquals(AndroidOutputTarget.BLUETOOTH, AndroidOutputRouteSelection.detectCurrent(listOf(
+            device(9, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, "Bluetooth")
+        )))
+    }
+
+    @Test fun wiredOutputTakesPrecedenceWhenMultipleRoutesAreConnected() {
+        assertEquals(AndroidOutputTarget.AUX, AndroidOutputRouteSelection.detectCurrent(listOf(
+            device(9, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, "Bluetooth"),
+            device(3, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, "Wired")
+        )))
+    }
+
     @Test fun preferenceDefaultsToSpeaker() {
         assertEquals(AndroidOutputTarget.SPEAKER, AndroidOutputTarget.fromPreference(null))
         assertEquals(AndroidOutputTarget.AUX, AndroidOutputTarget.fromPreference("aux"))
