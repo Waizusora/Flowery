@@ -16,6 +16,7 @@ import java.io.Closeable
 internal class UsbAudioControlSession private constructor(
     private val connection: UsbDeviceConnection,
     private val usbInterface: UsbInterface,
+    private val defaultAlternate: UsbInterface?,
     val interfaceNumber: Int,
     val alternateSetting: Int
 ) : Closeable {
@@ -83,9 +84,9 @@ internal class UsbAudioControlSession private constructor(
         if (closed) return
         closed = true
         try {
-            connection.setInterface(usbInterface)
+            defaultAlternate?.let(connection::setInterface)
         } catch (_: Exception) {
-            // Interface restoration is best-effort during teardown.
+            // Restoring the default alternate is best-effort during teardown.
         }
         try {
             connection.releaseInterface(usbInterface)
@@ -128,6 +129,11 @@ internal class UsbAudioControlSession private constructor(
                 return Result.failure(IllegalStateException("Unable to claim USB AudioStreaming interface"))
             }
 
+            val defaultAlternate = (0 until device.interfaceCount)
+                .asSequence()
+                .map(device::getInterface)
+                .firstOrNull { it.id == interfaceNumber && it.alternateSetting == 0 }
+
             if (!connection.setInterface(usbInterface)) {
                 connection.releaseInterface(usbInterface)
                 connection.close()
@@ -138,6 +144,7 @@ internal class UsbAudioControlSession private constructor(
                 UsbAudioControlSession(
                     connection,
                     usbInterface,
+                    defaultAlternate,
                     interfaceNumber,
                     alternateSetting
                 )
