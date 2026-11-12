@@ -141,39 +141,6 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
-    private var usbDacReport by mutableStateOf<String?>(null)
-    private var usbDacInspecting by mutableStateOf(false)
-    private var usbDacUiStatus by mutableStateOf("Checking USB audio devices…")
-    private var usbDacDeviceName by mutableStateOf("No USB DAC detected")
-    private var usbDacConnected by mutableStateOf(false)
-    private var usbDacPermissionGranted by mutableStateOf(false)
-    private var usbDacConnectionReleased = false
-    private var autoUsbPermissionRequestedForLaunch = false
-    private val usbDacController by lazy { UsbDacController(this) }
-    private val usbPermissionReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action != UsbDacController.ACTION_USB_PERMISSION) return
-            val device = intent.usbDeviceExtra()
-            val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-            when {
-                device == null -> {
-                    usbDacInspecting = false
-                    usbDacReport = "Android did not return the USB audio device."
-                }
-                granted -> {
-                    getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
-                        .putBoolean("usb_auto_reconnect", true).apply()
-                    refreshUsbDacUiState()
-                    inspectUsbDac(device)
-                }
-                else -> {
-                    usbDacInspecting = false
-                    usbDacUiStatus = "USB permission was denied. Tap Sambungkan DAC to try again."
-                    usbDacReport = "USB permission was not granted. Connect the DAC and grant access to inspect its descriptors."
-                }
-            }
-        }
-    }
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
     private val equalizerGains = mutableStateListOf<Float>().apply { repeat(31) { add(0f) } }

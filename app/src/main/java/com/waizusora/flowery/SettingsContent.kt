@@ -192,7 +192,6 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             Detail("Symphonia", "0.5.4 · audio demuxing and decoding · MPL-2.0", color, muted)
             Detail("Rubato", "5.0.1 · streaming sample-rate conversion · MIT OR Apache-2.0", color, muted)
             Detail("Lofty", "0.25.5 · audio metadata and tag editing · MIT OR Apache-2.0", color, muted)
-            Detail("libusb", "1.0.30-0 · USB host transport · LGPL-2.1-or-later", color, muted)
             Detail("jni", "0.21 · Rust/JVM native interface · MIT OR Apache-2.0", color, muted)
             Detail("audioadapter-buffers", "5.1 · audio buffer adapters · MIT OR Apache-2.0", color, muted)
             Detail("serde / serde_json", "1.x · serialization and JSON · MIT OR Apache-2.0", color, muted)
