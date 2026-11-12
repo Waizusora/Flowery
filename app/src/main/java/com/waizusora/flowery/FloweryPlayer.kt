@@ -135,6 +135,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
                     directUsb.start(actualStartPositionMs).getOrThrow()
+                    pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { queued ->
+                        directUsb.seek(segmentStartMs + queued.coerceAtLeast(0L)).getOrThrow()
+                    }
                     outputSampleRate = sourceRate
                     val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
@@ -358,7 +361,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun seekTo(positionMs: Long) {
         val boundedPosition = positionMs.coerceAtLeast(0L)
-        if (decoderHandle == 0L || (usbRouteActive && usbPlaybackSession == null)) {
+        if (decoderHandle == 0L || (usbRouteActive && !outputReady)) {
             pendingSeekMs.set(boundedPosition)
             return
         }
