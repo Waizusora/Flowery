@@ -30,7 +30,9 @@ internal class UsbNativePlaybackSession private constructor(
     private val interval: Int,
     private val channels: Int,
     private val validBits: Int,
-    private val subslotBytes: Int
+    private val subslotBytes: Int,
+    private val feedbackEndpoint: Int,
+    private val feedbackMaxPacketSize: Int
 ) : Closeable {
     private var closed = false
 
@@ -40,7 +42,8 @@ internal class UsbNativePlaybackSession private constructor(
             onSuccess = {
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
-                    sampleRate, channels, validBits, subslotBytes, initialPositionMs
+                    sampleRate, channels, validBits, subslotBytes, feedbackEndpoint,
+                    feedbackMaxPacketSize, initialPositionMs
                 )
             },
             onFailure = { Result.failure(it) }
@@ -183,9 +186,12 @@ internal class UsbNativePlaybackSession private constructor(
                 val interval = plan.optInt("interval", -1)
                 val subslot = plan.optInt("subslot_bytes", -1)
                 val bits = plan.optInt("bit_resolution", -1)
+                val feedbackEndpoint = plan.optInt("feedback_endpoint_address", 0)
+                val feedbackPacket = plan.optInt("feedback_max_packet_size", 0)
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
-                    subslot !in 1..4 || bits !in 1..32
+                    subslot !in 1..4 || bits !in 1..32 ||
+                    (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4))
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
                     continue
@@ -202,7 +208,7 @@ internal class UsbNativePlaybackSession private constructor(
                 return Result.success(
                     UsbNativePlaybackSession(
                         native, decoderHandle, sampleRate, endpoint, packet,
-                        interval, channels, bits, subslot
+                        interval, channels, bits, subslot, feedbackEndpoint, feedbackPacket
                     )
                 )
             }
