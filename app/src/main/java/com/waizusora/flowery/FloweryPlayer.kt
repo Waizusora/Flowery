@@ -2,6 +2,7 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.net.Uri
+import android.os.Build
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
@@ -242,7 +243,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // uses the separate libusb path above and never falls back to Android mixer mode.
                 // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
                 // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
-                val outputFormat = if (sourceBits <= 16) 1 else 3 // PCM_I16 / PCM_I24
+                val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
                 val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates)
                 val targetRate = NativeAudio.nativeSelectOutputSampleRate(
                     preferredRate, channels, deviceId, outputFormat, false
