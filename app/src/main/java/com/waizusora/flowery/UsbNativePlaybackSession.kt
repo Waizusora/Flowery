@@ -1,10 +1,19 @@
 package com.waizusora.flowery
 
+import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.Closeable
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Owns one class-compliant USB Audio playback stream.
@@ -60,6 +69,42 @@ internal class UsbNativePlaybackSession private constructor(
     }
 
     companion object {
+        private fun requestUsbPermission(
+            context: Context,
+            manager: UsbManager,
+            device: UsbDevice
+        ): Boolean {
+            val action = "${context.packageName}.USB_PERMISSION.${UUID.randomUUID()}"
+            val latch = CountDownLatch(1)
+            var granted = false
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    if (intent?.action != action) return
+                    val returnedDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    if (returnedDevice?.deviceName == device.deviceName) {
+                        granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                        latch.countDown()
+                    }
+                }
+            }
+            val filter = IntentFilter(action)
+            ContextCompat.registerReceiver(
+                context, receiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            try {
+                val flags = PendingIntent.FLAG_UPDATE_CURRENT or
+                    (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
+                val permissionIntent = PendingIntent.getBroadcast(
+                    context, device.deviceId, Intent(action).setPackage(context.packageName), flags
+                )
+                manager.requestPermission(device, permissionIntent)
+                latch.await(30, TimeUnit.SECONDS)
+                return granted && manager.hasPermission(device)
+            } finally {
+                runCatching { context.unregisterReceiver(receiver) }
+            }
+        }
+
         fun open(
             context: Context,
             decoderHandle: Long,
@@ -88,8 +133,11 @@ internal class UsbNativePlaybackSession private constructor(
             var lastError: Throwable? = null
             for (device in candidates) {
                 if (!manager.hasPermission(device)) {
-                    lastError = SecurityException("USB permission is required for ${device.productName ?: device.deviceName}")
-                    continue
+                    val granted = requestUsbPermission(context, manager, device)
+                    if (!granted) {
+                        lastError = SecurityException("USB permission was not granted for ${device.productName ?: device.deviceName}")
+                        continue
+                    }
                 }
                 val probe = manager.openDevice(device)
                 if (probe == null) {
