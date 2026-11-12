@@ -39,7 +39,9 @@ internal class UsbNativePlaybackSession private constructor(
     private val uac2ClockSelectorEntity: Int?,
     private val uac2ClockSelectorControls: Int?,
     private val uac2SelectorClockSources: IntArray,
-    private val uac2SelectorSourceControls: IntArray
+    private val uac2SelectorSourceControls: IntArray,
+    private val uac2ClockMultiplierEntity: Int?,
+    private val uac2ClockMultiplierControls: Int?
 ) : Closeable {
     private var closed = false
 
@@ -54,7 +56,9 @@ internal class UsbNativePlaybackSession private constructor(
                 uac2ClockSelectorEntity ?: 0,
                 uac2ClockSelectorControls ?: 0,
                 uac2SelectorClockSources,
-                uac2SelectorSourceControls
+                uac2SelectorSourceControls,
+                uac2ClockMultiplierEntity ?: 0,
+                uac2ClockMultiplierControls ?: 0
             )
         } else {
             usb.setUac1SampleRate(endpoint, sampleRate)
@@ -212,6 +216,8 @@ internal class UsbNativePlaybackSession private constructor(
                 val clockSelectorControls = if (isUac2) plan.optInt("uac2_clock_selector_controls", 0) else 0
                 val selectorSourcesJson = if (isUac2) plan.optJSONArray("uac2_selector_clock_sources") else null
                 val selectorControlsJson = if (isUac2) plan.optJSONArray("uac2_selector_source_controls") else null
+                val clockMultiplierEntity = if (isUac2) plan.optInt("uac2_clock_multiplier_entity_id", 0) else 0
+                val clockMultiplierControls = if (isUac2) plan.optInt("uac2_clock_multiplier_controls", 0) else 0
                 val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
                 val invalidUac2ClockPlan = isUac2 && (
@@ -227,6 +233,13 @@ internal class UsbNativePlaybackSession private constructor(
                         (clockSelectorEntity != 0 && (
                             selectorSources.isEmpty() ||
                                 (clockSelectorControls and 0x03) !in 1..2
+                            )) ||
+                        clockMultiplierEntity !in 0..255 ||
+                        clockMultiplierControls !in 0..255 ||
+                        (clockMultiplierEntity != 0 && (
+                            clockSelectorEntity != 0 || clockSourceEntity == 0 ||
+                                (clockMultiplierControls and 0x01) == 0 ||
+                                (clockMultiplierControls and 0x04) == 0
                             ))
                     )
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
@@ -257,7 +270,9 @@ internal class UsbNativePlaybackSession private constructor(
                         if (isUac2 && clockSelectorEntity != 0) clockSelectorEntity else null,
                         if (isUac2) clockSelectorControls else null,
                         selectorSources,
-                        selectorSourceControls
+                        selectorSourceControls,
+                        if (isUac2 && clockMultiplierEntity != 0) clockMultiplierEntity else null,
+                        if (isUac2) clockMultiplierControls else null
                     )
                 )
             }
