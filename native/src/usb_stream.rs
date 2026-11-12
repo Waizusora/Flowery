@@ -343,14 +343,19 @@ pub(super) fn start(
     let negotiated_speed = unsafe { libusb1_sys::libusb_get_device_speed(device) };
     let speed = match negotiated_speed {
         2 => UsbBusSpeed::Full,
-        3 | 4 | 5 => UsbBusSpeed::High,
+        3 => UsbBusSpeed::High,
+        4 | 5 => return Err("SuperSpeed USB streaming requires SuperSpeed endpoint companion descriptor support; refusing to reuse the High-Speed schedule".into()),
         0 => return Err("USB bus speed is unknown; refusing to guess the isochronous schedule".into()),
         1 => return Err("Low-Speed USB does not support this audio streaming mode".into()),
         other => return Err(format!("Unsupported libusb bus speed value {other}")),
     };
     let max_packet_bytes = max_isochronous_payload(raw_max_packet_size, speed)?;
     let factor = 1_u32 << (interval - 1);
-    let interval_us = if high_speed { 125_u32 } else { 1_000_u32 }
+    let base_interval_us = match speed {
+        UsbBusSpeed::Full => 1_000_u32,
+        UsbBusSpeed::High => 125_u32,
+    };
+    let interval_us = base_interval_us
         .checked_mul(factor).ok_or("USB service interval overflow")?;
     let max_frames = (u64::from(sample_rate) * u64::from(interval_us) + 999_999) / 1_000_000;
     let needed = max_frames * u64::from(channels) * u64::from(subslot_bytes);
