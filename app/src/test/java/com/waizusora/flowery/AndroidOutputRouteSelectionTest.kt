@@ -9,6 +9,14 @@ class AndroidOutputRouteSelectionTest {
     private fun device(id: Int, type: Int, name: String) =
         OutputDeviceCandidate(id, type, name)
 
+    @Test fun resolvesUsbDacOutputs() {
+        val selected = AndroidOutputRouteSelection.selectUsb(listOf(
+            device(1, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, "Speaker"),
+            device(12, AudioDeviceInfo.TYPE_USB_DEVICE, "USB DAC")))
+        assertEquals(12, selected?.id)
+        assertEquals("USB DAC", selected?.productName)
+    }
+
     @Test fun resolvesAuxFromWiredAnalogOutputs() {
         val selected = AndroidOutputRouteSelection.selectAux(listOf(
             device(1, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, "Speaker"),
@@ -32,6 +40,7 @@ class AndroidOutputRouteSelectionTest {
     }
 
     @Test fun missingRouteReturnsNull() {
+        assertNull(AndroidOutputRouteSelection.selectUsb(emptyList()))
         assertNull(AndroidOutputRouteSelection.selectAux(emptyList()))
         assertNull(AndroidOutputRouteSelection.selectSpeaker(emptyList()))
         assertNull(AndroidOutputRouteSelection.selectBluetooth(emptyList()))
@@ -39,11 +48,22 @@ class AndroidOutputRouteSelectionTest {
 
     @Test fun detectsConnectedOutputAutomatically() {
         assertEquals(AndroidOutputTarget.SPEAKER, AndroidOutputRouteSelection.detectCurrent(emptyList()))
+        assertEquals(AndroidOutputTarget.USB, AndroidOutputRouteSelection.detectCurrent(listOf(
+            device(12, AudioDeviceInfo.TYPE_USB_HEADSET, "USB DAC")
+        )))
         assertEquals(AndroidOutputTarget.AUX, AndroidOutputRouteSelection.detectCurrent(listOf(
             device(3, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, "Wired")
         )))
         assertEquals(AndroidOutputTarget.BLUETOOTH, AndroidOutputRouteSelection.detectCurrent(listOf(
             device(9, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, "Bluetooth")
+        )))
+    }
+
+    @Test fun usbOutputTakesPrecedenceOverOtherConnectedRoutes() {
+        assertEquals(AndroidOutputTarget.USB, AndroidOutputRouteSelection.detectCurrent(listOf(
+            device(9, AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, "Bluetooth"),
+            device(3, AudioDeviceInfo.TYPE_WIRED_HEADPHONES, "Wired"),
+            device(12, AudioDeviceInfo.TYPE_USB_DEVICE, "USB DAC")
         )))
     }
 
@@ -56,6 +76,7 @@ class AndroidOutputRouteSelectionTest {
 
     @Test fun preferenceDefaultsToSpeaker() {
         assertEquals(AndroidOutputTarget.SPEAKER, AndroidOutputTarget.fromPreference(null))
+        assertEquals(AndroidOutputTarget.USB, AndroidOutputTarget.fromPreference("usb"))
         assertEquals(AndroidOutputTarget.AUX, AndroidOutputTarget.fromPreference("aux"))
         assertEquals(AndroidOutputTarget.BLUETOOTH, AndroidOutputTarget.fromPreference("bluetooth"))
     }
