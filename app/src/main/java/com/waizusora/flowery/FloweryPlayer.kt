@@ -109,11 +109,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 check(selectedTarget == AndroidOutputTarget.SPEAKER || outputRoute.deviceId > 0) {
                     "The selected ${selectedTarget.displayName} output is not currently available."
                 }
-                // Android-managed AUX, speaker, and Bluetooth routes use STREAM_MUSIC.
+                // USB DAC, AUX, speaker, and Bluetooth use Android-managed AAudio routing.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
                 // AAudio receives integer PCM for every Android-managed output target.
-                // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
+                // USB exclusive mode is still subject to Android device and system audio policy.
                 // Select integer output width from the detected source bit depth.
                 val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
@@ -123,7 +123,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     sourceRate, channels,
                     softwareVolume,
                     deviceId,
-                    requireExclusive = true, // Prefer AAudio EXCLUSIVE; native open retries SHARED if exclusive is unavailable.
+                    requireExclusive = true,
+                    failOnShared = selectedTarget == AndroidOutputTarget.USB,
                     outputFormat = outputFormat,
                     capacityFrames = outputRingCapacityFrames
                 )
@@ -140,6 +141,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         4 -> "pcm_format_mismatch"
                         5 -> "device_selection_api_unavailable"
                         6 -> "requested_device_not_opened"
+                        7 -> "exclusive_required_shared_fallback_blocked"
                         else -> "unknown"
                     }
                     val details = if (attempt.size >= 11) {
@@ -151,7 +153,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             "failureStage=$failureStage"
                     } else "native open diagnostics unavailable"
                     val device = "target=${outputRoute.target}, product=${outputRoute.deviceName ?: "system default"}, id=${outputRoute.deviceId}, type=${outputRoute.deviceType}"
-                    val reason = if (opened == -10001) {
+                    val reason = if (selectedTarget == AndroidOutputTarget.USB) {
+                        "USB DAC output requires AAudio EXCLUSIVE mode; shared fallback is disabled."
+                    } else if (opened == -10001) {
                         "AAudio could not open the requested Android output in EXCLUSIVE mode."
                     } else {
                         "Unable to open the selected Android AAudio output (error $opened)."
