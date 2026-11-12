@@ -409,7 +409,7 @@ pub(super) fn start(
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn status(session: i64) -> (i32, String) {
+pub(super) fn status(session: i64) -> (i32, String, u64) {
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     match map.get(&session) {
         Some(worker) => (
