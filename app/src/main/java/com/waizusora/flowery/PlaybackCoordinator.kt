@@ -88,20 +88,22 @@ internal class PlaybackCoordinator(
 
 
 
-    @Synchronized
-    fun releaseUsb(onReleased: () -> Unit) {
-        transition(EVENT_STOP)
-        thread(name = "FloweryUsbRelease") {
-            if (!awaitEngineTeardown()) return@thread
-            transition(EVENT_FINISH)
-            onReleased()
+    private fun awaitEngineTeardown(): Boolean {
+        while (true) {
+            if (engine.stopAndJoin(Long.MAX_VALUE)) return true
+            try {
+                Thread.sleep(250L)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return false
+            }
         }
     }
+
 
     fun close(onClosed: () -> Unit = {}) {
         if (!closed.compareAndSet(false, true)) return
         transition(EVENT_STOP)
-        // Do not block Android's service lifecycle thread while the worker releases native handles.
         // Keep the service lifecycle thread non-blocking while the worker releases native handles.
         thread(name = "FloweryPlaybackControllerCleanup") {
             if (!awaitEngineTeardown()) return@thread
