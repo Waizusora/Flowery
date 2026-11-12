@@ -50,7 +50,7 @@ extern "C" {
 }
 
 const OK:i32=0; const INVALID_STATE:i32=-895; const INVALID_FORMAT:i32=-898; const UNAVAILABLE:i32=-890;
-const FMT_I16:i32=1; const FMT_FLOAT:i32=2; const FMT_I24:i32=3; const FMT_I32:i32=4;
+const FMT_I16:i32=1; const FMT_I24:i32=3;
 const SHARING_EXCLUSIVE:i32=0; const SHARING_SHARED:i32=1;
 const STATE_OPEN:i32=2; const STATE_STARTING:i32=3; const STATE_STARTED:i32=4;
 const STATE_PAUSING:i32=5; const STATE_PAUSED:i32=6; const STATE_STOPPED:i32=10; const STATE_DISCONNECTED:i32=13;
@@ -177,15 +177,13 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     let o=&*(data as *const Output); let requested=frames as u64;
     let read=o.read.load(Ordering::Relaxed); let write=o.write.load(Ordering::Acquire);
     let count=requested.min(write.saturating_sub(read)); let gain=o.gain();
-    let bps=match o.format{FMT_I16=>2,FMT_I24=>3,FMT_I32=>4,_=>4};
+    let bps=match o.format{FMT_I16=>2,FMT_I24=>3,_=>3};
     for f in 0..count { for c in 0..o.channels {
         let sample=(o.ring[(((read+f)&o.mask) as usize)*o.channels+c]*gain).clamp(-1.0,1.0);
         let index=f as usize*o.channels+c;
         match o.format {
-            FMT_FLOAT=>(audio as *mut f32).add(index).write(sample),
             FMT_I16=>(audio as *mut i16).add(index).write((sample*if sample<0.0{32768.0}else{32767.0}).round() as i16),
             FMT_I24=>{let v=(sample*if sample<0.0{8388608.0}else{8388607.0}).round() as i32;let p=(audio as *mut u8).add(index*3);p.write(v as u8);p.add(1).write((v>>8) as u8);p.add(2).write((v>>16) as u8);},
-            FMT_I32=>(audio as *mut i32).add(index).write((sample as f64*if sample<0.0{2147483648.0}else{2147483647.0}) as i32),
             _=>{}
         }
     }}
@@ -417,7 +415,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,format:jint,capacity:jint)->jint{
-    if rate<=0 || !(channels==1||channels==2) || capacity<2048 || ![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}
+    if rate<=0 || !(channels==1||channels==2) || capacity<2048 || ![FMT_I16,FMT_I24].contains(&format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let mut out=Box::new(Output{ring:vec![0.0;(cap as usize)*channels as usize],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
@@ -549,7 +547,7 @@ pub(crate) fn stop_output_for_session() {
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let a=env.new_long_array(11).unwrap();let _=env.set_long_array_region(&a,0,&e.last_open);a.into_raw()}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let mut v=[0i64;39];if let Some(o)=e.output.as_ref(){v[0]=o.underruns.load(Ordering::Acquire) as i64;v[2]=o.write.load(Ordering::Acquire) as i64-o.read.load(Ordering::Acquire) as i64;v[3]=o.capacity as i64;v[19]=e.last_open[4];v[23]=o.rate as i64;v[31]=e.last_open[1];v[32]=e.last_open[6];v[33]=e.last_open[0];}if !e.stream.is_null(){unsafe{v[1]=AAudioStream_getXRunCount(e.stream) as i64;v[4]=AAudioStream_getBufferSizeInFrames(e.stream) as i64;v[5]=AAudioStream_getFramesPerBurst(e.stream) as i64;v[6]=AAudioStream_getState(e.stream) as i64;v[7]=AAudioStream_getSampleRate(e.stream) as i64;v[8]=AAudioStream_getDeviceId(e.stream) as i64;v[9]=AAudioStream_getSharingMode(e.stream) as i64;v[10]=AAudioStream_getFormat(e.stream) as i64;v[11]=AAudioStream_getChannelCount(e.stream) as i64;v[12]=AAudioStream_getPerformanceMode(e.stream) as i64;v[26]=AAudioStream_getBufferCapacityInFrames(e.stream) as i64;}}let a=env.new_long_array(39).unwrap();let _=env.set_long_array_region(&a,0,&v);a.into_raw()}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null()||e.output.is_none(){return INVALID_STATE;}unsafe{let x=AAudioStream_getXRunCount(e.stream);if x<0{return x;}let cap=AAudioStream_getBufferCapacityInFrames(e.stream);let cur=AAudioStream_getBufferSizeInFrames(e.stream);let burst=AAudioStream_getFramesPerBurst(e.stream).max(1);if x>0&&cur>0&&cap>cur{let _=AAudioStream_setBufferSizeInFrames(e.stream,(cur+burst).min(cap));}OK}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(_:JNIEnv,_:JClass,rate:jint,channels:jint,device:jint,format:jint,exact:jboolean)->jint{if rate<=0||!(channels==1||channels==2)||![FMT_FLOAT,FMT_I16,FMT_I24,FMT_I32].contains(&format){return INVALID_FORMAT;}let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}let mut out=Output{ring:vec![0.0;2048*channels as usize],capacity:2048,mask:2047,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(1f32.to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)};let mut result=0;for sharing in [SHARING_EXCLUSIVE,SHARING_SHARED]{let r=unsafe{e.open(&mut out,rate,sharing,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();break;}}if result==0&&exact!=JNI_TRUE{let r=unsafe{e.open(&mut out,0,SHARING_SHARED,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();}}if result>0{result}else{UNAVAILABLE}}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSelectOutputSampleRate(_:JNIEnv,_:JClass,rate:jint,channels:jint,device:jint,format:jint,exact:jboolean)->jint{if rate<=0||!(channels==1||channels==2)||![FMT_I16,FMT_I24].contains(&format){return INVALID_FORMAT;}let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}let mut out=Output{ring:vec![0.0;2048*channels as usize],capacity:2048,mask:2047,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(1f32.to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)};let mut result=0;for sharing in [SHARING_EXCLUSIVE,SHARING_SHARED]{let r=unsafe{e.open(&mut out,rate,sharing,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();break;}}if result==0&&exact!=JNI_TRUE{let r=unsafe{e.open(&mut out,0,SHARING_SHARED,device)};if r==OK{result=out.rate;unsafe{let _=AAudioStream_close(e.stream);}e.stream=ptr::null_mut();}}if result>0{result}else{UNAVAILABLE}}
 
 #[cfg(test)]
 mod tests {
@@ -561,7 +559,7 @@ mod tests {
             capacity: capacity as u64,
             mask: capacity as u64 - 1,
             channels,
-            format: FMT_FLOAT,
+            format: FMT_I16,
             rate: 48_000,
             read: AtomicU64::new(0),
             write: AtomicU64::new(0),

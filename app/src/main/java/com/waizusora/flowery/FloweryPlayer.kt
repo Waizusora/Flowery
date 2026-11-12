@@ -240,7 +240,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // USB Bit-Perfect, playback has already taken the direct USB transport path.
                 // Shared Android output is handled by Rust AAudio. USB exclusive playback
                 // uses the separate libusb path above and never falls back to Android mixer mode.
-                val outputFormat = 2 // AAUDIO_FORMAT_PCM_FLOAT
+                // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
+                // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
+                val outputFormat = if (sourceBits <= 16) 1 else 3 // PCM_I16 / PCM_I24
                 val preferredRate = NativeAudio.nativeSelectPreferredSampleRate(sourceRate, supportedRates)
                 val targetRate = NativeAudio.nativeSelectOutputSampleRate(
                     preferredRate, channels, deviceId, outputFormat, false
