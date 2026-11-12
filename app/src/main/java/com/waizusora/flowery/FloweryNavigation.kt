@@ -1,8 +1,6 @@
 package com.waizusora.flowery
 
 import android.content.Context
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.Image
@@ -47,7 +45,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { WELCOME, PLAYER, FOLDERS, DSP, SETTINGS }
-internal enum class SettingsPage { ROOT, AUDIO, AUDIO_INFO, USB_DIAGNOSTICS, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+internal enum class SettingsPage { ROOT, AUDIO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -65,9 +63,7 @@ fun FloweryNavigation(
     onInspect: (AudioTrackItem) -> Unit, onEdit: () -> Unit, onTogglePlayback: () -> Unit,
     onVolume: (Float) -> Unit, onPrevious: () -> Unit, onNext: () -> Unit,
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
-    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit, onUsbDacClick: () -> Unit,
-    usbDacUiStatus: String, usbDacDeviceName: String, usbDacConnected: Boolean,
-    usbDacPermissionGranted: Boolean, onConnectUsbDac: () -> Unit, onReleaseUsbDac: () -> Unit,
+    onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit,
     audioSourceLabel: String,
     onRequestNotificationPermission: () -> Unit
 ) {
@@ -107,7 +103,7 @@ fun FloweryNavigation(
     var outputRoute by remember(context) {
         mutableStateOf(AndroidOutputTarget.fromPreference(prefs.getString("audio_output_route", "speaker")))
     }
-    var usbDiagnosticRecording by remember { mutableStateOf(prefs.getBoolean("usb_diagnostic_recording", false)) }
+
     var usbDiagnosticPreviousSample by remember { mutableStateOf<LongArray?>(null) }
     var usbDiagnosticPendingLog by remember { mutableStateOf("") }
     var usbDiagnosticDescriptorReport by remember { mutableStateOf("") }
@@ -261,56 +257,6 @@ fun FloweryNavigation(
                     onEqualizerEnabled = onEqualizerEnabled
                 )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
-                    usbDiagnosticRecording = usbDiagnosticRecording,
-                    usbDiagnosticLogCount = usbDiagnosticLines.size,
-                    usbDiagnosticDescriptorReport = usbDiagnosticDescriptorReport,
-                    onToggleUsbDiagnosticLog = {
-                        if (usbDiagnosticRecording) {
-                            usbDiagnosticRecording = false
-                            prefs.edit().putBoolean("usb_diagnostic_recording", false).apply()
-                        } else {
-                            usbDiagnosticLines.clear()
-                            usbDiagnosticPreviousSample = null
-                            usbDiagnosticDescriptorReport = "Reading connected USB DAC descriptors…"
-                            prefs.edit().putString("usb_direct_diagnostics", "")
-                                .putBoolean("usb_diagnostic_recording", true).apply()
-                            usbDiagnosticRecording = true
-                        }
-                    },
-                    onSaveUsbDiagnosticLog = {
-                        val usbDirectLog = prefs.getString("usb_direct_diagnostics", "").orEmpty()
-                        usbDiagnosticPendingLog = buildString {
-                            appendLine("# Flowery USB diagnostic record")
-                            appendLine("# Recorded at: ${java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(java.util.Date())}")
-                            appendLine("# AAudio and playback-state samples: ${usbDiagnosticLines.size}")
-                            appendLine("# Direct USB events: ${usbDirectLog.lineSequence().count { it.isNotBlank() }}")
-                            appendLine("# Software architecture: Kotlin Android integration; Rust decode/DSP/playback sessions; C++ libusb transport")
-                            appendLine("# Hardware acceptance: pending physical Android/USB DAC verification; CI does not establish bit-perfect output")
-                            appendLine("# Current playback: playing=$isPlaying positionMs=$positionMs durationMs=$durationMs")
-                            appendLine("# Current source: $audioSourceLabel")
-                            appendLine("# Current track: ${currentTag?.artist.orEmpty()} - ${selectedTrack?.title.orEmpty()}")
-                            appendLine("# Current route status: $status")
-                            appendLine("# USB DAC: connected=$usbDacConnected permissionGranted=$usbDacPermissionGranted name=$usbDacDeviceName")
-                            appendLine("# Bit-perfect policy: automatic DAC capability and playback-path detection")
-                            appendLine()
-                            appendLine("===== USB descriptor and DAC profile database snapshot =====")
-                            appendLine(usbDiagnosticDescriptorReport.ifBlank { "No descriptor snapshot was captured." })
-                            appendLine()
-                            appendLine("===== Playback/session state and AAudio runtime telemetry (1-second sampling) =====")
-                            usbDiagnosticLines.forEach { appendLine(it) }
-                            appendLine()
-                            appendLine("===== Direct USB / libusb playback events =====")
-                            if (usbDirectLog.isBlank()) appendLine("No direct USB playback events were recorded.")
-                            else appendLine(usbDirectLog)
-                        }
-                        usbDiagnosticSaveLauncher.launch("flowery-usb-diagnostic-${System.currentTimeMillis()}.txt")
-                    },
-                    usbDacUiStatus = usbDacUiStatus,
-                    usbDacDeviceName = usbDacDeviceName,
-                    usbDacConnected = usbDacConnected,
-                    usbDacPermissionGranted = usbDacPermissionGranted,
-                    onConnectUsbDac = onConnectUsbDac,
-                    onReleaseUsbDac = onReleaseUsbDac,
                     audioSourceLabel = audioSourceLabel,
                     outputRoute = outputRoute,
                     onOutputRouteChange = { selected ->
@@ -319,7 +265,6 @@ fun FloweryNavigation(
                     },
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
-                        SettingsPage.AUDIO_INFO, SettingsPage.USB_DIAGNOSTICS -> SettingsPage.AUDIO
                         SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
