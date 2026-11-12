@@ -219,13 +219,14 @@ internal class UsbNativePlaybackSession private constructor(
                     subslot !in 1..4 || bits !in 1..32 ||
                     (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
                     (isUac2 && (clockControlInterface !in 0..255 || clockSourceEntity !in 1..255 ||
-                        clockControls !in 0..255 ||
+                        clockControls !in 0..255 || clockSourceEntity !in 0..255 ||
+                        (clockSelectorEntity == 0 && clockSourceEntity == 0) ||
                         (clockSelectorEntity !in 0..255 || clockSelectorControls !in 0..255 ||
                             selectorSources.size != selectorSourceControls.size ||
                             selectorSources.any { it !in 1..255 } ||
                             selectorSourceControls.any { it !in 0..255 } ||
                             (clockSelectorEntity != 0 && (selectorSources.isEmpty() ||
-                                (clockSelectorControls and 0x03) !in 1..2)))))
+                                (clockSelectorControls and 0x03) !in 1..2))))
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
                     continue
