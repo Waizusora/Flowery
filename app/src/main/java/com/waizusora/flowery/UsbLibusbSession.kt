@@ -203,27 +203,32 @@ internal class UsbLibusbSession private constructor(
                     }
 
                     var mutationFailure: String? = null
-                    for (change in selectorChanges) {
-                        attemptedSelectors += change
-                        val payload = byteArrayOf(change.newPin.toByte())
-                        val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
-                        val verify = ByteArray(1)
-                        val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
-                        if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.newPin) {
-                            mutationFailure = "clock selector SET_CUR/verification failed"; break
+                    try {
+                        for (change in selectorChanges) {
+                            attemptedSelectors += change
+                            val payload = byteArrayOf(change.newPin.toByte())
+                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, change.index, payload, 1, 1_000)
+                            val verify = ByteArray(1)
+                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, change.index, verify, 1, 1_000)
+                            if (written != 1 || read != 1 || (verify[0].toInt() and 0xFF) != change.newPin) {
+                                mutationFailure = "clock selector SET_CUR/verification failed"; break
+                            }
                         }
-                    }
-                    if (mutationFailure == null && oldSourceRate != sourceRate) {
-                        sourceWriteAttempted = true
-                        val rate = sourceRate.toInt()
-                        val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
-                            (rate ushr 16).toByte(), (rate ushr 24).toByte())
-                        val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
-                        val verify = ByteArray(4)
-                        val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
-                        if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
-                            mutationFailure = "clock source SET_CUR/verification failed"
+                        if (mutationFailure == null && oldSourceRate != sourceRate) {
+                            sourceWriteAttempted = true
+                            val rate = sourceRate.toInt()
+                            val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
+                                (rate ushr 16).toByte(), (rate ushr 24).toByte())
+                            val written = connection.controlTransfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
+                            val verify = ByteArray(4)
+                            val read = connection.controlTransfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
+                            if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
+                                mutationFailure = "clock source SET_CUR/verification failed"
+                            }
                         }
+    
+                    } catch (error: Exception) {
+                        mutationFailure = error.message ?: error.javaClass.simpleName
                     }
                     if (mutationFailure != null) {
                         val rollbackErrors = restoreState()
