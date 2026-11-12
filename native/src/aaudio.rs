@@ -50,7 +50,7 @@ extern "C" {
     fn AAudioStream_setBufferSizeInFrames(stream: *mut AAudioStream, frames: i32) -> i32;
 }
 
-const OK:i32=0; const INVALID_STATE:i32=-895; const INVALID_FORMAT:i32=-898; const UNAVAILABLE:i32=-890;
+const OK:i32=0; const INVALID_STATE:i32=-895; const INVALID_FORMAT:i32=-898;
 
 fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
     let (valid_bits, subslot_bytes) = match format {
