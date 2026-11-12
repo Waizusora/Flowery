@@ -171,7 +171,6 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     else -> "unknown sharing mode"
                 }
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
-                onState("Playing · Rust AAudio $sharingName · ${sourceRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
 
                 // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
@@ -203,6 +202,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     paused = true
                     onState("Paused · audio output changed")
+                } else {
+                    onState("Playing · Rust AAudio $sharingName · ${sourceRate} Hz · ${channels} ch · $routeName (device $actualDeviceId)")
                 }
                 while (!stopped.get() && playbackGeneration.get() == generation) {
                     val completedSeekPosition = NativeAudio.nativeGetPlaybackSessionSeekPosition(sessionHandle)
