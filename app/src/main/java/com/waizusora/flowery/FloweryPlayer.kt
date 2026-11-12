@@ -110,16 +110,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val deviceId = outputRoute.deviceId
                 // AAudio receives integer PCM for every Android-managed output target.
                 // AUX, speaker, and Bluetooth use integer PCM at the AAudio boundary.
-                // Preserve 16-bit sources; use packed 24-bit for higher-depth sources.
+                // Select integer output width from the detected source bit depth.
                 val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
-                val sourceRate = sourceRate
-                check(sourceRate > 0) {
-                    "Unable to negotiate the selected Android output sample rate. " +
-                        "target=${outputRoute.target}, device=${outputRoute.deviceName ?: "system default"}, deviceId=$deviceId, " +
-                        "sourceRate=$sourceRate, channels=$channels. " +
-                        "Check that the selected Android output is connected."
-                }
-
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(sourceRate)
