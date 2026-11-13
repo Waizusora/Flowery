@@ -340,6 +340,24 @@ mod tests {
     }
 
     #[test]
+    fn resolves_nested_selector_and_multiplier_entity_order() {
+        let mut d = descriptor_prefix();
+        d.extend_from_slice(&[8,0x24,0x0B,9,1,10,2,0]);
+        d.extend_from_slice(&[7,0x24,0x0C,10,7,0x05,0]);
+        d.extend_from_slice(&[8,0x24,0x0B,12,2,9,8,2,0]);
+        append_playback_terminal(&mut d, 12);
+
+        let info = parse_playback_clock_info(&d).unwrap();
+        let paths = &info.clock_paths;
+        assert_eq!(paths.len(), 3);
+        assert_eq!(paths[0].clock_entities, vec![12, 9, 10, 7]);
+        assert_eq!(paths[0].selectors.iter().map(|step| step.entity_id).collect::<Vec<_>>(), vec![12, 9]);
+        assert_eq!(paths[0].multipliers.iter().map(|step| step.entity_id).collect::<Vec<_>>(), vec![10]);
+        assert_eq!(paths[1].clock_entities, vec![12, 9, 7]);
+        assert_eq!(paths[2].clock_entities, vec![12, 8]);
+    }
+
+    #[test]
     fn rejects_clock_topology_cycle() {
         let mut d = descriptor_prefix();
         d.extend_from_slice(&[7,0x24,0x0C,10,11,0x05,0]);
