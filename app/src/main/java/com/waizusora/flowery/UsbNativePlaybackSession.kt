@@ -29,18 +29,34 @@ internal fun startUsbPlaybackTransaction(
     commitClock: () -> Unit,
     rollbackOnStartFailure: Boolean
 ): Result<Unit> {
-    val negotiation = negotiateClock()
+    fun invoke(operation: () -> Result<Unit>, fallbackMessage: String): Result<Unit> =
+        try {
+            operation()
+        } catch (error: Throwable) {
+            Result.failure(error)
+        }
+
+    val negotiation = invoke(negotiateClock, "USB clock negotiation failed")
     if (negotiation.isFailure) return negotiation
 
-    val started = startNativePlayback()
+    val started = invoke(startNativePlayback, "Native USB playback failed to start")
     if (started.isSuccess) {
-        if (rollbackOnStartFailure) commitClock()
+        if (rollbackOnStartFailure) {
+            try {
+                commitClock()
+            } catch (error: Throwable) {
+                return Result.failure(IllegalStateException(
+                    "Native USB playback started but clock transaction commit failed",
+                    error
+                ))
+            }
+        }
         return started
     }
 
     if (!rollbackOnStartFailure) return started
 
-    val rollback = rollbackClock()
+    val rollback = invoke(rollbackClock, "UAC2 clock rollback failed")
     if (rollback.isFailure) {
         return Result.failure(IllegalStateException(
             (started.exceptionOrNull()?.message ?: "Native USB playback failed to start") +
@@ -78,25 +94,29 @@ internal class UsbNativePlaybackSession private constructor(
 
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
-        val negotiation = if (uac2ClockSourceEntity != null) {
-            usb.negotiateUac2Clock(
-                uac2ControlInterface ?: return Result.failure(IllegalStateException("UAC2 control interface is missing")),
-                uac2ClockSourceEntity,
-                uac2ClockControls ?: 0,
-                sampleRate,
-                uac2ClockSelectorEntity ?: 0,
-                uac2ClockSelectorControls ?: 0,
-                uac2SelectorClockSources,
-                uac2SelectorSourceControls,
-                uac2ClockMultiplierEntity ?: 0,
-                uac2ClockMultiplierControls ?: 0,
-                uac2ClockPaths
-            )
+        val negotiateClock: () -> Result<Unit> = if (uac2ClockSourceEntity != null) {
+            val controlInterface = uac2ControlInterface
+                ?: return Result.failure(IllegalStateException("UAC2 control interface is missing"))
+            {
+                usb.negotiateUac2Clock(
+                    controlInterface,
+                    uac2ClockSourceEntity,
+                    uac2ClockControls ?: 0,
+                    sampleRate,
+                    uac2ClockSelectorEntity ?: 0,
+                    uac2ClockSelectorControls ?: 0,
+                    uac2SelectorClockSources,
+                    uac2SelectorSourceControls,
+                    uac2ClockMultiplierEntity ?: 0,
+                    uac2ClockMultiplierControls ?: 0,
+                    uac2ClockPaths
+                )
+            }
         } else {
-            usb.setUac1SampleRate(endpoint, sampleRate)
+            { usb.setUac1SampleRate(endpoint, sampleRate) }
         }
         return startUsbPlaybackTransaction(
-            negotiateClock = { negotiation },
+            negotiateClock = negotiateClock,
             startNativePlayback = {
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
