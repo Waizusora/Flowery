@@ -55,6 +55,37 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
     Ok(source.len())
 }
 
+/// Completion metadata copied from one libusb isochronous transfer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IsochronousPacketCompletion {
+    pub status: i32,
+    pub actual_length: u32,
+    pub expected_length: u32,
+}
+
+/// Validate the transfer and every packet before accounting frames or reusing its buffer.
+/// A short OUT packet is treated as an underrun: it is not silently counted as played audio.
+pub fn validate_isochronous_completion(
+    transfer_status: i32,
+    packets: &[IsochronousPacketCompletion],
+) -> Result<(), String> {
+    if transfer_status != 0 {
+        return Err(format!("Isochronous USB transfer completed with status {transfer_status}"));
+    }
+    for (index, packet) in packets.iter().enumerate() {
+        if packet.status != 0 {
+            return Err(format!("Isochronous USB packet {index} failed with status {}", packet.status));
+        }
+        if packet.actual_length != packet.expected_length {
+            return Err(format!(
+                "Isochronous USB packet {index} was short: {} of {} bytes",
+                packet.actual_length, packet.expected_length
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Build a deterministic PCM packet schedule for the requested USB service intervals.
 /// Fractional sample frames are distributed without long-term drift.
 pub fn build_isochronous_schedule(
@@ -110,6 +141,29 @@ pub fn build_isochronous_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_complete_isochronous_out_transfer_and_all_packets() {
+        let packets = [
+            IsochronousPacketCompletion { status: 0, actual_length: 192, expected_length: 192 },
+            IsochronousPacketCompletion { status: 0, actual_length: 188, expected_length: 188 },
+        ];
+        assert_eq!(validate_isochronous_completion(0, &packets), Ok(()));
+    }
+
+    #[test]
+    fn rejects_transfer_and_individual_packet_completion_errors() {
+        let packet = [IsochronousPacketCompletion { status: 0, actual_length: 8, expected_length: 8 }];
+        assert!(validate_isochronous_completion(-4, &packet).unwrap_err().contains("transfer completed"));
+        let packet_error = [IsochronousPacketCompletion { status: 2, actual_length: 8, expected_length: 8 }];
+        assert!(validate_isochronous_completion(0, &packet_error).unwrap_err().contains("packet 0 failed"));
+    }
+
+    #[test]
+    fn treats_short_isochronous_out_packet_as_underrun() {
+        let packet = [IsochronousPacketCompletion { status: 0, actual_length: 6, expected_length: 8 }];
+        assert!(validate_isochronous_completion(0, &packet).unwrap_err().contains("short: 6 of 8 bytes"));
+    }
 
     #[test]
     fn copies_pcm_frames_into_isochronous_packet_and_pads_final_packet() {
