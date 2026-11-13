@@ -16,6 +16,7 @@ class UsbLibusbSessionTest {
         var sourceRate = 44_100
         val writes = mutableListOf<String>()
         var failNextSourceWrite = false
+        var failSourceRestore = false
 
         override fun transfer(
             requestType: Int,
@@ -58,6 +59,7 @@ class UsbLibusbSessionTest {
                     return 1
                 }
                 if (entityId == 9) {
+                    if (failSourceRestore && readU32(buffer) == 44_100) return -1
                     if (failNextSourceWrite) {
                         failNextSourceWrite = false
                         return -1
@@ -245,6 +247,26 @@ class UsbLibusbSessionTest {
         assertEquals(1, fake.selectorPin)
         assertEquals(44_100, fake.sourceRate)
         assertEquals(listOf("selector5:2", "source:48000", "source:44100", "selector5:1"), fake.writes)
+    }
+
+
+    @Test
+    fun reportsFatalWhenClockSourceRestoreFails() {
+        val fake = FakeUsbControl().apply { failSourceRestore = true }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            multipliers = emptyList()
+        )
+
+        assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
+        val rollback = session.rollbackClockNegotiation()
+        assertTrue(rollback.isFailure)
+        assertTrue(rollback.exceptionOrNull()?.message?.contains("FATAL") == true)
+        assertEquals(2, fake.selectorPin)
+        assertEquals(48_000, fake.sourceRate)
     }
 
 }
