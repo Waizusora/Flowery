@@ -13,7 +13,7 @@ object NativeAudio {
     external fun nativeResumeUsbPlayback(session: Long): Int
     external fun nativeStopUsbPlayback(session: Long)
     external fun nativeGetUsbPlaybackStatus(session: Long): String
-    external fun nativeReadUsbPcmChunk(decoderHandle: Long, maxFrames: Int, validBits: Int, subslotBytes: Int): ByteArray
+    external fun nativeReadUsbPcmChunk(decoderHandle: Long, maxFrames: Int, validBits: Int, subslotBytes: Int, dataFormat: Int): ByteArray
     external fun nativeParseLrc(content: String): String
     external fun nativeParsePlainLyrics(content: String): String
     external fun nativeParseLyricsFile(content: String): String
