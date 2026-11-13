@@ -316,7 +316,7 @@ mod tests {
     #[test]
     fn resolves_multiple_selector_and_multiplier_hops() {
         let mut d = descriptor_prefix();
-        d.extend_from_slice(&[9,0x24,0x0B,9,1,10,2,0]);
+        d.extend_from_slice(&[8,0x24,0x0B,9,1,10,2,0]);
         d.extend_from_slice(&[7,0x24,0x0C,10,11,0x05,0]);
         d.extend_from_slice(&[7,0x24,0x0C,11,7,0x05,0]);
         append_playback_terminal(&mut d, 9);
