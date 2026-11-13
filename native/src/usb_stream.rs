@@ -25,6 +25,8 @@ const PACKETS_PER_TRANSFER: usize = 8;
 const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(target_os = "android")]
 const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(target_os = "android")]
+const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 
 #[cfg(target_os = "android")]
 struct TransferSignal {
@@ -86,6 +88,7 @@ struct UsbStreamWorker {
     status: Arc<AtomicI32>,
     played_frames: Arc<AtomicU64>,
     paused: Arc<AtomicBool>,
+    pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
     thread: JoinHandle<()>,
 }
@@ -275,6 +278,7 @@ fn run_worker(
     status: Arc<AtomicI32>,
     played_frames: Arc<AtomicU64>,
     paused: Arc<AtomicBool>,
+    pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
 ) {
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
@@ -389,6 +393,10 @@ fn run_worker(
             }
         }
         let audio_pending = slots.iter().any(|slot| slot.submitted);
+        pause_drained.store(
+            crate::usb_isochronous::pause_is_drained(paused.load(Ordering::Acquire), audio_pending),
+            Ordering::Release,
+        );
         let feedback_pending = feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
         if !audio_pending && !feedback_pending {
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
@@ -512,24 +520,26 @@ fn spawn_worker(
     let status = Arc::new(AtomicI32::new(0));
     let played_frames = Arc::new(AtomicU64::new(initial_position_frames));
     let paused = Arc::new(AtomicBool::new(initially_paused));
+    let pause_drained = Arc::new(AtomicBool::new(initially_paused));
     let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
     let thread_played_frames = Arc::clone(&played_frames);
     let thread_paused = Arc::clone(&paused);
+    let thread_pause_drained = Arc::clone(&pause_drained);
     let thread_error = Arc::clone(&error);
     let worker_thread = thread::Builder::new()
         .name("flowery-usb-iso-out".into())
         .spawn(move || run_worker(
             session, decoder_handle, config, thread_stop, thread_status,
-            thread_played_frames, thread_paused, thread_error,
+            thread_played_frames, thread_paused, thread_pause_drained, thread_error,
         ))
         .map_err(|e| e.to_string())?;
     workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
         session_handle,
         UsbStreamWorker {
             session: session_handle, decoder_handle, config,
-            stop, status, played_frames, paused, error, thread: worker_thread,
+            stop, status, played_frames, paused, pause_drained, error, thread: worker_thread,
         },
     );
     Ok(())
@@ -688,6 +698,20 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
         return Err("USB stream is not in a running state".into());
     }
     worker.paused.store(paused, Ordering::Release);
+    if !paused {
+        worker.pause_drained.store(false, Ordering::Release);
+        return Ok(());
+    }
+    let deadline = Instant::now() + PAUSE_DRAIN_TIMEOUT;
+    while !worker.pause_drained.load(Ordering::Acquire) {
+        if worker.status.load(Ordering::Acquire) < 0 {
+            return Err("USB stream failed while draining transfers for pause".into());
+        }
+        if Instant::now() >= deadline {
+            return Err("Timed out waiting for submitted USB audio transfers to drain for pause".into());
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
     Ok(())
 }
 
