@@ -95,7 +95,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val negotiated = session.negotiateUac2Clock(
@@ -124,7 +125,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val negotiated = session.negotiateUac2Clock(
@@ -149,10 +151,11 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 6)),
                 Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
@@ -175,7 +178,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
@@ -195,10 +199,11 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 6)),
                 Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
@@ -217,10 +222,11 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 6)),
                 Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
@@ -239,7 +245,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
@@ -297,7 +304,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 8))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
@@ -316,7 +324,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 3, listOf(7, 8))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
@@ -335,7 +344,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
-            multipliers = emptyList()
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
         )
 
         assertTrue(session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path)).isSuccess)
