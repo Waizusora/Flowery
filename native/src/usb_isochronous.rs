@@ -55,6 +55,11 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
     Ok(source.len())
 }
 
+/// A pause is fully drained only after no audio transfer remains submitted.
+pub fn pause_is_drained(paused: bool, audio_transfers_pending: bool) -> bool {
+    paused && !audio_transfers_pending
+}
+
 /// Whether the worker may queue another audio transfer.
 /// Pause drains already submitted transfers but never refills the ring until resumed.
 pub fn audio_submission_allowed(paused: bool, cancelling: bool, eof: bool) -> bool {
@@ -152,6 +157,13 @@ pub fn build_isochronous_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pause_acknowledgement_waits_for_all_audio_transfers() {
+        assert!(!pause_is_drained(true, true));
+        assert!(pause_is_drained(true, false));
+        assert!(!pause_is_drained(false, false));
+    }
 
     #[test]
     fn pause_blocks_audio_refill_and_resume_reenables_it() {
