@@ -155,14 +155,20 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_data_format = match params.sample_format {
-            Some(symphonia::core::sample::SampleFormat::U8) => 2, // UAC PCM8
-            Some(symphonia::core::sample::SampleFormat::S16)
-            | Some(symphonia::core::sample::SampleFormat::S24)
-            | Some(symphonia::core::sample::SampleFormat::S32) => 1, // UAC PCM
-            Some(symphonia::core::sample::SampleFormat::F32) => 3, // UAC IEEE_FLOAT
-            Some(symphonia::core::sample::SampleFormat::F64) => 4, // not a standard UAC Type I float format
-            _ => 0, // unknown or unsupported typed output; never guess
+        let source_data_format = if params.codec == symphonia::core::codecs::CODEC_TYPE_FLAC {
+            // Symphonia's FLAC decoder always exposes its decoded samples as
+            // left-aligned i32, independent of the encoded bit depth.
+            1
+        } else {
+            match params.sample_format {
+                Some(symphonia::core::sample::SampleFormat::U8) => 2, // UAC PCM8
+                Some(symphonia::core::sample::SampleFormat::S16)
+                | Some(symphonia::core::sample::SampleFormat::S24)
+                | Some(symphonia::core::sample::SampleFormat::S32) => 1, // UAC PCM
+                Some(symphonia::core::sample::SampleFormat::F32) => 3, // UAC IEEE_FLOAT
+                Some(symphonia::core::sample::SampleFormat::F64) => 4, // not a standard UAC Type I float format
+                _ => 0, // unknown or unsupported typed output; never guess
+            }
         };
         let source_bits = if params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE {
             32
