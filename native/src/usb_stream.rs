@@ -340,6 +340,8 @@ fn run_worker(
                 || feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
             if pending && crate::usb_isochronous::transfer_drain_timed_out(started_at.elapsed(), TRANSFER_DRAIN_TIMEOUT) {
                 set_error(&error, &status, "Timed out draining cancelled USB transfers; retaining transfer buffers and libusb session to prevent use-after-free".into());
+                // Distinct terminal state: this session must not be reused for seek/restart.
+                status.store(-2, Ordering::Release);
                 unsafe_to_free = true;
                 break;
             }
@@ -493,18 +495,22 @@ fn run_worker(
 }
 
 #[cfg(target_os = "android")]
-fn stop_worker_locked(session: i64) {
+fn stop_worker_locked(session: i64) -> Result<(), String> {
     let worker = workers().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
         let _ = worker.thread.join();
+        if worker.status.load(Ordering::Acquire) == -2 {
+            return Err("USB transfer cancellation could not be drained safely; close and reopen the USB session before starting or seeking again".into());
+        }
     }
+    Ok(())
 }
 
 #[cfg(target_os = "android")]
 pub(super) fn stop_session(session: i64) {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
-    stop_worker_locked(session);
+    let _ = stop_worker_locked(session);
 }
 
 #[cfg(target_os = "android")]
@@ -625,7 +631,7 @@ pub(super) fn start(
         }
     }
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
-    stop_worker_locked(session_handle);
+    stop_worker_locked(session_handle)?;
     let feedback_endpoint = if feedback_endpoint == 0 { None } else { Some(feedback_endpoint) };
     let feedback_packet_bytes = if feedback_endpoint.is_some() {
         let expected = match speed { UsbBusSpeed::Full => 3, UsbBusSpeed::High => 4 };
@@ -677,7 +683,7 @@ pub(super) fn seek(
         .ok_or("Unknown stream decoder handle")?;
 
     // Joining the worker drains cancellation callbacks before touching decoder state.
-    stop_worker_locked(session_handle);
+    stop_worker_locked(session_handle)?;
     let actual_position = decoder.lock().unwrap_or_else(|e| e.into_inner())
         .seek_to(position_ms)?;
     let initial_position_frames = (u128::from(actual_position)
