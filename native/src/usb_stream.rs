@@ -110,8 +110,13 @@ fn lifecycle() -> &'static Mutex<()> {
 
 #[cfg(target_os = "android")]
 fn set_error(error: &Arc<Mutex<String>>, status: &AtomicI32, message: String) {
-    *error.lock().unwrap_or_else(|e| e.into_inner()) = message;
-    status.store(-1, Ordering::Release);
+    crate::usb_isochronous::preserve_first_error(
+        &mut error.lock().unwrap_or_else(|e| e.into_inner()),
+        message,
+    );
+    // Do not downgrade a terminal unsafe-teardown state or overwrite a
+    // completed/stopped state if an asynchronous diagnostic arrives late.
+    let _ = status.compare_exchange(0, -1, Ordering::AcqRel, Ordering::Acquire);
 }
 
 #[cfg(target_os = "android")]
