@@ -729,7 +729,7 @@ pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
             worker.status.load(Ordering::Acquire),
             worker.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
             worker.played_frames.load(Ordering::Acquire),
-            worker.paused.load(Ordering::Acquire),
+            worker.pause_drained.load(Ordering::Acquire),
         ),
         None => (-1, "USB stream worker is not running".into(), 0, false),
     }
