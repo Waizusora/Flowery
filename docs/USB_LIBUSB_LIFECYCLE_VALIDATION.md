@@ -10,7 +10,7 @@ This document records host-testable lifecycle policy and the remaining Android/h
 - Decoder EOF is handled separately: the final scheduled packet is zero-padded to its declared payload length. Only decoded PCM frames are added to the played-frame counter.
 - Pause stops refilling the audio ring. The pause API now waits for an explicit worker acknowledgement that all already-submitted audio transfers have completed, with a 750 ms bound; only then does it report pause success. Resume clears the acknowledgement and permits ring refill. This is a bounded-drain pause, not an instantaneous USB bus halt.
 - Stop, seek replacement, and session close request cancellation and keep pumping libusb events until submitted transfers have delivered callbacks.
-- If cancellation callbacks cannot be drained within two seconds, outstanding transfer slots and the libusb session/context are intentionally retained. This fail-safe leak prevents callbacks from dereferencing freed transfer buffers or user data.
+- If cancellation callbacks cannot be drained within two seconds, outstanding transfer slots and the libusb session/context are intentionally retained. This fail-safe leak prevents callbacks from dereferencing freed transfer buffers or user data. The worker enters a distinct unsafe-teardown state; seek/restart on that session is rejected, and the USB session must be closed and reopened.
 
 ## Host CI tests
 
@@ -29,6 +29,7 @@ The `native/src/usb_isochronous.rs` tests cover:
 - Host tests do not execute Android-gated libusb event handling or callback scheduling.
 - No physical DAC / USB bus capture has yet confirmed completion timing, pause latency, disconnect behavior, or cancellation callback delivery on Android devices.
 - The 750 ms pause timeout returns an error rather than claiming that pause completed while audio packets remain queued.
+- The unsafe-teardown state is terminal for that session; a new stream cannot be started on a context with outstanding callbacks.
 - The two-second timeout path is a safety fallback, not a successful teardown: it deliberately retains native resources if libusb cannot prove that callbacks are drained.
 - Exact underrun behavior under real host-controller load and all DAC feedback implementations remains hardware-unverified.
 
