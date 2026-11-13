@@ -38,6 +38,21 @@ pub fn max_isochronous_payload(raw: u16, speed: UsbBusSpeed) -> Result<u32, Stri
     }
 }
 
+/// Copy complete interleaved PCM frames into one isochronous packet payload.
+/// The destination is zero-filled first so a final short packet is silence-padded.
+pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: usize) -> Result<usize, String> {
+    if frame_bytes == 0 {
+        return Err("PCM frame size must be non-zero".into());
+    }
+    if destination.len() % frame_bytes != 0 || source.len() % frame_bytes != 0 {
+        return Err("PCM packet data is not aligned to complete sample frames".into());
+    }
+    destination.fill(0);
+    let copied = source.len().min(destination.len());
+    destination[..copied].copy_from_slice(&source[..copied]);
+    Ok(copied)
+}
+
 /// Build a deterministic PCM packet schedule for the requested USB service intervals.
 /// Fractional sample frames are distributed without long-term drift.
 pub fn build_isochronous_schedule(
