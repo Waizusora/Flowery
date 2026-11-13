@@ -46,7 +46,7 @@ impl PcmFormat {
 /// Pack decoded normalized float samples into little-endian USB Audio Class PCM.
 /// Valid sample bits are left-aligned in each subslot, as required by Type I PCM.
 pub(super) fn encode_usb_pcm(
-    samples: &[f32],
+    samples: &[f64],
     format: PcmFormat,
     output: &mut Vec<u8>,
 ) -> Result<(), &'static str> {
