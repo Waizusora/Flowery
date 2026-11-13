@@ -29,17 +29,17 @@ internal fun startUsbPlaybackTransaction(
     commitClock: () -> Unit,
     rollbackOnStartFailure: Boolean
 ): Result<Unit> {
-    fun invoke(operation: () -> Result<Unit>, fallbackMessage: String): Result<Unit> =
+    fun invoke(operation: () -> Result<Unit>): Result<Unit> =
         try {
             operation()
         } catch (error: Throwable) {
             Result.failure(error)
         }
 
-    val negotiation = invoke(negotiateClock, "USB clock negotiation failed")
+    val negotiation = invoke(negotiateClock)
     if (negotiation.isFailure) return negotiation
 
-    val started = invoke(startNativePlayback, "Native USB playback failed to start")
+    val started = invoke(startNativePlayback)
     if (started.isSuccess) {
         if (rollbackOnStartFailure) {
             try {
@@ -56,7 +56,7 @@ internal fun startUsbPlaybackTransaction(
 
     if (!rollbackOnStartFailure) return started
 
-    val rollback = invoke(rollbackClock, "UAC2 clock rollback failed")
+    val rollback = invoke(rollbackClock)
     if (rollback.isFailure) {
         return Result.failure(IllegalStateException(
             (started.exceptionOrNull()?.message ?: "Native USB playback failed to start") +
