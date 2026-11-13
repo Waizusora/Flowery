@@ -342,6 +342,22 @@ mod tests {
     }
 
     #[test]
+    fn end_to_end_alac24_m4a_decodes_and_preserves_pcm_codes() {
+        use base64::Engine;
+        // Five mono samples: INT24_MIN, -1, 0, 1, INT24_MAX.
+        const ALAC_24_FIXTURE: &str = "AAAAHGZ0eXBNNEEgAAACAE00QSBpc29taXNvMgAAAqptb292AAAAbG12aGQAAAAAAAAAAAAAAAAAAAPoAAAAAQABAAABAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAB1XRyYWsAAABcdGtoZAAAAAMAAAAAAAAAAAAAAAEAAAAAAAAAAQAAAAAAAAAAAAAAAQEAAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAACRlZHRzAAAAHGVsc3QAAAAAAAAAAQAAAAEAAAAAAAEAAAAAAU1tZGlhAAAAIG1kaGQAAAAAAAAAAAAAAAAAALuAAAAABVXEAAAAAAAtaGRscgAAAAAAAAAAc291bgAAAAAAAAAAAAAAAFNvdW5kSGFuZGxlcgAAAAD4bWluZgAAABBzbWhkAAAAAAAAAAAAAAAkZGluZgAAABxkcmVmAAAAAAAAAAEAAAAMdXJsIAAAAAEAAAC8c3RibAAAAFhzdHNkAAAAAAAAAAEAAABIYWxhYwAAAAAAAAABAAAAAAAAAAAAAQAYAAAAALuAAAAAAAAkYWxhYwAAAAAAABAAABgoCg4BAAAAADAEABGUAAAAu4AAAAAYc3R0cwAAAAAAAAABAAAAAQAAAAUAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAEAAAABAAAAFHN0c3oAAAAAAAAAFwAAAAEAAAAUc3RjbwAAAAAAAAABAAAC1gAAAGF1ZHRhAAAAWW1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALGlsc3QAAAAkqXRvbwAAABxkYXRhAAAAAQAAAABMYXZmNjEuNy4xMDMAAAAIZnJlZQAAAB9tZGF0AAASAAAACwAAAf///gAAAAAAAv///8A=";
+        let m4a = base64::engine::general_purpose::STANDARD.decode(ALAC_24_FIXTURE).unwrap();
+        let decoded = decode_test_audio(m4a, "m4a");
+        assert!(matches!(decoded, UsbPcmSamples::S32(_)), "ALAC 24-bit should decode to Symphonia S32");
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true };
+        let mut actual = Vec::new();
+        encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
+        let source = [-8_388_608_i32, -1, 0, 1, 8_388_607];
+        let expected: Vec<u8> = source.iter().flat_map(|sample| sample.to_le_bytes()[..3].to_vec()).collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
         for format in [
             PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true },
