@@ -121,6 +121,7 @@ pub(super) struct StreamDecoder {
     track_id: u32,
     source_rate: usize,
     source_bits: u8,
+    source_data_format: u8,
     channels: usize,
     input_pending: Vec<f64>,
     usb_pending: Option<crate::pcm_format::UsbPcmSamples>,
@@ -154,6 +155,15 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
+        let source_data_format = match params.sample_format {
+            Some(symphonia::core::audio::sample::SampleFormat::U8) => 2, // UAC PCM8
+            Some(symphonia::core::audio::sample::SampleFormat::S16)
+            | Some(symphonia::core::audio::sample::SampleFormat::S24)
+            | Some(symphonia::core::audio::sample::SampleFormat::S32) => 1, // UAC PCM
+            Some(symphonia::core::audio::sample::SampleFormat::F32) => 3, // UAC IEEE_FLOAT
+            Some(symphonia::core::audio::sample::SampleFormat::F64) => 4, // not a standard UAC Type I float format
+            _ => 0, // unknown or unsupported typed output; never guess
+        };
         let source_bits = if params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE {
             32
         } else {
@@ -182,7 +192,7 @@ impl StreamDecoder {
         let decoder = Some(symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
-            format, decoder, track_id, source_rate, source_bits, channels,
+            format, decoder, track_id, source_rate, source_bits, source_data_format, channels,
             input_pending: Vec::new(), usb_pending: None, eof: false,
             duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
@@ -208,8 +218,8 @@ impl StreamDecoder {
     }
 
 
-    pub(super) fn playback_metadata(&self) -> (usize, usize, u8) {
-        (self.source_rate, self.channels, self.source_bits)
+    pub(super) fn playback_metadata(&self) -> (usize, usize, u8, u8) {
+        (self.source_rate, self.channels, self.source_bits, self.source_data_format)
     }
 
 
@@ -338,6 +348,7 @@ pub(super) fn read_usb_pcm_chunk(
     max_frames: usize,
     valid_bits: u8,
     subslot_bytes: u8,
+    data_format: u8,
 ) -> Result<Vec<u8>, String> {
     if max_frames == 0 || max_frames > 16_384 {
         return Err("USB PCM chunk frame count must be between 1 and 16384".into());
@@ -352,6 +363,9 @@ pub(super) fn read_usb_pcm_chunk(
         little_endian: true,
     }.validate().map_err(str::to_string)?;
     let samples = decoder.read_usb_frames(max_frames)?;
+    if samples.data_format_code() != data_format && !matches!(samples, crate::pcm_format::UsbPcmSamples::Empty) {
+        return Err("Decoded Symphonia sample type does not match the selected USB descriptor format".into());
+    }
     let mut output = Vec::with_capacity(samples.len() * usize::from(subslot_bytes));
     crate::pcm_format::encode_usb_pcm(&samples, format, &mut output)
         .map_err(str::to_string)?;
