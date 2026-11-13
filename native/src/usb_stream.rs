@@ -371,11 +371,11 @@ fn run_worker(
                         // NOT_FOUND means libusb has already removed the transfer
                         // from its active set; its completion callback still owns
                         // the slot until the worker observes that callback.
-                        if result != 0 && result != -5 {
+                        if let Some(code) = crate::usb_isochronous::cancellation_request_error(result) {
                             set_error(
                                 &error,
                                 &status,
-                                format!("Unable to cancel USB audio transfer {index}: libusb error {result}; waiting for callback before teardown"),
+                                format!("Unable to cancel USB audio transfer {index}: libusb error {code}; waiting for callback before teardown"),
                             );
                         }
                     }
@@ -387,7 +387,7 @@ fn run_worker(
                             set_error(
                                 &error,
                                 &status,
-                                format!("Unable to cancel USB feedback transfer: libusb error {result}; waiting for callback before teardown"),
+                                format!("Unable to cancel USB feedback transfer: libusb error {code}; waiting for callback before teardown"),
                             );
                         }
                     }
@@ -403,7 +403,7 @@ fn run_worker(
                         set_error(
                             &error,
                             &status,
-                            format!("Unable to cancel completed-stream feedback transfer: libusb error {result}; waiting for callback before teardown"),
+                            format!("Unable to cancel completed-stream feedback transfer: libusb error {code}; waiting for callback before teardown"),
                         );
                     }
                     feedback_cancelling = true;
