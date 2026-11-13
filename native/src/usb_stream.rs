@@ -67,6 +67,7 @@ struct StreamConfig {
     channels: u8,
     valid_bits: u8,
     subslot_bytes: u8,
+    data_format: u8,
     max_packet_bytes: u32,
     interval_us: u32,
     feedback_endpoint: Option<u8>,
@@ -213,6 +214,7 @@ fn fill_and_submit(
                 remaining_frames,
                 config.valid_bits,
                 config.subslot_bytes,
+                config.data_format,
             )?;
             if chunk.is_empty() {
                 *eof = true;
@@ -509,6 +511,7 @@ pub(super) fn start(
     channels: u8,
     valid_bits: u8,
     subslot_bytes: u8,
+    data_format: u8,
     feedback_endpoint: u8,
     feedback_max_packet_size: u16,
     initial_position_ms: u64,
@@ -522,8 +525,9 @@ pub(super) fn start(
         return Err("Invalid USB stream parameters".into());
     }
     if !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
-        || u16::from(subslot_bytes) * 8 < u16::from(valid_bits) {
-        return Err("Invalid USB PCM subslot format".into());
+        || u16::from(subslot_bytes) * 8 < u16::from(valid_bits)
+        || !(1..=3).contains(&data_format) {
+        return Err("Invalid USB PCM subslot or data format".into());
     }
 
     let session = crate::usb_libusb::session_ref(session_handle)
@@ -558,10 +562,20 @@ pub(super) fn start(
         .ok_or("Unknown stream decoder handle")?;
     {
         let decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
-        let (rate, decoder_channels, _) = decoder.playback_metadata();
+        let (rate, decoder_channels, source_bits, source_data_format) = decoder.playback_metadata();
         if rate != sample_rate as usize || decoder_channels != channels as usize {
             return Err(format!(
                 "USB plan is {sample_rate} Hz/{channels} channel(s), decoder is {rate} Hz/{decoder_channels} channel(s)"
+            ));
+        }
+        if source_data_format != data_format {
+            return Err(format!(
+                "USB descriptor data format code {data_format} does not match decoder format code {source_data_format}"
+            ));
+        }
+        if source_bits != valid_bits {
+            return Err(format!(
+                "USB descriptor bit resolution {valid_bits} does not match decoder source precision {source_bits}"
             ));
         }
     }
@@ -581,7 +595,7 @@ pub(super) fn start(
         None
     };
     let config = StreamConfig {
-        endpoint, sample_rate, channels, valid_bits, subslot_bytes,
+        endpoint, sample_rate, channels, valid_bits, subslot_bytes, data_format,
         max_packet_bytes, interval_us, feedback_endpoint, feedback_packet_bytes,
         feedback_speed: match speed {
             UsbBusSpeed::Full => FeedbackBusSpeed::Full,
