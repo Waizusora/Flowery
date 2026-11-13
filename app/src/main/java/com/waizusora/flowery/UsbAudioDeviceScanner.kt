@@ -97,7 +97,8 @@ internal class UsbAudioDeviceScanner(context: Context) {
         deviceName: String,
         sampleRate: Int,
         channels: Int,
-        bitResolution: Int
+        bitResolution: Int,
+        dataFormat: Int
     ): String {
         val device = usbManager.deviceList[deviceName]
             ?: return """{"ok":false,"error":"USB device is no longer connected"}"""
@@ -108,7 +109,7 @@ internal class UsbAudioDeviceScanner(context: Context) {
             ?: return """{"ok":false,"error":"Android could not open the USB device"}"""
         return try {
             NativeAudio.nativePlanUsbAudioPlayback(
-                connection.rawDescriptors, sampleRate, channels, bitResolution
+                connection.rawDescriptors, sampleRate, channels, bitResolution, dataFormat
             )
         } catch (error: Exception) {
             """{"ok":false,"error":${org.json.JSONObject.quote(error.message ?: "USB planning failed")}}"""
