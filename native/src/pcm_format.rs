@@ -150,6 +150,8 @@ pub(super) fn encode_usb_integer_pcm(
             output.extend(values),
         UsbPcmSamples::S16(values) if format.valid_bits == 16 && format.subslot_bytes == 2 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
+        UsbPcmSamples::S16(values) if format.valid_bits == 16 && format.subslot_bytes == 4 =>
+            for value in values { output.extend_from_slice(&((*value as u32) << 16).to_le_bytes()); },
         UsbPcmSamples::S24(values) if format.valid_bits == 24 && format.subslot_bytes == 3 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()[..3]); },
         UsbPcmSamples::S24(values) if format.valid_bits == 24 && format.subslot_bytes == 4 =>
