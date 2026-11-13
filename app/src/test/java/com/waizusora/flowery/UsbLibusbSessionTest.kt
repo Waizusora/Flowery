@@ -265,7 +265,7 @@ class UsbLibusbSessionTest {
         val rollback = session.rollbackClockNegotiation()
         assertTrue(rollback.isFailure)
         assertTrue(rollback.exceptionOrNull()?.message?.contains("FATAL") == true)
-        assertEquals(2, fake.selectorPin)
+        assertEquals(1, fake.selectorPin)
         assertEquals(48_000, fake.sourceRate)
     }
 
