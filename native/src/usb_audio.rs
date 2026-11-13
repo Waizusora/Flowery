@@ -5,6 +5,20 @@
 //! Runtime clock selection and isochronous transfer scheduling belong to the USB
 //! transport layer and must be validated against the selected interface/alternate.
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UsbAudioDataFormat {
+    Pcm,
+    Pcm8,
+    IeeeFloat,
+}
+
+impl UsbAudioDataFormat {
+    pub fn code(self) -> u8 {
+        match self { Self::Pcm => 1, Self::Pcm8 => 2, Self::IeeeFloat => 3 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct UsbAudioFormat {
     pub interface_number: u8,
@@ -14,6 +28,7 @@ pub struct UsbAudioFormat {
     pub subslot_bytes: Option<u8>,
     pub bit_resolution: Option<u8>,
     pub format_type: Option<u8>,
+    pub data_format: Option<UsbAudioDataFormat>,
     pub sample_rates: Vec<u32>,
     pub continuous_rate_range: Option<(u32, u32)>,
     pub endpoint_address: Option<u8>,
@@ -42,6 +57,7 @@ struct Alternate {
     subslot_bytes: Option<u8>,
     bit_resolution: Option<u8>,
     format_type: Option<u8>,
+    data_format: Option<UsbAudioDataFormat>,
     sample_rates: Vec<u32>,
     continuous_rate_range: Option<(u32, u32)>,
     endpoint_address: Option<u8>,
@@ -78,6 +94,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     subslot_bytes: a.subslot_bytes,
                     bit_resolution: a.bit_resolution,
                     format_type: a.format_type,
+                    data_format: a.data_format,
                     sample_rates: a.sample_rates,
                     continuous_rate_range: a.continuous_rate_range,
                     endpoint_address: a.endpoint_address,
@@ -130,9 +147,16 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                 if let Some(a) = current.as_mut() {
                     if a.subclass == 0x02 {
                         match d[2] {
-                            // UAC1 AS_GENERAL contains terminal link, delay, and format tag.
-                            // Channel count and PCM container details are in FORMAT_TYPE_I.
-                            0x01 if a.protocol == 0x00 => {}
+                            // UAC1 AS_GENERAL carries the two-byte wFormatTag.
+                            0x01 if a.protocol == 0x00 && length >= 7 => {
+                                let format_tag = u16::from_le_bytes([d[5], d[6]]);
+                                a.data_format = match format_tag {
+                                    0x0001 => Some(UsbAudioDataFormat::Pcm),
+                                    0x0002 => Some(UsbAudioDataFormat::Pcm8),
+                                    0x0003 => Some(UsbAudioDataFormat::IeeeFloat),
+                                    _ => None,
+                                };
+                            }
                             // FORMAT_TYPE_I: format, channels, subframe size, bit resolution, rate count.
                             0x02 if a.protocol == 0x00 && length >= 8 => {
                                 a.format_type = Some(d[3]);
@@ -157,9 +181,17 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                                     }
                                 }
                             }
-                            // UAC2 AS_GENERAL: channel count follows terminal link and controls.
+                            // UAC2 AS_GENERAL: bmFormats is a 32-bit bitmap at bytes 6..10.
+                            // Exactly one supported Type I format bit must be selected.
                             0x01 if a.protocol == 0x20 && length >= 16 => {
                                 a.channels = Some(d[10]);
+                                let formats = u32::from_le_bytes([d[6], d[7], d[8], d[9]]);
+                                a.data_format = match formats {
+                                    0x0000_0001 => Some(UsbAudioDataFormat::Pcm),
+                                    0x0000_0002 => Some(UsbAudioDataFormat::Pcm8),
+                                    0x0000_0004 => Some(UsbAudioDataFormat::IeeeFloat),
+                                    _ => None,
+                                };
                             }
                             // UAC2 FORMAT_TYPE: Type I, subslot size and bit resolution.
                             0x02 if a.protocol == 0x20 && length >= 6 => {
@@ -216,6 +248,7 @@ pub struct UsbAudioStreamPlan {
     pub channels: u8,
     pub subslot_bytes: u8,
     pub bit_resolution: u8,
+    pub data_format: UsbAudioDataFormat,
     pub requires_uac2_clock_negotiation: bool,
     pub feedback_endpoint_address: Option<u8>,
     pub feedback_max_packet_size: Option<u16>,
@@ -227,6 +260,16 @@ pub fn plan_pcm_playback(
     sample_rate: u32,
     channels: u8,
     bit_resolution: u8,
+) -> Result<UsbAudioStreamPlan, String> {
+    plan_pcm_playback_with_format(descriptors, sample_rate, channels, bit_resolution, UsbAudioDataFormat::Pcm)
+}
+
+pub fn plan_pcm_playback_with_format(
+    descriptors: &[u8],
+    sample_rate: u32,
+    channels: u8,
+    bit_resolution: u8,
+    requested_format: UsbAudioDataFormat,
 ) -> Result<UsbAudioStreamPlan, String> {
     if sample_rate == 0 || channels == 0 || bit_resolution == 0 {
         return Err("Requested PCM parameters must be non-zero".to_string());
@@ -240,6 +283,7 @@ pub fn plan_pcm_playback(
         ) else { continue };
 
         if format.format_type != Some(1)
+            || format.data_format != Some(requested_format)
             || format_channels != channels
             || bits != bit_resolution
             || subslot_bytes.saturating_mul(8) < bits
@@ -271,6 +315,7 @@ pub fn plan_pcm_playback(
             channels,
             subslot_bytes,
             bit_resolution: bits,
+            data_format: requested_format,
             requires_uac2_clock_negotiation: format.protocol == 0x20,
             feedback_endpoint_address: if format.synchronization_type == Some(1) {
                 format.feedback_endpoint_address
@@ -293,7 +338,7 @@ pub fn plan_pcm_playback(
         return Err("The matching asynchronous USB Audio OUT endpoint has no explicit feedback endpoint; implicit feedback is not supported yet".into());
     }
     Err(format!(
-        "No advertised PCM Type I playback alternate matches {sample_rate} Hz, {channels} channel(s), {bit_resolution}-bit"
+        "No advertised {:?} Type I playback alternate matches {sample_rate} Hz, {channels} channel(s), {bit_resolution}-bit", requested_format
     ))
 }
 
@@ -392,7 +437,7 @@ mod tests {
             8, 0x24, 0x0A, 7, 0x03, 0x02, 0, 0, // Clock Source 7
             17, 0x24, 0x02, 1, 0x01, 0x01, 0, 7, 2, 3, 0, 0, 0, 0, 0, 0, 0, // USB Streaming Input Terminal
             9, 4, 1, 1, 1, 1, 2, 0x20, 0, // UAC2 AudioStreaming alt 1
-            16, 0x24, 0x01, 1, 0, 1, 0, 0, 0, 0, 2, 3, 0, 0, 0, 0, // AS_GENERAL
+            16, 0x24, 0x01, 1, 0, 1, 1, 0, 0, 0, 2, 3, 0, 0, 0, 0, // AS_GENERAL
             6, 0x24, 0x02, 1, 4, 24, // Type I, 4-byte subslot, 24 valid bits
             7, 5, 0x01, 0x09, 0x00, 0x14, 1, // Adaptive isochronous OUT
         ];
@@ -409,7 +454,7 @@ mod tests {
         let descriptors = [
             9, 4, 1, 0, 0, 1, 2, 0x20, 0,
             9, 4, 2, 1, 1, 1, 2, 0x20, 0,
-            16, 0x24, 1, 1, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0,
+            16, 0x24, 1, 1, 1, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0,
             6, 0x24, 2, 1, 4, 24,
             7, 5, 0x01, 0x05, 0x00, 0x14, 1,
         ];
