@@ -282,10 +282,16 @@ pub fn plan_pcm_playback_with_format(
             format.endpoint_address, format.max_packet_size, format.interval
         ) else { continue };
 
+        let valid_data_layout = match requested_format {
+            UsbAudioDataFormat::Pcm => (8..=32).contains(&bits),
+            UsbAudioDataFormat::Pcm8 => bits == 8 && subslot_bytes == 1,
+            UsbAudioDataFormat::IeeeFloat => bits == 32 && subslot_bytes == 4,
+        };
         if format.format_type != Some(1)
             || format.data_format != Some(requested_format)
             || format_channels != channels
             || bits != bit_resolution
+            || !valid_data_layout
             || subslot_bytes.saturating_mul(8) < bits
         {
             continue;
@@ -483,6 +489,31 @@ mod tests {
         ).unwrap();
         assert!(plan.requires_uac2_clock_negotiation);
         assert_eq!(plan.data_format, UsbAudioDataFormat::IeeeFloat);
+    }
+
+    #[test]
+    fn rejects_invalid_pcm8_and_ieee_float_container_layouts() {
+        let pcm8_wrong_subslot = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 2, 0,
+            14, 0x24, 2, 1, 2, 4, 8, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+        ];
+        assert!(plan_pcm_playback_with_format(
+            &pcm8_wrong_subslot, 48_000, 2, 8, UsbAudioDataFormat::Pcm8
+        ).is_err());
+
+        let float_wrong_width = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 3, 0,
+            14, 0x24, 2, 1, 2, 3, 24, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+        ];
+        assert!(plan_pcm_playback_with_format(
+            &float_wrong_width, 48_000, 2, 24, UsbAudioDataFormat::IeeeFloat
+        ).is_err());
     }
 
     #[test]
