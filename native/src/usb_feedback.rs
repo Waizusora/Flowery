@@ -51,8 +51,28 @@ impl PacketFrameScheduler {
     }
 }
 
-/// A bounded low-pass estimate used by the future packet scheduler. The caller
-/// must validate the estimate against the selected format and endpoint capacity.
+/// Validate a measured clock rate against a nominal stream rate before it can
+/// influence packet sizing. The tolerance accommodates normal clock drift while
+/// rejecting malformed or unrelated feedback values.
+pub fn validate_feedback_rate_hz(nominal_hz: u32, measured_hz: f64) -> Result<(), String> {
+    if nominal_hz == 0 {
+        return Err("Nominal USB audio sample rate must be non-zero".into());
+    }
+    if !measured_hz.is_finite() {
+        return Err("USB feedback rate is not finite".into());
+    }
+    let lower = f64::from(nominal_hz) * 0.75;
+    let upper = f64::from(nominal_hz) * 1.50;
+    if measured_hz < lower || measured_hz > upper {
+        return Err(format!(
+            "USB feedback rate {measured_hz:.2} Hz is outside the allowed range for nominal {nominal_hz} Hz"
+        ));
+    }
+    Ok(())
+}
+
+/// A bounded low-pass estimate used by the packet scheduler. The caller must
+/// validate each sample against the selected format before updating the tracker.
 #[derive(Debug, Clone, Copy)]
 pub struct FeedbackRateTracker {
     estimate_hz: Option<f64>,
@@ -128,6 +148,33 @@ mod tests {
         let fixed = (6.0_f64 * 65_536.0).round() as u32;
         let rate = decode_feedback_rate_hz(&fixed.to_le_bytes(), FeedbackBusSpeed::High).unwrap();
         assert!((rate - 48_000.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn rejects_feedback_packets_with_wrong_lengths_or_zero_values() {
+        assert!(decode_feedback_rate_hz(&[1, 2], FeedbackBusSpeed::Full).is_err());
+        assert!(decode_feedback_rate_hz(&[0, 0, 0], FeedbackBusSpeed::Full).is_err());
+        assert!(decode_feedback_rate_hz(&[1, 2, 3], FeedbackBusSpeed::High).is_err());
+        assert!(decode_feedback_rate_hz(&[0, 0, 0, 0], FeedbackBusSpeed::High).is_err());
+    }
+
+    #[test]
+    fn validates_feedback_against_nominal_rate_tolerance() {
+        assert!(validate_feedback_rate_hz(48_000, 36_000.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 72_000.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 35_999.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 72_001.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, f64::INFINITY).is_err());
+        assert!(validate_feedback_rate_hz(0, 48_000.0).is_err());
+    }
+
+    #[test]
+    fn tracker_rejects_out_of_range_and_non_finite_samples_without_mutating_estimate() {
+        let mut tracker = FeedbackRateTracker::new(0.5).unwrap();
+        assert_eq!(tracker.update(48_000.0).unwrap(), 48_000.0);
+        assert!(tracker.update(0.0).is_err());
+        assert!(tracker.update(f64::NAN).is_err());
+        assert_eq!(tracker.estimate_hz(), Some(48_000.0));
     }
 
     #[test]
