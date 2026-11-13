@@ -93,11 +93,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 usbRouteActive = AndroidOutputRouteResolver(context).detectCurrent() == AndroidOutputTarget.USB
 
                 val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
-                check(preparedSession.size == 5) { "Rust returned an invalid prepared playback session" }
+                check(preparedSession.size == 6) { "Rust returned an invalid prepared playback session" }
                 sessionHandle = preparedSession[0]
                 val sourceRate = preparedSession[2].toInt()
                 val channels = preparedSession[3].toInt()
                 val sourceBits = preparedSession[4].toInt()
+                val sourceDataFormat = preparedSession[5].toInt()
                 check(sessionHandle != 0L) { "The native playback session could not be created" }
                 check(sourceRate > 0 && channels in 1..8) {
                     "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels."
@@ -131,7 +132,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                     }
                     val directUsb = UsbNativePlaybackSession.open(
-                        context, handle, sourceRate, channels, sourceBits
+                        context, handle, sourceRate, channels, sourceBits, sourceDataFormat
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
                     directUsb.start(actualStartPositionMs).getOrThrow()
