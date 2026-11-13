@@ -32,7 +32,7 @@ impl PcmFormat {
         }
         if !matches!(self.valid_bits, 8 | 16 | 20 | 24 | 32 | 64)
             || self.valid_bits as u16 > self.subslot_bytes as u16 * 8 {
-            return Err("Unsupported signed integer PCM representation");
+            return Err("Unsupported PCM sample representation");
         }
         Ok(self)
     }
@@ -56,7 +56,7 @@ pub(super) enum UsbPcmSamples {
 
 impl UsbPcmSamples {
     pub fn from_audio_buffer(decoded: symphonia::core::audio::AudioBufferRef<'_>) -> Result<Self, &'static str> {
-        use symphonia::core::audio::AudioBufferRef;
+        use symphonia::core::audio::{AudioBufferRef, Signal};
         fn interleave<T: Copy>(buffer: &symphonia::core::audio::AudioBuffer<T>) -> Vec<T>
         where T: symphonia::core::sample::Sample {
             let channels = buffer.spec().channels.count();
