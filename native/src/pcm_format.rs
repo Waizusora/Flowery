@@ -345,7 +345,7 @@ mod tests {
         let mut wide_actual = Vec::new();
         encode_usb_pcm_for_data_format(&decoded, wide_format, 1, &mut wide_actual).unwrap();
         let wide_source = [-8_388_608_i32, -1, 0, 1, 8_388_607];
-        let wide_expected: Vec<u8> = wide_source.iter().map(|sample| (sample << 8).to_le_bytes()).flatten().collect();
+        let wide_expected: Vec<u8> = wide_source.iter().map(|sample| (*sample << 8).to_le_bytes()).flatten().collect();
         assert_eq!(wide_actual, wide_expected);
     }
 
