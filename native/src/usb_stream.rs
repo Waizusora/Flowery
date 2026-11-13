@@ -220,11 +220,9 @@ fn fill_and_submit(
                 *eof = true;
                 break;
             }
-            if chunk.len() % frame_bytes != 0 {
-                return Err("PCM decoder produced a non-frame-aligned USB chunk".into());
-            }
-            let copy = chunk.len().min(expected - written);
-            slot.buffer[offset + written..offset + written + copy].copy_from_slice(&chunk[..copy]);
+            let packet_region = &mut slot.buffer[offset + written..offset + expected];
+            let copy = crate::usb_isochronous::copy_pcm_into_packet(packet_region, &chunk, frame_bytes)
+                .map_err(|message| format!("Invalid PCM data for USB isochronous packet: {message}"))?;
             written += copy;
         }
 
