@@ -251,6 +251,45 @@ class UsbLibusbSessionTest {
 
 
     @Test
+    fun rejectsClockPathWhenSelectorInputDoesNotMatchNextEntity() {
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 1, listOf(8, 9))),
+            multipliers = emptyList(),
+            clockEntities = listOf(5, 9)
+        )
+
+        assertFalse(path.hasConsistentTopology())
+    }
+
+    @Test
+    fun rejectsClockPathWhenMultiplierLinkDoesNotMatchNextEntity() {
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = emptyList(),
+            multipliers = listOf(Uac2ClockMultiplierStep(5, 0x05, 8)),
+            clockEntities = listOf(5, 9)
+        )
+
+        assertFalse(path.hasConsistentTopology())
+    }
+
+    @Test
+    fun acceptsInterleavedSelectorAndMultiplierChain() {
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 1, listOf(6, 7))),
+            multipliers = listOf(Uac2ClockMultiplierStep(6, 0x05, 9)),
+            clockEntities = listOf(5, 6, 9)
+        )
+
+        assertTrue(path.hasConsistentTopology())
+    }
+
+    @Test
     fun rejectsActiveSelectorPinOutsideDescriptorInputCountBeforeMutation() {
         val fake = FakeUsbControl().apply { selectorPin = 3 }
         val session = UsbLibusbSession(null, 1L, fake)
