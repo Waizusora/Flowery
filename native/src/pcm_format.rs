@@ -180,8 +180,22 @@ pub(super) fn encode_usb_integer_pcm(
             for value in values { output.extend_from_slice(&value.to_le_bytes()[..3]); },
         UsbPcmSamples::S24(values) if format.valid_bits == 24 && format.subslot_bytes == 4 =>
             for value in values { output.extend_from_slice(&((*value as u32) << 8).to_le_bytes()); },
-        UsbPcmSamples::S32(values) if format.valid_bits == 32 && format.subslot_bytes == 4 =>
-            for value in values { output.extend_from_slice(&value.to_le_bytes()); },
+        // Symphonia's FLAC decoder stores every decoded depth in i32 and
+        // left-aligns valid sample bits. Remove only the low padding bits when
+        // the USB subslot is narrower than 32 bits; preserve left alignment in
+        // a 32-bit subslot.
+        UsbPcmSamples::S32(values)
+            if matches!(format.valid_bits, 16 | 24 | 32)
+                && matches!(format.subslot_bytes, 2 | 3 | 4)
+                && format.valid_bits as u16 <= format.subslot_bytes as u16 * 8 =>
+        {
+            let padding = 32 - u32::from(format.valid_bits);
+            for value in values {
+                let aligned = if padding == 0 { *value } else { *value >> padding };
+                let bytes = aligned.to_le_bytes();
+                output.extend_from_slice(&bytes[..format.subslot_bytes as usize]);
+            }
+        },
         UsbPcmSamples::Empty => {},
         _ => return Err("USB integer PCM format does not exactly match the decoder sample representation"),
     }
@@ -278,6 +292,27 @@ mod tests {
             .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
             .collect();
         assert_eq!(decoded_codes, source_codes);
+    }
+
+    #[test]
+    fn encodes_symphonia_left_aligned_s32_for_16_24_and_32_bit_pcm() {
+        let cases = [
+            (16_u8, 2_u8, vec![i32::MIN, -65_536, 0, 65_536, i32::MAX & !0xffff]),
+            (24_u8, 3_u8, vec![i32::MIN, -256, 0, 256, i32::MAX & !0xff]),
+            (24_u8, 4_u8, vec![i32::MIN, -256, 0, 256, i32::MAX & !0xff]),
+            (32_u8, 4_u8, vec![i32::MIN, -1, 0, 1, i32::MAX]),
+        ];
+        for (valid_bits, subslot_bytes, source) in cases {
+            let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits, subslot_bytes, little_endian: true };
+            let mut output = Vec::new();
+            encode_usb_pcm(&UsbPcmSamples::S32(source.clone()), format, &mut output).unwrap();
+            let padding = 32 - u32::from(valid_bits);
+            let expected: Vec<u8> = source.iter().flat_map(|sample| {
+                let aligned = if padding == 0 { *sample } else { *sample >> padding };
+                aligned.to_le_bytes()[..subslot_bytes as usize].to_vec()
+            }).collect();
+            assert_eq!(output, expected, "valid_bits={valid_bits}, subslot_bytes={subslot_bytes}");
+        }
     }
 
     #[test]
