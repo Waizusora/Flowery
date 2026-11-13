@@ -140,8 +140,6 @@ pub(super) fn encode_usb_pcm(
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
         UsbPcmSamples::F32(values) if format.valid_bits == 32 && format.subslot_bytes == 4 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
-        UsbPcmSamples::F64(values) if format.valid_bits == 32 && format.subslot_bytes == 4 =>
-            for value in values { output.extend_from_slice(&((*value as f32).to_le_bytes())); },
         UsbPcmSamples::F64(values) if format.valid_bits == 64 && format.subslot_bytes == 8 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
         _ => return Err("USB endpoint PCM format does not exactly match the decoder sample representation"),
@@ -176,7 +174,7 @@ mod tests {
     fn encodes_24_valid_bits_left_aligned_in_32_bit_subslot() {
         let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 24, subslot_bytes: 4, little_endian: true };
         let mut output = Vec::new();
-        encode_usb_pcm(&UsbPcmSamples::F64(vec![0.0, -1.0, 0.5, 1.0]), format, &mut output).unwrap();
+        encode_usb_pcm(&UsbPcmSamples::S24(vec![0, -8_388_608, 4_194_304, 8_388_607]), format, &mut output).unwrap();
         assert_eq!(&output[0..4], &[0, 0, 0, 0]);
         assert_eq!(&output[4..8], &[0, 0, 0, 0x80]);
         assert_eq!(&output[8..12], &[0, 0, 0, 0x40]);
@@ -187,31 +185,28 @@ mod tests {
     fn encodes_32_bit_integer_pcm_without_f32_precision_loss() {
         let format = PcmFormat {
             sample_rate: 192_000,
-            channels: 2,
+            channels: 1,
             valid_bits: 32,
             subslot_bytes: 4,
             little_endian: true,
         };
-        let scale = (1_i64 << 31) as f64;
         let source_codes = [
-            i32::MIN as i64,
+            i32::MIN,
             -16_777_217,
             -1,
             0,
             1,
             16_777_217,
-            i32::MAX as i64,
+            i32::MAX,
         ];
-        let samples: Vec<f64> = source_codes.iter().map(|code| *code as f64 / scale).collect();
         let mut output = Vec::new();
-        encode_usb_pcm(&UsbPcmSamples::F64(samples), format, &mut output).unwrap();
+        encode_usb_pcm(&UsbPcmSamples::S32(source_codes.to_vec()), format, &mut output).unwrap();
 
         let decoded_codes: Vec<i32> = output
             .chunks_exact(4)
             .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
             .collect();
-        let expected: Vec<i32> = source_codes.iter().map(|code| *code as i32).collect();
-        assert_eq!(decoded_codes, expected);
+        assert_eq!(decoded_codes, source_codes);
     }
 
     #[test]
