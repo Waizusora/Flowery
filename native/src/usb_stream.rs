@@ -441,11 +441,11 @@ fn run_worker(
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
         if event_result < 0 && event_result != -10 {
             set_error(&error, &status, crate::usb_isochronous::event_error_message(event_result));
-            // Keep pumping events while cancellation callbacks are outstanding.
-            // The bounded drain timeout below prevents an unbounded join if the
-            // device/context can no longer deliver callbacks.
+            // Do not skip completion-signal inspection after an event-loop error:
+            // a callback may have completed before libusb returned the error.
+            // The next iteration enters cancellation and keeps pumping events
+            // until every submitted transfer is acknowledged or the drain times out.
             thread::sleep(Duration::from_millis(1));
-            continue;
         }
         if let Some(feedback) = feedback_slot.as_mut() {
             if feedback.submitted && feedback.signal.completed.swap(false, Ordering::AcqRel) {
