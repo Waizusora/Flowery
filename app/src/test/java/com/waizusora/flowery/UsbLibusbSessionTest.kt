@@ -206,7 +206,7 @@ class UsbLibusbSessionTest {
         assertEquals(1, fake.selectorPin)
         assertEquals(1, fake.secondSelectorPin)
         assertEquals(44_100, fake.sourceRate)
-        assertEquals(listOf("selector5:2", "selector5:1"), fake.writes)
+        assertEquals(listOf("selector5:2", "selector6:1", "selector5:1"), fake.writes)
     }
 
     @Test
