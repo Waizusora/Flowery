@@ -11,7 +11,7 @@ use std::{
         Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(target_os = "android")]
@@ -21,6 +21,8 @@ use crate::usb_feedback::{FeedbackBusSpeed, FeedbackRateTracker, PacketFrameSche
 const TRANSFER_RING_SIZE: usize = 4;
 #[cfg(target_os = "android")]
 const PACKETS_PER_TRANSFER: usize = 8;
+#[cfg(target_os = "android")]
+const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
 
 #[cfg(target_os = "android")]
 struct TransferSignal {
@@ -34,6 +36,7 @@ struct TransferSlot {
     signal: Box<TransferSignal>,
     submitted: bool,
     audio_frames: u64,
+    submitted_at: Option<Instant>,
 }
 
 #[cfg(target_os = "android")]
@@ -42,6 +45,7 @@ struct FeedbackSlot {
     buffer: Vec<u8>,
     signal: Box<TransferSignal>,
     submitted: bool,
+    submitted_at: Option<Instant>,
 }
 
 #[cfg(target_os = "android")]
@@ -135,7 +139,7 @@ fn create_slot(
             0,
         );
     }
-    Ok(TransferSlot { transfer, buffer, signal, submitted: false, audio_frames: 0 })
+    Ok(TransferSlot { transfer, buffer, signal, submitted: false, audio_frames: 0, submitted_at: None })
 }
 
 #[cfg(target_os = "android")]
@@ -156,7 +160,7 @@ fn create_feedback_slot(
             1, transfer_callback, (&*signal as *const TransferSignal).cast_mut().cast(), 0,
         );
     }
-    Ok(FeedbackSlot { transfer, buffer, signal, submitted: false })
+    Ok(FeedbackSlot { transfer, buffer, signal, submitted: false, submitted_at: None })
 }
 
 #[cfg(target_os = "android")]
@@ -167,6 +171,7 @@ fn submit_feedback(slot: &mut FeedbackSlot) -> Result<(), String> {
         return Err(format!("Unable to submit USB feedback transfer: libusb error {result}"));
     }
     slot.submitted = true;
+    slot.submitted_at = Some(Instant::now());
     Ok(())
 }
 
@@ -235,6 +240,7 @@ fn fill_and_submit(
         return Err(format!("libusb_submit_transfer failed with code {result}"));
     }
     slot.submitted = true;
+    slot.submitted_at = Some(Instant::now());
     Ok(())
 }
 
@@ -326,6 +332,21 @@ fn run_worker(
 
     let mut cancelling = false;
     loop {
+        if !cancelling {
+            let audio_timed_out = slots.iter().any(|slot| {
+                slot.submitted_at.map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT).unwrap_or(false)
+            });
+            let feedback_timed_out = feedback_slot.as_ref().map(|slot| {
+                slot.submitted && slot.submitted_at
+                    .map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT)
+                    .unwrap_or(false)
+            }).unwrap_or(false);
+            if audio_timed_out {
+                set_error(&error, &status, "USB isochronous OUT transfer timed out".into());
+            } else if feedback_timed_out {
+                set_error(&error, &status, "USB explicit feedback transfer timed out".into());
+            }
+        }
         if stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0 {
             if !cancelling {
                 cancelling = true;
@@ -370,6 +391,7 @@ fn run_worker(
         if let Some(feedback) = feedback_slot.as_mut() {
             if feedback.submitted && feedback.signal.completed.swap(false, Ordering::AcqRel) {
                 feedback.submitted = false;
+                feedback.submitted_at = None;
                 if !cancelling && !feedback_cancelling {
                     let transfer_status = unsafe { (*feedback.transfer).status };
                     let descriptor = unsafe { &*(*feedback.transfer).iso_packet_desc.as_ptr() };
@@ -386,13 +408,8 @@ fn run_worker(
                     } else {
                         match crate::usb_feedback::decode_feedback_rate_hz(&feedback.buffer, config.feedback_speed) {
                             Ok(measured) => {
-                                let lower = f64::from(config.sample_rate) * 0.75;
-                                let upper = f64::from(config.sample_rate) * 1.50;
-                                if measured < lower || measured > upper {
-                                    set_error(&error, &status, format!(
-                                        "USB feedback rate {measured:.2} Hz is outside the allowed range for nominal {} Hz",
-                                        config.sample_rate
-                                    ));
+                                if let Err(message) = crate::usb_feedback::validate_feedback_rate_hz(config.sample_rate, measured) {
+                                    set_error(&error, &status, message);
                                 } else if let Ok(estimate) = feedback_tracker.update(measured) {
                                     feedback_rate_hz = Some(estimate);
                                 }
@@ -411,6 +428,7 @@ fn run_worker(
         for slot in &mut slots {
             if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) { continue; }
             slot.submitted = false;
+            slot.submitted_at = None;
             if !cancelling {
                 if let Err(message) = transfer_packets_succeeded(slot) { set_error(&error, &status, message); continue; }
                 played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
