@@ -55,6 +55,17 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
     Ok(source.len())
 }
 
+/// Whether the worker may queue another audio transfer.
+/// Pause drains already submitted transfers but never refills the ring until resumed.
+pub fn audio_submission_allowed(paused: bool, cancelling: bool, eof: bool) -> bool {
+    !paused && !cancelling && !eof
+}
+
+/// Whether a cancellation drain has exceeded its bounded wait period.
+pub fn transfer_drain_timed_out(elapsed: std::time::Duration, limit: std::time::Duration) -> bool {
+    elapsed >= limit
+}
+
 /// Completion metadata copied from one libusb isochronous transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IsochronousPacketCompletion {
@@ -141,6 +152,21 @@ pub fn build_isochronous_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pause_blocks_audio_refill_and_resume_reenables_it() {
+        assert!(!audio_submission_allowed(true, false, false));
+        assert!(audio_submission_allowed(false, false, false));
+        assert!(!audio_submission_allowed(false, true, false));
+        assert!(!audio_submission_allowed(false, false, true));
+    }
+
+    #[test]
+    fn cancellation_drain_timeout_has_a_strict_boundary() {
+        use std::time::Duration;
+        assert!(!transfer_drain_timed_out(Duration::from_millis(1999), Duration::from_secs(2)));
+        assert!(transfer_drain_timed_out(Duration::from_secs(2), Duration::from_secs(2)));
+    }
 
     #[test]
     fn validates_complete_isochronous_out_transfer_and_all_packets() {
