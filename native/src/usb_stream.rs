@@ -383,7 +383,7 @@ fn run_worker(
                 if let Some(feedback) = feedback_slot.as_mut() {
                     if feedback.submitted {
                         let result = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
-                        if result != 0 && result != -5 {
+                        if let Some(code) = crate::usb_isochronous::cancellation_request_error(result) {
                             set_error(
                                 &error,
                                 &status,
@@ -399,7 +399,7 @@ fn run_worker(
             if let Some(feedback) = feedback_slot.as_mut() {
                 if feedback.submitted && !feedback_cancelling {
                     let result = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
-                    if result != 0 && result != -5 {
+                    if let Some(code) = crate::usb_isochronous::cancellation_request_error(result) {
                         set_error(
                             &error,
                             &status,
