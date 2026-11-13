@@ -323,6 +323,20 @@ mod tests {
             encode_usb_pcm_for_data_format(&decoded, format, data_format, &mut actual)
                 .expect("encode descriptor-matched USB PCM");
             assert_eq!(actual, expected, "valid_bits={valid_bits}, data_format={data_format}");
+
+            let frame_bytes = subslot_bytes as usize;
+            let schedule = crate::usb_isochronous::build_isochronous_schedule(
+                48_000, 1, subslot_bytes, 192, 1,
+                crate::usb_isochronous::UsbBusSpeed::Full, 1,
+            ).unwrap();
+            let packet_bytes = schedule.packets[0].payload_bytes as usize;
+            let mut iso_payload = vec![0xff; packet_bytes];
+            let copied = crate::usb_isochronous::copy_pcm_into_packet(
+                &mut iso_payload, &actual, frame_bytes,
+            ).unwrap();
+            assert_eq!(copied, expected.len());
+            assert_eq!(&iso_payload[..expected.len()], expected.as_slice());
+            assert!(iso_payload[expected.len()..].iter().all(|byte| *byte == 0));
         }
     }
 
