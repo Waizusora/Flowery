@@ -9,6 +9,10 @@ class UsbLibusbSessionTest {
         var selectorPin = 1
         var secondSelectorPin = 1
         var failSelectorRestore = false
+        var failSecondSelectorSet = false
+        var failSecondSelectorGet = false
+        var failSourceVerification = false
+        var sourceWriteCompleted = false
         var sourceRate = 44_100
         val writes = mutableListOf<String>()
         var failNextSourceWrite = false
@@ -34,17 +38,20 @@ class UsbLibusbSessionTest {
             }
             if (requestType == 0xA1 && request == 0x01 && value == 0x0100) {
                 if (entityId == 5 || entityId == 6) {
+                    if (entityId == 6 && failSecondSelectorGet) return -1
                     buffer[0] = (if (entityId == 5) selectorPin else secondSelectorPin).toByte()
                     return 1
                 }
                 if (entityId == 9) {
-                    putU32(buffer, 0, sourceRate)
+                    putU32(buffer, 0, if (failSourceVerification && sourceWriteCompleted) 47_999 else sourceRate)
+                    if (sourceWriteCompleted) failSourceVerification = false
                     return 4
                 }
             }
             if (requestType == 0x21 && request == 0x01 && value == 0x0100) {
                 if (entityId == 5 || entityId == 6) {
                     val pin = buffer[0].toInt() and 0xFF
+                    if (entityId == 6 && failSecondSelectorSet) { failSecondSelectorSet = false; return -1 }
                     if (entityId == 5 && pin == 1 && failSelectorRestore) return -1
                     if (entityId == 5) selectorPin = pin else secondSelectorPin = pin
                     writes += "selector$entityId:$pin"
@@ -56,6 +63,7 @@ class UsbLibusbSessionTest {
                         return -1
                     }
                     sourceRate = readU32(buffer)
+                    sourceWriteCompleted = true
                     writes += "source:$sourceRate"
                     return 4
                 }
@@ -174,6 +182,69 @@ class UsbLibusbSessionTest {
         assertTrue(rollback.exceptionOrNull()?.message?.contains("FATAL") == true)
         assertEquals(2, fake.selectorPin)
         assertEquals(44_100, fake.sourceRate)
+    }
+
+
+    @Test
+    fun restoresEarlierSelectorWhenSecondSelectorSetFails() {
+        val fake = FakeUsbControl().apply { failSecondSelectorSet = true }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(
+                Uac2ClockSelectorStep(5, 2, 2),
+                Uac2ClockSelectorStep(6, 2, 3)
+            ),
+            multipliers = emptyList()
+        )
+
+        val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
+        assertTrue(result.isFailure)
+        assertEquals(1, fake.selectorPin)
+        assertEquals(1, fake.secondSelectorPin)
+        assertEquals(44_100, fake.sourceRate)
+        assertEquals(listOf("selector5:2", "selector5:1"), fake.writes)
+    }
+
+    @Test
+    fun doesNotMutateClockWhenLaterSelectorGetCurFails() {
+        val fake = FakeUsbControl().apply { failSecondSelectorGet = true }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(
+                Uac2ClockSelectorStep(5, 2, 2),
+                Uac2ClockSelectorStep(6, 2, 3)
+            ),
+            multipliers = emptyList()
+        )
+
+        val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
+        assertTrue(result.isFailure)
+        assertEquals(1, fake.selectorPin)
+        assertEquals(1, fake.secondSelectorPin)
+        assertEquals(44_100, fake.sourceRate)
+        assertTrue(fake.writes.isEmpty())
+    }
+
+    @Test
+    fun restoresClockSourceAndSelectorWhenSourceVerificationFails() {
+        val fake = FakeUsbControl().apply { failSourceVerification = true }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            multipliers = emptyList()
+        )
+
+        val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
+        assertTrue(result.isFailure)
+        assertEquals(1, fake.selectorPin)
+        assertEquals(44_100, fake.sourceRate)
+        assertEquals(listOf("selector5:2", "source:48000", "source:44100", "selector5:1"), fake.writes)
     }
 
 }
