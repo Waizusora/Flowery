@@ -123,6 +123,7 @@ pub(super) struct StreamDecoder {
     source_bits: u8,
     channels: usize,
     input_pending: Vec<f64>,
+    usb_pending: Option<crate::pcm_format::UsbPcmSamples>,
     eof: bool,
     duration_ms: u64,
     time_base: Option<symphonia::core::units::TimeBase>,
@@ -182,7 +183,7 @@ impl StreamDecoder {
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
             format, decoder, track_id, source_rate, source_bits, channels,
-            input_pending: Vec::new(), eof: false,
+            input_pending: Vec::new(), usb_pending: None, eof: false,
             duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
         })
@@ -196,6 +197,7 @@ impl StreamDecoder {
         ).map_err(|e| format!("Container seek failed: {e}"))?;
         if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.input_pending.clear();
+        self.usb_pending = None;
         self.eof = false;
         self.consecutive_decode_errors = 0;
         let actual_ms = timestamp_to_milliseconds(seeked.actual_ts, self.time_base, requested_ms);
@@ -216,7 +218,7 @@ impl StreamDecoder {
 
 
     #[cfg(target_os = "android")]
-    fn decode_packet(&mut self) -> Result<bool,String> {
+    fn decode_packet(&mut self, preserve_usb_samples: bool) -> Result<bool,String> {
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
@@ -240,18 +242,33 @@ impl StreamDecoder {
                     if spec.channels.count() != self.channels {
                         return Err("The audio stream changed channel layout mid-track".into());
                     }
-                    // f64 exactly represents every normalized signed 32-bit PCM code point.
-                    // Keep this precision until USB packing; AAudio narrows at its own boundary.
-                    let mut buffer = SampleBuffer::<f64>::new(decoded.capacity() as u64, spec);
-                    buffer.copy_interleaved_ref(decoded);
-                    let mut samples = buffer.samples().to_vec();
-                    let decoded_frames = (samples.len() / self.channels) as u64;
-                    let discard_samples = self.discard_source_frames.min(decoded_frames) as usize * self.channels;
-                    if discard_samples > 0 {
-                        samples.drain(..discard_samples);
-                        self.discard_source_frames -= (discard_samples / self.channels) as u64;
+                    if preserve_usb_samples {
+                        let mut samples = crate::pcm_format::UsbPcmSamples::from_audio_buffer(decoded)
+                            .map_err(str::to_string)?;
+                        let decoded_frames = (samples.len() / self.channels) as u64;
+                        let discard_samples = self.discard_source_frames.min(decoded_frames) as usize * self.channels;
+                        if discard_samples > 0 {
+                            let _ = samples.drain(discard_samples as usize);
+                            self.discard_source_frames -= (discard_samples / self.channels) as u64;
+                        }
+                        if let Some(pending) = self.usb_pending.as_mut() {
+                            pending.append(samples).map_err(str::to_string)?;
+                        } else {
+                            self.usb_pending = Some(samples);
+                        }
+                    } else {
+                        // AAudio consumes normalized f32; retain f64 until its output boundary.
+                        let mut buffer = SampleBuffer::<f64>::new(decoded.capacity() as u64, spec);
+                        buffer.copy_interleaved_ref(decoded);
+                        let mut samples = buffer.samples().to_vec();
+                        let decoded_frames = (samples.len() / self.channels) as u64;
+                        let discard_samples = self.discard_source_frames.min(decoded_frames) as usize * self.channels;
+                        if discard_samples > 0 {
+                            samples.drain(..discard_samples);
+                            self.discard_source_frames -= (discard_samples / self.channels) as u64;
+                        }
+                        self.input_pending.extend_from_slice(&samples);
                     }
-                    self.input_pending.extend_from_slice(&samples);
                     return Ok(true);
                 }
                 Err(Error::DecodeError(reason)) => {
@@ -270,7 +287,7 @@ impl StreamDecoder {
 
     #[cfg(target_os = "android")]
     fn read_frames(&mut self, requested: usize) -> Result<Vec<f32>,String> {
-        while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
+        while self.input_pending.is_empty() && !self.eof { self.decode_packet(false)?; }
         if self.input_pending.is_empty() { return Ok(Vec::new()); }
         let take = (requested * self.channels).min(self.input_pending.len());
         let samples: Vec<f32> = self.input_pending.drain(..take).map(|sample| sample as f32).collect();
@@ -278,11 +295,19 @@ impl StreamDecoder {
     }
 
     #[cfg(target_os = "android")]
-    fn read_usb_frames(&mut self, requested: usize) -> Result<Vec<f64>,String> {
-        while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
-        if self.input_pending.is_empty() { return Ok(Vec::new()); }
-        let take = (requested * self.channels).min(self.input_pending.len());
-        Ok(self.input_pending.drain(..take).collect())
+    fn read_usb_frames(&mut self, requested: usize) -> Result<crate::pcm_format::UsbPcmSamples,String> {
+        while self.usb_pending.as_ref().map(|samples| samples.len() == 0).unwrap_or(true) && !self.eof {
+            self.decode_packet(true)?;
+        }
+        let Some(pending) = self.usb_pending.as_mut() else {
+            return Err("USB decoder produced no typed PCM buffer".into());
+        };
+        let take = (requested * self.channels).min(pending.len());
+        let chunk = pending.drain(take);
+        if pending.len() == 0 {
+            self.usb_pending = None;
+        }
+        Ok(chunk)
     }
 
 
