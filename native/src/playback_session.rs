@@ -134,12 +134,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid stream decoder handle");
         return std::ptr::null_mut();
     };
-    let (source_rate, channels, source_bits) = {
+    let (source_rate, channels, source_bits, source_data_format) = {
         let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
         guard.playback_metadata()
     };
     let route = select_playback_route();
-    let output = match env.new_long_array(5) {
+    let output = match env.new_long_array(6) {
         Ok(value) => value,
         Err(_) => return std::ptr::null_mut(),
     };
@@ -160,12 +160,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         let _ = env.throw_new("java/lang/IllegalStateException", "Unable to allocate playback session handle");
         return std::ptr::null_mut();
     }
-    let values: [jlong; 5] = [
+    let values: [jlong; 6] = [
         session_handle,
         route as jlong,
         source_rate as jlong,
         channels as jlong,
         source_bits as jlong,
+        source_data_format as jlong,
     ];
     if env.set_long_array_region(&output, 0, &values).is_err() {
         registry().lock().unwrap_or_else(|error| error.into_inner()).remove(&session_handle);
