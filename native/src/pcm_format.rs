@@ -358,6 +358,37 @@ mod tests {
     }
 
     #[test]
+    fn end_to_end_flac16_decodes_and_preserves_pcm_codes() {
+        use base64::Engine;
+        const FLAC_16_FIXTURE: &str = "ZkxhQwAAACIQABAAAAAUAAAUC7gA8AAAAAV9hM3Gd/XpiVW1YDHEfdLAAwAAEgAAAAAAAAAAAAAAAAAAAAAABYQAACggAAAAcmVmZXJlbmNlIGxpYkZMQUMgMS41LjAgMjAyNTAyMTEAAAAA//hqCAAEOxiAAP//AAAAAQAQqnA=";
+        let flac = base64::engine::general_purpose::STANDARD.decode(FLAC_16_FIXTURE).unwrap();
+        let decoded = decode_test_audio(flac, "flac");
+        assert!(matches!(decoded, UsbPcmSamples::S16(_)), "FLAC 16-bit should decode to Symphonia S16");
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        let mut actual = Vec::new();
+        encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
+        let source = [-32_768_i16, -1, 0, 1, 32_767];
+        let expected: Vec<u8> = source.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn end_to_end_alac16_m4a_decodes_and_preserves_pcm_codes() {
+        use base64::Engine;
+        // Five mono samples: INT16_MIN, -1, 0, 1, INT16_MAX.
+        const ALAC_16_FIXTURE: &str = "AAAAHGZ0eXBNNEEgAAACAE00QSBpc29taXNvMgAAAAhmcmVlAAAAGm1kYXQAABIAAAALAAH//gAAAAL//8AAAAKqbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAAEAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAdV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAEBAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAABAAAAAAABAAAAAAFNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAC7gAAAAAVVxAAAAAAALWhkbHIAAAAAAAAAAHNvdW4AAAAAAAAAAAAAAABTb3VuZEhhbmRsZXIAAAAA+G1pbmYAAAAQc21oZAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAAvHN0YmwAAABYc3RzZAAAAAAAAAABAAAASGFsYWMAAAAAAAAAAQAAAAAAAAAAAAEAEAAAAAC7gAAAAAAAJGFsYWMAAAAAAAAQAAAQKAoOAQAAAAAgBAALuAAAALuAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAFAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAABAAAAAQAAABRzdHN6AAAAAAAAABIAAAABAAAAFHN0Y28AAAAAAAAAAQAAACwAAABhdWR0YQAAAFltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAACxpbHN0AAAAJKl0b28AAAAcZGF0YQAAAAEAAAAATGF2ZjYxLjcuMTAz";
+        let m4a = base64::engine::general_purpose::STANDARD.decode(ALAC_16_FIXTURE).unwrap();
+        let decoded = decode_test_audio(m4a, "m4a");
+        assert!(matches!(decoded, UsbPcmSamples::S16(_)), "ALAC 16-bit should decode to Symphonia S16");
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        let mut actual = Vec::new();
+        encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
+        let source = [-32_768_i16, -1, 0, 1, 32_767];
+        let expected: Vec<u8> = source.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
         for format in [
             PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true },
