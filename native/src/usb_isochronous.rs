@@ -78,6 +78,13 @@ pub fn cancellation_request_error(result: i32) -> Option<i32> {
     if result == 0 || result == -5 { None } else { Some(result) }
 }
 
+/// Preserve the first asynchronous stream error as the primary diagnostic.
+pub fn preserve_first_error(current: &mut String, message: String) {
+    if current.is_empty() {
+        *current = message;
+    }
+}
+
 /// Completion metadata copied from one libusb isochronous transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IsochronousPacketCompletion {
@@ -193,6 +200,14 @@ mod tests {
         assert_eq!(cancellation_request_error(-5), None);
         assert_eq!(cancellation_request_error(-4), Some(-4));
         assert_eq!(cancellation_request_error(-1), Some(-1));
+    }
+
+    #[test]
+    fn preserves_original_stream_error_when_cleanup_also_fails() {
+        let mut error = String::new();
+        preserve_first_error(&mut error, "audio packet underrun".into());
+        preserve_first_error(&mut error, "cancel transfer failed with code -4".into());
+        assert_eq!(error, "audio packet underrun");
     }
 
     #[test]
