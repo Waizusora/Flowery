@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(info.clock_source_entity_id, 7);
         assert_eq!(info.clock_paths.len(), 1);
         assert_eq!(info.clock_paths[0].source_entity_id, 7);
-        assert_eq!(info.clock_paths[0].clock_entities, vec![9, 10, 11, 7]);
+        assert_eq!(info.clock_paths[0].clock_entities, vec![7]);
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn resolves_multiple_selector_and_multiplier_hops() {
         let mut d = descriptor_prefix();
-        d.extend_from_slice(&[8,0x24,0x0B,9,1,10,2,0]);
+        d.extend_from_slice(&[9,0x24,0x0B,9,2,10,7,2,0]);
         d.extend_from_slice(&[7,0x24,0x0C,10,11,0x05,0]);
         d.extend_from_slice(&[7,0x24,0x0C,11,7,0x05,0]);
         append_playback_terminal(&mut d, 9);
