@@ -334,7 +334,7 @@ fn run_worker(
         if let Some(started_at) = drain_started_at {
             let pending = slots.iter().any(|slot| slot.submitted)
                 || feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
-            if pending && started_at.elapsed() >= TRANSFER_DRAIN_TIMEOUT {
+            if pending && crate::usb_isochronous::transfer_drain_timed_out(started_at.elapsed(), TRANSFER_DRAIN_TIMEOUT) {
                 set_error(&error, &status, "Timed out draining cancelled USB transfers; retaining transfer buffers and libusb session to prevent use-after-free".into());
                 unsafe_to_free = true;
                 break;
@@ -376,7 +376,9 @@ fn run_worker(
                 }
             }
         }
-        if !cancelling && !paused.load(Ordering::Acquire) && !eof {
+        if crate::usb_isochronous::audio_submission_allowed(
+            paused.load(Ordering::Acquire), cancelling, eof,
+        ) {
             for slot in &mut slots {
                 if !slot.submitted {
                     if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
