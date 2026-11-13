@@ -24,7 +24,12 @@ internal fun interface UsbControlTransfer {
 }
 
 internal data class Uac2ClockPath(val sourceEntityId: Int, val sourceControls: Int, val selectors: List<Uac2ClockSelectorStep>, val multipliers: List<Uac2ClockMultiplierStep>)
-internal data class Uac2ClockSelectorStep(val entityId: Int, val controls: Int, val selectedPin: Int)
+internal data class Uac2ClockSelectorStep(
+    val entityId: Int,
+    val controls: Int,
+    val selectedPin: Int,
+    val inputSources: List<Int> = emptyList()
+)
 internal data class Uac2ClockMultiplierStep(val entityId: Int, val controls: Int)
 
 internal class UsbLibusbSession internal constructor(
@@ -171,7 +176,9 @@ internal class UsbLibusbSession internal constructor(
                     data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
                     val selectorChanges = mutableListOf<SelectorChange>()
                     for (selector in path.selectors) {
-                        if (selector.entityId !in 1..255 || selector.selectedPin !in 1..255 ||
+                        if (selector.entityId !in 1..255 || selector.inputSources.isEmpty() ||
+                            selector.inputSources.any { it !in 1..255 } ||
+                            selector.selectedPin !in 1..selector.inputSources.size ||
                             (selector.controls and 0x03) !in 1..2) {
                             failures += "invalid selector descriptor controls"; valid = false; break
                         }
@@ -181,7 +188,7 @@ internal class UsbLibusbSession internal constructor(
                             failures += "selector GET_CUR failed"; valid = false; break
                         }
                         val oldPin = active[0].toInt() and 0xFF
-                        if (oldPin !in 1..255) {
+                        if (oldPin !in 1..selector.inputSources.size) {
                             failures += "selector returned an invalid pin"; valid = false; break
                         }
                         if (oldPin != selector.selectedPin) {
