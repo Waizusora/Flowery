@@ -77,6 +77,7 @@ internal class UsbNativePlaybackSession private constructor(
     private val channels: Int,
     private val validBits: Int,
     private val subslotBytes: Int,
+    private val dataFormat: Int,
     private val feedbackEndpoint: Int,
     private val feedbackMaxPacketSize: Int,
     private val uac2ControlInterface: Int?,
@@ -124,7 +125,7 @@ internal class UsbNativePlaybackSession private constructor(
             startNativePlayback = {
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
-                    sampleRate, channels, validBits, subslotBytes, feedbackEndpoint,
+                    sampleRate, channels, validBits, subslotBytes, dataFormat, feedbackEndpoint,
                     feedbackMaxPacketSize, initialPositionMs
                 )
             },
@@ -202,9 +203,11 @@ internal class UsbNativePlaybackSession private constructor(
             decoderHandle: Long,
             sampleRate: Int,
             channels: Int,
-            sourceBits: Int
+            sourceBits: Int,
+            sourceDataFormat: Int
         ): Result<UsbNativePlaybackSession> {
-            if (decoderHandle <= 0L || sampleRate <= 0 || channels !in 1..8 || sourceBits !in 1..32) {
+            if (decoderHandle <= 0L || sampleRate <= 0 || channels !in 1..8 ||
+                sourceBits !in 1..32 || sourceDataFormat !in 1..3) {
                 return Result.failure(IllegalArgumentException("Invalid USB playback source format"))
             }
             val manager = context.applicationContext.getSystemService(Context.USB_SERVICE) as UsbManager
@@ -239,7 +242,7 @@ internal class UsbNativePlaybackSession private constructor(
                 val planJson = try {
                     JSONObject(
                         NativeAudio.nativePlanUsbAudioPlayback(
-                            probe.rawDescriptors, sampleRate, channels, sourceBits
+                            probe.rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
                         )
                     )
                 } catch (error: Throwable) {
@@ -265,6 +268,13 @@ internal class UsbNativePlaybackSession private constructor(
                 val interval = plan.optInt("interval", -1)
                 val subslot = plan.optInt("subslot_bytes", -1)
                 val bits = plan.optInt("bit_resolution", -1)
+                val planDataFormat = plan.optString("data_format", "")
+                val expectedDataFormat = when (sourceDataFormat) {
+                    1 -> "pcm"
+                    2 -> "pcm8"
+                    3 -> "ieee_float"
+                    else -> ""
+                }
                 val feedbackEndpoint = plan.optInt("feedback_endpoint_address", 0)
                 val feedbackPacket = plan.optInt("feedback_max_packet_size", 0)
                 val isUac2 = plan.optBoolean("requires_uac2_clock_negotiation")
@@ -338,7 +348,8 @@ internal class UsbNativePlaybackSession private constructor(
                     )
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
-                    subslot !in 1..4 || bits !in 1..32 ||
+                    subslot !in 1..4 || bits != sourceBits ||
+                    planDataFormat != expectedDataFormat ||
                     (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
                     invalidUac2ClockPlan
                 ) {
@@ -357,7 +368,7 @@ internal class UsbNativePlaybackSession private constructor(
                 return Result.success(
                     UsbNativePlaybackSession(
                         native, decoderHandle, sampleRate, endpoint, packet,
-                        interval, channels, bits, subslot, feedbackEndpoint, feedbackPacket,
+                        interval, channels, bits, subslot, sourceDataFormat, feedbackEndpoint, feedbackPacket,
                         if (isUac2) clockControlInterface else null,
                         if (isUac2) clockSourceEntity else null,
                         if (isUac2) clockControls else null,
