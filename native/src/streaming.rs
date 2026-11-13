@@ -300,7 +300,11 @@ impl StreamDecoder {
             self.decode_packet(true)?;
         }
         let Some(pending) = self.usb_pending.as_mut() else {
-            return Err("USB decoder produced no typed PCM buffer".into());
+            return if self.eof {
+                Ok(crate::pcm_format::UsbPcmSamples::Empty)
+            } else {
+                Err("USB decoder produced no typed PCM buffer".into())
+            };
         };
         let take = (requested * self.channels).min(pending.len());
         let chunk = pending.drain(take);
