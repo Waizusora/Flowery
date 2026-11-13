@@ -71,6 +71,13 @@ pub fn transfer_drain_timed_out(elapsed: std::time::Duration, limit: std::time::
     elapsed >= limit
 }
 
+/// Classify libusb_cancel_transfer results without treating a request as completion.
+/// LIBUSB_ERROR_NOT_FOUND (-5) means the transfer is no longer in the active set;
+/// the owning worker must still observe its callback before freeing transfer memory.
+pub fn cancellation_request_error(result: i32) -> Option<i32> {
+    if result == 0 || result == -5 { None } else { Some(result) }
+}
+
 /// Completion metadata copied from one libusb isochronous transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IsochronousPacketCompletion {
@@ -178,6 +185,14 @@ mod tests {
         use std::time::Duration;
         assert!(!transfer_drain_timed_out(Duration::from_millis(1999), Duration::from_secs(2)));
         assert!(transfer_drain_timed_out(Duration::from_secs(2), Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn classifies_cancel_request_results_without_claiming_completion() {
+        assert_eq!(cancellation_request_error(0), None);
+        assert_eq!(cancellation_request_error(-5), None);
+        assert_eq!(cancellation_request_error(-4), Some(-4));
+        assert_eq!(cancellation_request_error(-1), Some(-1));
     }
 
     #[test]
