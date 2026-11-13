@@ -249,7 +249,7 @@ fn fill_and_submit(
 #[cfg(target_os = "android")]
 fn transfer_packets_succeeded(slot: &TransferSlot) -> Result<(), String> {
     unsafe {
-        let transfer_status = (*slot.transfer).status;
+        let transfer_status = (*slot.transfer).status as i32;
         let descriptors = std::slice::from_raw_parts(
             (*slot.transfer).iso_packet_desc.as_ptr(),
             PACKETS_PER_TRANSFER,
@@ -257,7 +257,7 @@ fn transfer_packets_succeeded(slot: &TransferSlot) -> Result<(), String> {
         let packets: Vec<crate::usb_isochronous::IsochronousPacketCompletion> = descriptors
             .iter()
             .map(|packet| crate::usb_isochronous::IsochronousPacketCompletion {
-                status: i32::from(packet.status),
+                status: packet.status as i32,
                 actual_length: packet.actual_length,
                 expected_length: packet.length,
             })
