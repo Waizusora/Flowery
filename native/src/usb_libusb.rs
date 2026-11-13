@@ -147,6 +147,12 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
 #[cfg(target_os = "android")]
 pub fn close_session(session: i64) {
     if session <= 0 { return; }
-    crate::usb_stream::stop_session(session);
+    crate::usb_stream::close_session(session);
+}
+
+/// Remove the registry's session reference. Caller must hold the stream
+/// lifecycle gate so start/seek cannot race this removal.
+#[cfg(target_os = "android")]
+pub(super) fn remove_session(session: i64) {
     sessions().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
 }
