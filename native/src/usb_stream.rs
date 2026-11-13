@@ -365,11 +365,32 @@ fn run_worker(
             if !cancelling {
                 cancelling = true;
                 drain_started_at = Some(Instant::now());
-                for slot in &slots {
-                    if slot.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) }; }
+                for (index, slot) in slots.iter().enumerate() {
+                    if slot.submitted {
+                        let result = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) };
+                        // NOT_FOUND means libusb has already removed the transfer
+                        // from its active set; its completion callback still owns
+                        // the slot until the worker observes that callback.
+                        if result != 0 && result != -5 {
+                            set_error(
+                                &error,
+                                &status,
+                                format!("Unable to cancel USB audio transfer {index}: libusb error {result}; waiting for callback before teardown"),
+                            );
+                        }
+                    }
                 }
                 if let Some(feedback) = feedback_slot.as_mut() {
-                    if feedback.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) }; }
+                    if feedback.submitted {
+                        let result = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
+                        if result != 0 && result != -5 {
+                            set_error(
+                                &error,
+                                &status,
+                                format!("Unable to cancel USB feedback transfer: libusb error {result}; waiting for callback before teardown"),
+                            );
+                        }
+                    }
                     feedback_cancelling = true;
                 }
             }
@@ -377,7 +398,14 @@ fn run_worker(
         if eof && !slots.iter().any(|slot| slot.submitted) {
             if let Some(feedback) = feedback_slot.as_mut() {
                 if feedback.submitted && !feedback_cancelling {
-                    let _ = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
+                    let result = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
+                    if result != 0 && result != -5 {
+                        set_error(
+                            &error,
+                            &status,
+                            format!("Unable to cancel completed-stream feedback transfer: libusb error {result}; waiting for callback before teardown"),
+                        );
+                    }
                     feedback_cancelling = true;
                 }
             }
@@ -698,19 +726,29 @@ pub(super) fn seek(
 
 #[cfg(target_os = "android")]
 pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
-    let map = workers().lock().unwrap_or_else(|e| e.into_inner());
-    let worker = map.get(&session).ok_or("USB stream worker is not running")?;
-    if worker.status.load(Ordering::Acquire) != 0 {
+    // Clone the shared state while holding the registry lock, then release it
+    // before waiting. Status polling and stop requests must not queue behind
+    // the bounded pause-drain wait.
+    let (worker_status, worker_paused, pause_drained) = {
+        let map = workers().lock().unwrap_or_else(|e| e.into_inner());
+        let worker = map.get(&session).ok_or("USB stream worker is not running")?;
+        (
+            Arc::clone(&worker.status),
+            Arc::clone(&worker.paused),
+            Arc::clone(&worker.pause_drained),
+        )
+    };
+    if worker_status.load(Ordering::Acquire) != 0 {
         return Err("USB stream is not in a running state".into());
     }
-    worker.paused.store(paused, Ordering::Release);
+    worker_paused.store(paused, Ordering::Release);
     if !paused {
-        worker.pause_drained.store(false, Ordering::Release);
+        pause_drained.store(false, Ordering::Release);
         return Ok(());
     }
     let deadline = Instant::now() + PAUSE_DRAIN_TIMEOUT;
-    while !worker.pause_drained.load(Ordering::Acquire) {
-        if worker.status.load(Ordering::Acquire) < 0 {
+    while !pause_drained.load(Ordering::Acquire) {
+        if worker_status.load(Ordering::Acquire) < 0 {
             return Err("USB stream failed while draining transfers for pause".into());
         }
         if Instant::now() >= deadline {
