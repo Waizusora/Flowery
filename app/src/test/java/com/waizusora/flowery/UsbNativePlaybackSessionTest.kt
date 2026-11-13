@@ -93,6 +93,56 @@ class UsbNativePlaybackSessionTest {
         assertTrue(result.exceptionOrNull()?.message?.contains("FATAL: clock restore failed") == true)
     }
 
+
+    @Test
+    fun rollsBackClockWhenNativeStartThrows() {
+        val events = mutableListOf<String>()
+
+        val result = startUsbPlaybackTransaction(
+            negotiateClock = { events += "negotiate"; Result.success(Unit) },
+            startNativePlayback = {
+                events += "start"
+                throw IllegalStateException("native JNI start threw")
+            },
+            rollbackClock = {
+                events += "rollback"
+                Result.success(Unit)
+            },
+            commitClock = { events += "commit" },
+            rollbackOnStartFailure = true
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("negotiate", "start", "rollback"), events)
+        assertEquals("native JNI start threw", result.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun doesNotStartNativePlaybackWhenClockNegotiationThrows() {
+        val events = mutableListOf<String>()
+
+        val result = startUsbPlaybackTransaction(
+            negotiateClock = {
+                events += "negotiate"
+                throw IllegalStateException("clock control transfer threw")
+            },
+            startNativePlayback = {
+                events += "start"
+                Result.success(Unit)
+            },
+            rollbackClock = {
+                events += "rollback"
+                Result.success(Unit)
+            },
+            commitClock = { events += "commit" },
+            rollbackOnStartFailure = true
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(listOf("negotiate"), events)
+        assertEquals("clock control transfer threw", result.exceptionOrNull()?.message)
+    }
+
     @Test
     fun doesNotRollbackClockForUac1StartupFailure() {
         var rollbackCalled = false
