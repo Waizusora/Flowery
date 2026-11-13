@@ -111,6 +111,37 @@ mod tests {
     }
 
     #[test]
+    fn encodes_32_bit_integer_pcm_without_f32_precision_loss() {
+        let format = PcmFormat {
+            sample_rate: 192_000,
+            channels: 2,
+            valid_bits: 32,
+            subslot_bytes: 4,
+            little_endian: true,
+        };
+        let scale = (1_i64 << 31) as f64;
+        let source_codes = [
+            i32::MIN as i64,
+            -16_777_217,
+            -1,
+            0,
+            1,
+            16_777_217,
+            i32::MAX as i64,
+        ];
+        let samples: Vec<f64> = source_codes.iter().map(|code| *code as f64 / scale).collect();
+        let mut output = Vec::new();
+        encode_usb_pcm(&samples, format, &mut output).unwrap();
+
+        let decoded_codes: Vec<i32> = output
+            .chunks_exact(4)
+            .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
+            .collect();
+        let expected: Vec<i32> = source_codes.iter().map(|code| *code as i32).collect();
+        assert_eq!(decoded_codes, expected);
+    }
+
+    #[test]
     fn rejects_unaligned_pcm_sample_count() {
         let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true };
         assert!(encode_usb_pcm(&[0.0], format, &mut Vec::new()).is_err());
