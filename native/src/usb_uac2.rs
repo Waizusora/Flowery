@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 pub struct Uac2ClockPath {
     pub source_entity_id: u8,
     pub source_controls: u8,
+    /// Ordered clock entity chain from terminal clock link to source.
+    pub clock_entities: Vec<u8>,
     /// Selector entities from terminal towards the source, with one-based selected pin.
     pub selectors: Vec<Uac2SelectorStep>,
     /// Multiplier entities from terminal towards the source.
@@ -71,12 +73,14 @@ impl AudioControlInterface {
         entity_id: u8,
         selectors: &mut Vec<Uac2SelectorStep>,
         multipliers: &mut Vec<Uac2MultiplierStep>,
+        clock_entities: &mut Vec<u8>,
         visited: &mut HashSet<u8>,
         output: &mut Vec<Uac2ClockPath>,
     ) -> Result<(), String> {
         if !visited.insert(entity_id) {
             return Err(format!("UAC2 clock topology contains a cycle at entity {entity_id}"));
         }
+        clock_entities.push(entity_id);
 
         if let Some(&controls) = self.clock_sources.get(&entity_id) {
             if !matches!(controls & 0x03, 0x01 | 0x02) {
@@ -85,6 +89,7 @@ impl AudioControlInterface {
             output.push(Uac2ClockPath {
                 source_entity_id: entity_id,
                 source_controls: controls,
+                clock_entities: clock_entities.clone(),
                 selectors: selectors.clone(),
                 multipliers: multipliers.clone(),
             });
@@ -99,7 +104,7 @@ impl AudioControlInterface {
                     input_sources: inputs.clone(),
                     selected_pin: (index + 1) as u8,
                 });
-                self.resolve_paths(input_id, selectors, multipliers, visited, output)?;
+                self.resolve_paths(input_id, selectors, multipliers, clock_entities, visited, output)?;
                 selectors.pop();
             }
         } else if let Some(&(input_id, controls)) = self.clock_multipliers.get(&entity_id) {
@@ -114,6 +119,7 @@ impl AudioControlInterface {
             return Err(format!("UAC2 clock entity {entity_id} references an unresolved entity"));
         }
 
+        clock_entities.pop();
         visited.remove(&entity_id);
         Ok(())
     }
@@ -238,7 +244,14 @@ pub fn parse_playback_clock_info_for_interface(
                 return Err(format!("UAC2 playback terminal {terminal_link} has no clock link"));
             };
             let mut paths = Vec::new();
-            ac.resolve_paths(clock_id, &mut Vec::new(), &mut Vec::new(), &mut HashSet::new(), &mut paths)?;
+            ac.resolve_paths(
+                clock_id,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &mut HashSet::new(),
+                &mut paths,
+            )?;
             if paths.is_empty() { return Err(format!("UAC2 playback terminal {terminal_link} has no clock source path")); }
             // Legacy fields describe the first candidate; the complete path set is authoritative.
             let first = &paths[0];
@@ -295,6 +308,7 @@ mod tests {
         assert_eq!(info.clock_source_entity_id, 7);
         assert_eq!(info.clock_paths.len(), 1);
         assert_eq!(info.clock_paths[0].source_entity_id, 7);
+        assert_eq!(info.clock_paths[0].clock_entities, vec![9, 10, 11, 7]);
     }
 
     #[test]
