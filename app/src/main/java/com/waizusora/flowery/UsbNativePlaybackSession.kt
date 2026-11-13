@@ -97,7 +97,7 @@ internal class UsbNativePlaybackSession private constructor(
         val negotiateClock: () -> Result<Unit> = if (uac2ClockSourceEntity != null) {
             val controlInterface = uac2ControlInterface
                 ?: return Result.failure(IllegalStateException("UAC2 control interface is missing"))
-            {
+            val operation: () -> Result<Unit> = {
                 usb.negotiateUac2Clock(
                     controlInterface,
                     uac2ClockSourceEntity,
@@ -112,8 +112,12 @@ internal class UsbNativePlaybackSession private constructor(
                     uac2ClockPaths
                 )
             }
+            operation
         } else {
-            { usb.setUac1SampleRate(endpoint, sampleRate) }
+            val operation: () -> Result<Unit> = {
+                usb.setUac1SampleRate(endpoint, sampleRate)
+            }
+            operation
         }
         return startUsbPlaybackTransaction(
             negotiateClock = negotiateClock,
