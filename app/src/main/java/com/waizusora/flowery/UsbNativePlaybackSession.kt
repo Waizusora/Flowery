@@ -22,6 +22,35 @@ import java.util.concurrent.TimeUnit
  * UAC1 endpoint frequency and UAC2 Clock Source frequency are negotiated
  * before the native isochronous stream is started.
  */
+internal fun startUsbPlaybackTransaction(
+    negotiateClock: () -> Result<Unit>,
+    startNativePlayback: () -> Result<Unit>,
+    rollbackClock: () -> Result<Unit>,
+    commitClock: () -> Unit,
+    rollbackOnStartFailure: Boolean
+): Result<Unit> {
+    val negotiation = negotiateClock()
+    if (negotiation.isFailure) return negotiation
+
+    val started = startNativePlayback()
+    if (started.isSuccess) {
+        if (rollbackOnStartFailure) commitClock()
+        return started
+    }
+
+    if (!rollbackOnStartFailure) return started
+
+    val rollback = rollbackClock()
+    if (rollback.isFailure) {
+        return Result.failure(IllegalStateException(
+            (started.exceptionOrNull()?.message ?: "Native USB playback failed to start") +
+                "; " + (rollback.exceptionOrNull()?.message ?: "UAC2 clock rollback failed"),
+            rollback.exceptionOrNull()
+        ))
+    }
+    return started
+}
+
 internal class UsbNativePlaybackSession private constructor(
     private val usb: UsbLibusbSession,
     private val decoderHandle: Long,
@@ -66,32 +95,18 @@ internal class UsbNativePlaybackSession private constructor(
         } else {
             usb.setUac1SampleRate(endpoint, sampleRate)
         }
-        return negotiation.fold(
-            onSuccess = {
-                val started = usb.startPlayback(
+        return startUsbPlaybackTransaction(
+            negotiateClock = { negotiation },
+            startNativePlayback = {
+                usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
                     sampleRate, channels, validBits, subslotBytes, feedbackEndpoint,
                     feedbackMaxPacketSize, initialPositionMs
                 )
-                if (started.isSuccess) {
-                    if (uac2ClockSourceEntity != null) usb.commitClockNegotiation()
-                    started
-                } else if (uac2ClockSourceEntity != null) {
-                    val rollback = usb.rollbackClockNegotiation()
-                    if (rollback.isFailure) {
-                        Result.failure(IllegalStateException(
-                            (started.exceptionOrNull()?.message ?: "Native USB playback failed to start") +
-                                "; " + (rollback.exceptionOrNull()?.message ?: "UAC2 clock rollback failed"),
-                            rollback.exceptionOrNull()
-                        ))
-                    } else {
-                        started
-                    }
-                } else {
-                    started
-                }
             },
-            onFailure = { Result.failure(it) }
+            rollbackClock = { usb.rollbackClockNegotiation() },
+            commitClock = { usb.commitClockNegotiation() },
+            rollbackOnStartFailure = uac2ClockSourceEntity != null
         )
     }
 
