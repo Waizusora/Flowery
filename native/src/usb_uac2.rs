@@ -113,7 +113,7 @@ impl AudioControlInterface {
                 return Err(format!("UAC2 Clock Multiplier {entity_id} does not expose numerator and denominator controls"));
             }
             multipliers.push(Uac2MultiplierStep { entity_id, controls, input_clock_id: input_id });
-            self.resolve_paths(input_id, selectors, multipliers, visited, output)?;
+            self.resolve_paths(input_id, selectors, multipliers, clock_entities, visited, output)?;
             multipliers.pop();
         } else {
             return Err(format!("UAC2 clock entity {entity_id} references an unresolved entity"));
