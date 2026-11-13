@@ -541,6 +541,20 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
+pub(super) fn bus_speed(session_handle: i64) -> i32 {
+    // Serialize the handle query with close so the Java-owned fd cannot be
+    // released while libusb is resolving the device speed.
+    let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
+    let Some(session) = crate::usb_libusb::session_ref(session_handle) else {
+        return 0;
+    };
+    unsafe {
+        let device = libusb1_sys::libusb_get_device(session.handle);
+        if device.is_null() { 0 } else { libusb1_sys::libusb_get_device_speed(device) }
+    }
+}
+
+#[cfg(target_os = "android")]
 pub(super) fn stop_session(session: i64) {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     let _ = stop_worker_locked(session);
