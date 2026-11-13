@@ -3,11 +3,11 @@ object NativeAudio {
     init { System.loadLibrary("flowery_audio") }
     external fun nativeEngineVersion(): String
     external fun nativeParseUsbAudioDescriptors(descriptors: ByteArray): String
-    external fun nativePlanUsbAudioPlayback(descriptors: ByteArray, sampleRate: Int, channels: Int, bitResolution: Int): String
+    external fun nativePlanUsbAudioPlayback(descriptors: ByteArray, sampleRate: Int, channels: Int, bitResolution: Int, dataFormat: Int): String
     external fun nativeOpenUsbAudioSession(fileDescriptor: Int, interfaceNumber: Int, alternateSetting: Int): Long
     external fun nativeCloseUsbAudioSession(handle: Long)
     external fun nativeGetUsbBusSpeed(handle: Long): Int
-    external fun nativeStartUsbIsochronousPlayback(session: Long, decoder: Long, endpoint: Int, rawMaxPacketSize: Int, interval: Int, sampleRate: Int, channels: Int, validBits: Int, subslotBytes: Int, feedbackEndpointAddress: Int, feedbackMaxPacketSize: Int, initialPositionMs: Long): Int
+    external fun nativeStartUsbIsochronousPlayback(session: Long, decoder: Long, endpoint: Int, rawMaxPacketSize: Int, interval: Int, sampleRate: Int, channels: Int, validBits: Int, subslotBytes: Int, dataFormat: Int, feedbackEndpointAddress: Int, feedbackMaxPacketSize: Int, initialPositionMs: Long): Int
     external fun nativeSeekUsbPlayback(session: Long, decoder: Long, positionMs: Long): Long
     external fun nativePauseUsbPlayback(session: Long): Int
     external fun nativeResumeUsbPlayback(session: Long): Int
