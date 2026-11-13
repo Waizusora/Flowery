@@ -378,7 +378,11 @@ mod tests {
         const FLAC_16_FIXTURE: &str = "ZkxhQwAAACIQABAAAAAUAAAUC7gA8AAAAAV9hM3Gd/XpiVW1YDHEfdLAAwAAEgAAAAAAAAAAAAAAAAAAAAAABYQAACggAAAAcmVmZXJlbmNlIGxpYkZMQUMgMS41LjAgMjAyNTAyMTEAAAAA//hqCAAEOxiAAP//AAAAAQAQqnA=";
         let flac = base64::engine::general_purpose::STANDARD.decode(FLAC_16_FIXTURE).unwrap();
         let decoded = decode_test_audio(flac, "flac");
-        assert!(matches!(decoded, UsbPcmSamples::S16(_)), "FLAC 16-bit should decode to Symphonia S16");
+        assert_eq!(
+            decoded,
+            UsbPcmSamples::S32(vec![i32::MIN, -65_536, 0, 65_536, i32::MAX & !0xffff]),
+            "FLAC 16-bit must decode as left-aligned S32 samples"
+        );
         let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
         let mut actual = Vec::new();
         encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
@@ -394,7 +398,11 @@ mod tests {
         const ALAC_16_FIXTURE: &str = "AAAAHGZ0eXBNNEEgAAACAE00QSBpc29taXNvMgAAAAhmcmVlAAAAGm1kYXQAABIAAAALAAH//gAAAAL//8AAAAKqbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAAEAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAdV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAAEAAAAAAAAAAAAAAAEBAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAABAAAAAAABAAAAAAFNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAC7gAAAAAVVxAAAAAAALWhkbHIAAAAAAAAAAHNvdW4AAAAAAAAAAAAAAABTb3VuZEhhbmRsZXIAAAAA+G1pbmYAAAAQc21oZAAAAAAAAAAAAAAAJGRpbmYAAAAcZHJlZgAAAAAAAAABAAAADHVybCAAAAABAAAAvHN0YmwAAABYc3RzZAAAAAAAAAABAAAASGFsYWMAAAAAAAAAAQAAAAAAAAAAAAEAEAAAAAC7gAAAAAAAJGFsYWMAAAAAAAAQAAAQKAoOAQAAAAAgBAALuAAAALuAAAAAGHN0dHMAAAAAAAAAAQAAAAEAAAAFAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAABAAAAAQAAABRzdHN6AAAAAAAAABIAAAABAAAAFHN0Y28AAAAAAAAAAQAAACwAAABhdWR0YQAAAFltZXRhAAAAAAAAACFoZGxyAAAAAAAAAABtZGlyYXBwbAAAAAAAAAAAAAAAACxpbHN0AAAAJKl0b28AAAAcZGF0YQAAAAEAAAAATGF2ZjYxLjcuMTAz";
         let m4a = base64::engine::general_purpose::STANDARD.decode(ALAC_16_FIXTURE).unwrap();
         let decoded = decode_test_audio(m4a, "m4a");
-        assert!(matches!(decoded, UsbPcmSamples::S16(_)), "ALAC 16-bit should decode to Symphonia S16");
+        assert_eq!(
+            decoded,
+            UsbPcmSamples::S32(vec![i32::MIN, -65_536, 0, 65_536, i32::MAX & !0xffff]),
+            "ALAC 16-bit must decode as left-aligned S32 samples"
+        );
         let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
         let mut actual = Vec::new();
         encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
