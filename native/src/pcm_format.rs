@@ -83,10 +83,14 @@ impl UsbPcmSamples {
     }
 
     pub fn append(&mut self, other: Self) -> Result<(), &'static str> {
+        if matches!(self, Self::Empty) {
+            *self = other;
+            return Ok(());
+        }
+        if matches!(other, Self::Empty) {
+            return Ok(());
+        }
         match (self, other) {
-            (Self::Empty, Self::Empty) => {},
-            (Self::Empty, other) => *self = other,
-            (this, Self::Empty) => {},
             (Self::U8(a), Self::U8(b)) => a.extend(b),
             (Self::S16(a), Self::S16(b)) => a.extend(b),
             (Self::S24(a), Self::S24(b)) => a.extend(b),
@@ -248,6 +252,18 @@ mod tests {
             .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
             .collect();
         assert_eq!(decoded_codes, source_codes);
+    }
+
+    #[test]
+    fn integer_encoder_preserves_signed16_and_unsigned8_codes() {
+        let mut output = Vec::new();
+        let s16 = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        encode_usb_pcm(&UsbPcmSamples::S16(vec![i16::MIN, -1, 0, i16::MAX]), s16, &mut output).unwrap();
+        assert_eq!(output, [-32768_i16, -1, 0, 32767].iter().flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>());
+
+        let u8 = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 8, subslot_bytes: 1, little_endian: true };
+        encode_usb_pcm(&UsbPcmSamples::U8(vec![0, 1, 127, 255]), u8, &mut output).unwrap();
+        assert_eq!(output, vec![0, 1, 127, 255]);
     }
 
     #[test]
