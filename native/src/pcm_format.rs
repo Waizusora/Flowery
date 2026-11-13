@@ -117,45 +117,81 @@ impl UsbPcmSamples {
     }
 }
 
-/// Pack typed Symphonia samples without a normalized-float conversion.
+/// Dispatch typed decoded samples to the matching USB integer or float encoder.
 pub(super) fn encode_usb_pcm(
     samples: &UsbPcmSamples,
     format: PcmFormat,
     output: &mut Vec<u8>,
 ) -> Result<(), &'static str> {
-    let format = format.validate()?;
-    let channels = usize::from(format.channels);
-    if samples.len() % channels != 0 {
-        return Err("Decoded PCM sample count is not channel-frame aligned");
-    }
-    if samples.len() == 0 { output.clear(); return Ok(()); }
-    let required = samples.len().checked_mul(usize::from(format.subslot_bytes))
-        .ok_or("USB PCM output size overflow")?;
-    output.clear();
-    output.reserve(required);
     match samples {
-        UsbPcmSamples::Empty => {},
-        UsbPcmSamples::U8(values) if format.valid_bits == 8 && format.subslot_bytes == 1 => output.extend(values),
+        UsbPcmSamples::F32(_) | UsbPcmSamples::F64(_) =>
+            encode_usb_float_pcm(samples, format, output),
+        _ => encode_usb_integer_pcm(samples, format, output),
+    }
+}
+
+/// Pack integer samples in their native code representation. No float conversion
+/// or requantization is performed.
+pub(super) fn encode_usb_integer_pcm(
+    samples: &UsbPcmSamples,
+    format: PcmFormat,
+    output: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    let format = format.validate()?;
+    validate_sample_alignment(samples, format)?;
+    output.clear();
+    if samples.len() == 0 { return Ok(()); }
+    match samples {
+        UsbPcmSamples::U8(values) if format.valid_bits == 8 && format.subslot_bytes == 1 =>
+            output.extend(values),
         UsbPcmSamples::S16(values) if format.valid_bits == 16 && format.subslot_bytes == 2 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
         UsbPcmSamples::S24(values) if format.valid_bits == 24 && format.subslot_bytes == 3 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()[..3]); },
         UsbPcmSamples::S24(values) if format.valid_bits == 24 && format.subslot_bytes == 4 =>
-            for value in values { output.extend_from_slice(&(((*value as u32) << 8).to_le_bytes())); },
+            for value in values { output.extend_from_slice(&((*value as u32) << 8).to_le_bytes()); },
         UsbPcmSamples::S32(values) if format.valid_bits == 32 && format.subslot_bytes == 4 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
+        UsbPcmSamples::Empty => {},
+        _ => return Err("USB integer PCM format does not exactly match the decoder sample representation"),
+    }
+    Ok(())
+}
+
+/// Pack IEEE-754 float samples directly as little-endian USB Audio Class data.
+pub(super) fn encode_usb_float_pcm(
+    samples: &UsbPcmSamples,
+    format: PcmFormat,
+    output: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    let format = format.validate()?;
+    validate_sample_alignment(samples, format)?;
+    output.clear();
+    if samples.len() == 0 { return Ok(()); }
+    match samples {
         UsbPcmSamples::F32(values) if format.valid_bits == 32 && format.subslot_bytes == 4 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
         UsbPcmSamples::F64(values) if format.valid_bits == 64 && format.subslot_bytes == 8 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
-        _ => return Err("USB endpoint PCM format does not exactly match the decoder sample representation"),
+        UsbPcmSamples::Empty => {},
+        _ => return Err("USB float PCM format does not exactly match the decoder sample representation"),
+    }
+    Ok(())
+}
+
+fn validate_sample_alignment(
+    samples: &UsbPcmSamples,
+    format: PcmFormat,
+) -> Result<(), &'static str> {
+    if samples.len() % usize::from(format.channels) != 0 {
+        return Err("Decoded PCM sample count is not channel-frame aligned");
     }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_usb_pcm, PcmFormat, UsbPcmSamples};
+    use super::{encode_usb_float_pcm, encode_usb_pcm, PcmFormat, UsbPcmSamples};
 
     #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
@@ -212,6 +248,22 @@ mod tests {
             .map(|bytes| i32::from_le_bytes(bytes.try_into().unwrap()))
             .collect();
         assert_eq!(decoded_codes, source_codes);
+    }
+
+    #[test]
+    fn float_encoders_preserve_f32_and_f64_ieee_bit_patterns() {
+        let f32_values = [0.0_f32, -0.5, 1.0, f32::from_bits(0x3f80_0001)];
+        let f32_format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 32, subslot_bytes: 4, little_endian: true };
+        let mut output = Vec::new();
+        encode_usb_float_pcm(&UsbPcmSamples::F32(f32_values.to_vec()), f32_format, &mut output).unwrap();
+        let expected: Vec<u8> = f32_values.iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(output, expected);
+
+        let f64_values = [0.0_f64, -0.5, f64::from_bits(0x3ff0_0000_0000_0001), 1.0];
+        let f64_format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 64, subslot_bytes: 8, little_endian: true };
+        encode_usb_float_pcm(&UsbPcmSamples::F64(f64_values.to_vec()), f64_format, &mut output).unwrap();
+        let expected: Vec<u8> = f64_values.iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(output, expected);
     }
 
     #[test]
