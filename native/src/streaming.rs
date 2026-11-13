@@ -122,7 +122,7 @@ pub(super) struct StreamDecoder {
     source_rate: usize,
     source_bits: u8,
     channels: usize,
-    input_pending: Vec<f32>,
+    input_pending: Vec<f64>,
     eof: bool,
     duration_ms: u64,
     time_base: Option<symphonia::core::units::TimeBase>,
@@ -240,7 +240,9 @@ impl StreamDecoder {
                     if spec.channels.count() != self.channels {
                         return Err("The audio stream changed channel layout mid-track".into());
                     }
-                    let mut buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+                    // f64 exactly represents every normalized signed 32-bit PCM code point.
+                    // Keep this precision until USB packing; AAudio narrows at its own boundary.
+                    let mut buffer = SampleBuffer::<f64>::new(decoded.capacity() as u64, spec);
                     buffer.copy_interleaved_ref(decoded);
                     let mut samples = buffer.samples().to_vec();
                     let decoded_frames = (samples.len() / self.channels) as u64;
@@ -271,8 +273,16 @@ impl StreamDecoder {
         while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
         if self.input_pending.is_empty() { return Ok(Vec::new()); }
         let take = (requested * self.channels).min(self.input_pending.len());
-        let samples: Vec<f32> = self.input_pending.drain(..take).collect();
+        let samples: Vec<f32> = self.input_pending.drain(..take).map(|sample| sample as f32).collect();
         Ok(samples)
+    }
+
+    #[cfg(target_os = "android")]
+    fn read_usb_frames(&mut self, requested: usize) -> Result<Vec<f64>,String> {
+        while self.input_pending.is_empty() && !self.eof { self.decode_packet()?; }
+        if self.input_pending.is_empty() { return Ok(Vec::new()); }
+        let take = (requested * self.channels).min(self.input_pending.len());
+        Ok(self.input_pending.drain(..take).collect())
     }
 
 
@@ -312,7 +322,7 @@ pub(super) fn read_usb_pcm_chunk(
         subslot_bytes,
         little_endian: true,
     }.validate().map_err(str::to_string)?;
-    let samples = decoder.read_frames(max_frames)?;
+    let samples = decoder.read_usb_frames(max_frames)?;
     let mut output = Vec::with_capacity(samples.len() * usize::from(subslot_bytes));
     crate::pcm_format::encode_usb_pcm(&samples, format, &mut output)
         .map_err(str::to_string)?;
