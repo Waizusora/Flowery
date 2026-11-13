@@ -258,20 +258,28 @@ internal class UsbNativePlaybackSession private constructor(
                     }
                     val multipliers = (0 until multipliersJson.length()).mapNotNull { index ->
                         multipliersJson.optJSONObject(index)?.let { item ->
-                            Uac2ClockMultiplierStep(item.optInt("entity_id", -1), item.optInt("controls", -1))
+                            Uac2ClockMultiplierStep(
+                                item.optInt("entity_id", -1),
+                                item.optInt("controls", -1),
+                                item.optInt("input_clock_id", -1)
+                            )
                         }
                     }
                     clockPaths += Uac2ClockPath(
                         pathObject.optInt("source_entity_id", -1),
                         pathObject.optInt("source_controls", -1),
                         selectors,
-                        multipliers
+                        multipliers,
+                        (0 until (pathObject.optJSONArray("clock_entities")?.length() ?: 0)).map { entityIndex ->
+                            pathObject.optJSONArray("clock_entities")!!.optInt(entityIndex, -1)
+                        }
                     )
                 }
                 val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
                 val invalidClockPaths = isUac2 && (clockPaths.isEmpty() || clockPaths.any { path ->
                     path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
+                        !path.hasConsistentTopology() ||
                         path.selectors.any {
                             it.entityId !in 1..255 ||
                                 it.inputSources.isEmpty() ||
@@ -279,7 +287,10 @@ internal class UsbNativePlaybackSession private constructor(
                                 it.selectedPin !in 1..it.inputSources.size ||
                                 (it.controls and 0x03) !in 1..2
                         } ||
-                        path.multipliers.any { it.entityId !in 1..255 || (it.controls and 0x03) != 0x01 || (it.controls and 0x0C) != 0x04 }
+                        path.multipliers.any {
+                            it.entityId !in 1..255 || it.inputClockId !in 1..255 ||
+                                (it.controls and 0x03) != 0x01 || (it.controls and 0x0C) != 0x04
+                        }
                 })
                 val invalidUac2ClockPlan = isUac2 && (
                     clockControlInterface !in 0..255 ||
