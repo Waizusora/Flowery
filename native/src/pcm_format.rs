@@ -145,6 +145,19 @@ pub(super) fn encode_usb_pcm(
     }
 }
 
+/// Enforce descriptor-selected UAC Type I encoding before packing the bytes.
+pub(super) fn encode_usb_pcm_for_data_format(
+    samples: &UsbPcmSamples,
+    format: PcmFormat,
+    data_format: u8,
+    output: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    if !matches!(samples, UsbPcmSamples::Empty) && samples.data_format_code() != data_format {
+        return Err("Decoded sample representation does not match the USB descriptor data format");
+    }
+    encode_usb_pcm(samples, format, output)
+}
+
 /// Pack integer samples in their native code representation. No float conversion
 /// or requantization is performed.
 pub(super) fn encode_usb_integer_pcm(
@@ -208,7 +221,7 @@ fn validate_sample_alignment(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_usb_float_pcm, encode_usb_pcm, PcmFormat, UsbPcmSamples};
+    use super::{encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
 
     #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
@@ -293,6 +306,30 @@ mod tests {
         encode_usb_float_pcm(&UsbPcmSamples::F64(f64_values.to_vec()), f64_format, &mut output).unwrap();
         let expected: Vec<u8> = f64_values.iter().flat_map(|value| value.to_le_bytes()).collect();
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn descriptor_format_dispatch_preserves_float_bytes_and_rejects_cross_format() {
+        let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 32, subslot_bytes: 4, little_endian: true };
+        let values = [0.0_f32, -0.5, 1.0, f32::from_bits(0x3f80_0001)];
+        let samples = UsbPcmSamples::F32(values.to_vec());
+        let mut output = Vec::new();
+        encode_usb_pcm_for_data_format(&samples, format, 3, &mut output).unwrap();
+        let expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(output, expected);
+        assert!(encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).is_err());
+        assert!(encode_usb_pcm_for_data_format(
+            &UsbPcmSamples::S32(vec![0, 1, -1, i32::MAX]), format, 3, &mut output
+        ).is_err());
+    }
+
+    #[test]
+    fn pcm8_descriptor_requires_unsigned_8_bit_decoder_samples() {
+        let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 8, subslot_bytes: 1, little_endian: true };
+        let mut output = Vec::new();
+        encode_usb_pcm_for_data_format(&UsbPcmSamples::U8(vec![0, 128, 255, 1]), format, 2, &mut output).unwrap();
+        assert_eq!(output, vec![0, 128, 255, 1]);
+        assert!(encode_usb_pcm_for_data_format(&UsbPcmSamples::S16(vec![0, 1]), format, 2, &mut output).is_err());
     }
 
     #[test]
