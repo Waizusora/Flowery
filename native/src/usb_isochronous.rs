@@ -47,10 +47,12 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
     if destination.len() % frame_bytes != 0 || source.len() % frame_bytes != 0 {
         return Err("PCM packet data is not aligned to complete sample frames".into());
     }
+    if source.len() > destination.len() {
+        return Err("PCM chunk exceeds the remaining isochronous packet capacity".into());
+    }
     destination.fill(0);
-    let copied = source.len().min(destination.len());
-    destination[..copied].copy_from_slice(&source[..copied]);
-    Ok(copied)
+    destination[..source.len()].copy_from_slice(source);
+    Ok(source.len())
 }
 
 /// Build a deterministic PCM packet schedule for the requested USB service intervals.
@@ -108,6 +110,23 @@ pub fn build_isochronous_schedule(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copies_pcm_frames_into_isochronous_packet_and_pads_final_packet() {
+        let source = [0x10, 0x11, 0x20, 0x21];
+        let mut packet = [0xff; 8];
+        let copied = copy_pcm_into_packet(&mut packet, &source, 2).unwrap();
+        assert_eq!(copied, 4);
+        assert_eq!(packet, [0x10, 0x11, 0x20, 0x21, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rejects_unaligned_or_oversized_pcm_packet_data() {
+        let mut packet = [0_u8; 4];
+        assert!(copy_pcm_into_packet(&mut packet, &[1, 2, 3], 2).is_err());
+        assert!(copy_pcm_into_packet(&mut packet, &[1, 2, 3, 4, 5, 6], 2).is_err());
+        assert!(copy_pcm_into_packet(&mut packet, &[1, 2], 0).is_err());
+    }
 
     #[test]
     fn distributes_44100_frames_without_drift_at_full_speed() {
