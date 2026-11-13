@@ -546,6 +546,15 @@ pub(super) fn stop_session(session: i64) {
     let _ = stop_worker_locked(session);
 }
 
+/// Stop the worker and remove the session while holding the same lifecycle
+/// gate used by start/seek. This closes the lookup-vs-close race.
+#[cfg(target_os = "android")]
+pub(super) fn close_session(session: i64) {
+    let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
+    let _ = stop_worker_locked(session);
+    crate::usb_libusb::remove_session(session);
+}
+
 #[cfg(target_os = "android")]
 fn spawn_worker(
     session_handle: i64,
@@ -614,6 +623,9 @@ pub(super) fn start(
         return Err("Invalid USB PCM subslot or data format".into());
     }
 
+    // Serialize session lookup with close: once close acquires this gate,
+    // no new worker can retain a handle to the session being removed.
+    let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     let session = crate::usb_libusb::session_ref(session_handle)
         .ok_or("Unknown USB session handle")?;
     let device = unsafe { libusb1_sys::libusb_get_device(session.handle) };
@@ -663,7 +675,6 @@ pub(super) fn start(
             ));
         }
     }
-    let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     stop_worker_locked(session_handle)?;
     let feedback_endpoint = if feedback_endpoint == 0 { None } else { Some(feedback_endpoint) };
     let feedback_packet_bytes = if feedback_endpoint.is_some() {
