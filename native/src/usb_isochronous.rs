@@ -93,6 +93,29 @@ pub struct IsochronousPacketCompletion {
     pub expected_length: u32,
 }
 
+/// Translate libusb_transfer_status values into stable diagnostic labels.
+pub fn transfer_status_name(status: i32) -> &'static str {
+    match status {
+        0 => "completed",
+        1 => "generic error",
+        2 => "timed out",
+        3 => "cancelled",
+        4 => "stalled",
+        5 => "device disconnected",
+        6 => "overflow",
+        _ => "unknown transfer status",
+    }
+}
+
+/// Translate libusb event-loop errors into actionable diagnostics.
+pub fn event_error_message(code: i32) -> String {
+    match code {
+        -4 => "USB device disconnected while handling libusb events".into(),
+        -10 => "libusb event handling was interrupted".into(),
+        _ => format!("libusb event handling failed with code {code}"),
+    }
+}
+
 /// Validate the transfer and every packet before accounting frames or reusing its buffer.
 /// A short OUT packet is treated as an underrun: it is not silently counted as played audio.
 pub fn validate_isochronous_completion(
@@ -100,11 +123,11 @@ pub fn validate_isochronous_completion(
     packets: &[IsochronousPacketCompletion],
 ) -> Result<(), String> {
     if transfer_status != 0 {
-        return Err(format!("Isochronous USB transfer completed with status {transfer_status}"));
+        return Err(format!("Isochronous USB transfer {} (status {transfer_status})", transfer_status_name(transfer_status)));
     }
     for (index, packet) in packets.iter().enumerate() {
         if packet.status != 0 {
-            return Err(format!("Isochronous USB packet {index} failed with status {}", packet.status));
+            return Err(format!("Isochronous USB packet {index} {} (status {})", transfer_status_name(packet.status), packet.status));
         }
         if packet.actual_length != packet.expected_length {
             return Err(format!(
@@ -225,6 +248,23 @@ mod tests {
         assert!(validate_isochronous_completion(-4, &packet).unwrap_err().contains("transfer completed"));
         let packet_error = [IsochronousPacketCompletion { status: 2, actual_length: 8, expected_length: 8 }];
         assert!(validate_isochronous_completion(0, &packet_error).unwrap_err().contains("packet 0 failed"));
+    }
+
+    #[test]
+    fn describes_libusb_transfer_statuses_and_disconnect_errors() {
+        assert_eq!(transfer_status_name(0), "completed");
+        assert_eq!(transfer_status_name(2), "timed out");
+        assert_eq!(transfer_status_name(5), "device disconnected");
+        assert_eq!(transfer_status_name(6), "overflow");
+        assert!(event_error_message(-4).contains("disconnected"));
+        assert!(event_error_message(-9).contains("code -9"));
+    }
+
+    #[test]
+    fn reports_disconnect_instead_of_an_opaque_transfer_status() {
+        let packet = [IsochronousPacketCompletion { status: 5, actual_length: 0, expected_length: 8 }];
+        assert!(validate_isochronous_completion(0, &packet).unwrap_err().contains("device disconnected"));
+        assert!(validate_isochronous_completion(5, &[]).unwrap_err().contains("device disconnected"));
     }
 
     #[test]

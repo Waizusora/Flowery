@@ -440,7 +440,7 @@ fn run_worker(
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
         if event_result < 0 && event_result != -10 {
-            set_error(&error, &status, format!("libusb event handling failed with code {event_result}"));
+            set_error(&error, &status, crate::usb_isochronous::event_error_message(event_result));
             // Keep pumping events while cancellation callbacks are outstanding.
             // The bounded drain timeout below prevents an unbounded join if the
             // device/context can no longer deliver callbacks.
