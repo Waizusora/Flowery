@@ -23,14 +23,48 @@ internal fun interface UsbControlTransfer {
     ): Int
 }
 
-internal data class Uac2ClockPath(val sourceEntityId: Int, val sourceControls: Int, val selectors: List<Uac2ClockSelectorStep>, val multipliers: List<Uac2ClockMultiplierStep>)
+internal data class Uac2ClockPath(
+    val sourceEntityId: Int,
+    val sourceControls: Int,
+    val selectors: List<Uac2ClockSelectorStep>,
+    val multipliers: List<Uac2ClockMultiplierStep>,
+    val clockEntities: List<Int> = emptyList()
+) {
+    fun hasConsistentTopology(): Boolean {
+        if (clockEntities.size != selectors.size + multipliers.size + 1 ||
+            clockEntities.lastOrNull() != sourceEntityId ||
+            clockEntities.any { it !in 1..255 } ||
+            clockEntities.toSet().size != clockEntities.size
+        ) return false
+        val selectorById = selectors.associateBy { it.entityId }
+        val multiplierById = multipliers.associateBy { it.entityId }
+        if (selectorById.size != selectors.size || multiplierById.size != multipliers.size ||
+            selectors.any { it.entityId in multiplierById } ||
+            clockEntities.dropLast(1).any { it !in selectorById && it !in multiplierById }
+        ) return false
+        for (index in 0 until clockEntities.lastIndex) {
+            val entityId = clockEntities[index]
+            val nextEntityId = clockEntities[index + 1]
+            val selector = selectorById[entityId]
+            if (selector != null) {
+                if (selector.selectedPin !in 1..selector.inputSources.size ||
+                    selector.inputSources[selector.selectedPin - 1] != nextEntityId
+                ) return false
+            } else {
+                val multiplier = multiplierById[entityId] ?: return false
+                if (multiplier.inputClockId != nextEntityId) return false
+            }
+        }
+        return true
+    }
+}
 internal data class Uac2ClockSelectorStep(
     val entityId: Int,
     val controls: Int,
     val selectedPin: Int,
     val inputSources: List<Int> = emptyList()
 )
-internal data class Uac2ClockMultiplierStep(val entityId: Int, val controls: Int)
+internal data class Uac2ClockMultiplierStep(val entityId: Int, val controls: Int, val inputClockId: Int = -1)
 
 internal class UsbLibusbSession internal constructor(
     private val connection: UsbDeviceConnection?,
@@ -126,14 +160,15 @@ internal class UsbLibusbSession internal constructor(
             if (clockPaths.isNotEmpty()) {
                 val failures = mutableListOf<String>()
                 for (path in clockPaths) {
-                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2) {
+                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
+                        !path.hasConsistentTopology()) {
                         failures += "invalid source controls"
                         continue
                     }
                     var sourceRate = sampleRate.toLong()
                     var valid = true
                     for (multiplier in path.multipliers) {
-                        if (multiplier.entityId !in 1..255 ||
+                        if (multiplier.entityId !in 1..255 || multiplier.inputClockId !in 1..255 ||
                             (multiplier.controls and 0x01) == 0 ||
                             (multiplier.controls and 0x04) == 0) {
                             failures += "invalid multiplier controls"; valid = false; break
