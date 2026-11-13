@@ -62,13 +62,10 @@ pub(super) fn session_ref(session: i64) -> Option<Arc<UsbSession>> {
 
 /// Returns libusb's negotiated bus speed for the opened device.
 /// Values follow libusb_speed: 1 low, 2 full, 3 high, 4 super, 5 super-plus; 0 is unknown.
+/// The stream lifecycle gate protects the query from concurrent session close.
 #[cfg(target_os = "android")]
 pub(super) fn bus_speed(session: i64) -> i32 {
-    let Some(session) = session_ref(session) else { return 0; };
-    unsafe {
-        let device = libusb1_sys::libusb_get_device(session.handle);
-        if device.is_null() { 0 } else { libusb1_sys::libusb_get_device_speed(device) }
-    }
+    crate::usb_stream::bus_speed(session)
 }
 
 /// Wrap an already permission-authorized Android USB fd. The fd remains owned
