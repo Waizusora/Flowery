@@ -389,6 +389,13 @@ mod tests {
         let source = [-32_768_i16, -1, 0, 1, 32_767];
         let expected: Vec<u8> = source.iter().flat_map(|sample| sample.to_le_bytes()).collect();
         assert_eq!(actual, expected);
+
+        let wide_format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 4, little_endian: true };
+        let mut wide_actual = Vec::new();
+        encode_usb_pcm_for_data_format(&decoded, wide_format, 1, &mut wide_actual).unwrap();
+        let wide_expected: Vec<u8> = [-2_147_483_648_i32, -65_536, 0, 65_536, 2_147_418_112_i32]
+            .iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        assert_eq!(wide_actual, wide_expected);
     }
 
     #[test]
