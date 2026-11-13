@@ -237,6 +237,106 @@ fn validate_sample_alignment(
 mod tests {
     use super::{encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
 
+
+    fn make_test_wav(format_tag: u16, bits: u16, sample_rate: u32, sample_bytes: &[u8]) -> Vec<u8> {
+        let channels = 1_u16;
+        let block_align = channels * (bits / 8);
+        let byte_rate = sample_rate * u32::from(block_align);
+        let data_len = sample_bytes.len() as u32;
+        let mut wav = Vec::with_capacity(44 + sample_bytes.len());
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36_u32 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&format_tag.to_le_bytes());
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&block_align.to_le_bytes());
+        wav.extend_from_slice(&bits.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        wav.extend_from_slice(sample_bytes);
+        wav
+    }
+
+    fn decode_test_audio(bytes: Vec<u8>, extension: &str) -> UsbPcmSamples {
+        use std::io::{Cursor, ErrorKind};
+        use symphonia::core::codecs::{Decoder, DecoderOptions};
+        use symphonia::core::errors::Error;
+        use symphonia::core::formats::{FormatOptions, FormatReader};
+        use symphonia::core::io::MediaSourceStream;
+        use symphonia::core::meta::MetadataOptions;
+        use symphonia::core::probe::Hint;
+
+        let source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension(extension);
+        let probed = symphonia::default::get_probe()
+            .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+            .expect("probe test audio");
+        let mut format = probed.format;
+        let track = format.default_track().expect("default test track");
+        let mut decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .expect("create test decoder");
+        let mut samples = UsbPcmSamples::Empty;
+        loop {
+            let packet = match format.next_packet() {
+                Ok(packet) => packet,
+                Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => break,
+                Err(error) => panic!("read test packet: {error}"),
+            };
+            let decoded = decoder.decode(&packet).expect("decode test packet");
+            samples.append(UsbPcmSamples::from_audio_buffer(decoded).expect("typed decoded samples"))
+                .expect("stable decoded representation");
+        }
+        samples
+    }
+
+    #[test]
+    fn end_to_end_wav_pcm16_pcm24_pcm32_and_float32_preserve_sample_bytes() {
+        let pcm16 = [-32768_i16, -1, 0, 1, 32767];
+        let pcm16_bytes: Vec<u8> = pcm16.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let pcm24 = [-8_388_608_i32, -1, 0, 1, 8_388_607];
+        let pcm24_bytes: Vec<u8> = pcm24.iter().flat_map(|sample| sample.to_le_bytes()[..3].to_vec()).collect();
+        let pcm32 = [i32::MIN, -1, 0, 1, i32::MAX];
+        let pcm32_bytes: Vec<u8> = pcm32.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+        let float32 = [0.0_f32, -0.5, 1.0, f32::from_bits(0x3f80_0001)];
+        let float32_bytes: Vec<u8> = float32.iter().flat_map(|sample| sample.to_le_bytes()).collect();
+
+        let cases = [
+            (make_test_wav(1, 16, 48_000, &pcm16_bytes), 16_u8, 2_u8, 1_u8, pcm16_bytes),
+            (make_test_wav(1, 24, 48_000, &pcm24_bytes), 24_u8, 3_u8, 1_u8, pcm24_bytes),
+            (make_test_wav(1, 32, 48_000, &pcm32_bytes), 32_u8, 4_u8, 1_u8, pcm32_bytes),
+            (make_test_wav(3, 32, 48_000, &float32_bytes), 32_u8, 4_u8, 3_u8, float32_bytes),
+        ];
+
+        for (wav, valid_bits, subslot_bytes, data_format, expected) in cases {
+            let decoded = decode_test_audio(wav, "wav");
+            let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits, subslot_bytes, little_endian: true };
+            let mut actual = Vec::new();
+            encode_usb_pcm_for_data_format(&decoded, format, data_format, &mut actual)
+                .expect("encode descriptor-matched USB PCM");
+            assert_eq!(actual, expected, "valid_bits={valid_bits}, data_format={data_format}");
+        }
+    }
+
+    #[test]
+    fn end_to_end_flac24_s32_left_alignment_is_restored_to_usb_24_bit_pcm() {
+        use base64::Engine;
+        const FLAC_24_FIXTURE: &str = "ZkxhQwAAACIQABAAAAAYAAAYC7gBcAAAAAX5cmc8NYTV0MCDbk1mk3rMhAAAKCAAAAByZWZlcmVuY2UgbGliRkxBQyAxLjUuMCAyMDI1MDIxMQAAAAD/+GoMAASQGIAAAP///wAAAAAAAQAQREw=";
+        let flac = base64::engine::general_purpose::STANDARD.decode(FLAC_24_FIXTURE).unwrap();
+        let decoded = decode_test_audio(flac, "flac");
+        assert!(matches!(decoded, UsbPcmSamples::S32(_)), "FLAC 24-bit should decode to Symphonia S32");
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true };
+        let mut actual = Vec::new();
+        encode_usb_pcm_for_data_format(&decoded, format, 1, &mut actual).unwrap();
+        let source = [-8_388_608_i32, -1, 0, 1, 8_388_607];
+        let expected: Vec<u8> = source.iter().flat_map(|sample| sample.to_le_bytes()[..3].to_vec()).collect();
+        assert_eq!(actual, expected);
+    }
+
     #[test]
     fn accepts_integer_16_and_24_bit_pcm_layouts() {
         for format in [
