@@ -23,6 +23,8 @@ const TRANSFER_RING_SIZE: usize = 4;
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
 const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
+#[cfg(target_os = "android")]
+const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(target_os = "android")]
 struct TransferSignal {
@@ -247,26 +249,21 @@ fn fill_and_submit(
 #[cfg(target_os = "android")]
 fn transfer_packets_succeeded(slot: &TransferSlot) -> Result<(), String> {
     unsafe {
-        if (*slot.transfer).status != 0 {
-            return Err(format!("Isochronous USB transfer completed with status {}", (*slot.transfer).status));
-        }
+        let transfer_status = (*slot.transfer).status;
         let descriptors = std::slice::from_raw_parts(
             (*slot.transfer).iso_packet_desc.as_ptr(),
             PACKETS_PER_TRANSFER,
         );
-        for (index, packet) in descriptors.iter().enumerate() {
-            if packet.status != 0 {
-                return Err(format!("Isochronous USB packet {index} failed with status {}", packet.status));
-            }
-            if packet.actual_length != packet.length {
-                return Err(format!(
-                    "Isochronous USB packet {index} was short: {} of {} bytes",
-                    packet.actual_length, packet.length
-                ));
-            }
-        }
+        let packets: Vec<crate::usb_isochronous::IsochronousPacketCompletion> = descriptors
+            .iter()
+            .map(|packet| crate::usb_isochronous::IsochronousPacketCompletion {
+                status: i32::from(packet.status),
+                actual_length: packet.actual_length,
+                expected_length: packet.length,
+            })
+            .collect();
+        crate::usb_isochronous::validate_isochronous_completion(transfer_status, &packets)
     }
-    Ok(())
 }
 
 #[cfg(target_os = "android")]
@@ -331,7 +328,18 @@ fn run_worker(
     }
 
     let mut cancelling = false;
+    let mut drain_started_at: Option<Instant> = None;
+    let mut unsafe_to_free = false;
     loop {
+        if let Some(started_at) = drain_started_at {
+            let pending = slots.iter().any(|slot| slot.submitted)
+                || feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
+            if pending && started_at.elapsed() >= TRANSFER_DRAIN_TIMEOUT {
+                set_error(&error, &status, "Timed out draining cancelled USB transfers; retaining transfer buffers and libusb session to prevent use-after-free".into());
+                unsafe_to_free = true;
+                break;
+            }
+        }
         if !cancelling {
             let audio_timed_out = slots.iter().any(|slot| {
                 slot.submitted_at.map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT).unwrap_or(false)
@@ -350,6 +358,7 @@ fn run_worker(
         if stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0 {
             if !cancelling {
                 cancelling = true;
+                drain_started_at = Some(Instant::now());
                 for slot in &slots {
                     if slot.submitted { let _ = unsafe { libusb1_sys::libusb_cancel_transfer(slot.transfer) }; }
                 }
@@ -386,7 +395,12 @@ fn run_worker(
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
         if event_result < 0 && event_result != -10 {
-            set_error(&error, &status, format!("libusb event handling failed with code {event_result}")); continue;
+            set_error(&error, &status, format!("libusb event handling failed with code {event_result}"));
+            // Keep pumping events while cancellation callbacks are outstanding.
+            // The bounded drain timeout below prevents an unbounded join if the
+            // device/context can no longer deliver callbacks.
+            thread::sleep(Duration::from_millis(1));
+            continue;
         }
         if let Some(feedback) = feedback_slot.as_mut() {
             if feedback.submitted && feedback.signal.completed.swap(false, Ordering::AcqRel) {
@@ -436,6 +450,27 @@ fn run_worker(
         }
     }
 
+    if unsafe_to_free {
+        // A callback may still dereference user_data and the transfer buffer.
+        // Leak only outstanding slots and retain the session/context; safety is
+        // preferred over reclaiming resources after a broken libusb event loop.
+        if let Some(feedback) = feedback_slot {
+            if feedback.submitted {
+                std::mem::forget(feedback);
+            } else {
+                unsafe { libusb1_sys::libusb_free_transfer(feedback.transfer); }
+            }
+        }
+        for slot in slots {
+            if slot.submitted {
+                std::mem::forget(slot);
+            } else {
+                unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
+            }
+        }
+        std::mem::forget(session);
+        return;
+    }
     if let Some(feedback) = feedback_slot {
         unsafe { libusb1_sys::libusb_free_transfer(feedback.transfer); }
     }
