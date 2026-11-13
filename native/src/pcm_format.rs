@@ -46,6 +46,7 @@ impl PcmFormat {
 /// Decoded samples retained in the exact Symphonia sample representation.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum UsbPcmSamples {
+    Empty,
     U8(Vec<u8>),
     S16(Vec<i16>),
     S24(Vec<i32>),
@@ -83,6 +84,9 @@ impl UsbPcmSamples {
 
     pub fn append(&mut self, other: Self) -> Result<(), &'static str> {
         match (self, other) {
+            (Self::Empty, Self::Empty) => {},
+            (Self::Empty, other) => *self = other,
+            (this, Self::Empty) => {},
             (Self::U8(a), Self::U8(b)) => a.extend(b),
             (Self::S16(a), Self::S16(b)) => a.extend(b),
             (Self::S24(a), Self::S24(b)) => a.extend(b),
@@ -97,6 +101,7 @@ impl UsbPcmSamples {
     pub fn drain(&mut self, count: usize) -> Self {
         macro_rules! take { ($v:expr, $variant:ident) => {{ let n = count.min($v.len()); Self::$variant($v.drain(..n).collect()) }}; }
         match self {
+            Self::Empty => Self::Empty,
             Self::U8(v) => take!(v, U8),
             Self::S16(v) => take!(v, S16),
             Self::S24(v) => take!(v, S24),
@@ -107,7 +112,7 @@ impl UsbPcmSamples {
     }
 
     pub fn len(&self) -> usize {
-        match self { Self::U8(v) => v.len(), Self::S16(v) => v.len(), Self::S24(v) => v.len(),
+        match self { Self::Empty => 0, Self::U8(v) => v.len(), Self::S16(v) => v.len(), Self::S24(v) => v.len(),
             Self::S32(v) => v.len(), Self::F32(v) => v.len(), Self::F64(v) => v.len() }
     }
 }
@@ -123,12 +128,13 @@ pub(super) fn encode_usb_pcm(
     if samples.len() % channels != 0 {
         return Err("Decoded PCM sample count is not channel-frame aligned");
     }
+    if samples.len() == 0 { output.clear(); return Ok(()); }
     let required = samples.len().checked_mul(usize::from(format.subslot_bytes))
         .ok_or("USB PCM output size overflow")?;
     output.clear();
     output.reserve(required);
-    let padding = format.subslot_bytes * 8 - format.valid_bits;
     match samples {
+        UsbPcmSamples::Empty => {},
         UsbPcmSamples::U8(values) if format.valid_bits == 8 && format.subslot_bytes == 1 => output.extend(values),
         UsbPcmSamples::S16(values) if format.valid_bits == 16 && format.subslot_bytes == 2 =>
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
@@ -144,7 +150,6 @@ pub(super) fn encode_usb_pcm(
             for value in values { output.extend_from_slice(&value.to_le_bytes()); },
         _ => return Err("USB endpoint PCM format does not exactly match the decoder sample representation"),
     }
-    let _ = padding;
     Ok(())
 }
 
