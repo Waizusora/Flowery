@@ -189,7 +189,11 @@ pub(super) fn encode_usb_integer_pcm(
                 && matches!(format.subslot_bytes, 2 | 3 | 4)
                 && format.valid_bits as u16 <= format.subslot_bytes as u16 * 8 =>
         {
-            let padding = 32 - u32::from(format.valid_bits);
+            let padding = if format.subslot_bytes == 4 {
+                0
+            } else {
+                32 - u32::from(format.valid_bits)
+            };
             for value in values {
                 let aligned = if padding == 0 { *value } else { *value >> padding };
                 let bytes = aligned.to_le_bytes();
@@ -406,7 +410,7 @@ mod tests {
             let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits, subslot_bytes, little_endian: true };
             let mut output = Vec::new();
             encode_usb_pcm(&UsbPcmSamples::S32(source.clone()), format, &mut output).unwrap();
-            let padding = 32 - u32::from(valid_bits);
+            let padding = if subslot_bytes == 4 { 0 } else { 32 - u32::from(valid_bits) };
             let expected: Vec<u8> = source.iter().flat_map(|sample| {
                 let aligned = if padding == 0 { *sample } else { *sample >> padding };
                 aligned.to_le_bytes()[..subslot_bytes as usize].to_vec()
