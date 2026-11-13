@@ -166,14 +166,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbPlayba
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeReadUsbPcmChunk(
     mut env: JNIEnv, _class: JClass, decoder_handle: jni::sys::jlong,
-    max_frames: jint, valid_bits: jint, subslot_bytes: jint,
+    max_frames: jint, valid_bits: jint, subslot_bytes: jint, data_format: jint,
 ) -> jbyteArray {
-    if max_frames <= 0 || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes) {
+    if max_frames <= 0 || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
+        || !(1..=3).contains(&data_format) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid USB PCM chunk format");
         return std::ptr::null_mut();
     }
     match crate::streaming::read_usb_pcm_chunk(
-        decoder_handle, max_frames as usize, valid_bits as u8, subslot_bytes as u8,
+        decoder_handle, max_frames as usize, valid_bits as u8, subslot_bytes as u8, data_format as u8,
     ) {
         Ok(bytes) => write_bytes_to_java(&mut env, &bytes),
         Err(error) => {
