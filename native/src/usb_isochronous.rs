@@ -137,6 +137,30 @@ mod tests {
     }
 
     #[test]
+    fn fractional_frames_are_distributed_without_drift_at_high_speed() {
+        let schedule = build_isochronous_schedule(
+            44_100, 2, 4, 0x0400, 1, UsbBusSpeed::High, 80
+        ).unwrap();
+        assert_eq!(schedule.packets.iter().map(|p| p.sample_frames).sum::<u32>(), 441);
+        assert!(schedule.packets.iter().all(|p| p.sample_frames == 5 || p.sample_frames == 6));
+        assert!(schedule.packets.iter().enumerate().all(|(index, p)| p.service_index == index as u32));
+    }
+
+    #[test]
+    fn rejects_zero_and_invalid_packet_descriptors() {
+        assert!(max_isochronous_payload(0, UsbBusSpeed::Full).is_err());
+        assert!(max_isochronous_payload(0xe400, UsbBusSpeed::High).is_err());
+        assert!(build_isochronous_schedule(48_000, 2, 4, 0x0400, 0, UsbBusSpeed::High, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_service_intervals_that_exceed_endpoint_capacity() {
+        assert!(build_isochronous_schedule(
+            768_000, 8, 4, 0x0400, 16, UsbBusSpeed::High, 1
+        ).is_err());
+    }
+
+    #[test]
     fn high_speed_interval_uses_microframes() {
         let s = build_isochronous_schedule(48_000, 2, 2, 0x0400, 1, UsbBusSpeed::High, 8).unwrap();
         assert_eq!(s.service_interval_micros, 125);
