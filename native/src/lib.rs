@@ -67,7 +67,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
     session: jni::sys::jlong, decoder: jni::sys::jlong,
     endpoint: jint, raw_max_packet_size: jint, interval: jint,
     sample_rate: jint, channels: jint, valid_bits: jint, subslot_bytes: jint,
-    feedback_endpoint: jint, feedback_max_packet_size: jint,
+    data_format: jint, feedback_endpoint: jint, feedback_max_packet_size: jint,
     initial_position_ms: jni::sys::jlong,
 ) -> jint {
     if session <= 0 || decoder <= 0 || !(0..=255).contains(&endpoint)
@@ -75,6 +75,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
         || !(1..=16).contains(&interval)
         || sample_rate <= 0 || !(1..=8).contains(&channels)
         || !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
+        || !(1..=3).contains(&data_format)
         || !((feedback_endpoint == 0 && feedback_max_packet_size == 0)
             || ((0x81..=0x8f).contains(&feedback_endpoint) && (3..=4).contains(&feedback_max_packet_size)))
         || initial_position_ms < 0 {
@@ -84,7 +85,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartUsbIsoc
     match crate::usb_stream::start(
         session, decoder, endpoint as u8, raw_max_packet_size as u16,
         interval as u8, sample_rate as u32,
-        channels as u8, valid_bits as u8, subslot_bytes as u8,
+        channels as u8, valid_bits as u8, subslot_bytes as u8, data_format as u8,
         feedback_endpoint as u8, feedback_max_packet_size as u16,
         initial_position_ms as u64,
     ) {
@@ -215,6 +216,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
     sample_rate: jint,
     channels: jint,
     bit_resolution: jint,
+    data_format: jint,
 ) -> jstring {
     let bytes = match jbytes(&mut env, &descriptors) {
         Ok(value) => value,
@@ -225,11 +227,18 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
     };
     let result = if sample_rate <= 0 || channels <= 0 || channels > u8::MAX as jint
         || bit_resolution <= 0 || bit_resolution > u8::MAX as jint
+        || !(1..=3).contains(&data_format)
     {
         serde_json::json!({"ok": false, "error": "Invalid PCM parameters"})
     } else {
-        match crate::usb_audio::plan_pcm_playback(
-            &bytes, sample_rate as u32, channels as u8, bit_resolution as u8
+        let requested_format = match data_format {
+            1 => crate::usb_audio::UsbAudioDataFormat::Pcm,
+            2 => crate::usb_audio::UsbAudioDataFormat::Pcm8,
+            3 => crate::usb_audio::UsbAudioDataFormat::IeeeFloat,
+            _ => unreachable!(),
+        };
+        match crate::usb_audio::plan_pcm_playback_with_format(
+            &bytes, sample_rate as u32, channels as u8, bit_resolution as u8, requested_format
         ) {
             Ok(plan) => {
                 let mut plan_value = match serde_json::to_value(&plan) {
