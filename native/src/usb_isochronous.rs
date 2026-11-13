@@ -245,9 +245,9 @@ mod tests {
     #[test]
     fn rejects_transfer_and_individual_packet_completion_errors() {
         let packet = [IsochronousPacketCompletion { status: 0, actual_length: 8, expected_length: 8 }];
-        assert!(validate_isochronous_completion(-4, &packet).unwrap_err().contains("transfer completed"));
+        assert!(validate_isochronous_completion(5, &packet).unwrap_err().contains("device disconnected"));
         let packet_error = [IsochronousPacketCompletion { status: 2, actual_length: 8, expected_length: 8 }];
-        assert!(validate_isochronous_completion(0, &packet_error).unwrap_err().contains("packet 0 failed"));
+        assert!(validate_isochronous_completion(0, &packet_error).unwrap_err().contains("packet 0 timed out"));
     }
 
     #[test]
