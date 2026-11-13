@@ -246,7 +246,14 @@ internal class UsbNativePlaybackSession private constructor(
                     val multipliersJson = pathObject.optJSONArray("multipliers") ?: JSONArray()
                     val selectors = (0 until selectorsJson.length()).mapNotNull { index ->
                         selectorsJson.optJSONObject(index)?.let { item ->
-                            Uac2ClockSelectorStep(item.optInt("entity_id", -1), item.optInt("controls", -1), item.optInt("selected_pin", -1))
+                            Uac2ClockSelectorStep(
+                                item.optInt("entity_id", -1),
+                                item.optInt("controls", -1),
+                                item.optInt("selected_pin", -1),
+                                (0 until (item.optJSONArray("input_sources")?.length() ?: 0)).map { sourceIndex ->
+                                    item.optJSONArray("input_sources")!!.optInt(sourceIndex, -1)
+                                }
+                            )
                         }
                     }
                     val multipliers = (0 until multipliersJson.length()).mapNotNull { index ->
@@ -265,7 +272,13 @@ internal class UsbNativePlaybackSession private constructor(
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
                 val invalidClockPaths = isUac2 && (clockPaths.isEmpty() || clockPaths.any { path ->
                     path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
-                        path.selectors.any { it.entityId !in 1..255 || it.selectedPin !in 1..255 || (it.controls and 0x03) !in 1..2 } ||
+                        path.selectors.any {
+                            it.entityId !in 1..255 ||
+                                it.inputSources.isEmpty() ||
+                                it.inputSources.any { sourceId -> sourceId !in 1..255 } ||
+                                it.selectedPin !in 1..it.inputSources.size ||
+                                (it.controls and 0x03) !in 1..2
+                        } ||
                         path.multipliers.any { it.entityId !in 1..255 || (it.controls and 0x03) != 0x01 || (it.controls and 0x0C) != 0x04 }
                 })
                 val invalidUac2ClockPlan = isUac2 && (
