@@ -119,6 +119,17 @@ impl UsbPcmSamples {
         match self { Self::Empty => 0, Self::U8(v) => v.len(), Self::S16(v) => v.len(), Self::S24(v) => v.len(),
             Self::S32(v) => v.len(), Self::F32(v) => v.len(), Self::F64(v) => v.len() }
     }
+
+    /// USB Audio Class Type I data format code: PCM=1, PCM8=2, IEEE_FLOAT=3.
+    pub fn data_format_code(&self) -> u8 {
+        match self {
+            Self::U8(_) => 2,
+            Self::S16(_) | Self::S24(_) | Self::S32(_) => 1,
+            Self::F32(_) => 3,
+            Self::F64(_) => 4,
+            Self::Empty => 0,
+        }
+    }
 }
 
 /// Dispatch typed decoded samples to the matching USB integer or float encoder.
