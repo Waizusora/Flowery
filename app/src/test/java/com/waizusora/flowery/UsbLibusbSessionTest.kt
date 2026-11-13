@@ -94,7 +94,7 @@ class UsbLibusbSessionTest {
         val path = Uac2ClockPath(
             sourceEntityId = 9,
             sourceControls = 2,
-            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
             multipliers = emptyList()
         )
 
@@ -123,7 +123,7 @@ class UsbLibusbSessionTest {
         val path = Uac2ClockPath(
             sourceEntityId = 9,
             sourceControls = 2,
-            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
             multipliers = emptyList()
         )
 
@@ -149,8 +149,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2),
-                Uac2ClockSelectorStep(6, 2, 3)
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
             multipliers = emptyList()
         )
@@ -174,7 +174,7 @@ class UsbLibusbSessionTest {
         val path = Uac2ClockPath(
             sourceEntityId = 9,
             sourceControls = 2,
-            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
             multipliers = emptyList()
         )
 
@@ -195,8 +195,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2),
-                Uac2ClockSelectorStep(6, 2, 3)
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
             multipliers = emptyList()
         )
@@ -217,8 +217,8 @@ class UsbLibusbSessionTest {
             sourceEntityId = 9,
             sourceControls = 2,
             selectors = listOf(
-                Uac2ClockSelectorStep(5, 2, 2),
-                Uac2ClockSelectorStep(6, 2, 3)
+                Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9)),
+                Uac2ClockSelectorStep(6, 2, 3, listOf(7, 8, 9))
             ),
             multipliers = emptyList()
         )
@@ -238,7 +238,7 @@ class UsbLibusbSessionTest {
         val path = Uac2ClockPath(
             sourceEntityId = 9,
             sourceControls = 2,
-            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
             multipliers = emptyList()
         )
 
@@ -251,13 +251,51 @@ class UsbLibusbSessionTest {
 
 
     @Test
+    fun rejectsActiveSelectorPinOutsideDescriptorInputCountBeforeMutation() {
+        val fake = FakeUsbControl().apply { selectorPin = 3 }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 8))),
+            multipliers = emptyList()
+        )
+
+        val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
+
+        assertTrue(result.isFailure)
+        assertEquals(3, fake.selectorPin)
+        assertEquals(44_100, fake.sourceRate)
+        assertTrue(fake.writes.isEmpty())
+    }
+
+    @Test
+    fun rejectsRequestedSelectorPinOutsideDescriptorInputCountBeforeMutation() {
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 2,
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 3, listOf(7, 8))),
+            multipliers = emptyList()
+        )
+
+        val result = session.negotiateUac2Clock(0, 9, 2, 48_000, clockPaths = listOf(path))
+
+        assertTrue(result.isFailure)
+        assertEquals(1, fake.selectorPin)
+        assertEquals(44_100, fake.sourceRate)
+        assertTrue(fake.writes.isEmpty())
+    }
+
+    @Test
     fun reportsFatalWhenClockSourceRestoreFails() {
         val fake = FakeUsbControl().apply { failSourceRestore = true }
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
             sourceEntityId = 9,
             sourceControls = 2,
-            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2)),
+            selectors = listOf(Uac2ClockSelectorStep(5, 2, 2, listOf(7, 9))),
             multipliers = emptyList()
         )
 
