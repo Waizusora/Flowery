@@ -363,11 +363,8 @@ pub(super) fn read_usb_pcm_chunk(
         little_endian: true,
     }.validate().map_err(str::to_string)?;
     let samples = decoder.read_usb_frames(max_frames)?;
-    if samples.data_format_code() != data_format && !matches!(samples, crate::pcm_format::UsbPcmSamples::Empty) {
-        return Err("Decoded Symphonia sample type does not match the selected USB descriptor format".into());
-    }
     let mut output = Vec::with_capacity(samples.len() * usize::from(subslot_bytes));
-    crate::pcm_format::encode_usb_pcm(&samples, format, &mut output)
+    crate::pcm_format::encode_usb_pcm_for_data_format(&samples, format, data_format, &mut output)
         .map_err(str::to_string)?;
     Ok(output)
 }
