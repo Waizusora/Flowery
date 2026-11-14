@@ -283,6 +283,14 @@ mod tests {
     }
 
     #[test]
+    fn appending_multiple_decoder_chunks_preserves_previously_copied_pcm() {
+        let mut packet = [0_u8; 8];
+        copy_pcm_into_packet(&mut packet[0..2], &[0x10, 0x11], 2).unwrap();
+        copy_pcm_into_packet(&mut packet[2..4], &[0x20, 0x21], 2).unwrap();
+        assert_eq!(packet, [0x10, 0x11, 0x20, 0x21, 0, 0, 0, 0]);
+    }
+
+    #[test]
     fn rejects_unaligned_or_oversized_pcm_packet_data() {
         let mut packet = [0_u8; 4];
         assert!(copy_pcm_into_packet(&mut packet, &[1, 2, 3], 2).is_err());

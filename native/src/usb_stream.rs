@@ -230,7 +230,10 @@ fn fill_and_submit(
                 *eof = true;
                 break;
             }
-            let packet_region = &mut slot.buffer[offset + written..offset + expected];
+            let chunk_end = offset.checked_add(written)
+                .and_then(|start| start.checked_add(chunk.len()))
+                .ok_or("USB PCM chunk buffer offset overflow")?;
+            let packet_region = &mut slot.buffer[offset + written..chunk_end];
             let copy = crate::usb_isochronous::copy_pcm_into_packet(packet_region, &chunk, frame_bytes)
                 .map_err(|message| format!("Invalid PCM data for USB isochronous packet: {message}"))?;
             written += copy;
