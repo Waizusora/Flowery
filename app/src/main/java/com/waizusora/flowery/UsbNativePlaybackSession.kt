@@ -338,7 +338,7 @@ internal class UsbNativePlaybackSession private constructor(
                         } ||
                         path.multipliers.any {
                             it.entityId !in 1..255 || it.inputClockId !in 1..255 ||
-                                (it.controls and 0x03) != 0x01 || (it.controls and 0x0C) != 0x04
+                                !isValidUac2ClockMultiplierControls(it.controls)
                         }
                 })
                 val invalidUac2ClockPlan = isUac2 && (

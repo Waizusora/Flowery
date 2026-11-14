@@ -259,6 +259,23 @@ class UsbLibusbSessionTest {
 
 
     @Test
+    fun acceptsReadableClockMultiplierControls() {
+        assertTrue(isValidUac2ClockMultiplierControls(0x05))
+        assertTrue(isValidUac2ClockMultiplierControls(0x06))
+        assertTrue(isValidUac2ClockMultiplierControls(0x09))
+        assertTrue(isValidUac2ClockMultiplierControls(0x0A))
+    }
+
+    @Test
+    fun rejectsUnavailableOrReservedClockMultiplierControls() {
+        assertFalse(isValidUac2ClockMultiplierControls(0x00))
+        assertFalse(isValidUac2ClockMultiplierControls(0x03))
+        assertFalse(isValidUac2ClockMultiplierControls(0x07))
+        assertFalse(isValidUac2ClockMultiplierControls(0x0B))
+        assertFalse(isValidUac2ClockMultiplierControls(0x0F))
+    }
+
+    @Test
     fun rejectsClockPathWhenSelectorInputDoesNotMatchNextEntity() {
         val path = Uac2ClockPath(
             sourceEntityId = 9,

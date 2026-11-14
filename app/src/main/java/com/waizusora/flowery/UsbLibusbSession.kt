@@ -11,6 +11,16 @@ import java.io.Closeable
  * Do not open UsbAudioControlSession for the same interface while this object is
  * active: libusb owns interface claiming and alternate-setting selection.
  */
+/**
+ * UAC2 Clock Multiplier numerator and denominator controls must both support
+ * GET_CUR. Read-only (1) and host-programmable (2) controls are readable.
+ */
+internal fun isValidUac2ClockMultiplierControls(controls: Int): Boolean {
+    val numeratorControl = controls and 0x03
+    val denominatorControl = (controls shr 2) and 0x03
+    return numeratorControl in 1..2 && denominatorControl in 1..2
+}
+
 internal fun interface UsbControlTransfer {
     fun transfer(
         requestType: Int,
@@ -169,8 +179,7 @@ internal class UsbLibusbSession internal constructor(
                     var valid = true
                     for (multiplier in path.multipliers) {
                         if (multiplier.entityId !in 1..255 || multiplier.inputClockId !in 1..255 ||
-                            (multiplier.controls and 0x01) == 0 ||
-                            (multiplier.controls and 0x04) == 0) {
+                            !isValidUac2ClockMultiplierControls(multiplier.controls)) {
                             failures += "invalid multiplier controls"; valid = false; break
                         }
                         val index = (multiplier.entityId shl 8) or controlInterfaceNumber
