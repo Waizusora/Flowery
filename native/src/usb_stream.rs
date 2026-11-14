@@ -331,11 +331,13 @@ fn run_worker(
     let mut feedback_cancelling = false;
     let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
-    for slot in &mut slots {
-        if eof || paused.load(Ordering::Acquire) { break; }
-        if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
-            set_error(&error, &status, message);
-            break;
+    if crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
+        for slot in &mut slots {
+            if eof || paused.load(Ordering::Acquire) { break; }
+            if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
+                set_error(&error, &status, message);
+                break;
+            }
         }
     }
 
@@ -420,7 +422,7 @@ fn run_worker(
         }
         if crate::usb_isochronous::audio_submission_allowed(
             paused.load(Ordering::Acquire), cancelling, eof,
-        ) {
+        ) && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
             for slot in &mut slots {
                 if !slot.submitted {
                     if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {

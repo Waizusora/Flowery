@@ -51,6 +51,13 @@ impl PacketFrameScheduler {
     }
 }
 
+/// Audio submission on an asynchronous endpoint must wait for its first
+/// valid explicit-feedback sample. Endpoints without feedback use the nominal
+/// rate selected by their synchronization mode.
+pub fn audio_clock_is_ready(feedback_required: bool, measured_rate_hz: Option<f64>) -> bool {
+    !feedback_required || measured_rate_hz.is_some_and(|rate| rate.is_finite() && rate > 0.0)
+}
+
 /// Validate a measured clock rate against a nominal stream rate before it can
 /// influence packet sizing. The tolerance accommodates normal clock drift while
 /// rejecting malformed or unrelated feedback values.
@@ -156,6 +163,15 @@ mod tests {
         assert!(decode_feedback_rate_hz(&[0, 0, 0], FeedbackBusSpeed::Full).is_err());
         assert!(decode_feedback_rate_hz(&[1, 2, 3], FeedbackBusSpeed::High).is_err());
         assert!(decode_feedback_rate_hz(&[0, 0, 0, 0], FeedbackBusSpeed::High).is_err());
+    }
+
+    #[test]
+    fn asynchronous_audio_waits_for_a_valid_initial_feedback_sample() {
+        assert!(!audio_clock_is_ready(true, None));
+        assert!(!audio_clock_is_ready(true, Some(f64::NAN)));
+        assert!(!audio_clock_is_ready(true, Some(0.0)));
+        assert!(audio_clock_is_ready(true, Some(48_000.0)));
+        assert!(audio_clock_is_ready(false, None));
     }
 
     #[test]
