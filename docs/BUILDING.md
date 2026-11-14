@@ -11,11 +11,12 @@ Install the following tools:
 - Android NDK 27.2.12479018
 - CMake 3.22.1
 - Rust stable toolchain with rustc 1.87 or newer
-- Rust targets:
-  - `aarch64-linux-android`
-  - `armv7-linux-androideabi`
-  - `x86_64-linux-android`
+- Rust Android targets:
+  - `aarch64-linux-android` (Android ABI `arm64-v8a`)
+  - `x86_64-linux-android` (Android ABI `x86_64`)
 - `cargo-ndk`
+
+Flowery builds native Android libraries only for 64-bit ARM and 64-bit x86 devices. The 32-bit ARM ABI (`armeabi-v7a`) is not supported.
 
 The Android Gradle configuration sets minSdk 26, targetSdk 35, and Java/Kotlin target 17.
 
@@ -26,7 +27,7 @@ From the repository root:
 ```bash
 cd native
 cargo test --locked
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o ../app/src/main/jniLibs build --release
+cargo ndk -t arm64-v8a -t x86_64 -o ../app/src/main/jniLibs build --release
 cd ..
 ```
 
@@ -68,12 +69,12 @@ Do not place signing material in source control. Keep keystore files and passwor
 
 The workflow at `.github/workflows/build.yml` runs for:
 
-- Pushes to `main` and `trial`.
+- Pushes to `main`, `trial`, and `dev`.
 - Pull requests.
 - Tags matching `v*`.
 - Manual workflow dispatch.
 
-The build job configures JDK 17 and Gradle 8.9, installs Android SDK Platform 35, Build Tools 35.0.0, and NDK 27.2.12479018, then installs Rust stable with Android targets. It generates the native Cargo lockfile, runs native Rust unit tests, checks the Kotlin/native JNI contract, installs `cargo-ndk`, runs Android JVM unit tests, builds native libraries for `arm64-v8a`, `armeabi-v7a`, and `x86_64`, and assembles debug and release APKs.
+The build job configures JDK 17 and Gradle 8.9, installs Android SDK Platform 35, Build Tools 35.0.0, and NDK 27.2.12479018, then installs Rust stable with the `aarch64-linux-android` and `x86_64-linux-android` targets. It generates the native Cargo lockfile, runs native Rust unit tests, checks the Kotlin/native JNI contract, installs `cargo-ndk`, runs Android JVM unit tests, builds native libraries for `arm64-v8a` and `x86_64`, and assembles debug and release APKs.
 
 The workflow uploads APKs as the `flowery-apks` artifact. A tag matching `v*` also publishes the release APK through GitHub Releases.
 
@@ -90,10 +91,10 @@ If the secrets are absent, CI still assembles the release variant but does not s
 
 ### Rust target is missing
 
-Install the Android targets with rustup:
+Install the supported Android targets with rustup:
 
 ```bash
-rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+rustup target add aarch64-linux-android x86_64-linux-android
 ```
 
 ### cargo-ndk is unavailable

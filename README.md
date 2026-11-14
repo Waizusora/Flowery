@@ -47,6 +47,7 @@ Flowery enumerates connected USB Audio Class devices independently from Android'
 This is Android-managed USB audio output through AAudio, not a raw USB Audio Class host driver. It does not claim the USB interface, submit isochronous URBs directly, or bypass Android audio policy. AAudio's EXCLUSIVE sharing mode and integer PCM configuration are necessary route conditions, not proof that the entire device-to-DAC path is bit-perfect; Android vendor DSP, firmware, clocking, and DAC behavior still require physical-device validation.
 
 The USB inventory reports VID/PID, interface subclass/protocol, and endpoint transfer direction. Android output capabilities are reported separately because the public AudioDeviceInfo API does not expose USB VID/PID for a reliable cross-API device match. An isochronous OUT endpoint is only a candidate indicator; it does not prove that an application can claim the interface or stream USB audio directly. Android's public USB Host API does not provide isochronous transfer support.
+
 ## Lyrics
 
 Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers. Users can search LRCLIB and download plain-text, synchronized LRC, or word-synchronized YAML lyrics. Downloaded lyrics are stored in app-private storage and associated with the selected audio URI; malformed or empty downloads are rejected without terminating the application. The lyrics view uses the downloaded lyric list when available and otherwise falls back to sidecar lyrics.
@@ -61,8 +62,12 @@ The lyrics panel uses the Soft Rose theme's `primaryContainer` color in light an
 - Android SDK Platform 35 and Build Tools 35.0.0
 - Android NDK 27.2.12479018
 - Rust toolchain compatible with the pinned dependencies
-- Rust Android targets: `aarch64-linux-android`, `armv7-linux-androideabi`, and `x86_64-linux-android`
+- Rust Android targets:
+  - `aarch64-linux-android` (Android ABI `arm64-v8a`)
+  - `x86_64-linux-android` (Android ABI `x86_64`)
 - `cargo-ndk`
+
+The 32-bit ARM ABI (`armeabi-v7a`) is not supported. Flowery packages native libraries only for 64-bit ARM and 64-bit x86 Android devices.
 
 See [BUILDING.md](docs/BUILDING.md) for setup and build instructions.
 
