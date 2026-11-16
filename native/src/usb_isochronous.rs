@@ -27,10 +27,16 @@ pub fn max_isochronous_payload(raw: u16, speed: UsbBusSpeed) -> Result<u32, Stri
     match speed {
         UsbBusSpeed::Full => {
             if raw & 0xf800 != 0 { return Err("Full-speed wMaxPacketSize contains reserved transaction bits".into()); }
+            if payload > 1_023 {
+                return Err("Full-speed isochronous wMaxPacketSize exceeds the 1023-byte USB limit".into());
+            }
             Ok(payload)
         }
         UsbBusSpeed::High => {
             if raw & 0xe000 != 0 { return Err("High-speed wMaxPacketSize contains reserved bits".into()); }
+            if payload > 1_024 {
+                return Err("High-speed isochronous transaction exceeds the 1024-byte USB limit".into());
+            }
             let additional = (raw >> 11) & 0x03;
             if additional == 3 { return Err("High-speed endpoint uses the reserved transaction multiplier".into()); }
             Ok(payload * (u32::from(additional) + 1))
@@ -472,6 +478,15 @@ mod tests {
         assert!(required_isochronous_packet_capacity(999, 2, 2, 1_000, false).is_err());
         assert!(required_isochronous_packet_capacity(768_001, 2, 2, 1_000, false).is_err());
         assert!(required_isochronous_packet_capacity(48_000, 0, 2, 1_000, false).is_err());
+    }
+
+    #[test]
+    fn enforces_usb_speed_specific_isochronous_transaction_limits() {
+        assert_eq!(max_isochronous_payload(0x03ff, UsbBusSpeed::Full).unwrap(), 1023);
+        assert!(max_isochronous_payload(0x0400, UsbBusSpeed::Full).is_err());
+        assert_eq!(max_isochronous_payload(0x0400, UsbBusSpeed::High).unwrap(), 1024);
+        assert_eq!(max_isochronous_payload(0x0c00, UsbBusSpeed::High).unwrap(), 2048);
+        assert!(max_isochronous_payload(0x0401, UsbBusSpeed::High).is_err());
     }
 
     #[test]
