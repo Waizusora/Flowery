@@ -12,6 +12,114 @@ pub(super) fn quantize_signed_pcm(sample: f32, gain: f32, valid_bits: u8) -> i64
     (scaled as i64).clamp(minimum, maximum)
 }
 
+/// Apply Q1.31 gain to signed little-endian integer PCM without float conversion.
+/// A unity gain is a strict byte-preserving fast path.
+pub(super) fn apply_integer_pcm_gain(
+    bytes: &mut [u8],
+    valid_bits: u8,
+    sample_count: usize,
+    gain_q31: i64,
+) -> Result<(), &'static str> {
+    let sample_bytes = match valid_bits {
+        16 => 2,
+        24 => 3,
+        32 => 4,
+        _ => return Err("Unsupported integer PCM gain bit depth"),
+    };
+    if !(0..=2_147_483_648_i64).contains(&gain_q31) {
+        return Err("Q1.31 gain is outside the supported range");
+    }
+    let required = sample_count.checked_mul(sample_bytes).ok_or("PCM gain buffer length overflow")?;
+    if bytes.len() < required {
+        return Err("PCM gain buffer is shorter than the requested sample count");
+    }
+    if gain_q31 == 2_147_483_648_i64 || sample_count == 0 {
+        return Ok(());
+    }
+    let minimum = -(1_i64 << (valid_bits - 1));
+    let maximum = (1_i64 << (valid_bits - 1)) - 1;
+    for sample in bytes[..required].chunks_exact_mut(sample_bytes) {
+        let raw = match valid_bits {
+            16 => i16::from_le_bytes([sample[0], sample[1]]) as i64,
+            24 => {
+                let value = sample[0] as i32
+                    | ((sample[1] as i32) << 8)
+                    | ((sample[2] as i32) << 16);
+                ((value << 8) >> 8) as i64
+            }
+            32 => i32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) as i64,
+            _ => unreachable!(),
+        };
+        let product = raw as i128 * gain_q31 as i128;
+        let half = 1_i128 << 30;
+        let rounded = if product >= 0 { product + half } else { product - half };
+        let scaled = (rounded >> 31).clamp(minimum as i128, maximum as i128) as i64;
+        match valid_bits {
+            16 => sample.copy_from_slice(&(scaled as i16).to_le_bytes()),
+            24 => {
+                let value = scaled as i32;
+                sample[0] = value as u8;
+                sample[1] = (value >> 8) as u8;
+                sample[2] = (value >> 16) as u8;
+            }
+            32 => sample.copy_from_slice(&(scaled as i32).to_le_bytes()),
+            _ => unreachable!(),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod integer_pcm_gain_tests {
+    use super::apply_integer_pcm_gain;
+
+    #[test]
+    fn unity_gain_preserves_every_pcm_byte_for_16_24_and_32_bit() {
+        for (bits, source) in [
+            (16, vec![0x00, 0x80, 0xff, 0xff, 0x01, 0x00, 0xff, 0x7f]),
+            (24, vec![0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x01, 0x00, 0x00]),
+            (32, vec![0x00, 0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0xff]),
+        ] {
+            let mut actual = source.clone();
+            apply_integer_pcm_gain(&mut actual, bits, source.len() / (bits as usize / 8), 1_i64 << 31).unwrap();
+            assert_eq!(actual, source, "bit depth {bits}");
+        }
+    }
+
+    #[test]
+    fn half_gain_scales_signed_extremes_without_changing_pcm_width() {
+        let mut pcm16 = [i16::MIN, -2, 0, 2, i16::MAX].iter()
+            .flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>();
+        apply_integer_pcm_gain(&mut pcm16, 16, 5, 1_i64 << 30).unwrap();
+        let decoded: Vec<i16> = pcm16.chunks_exact(2)
+            .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]])).collect();
+        assert_eq!(decoded, [-16_384, -1, 0, 1, 16_384]);
+
+        let mut pcm24 = [-(1_i32 << 23), -2, 0, 2, (1_i32 << 23) - 1].iter()
+            .flat_map(|value| value.to_le_bytes()[..3].to_vec()).collect::<Vec<_>>();
+        apply_integer_pcm_gain(&mut pcm24, 24, 5, 1_i64 << 30).unwrap();
+        let decoded: Vec<i32> = pcm24.chunks_exact(3).map(|b| {
+            let raw = b[0] as i32 | ((b[1] as i32) << 8) | ((b[2] as i32) << 16);
+            (raw << 8) >> 8
+        }).collect();
+        assert_eq!(decoded, [-(1 << 22), -1, 0, 1, (1 << 22)]);
+
+        let mut pcm32 = [i32::MIN, -2, 0, 2, i32::MAX].iter()
+            .flat_map(|value| value.to_le_bytes()).collect::<Vec<_>>();
+        apply_integer_pcm_gain(&mut pcm32, 32, 5, 1_i64 << 30).unwrap();
+        let decoded: Vec<i32> = pcm32.chunks_exact(4)
+            .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
+        assert_eq!(decoded, [i32::MIN / 2, -1, 0, 1, i32::MAX / 2]);
+    }
+
+    #[test]
+    fn rejects_invalid_gain_depth_and_short_buffer() {
+        assert!(apply_integer_pcm_gain(&mut [0; 4], 20, 1, 1_i64 << 31).is_err());
+        assert!(apply_integer_pcm_gain(&mut [0; 2], 16, 2, 1_i64 << 31).is_err());
+        assert!(apply_integer_pcm_gain(&mut [0; 2], 16, 1, -1).is_err());
+    }
+}
+
 /// Platform-neutral signed integer PCM layout used at native output boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PcmFormat {
