@@ -751,7 +751,6 @@ pub(super) fn start(
             ));
         }
     }
-    stop_worker_locked(session_handle)?;
     if feedback_endpoint != 0
         && (feedback_endpoint & 0x80 == 0 || feedback_endpoint & 0x0f == 0)
     {
@@ -781,6 +780,9 @@ pub(super) fn start(
     let initial_position_frames = (u128::from(initial_position_ms)
         .saturating_mul(u128::from(sample_rate)) / 1_000)
         .min(u128::from(u64::MAX)) as u64;
+    // Do not interrupt an existing stream until every new stream parameter
+    // has passed validation.
+    stop_worker_locked(session_handle)?;
     spawn_worker(
         session_handle, session, decoder_handle, config, false,
         initial_position_frames,
