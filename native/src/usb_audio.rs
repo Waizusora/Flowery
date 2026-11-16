@@ -584,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ambiguous_uac2_bm_formats_bitmap() {
+    fn supports_multiple_uac2_bm_formats_bits() {
         let descriptors = [
             9, 4, 0, 0, 0, 1, 1, 0x20, 0,
             9, 4, 1, 1, 1, 1, 2, 0x20, 0,
