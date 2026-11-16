@@ -71,6 +71,8 @@ class PlaybackService : Service() {
         const val EXTRA_SHUFFLE_ENABLED = "shuffle_enabled"
         const val EXTRA_REPEAT_MODE = "repeat_mode"
         const val EXTRA_VOLUME = "extra_volume"
+        const val EXTRA_OUTPUT_SAMPLE_RATE = "output_sample_rate_hz"
+        const val EXTRA_OUTPUT_BIT_DEPTH = "output_bit_depth"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -168,6 +170,8 @@ class PlaybackService : Service() {
                 sendBroadcast(Intent(BROADCAST_STATE).setPackage(packageName)
                     .putExtra(EXTRA_POSITION, position)
                     .putExtra(EXTRA_DURATION, duration)
+                    .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
+                    .putExtra(EXTRA_OUTPUT_BIT_DEPTH, player.outputBitDepth())
                     .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
                     .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
                     .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
@@ -619,6 +623,8 @@ class PlaybackService : Service() {
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
             .putExtra(EXTRA_POSITION, player.positionMs())
             .putExtra(EXTRA_DURATION, player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs)
+            .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
+            .putExtra(EXTRA_OUTPUT_BIT_DEPTH, player.outputBitDepth())
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
             .putExtra(EXTRA_CURRENT_CUE_PLAYLIST, queueCuePlaylists.getOrNull(queueIndex).orEmpty())
