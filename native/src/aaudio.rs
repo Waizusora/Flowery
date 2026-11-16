@@ -56,6 +56,7 @@ fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
     let (valid_bits, subslot_bytes) = match format {
         FMT_I16 => (16, 2),
         FMT_I24 => (24, 3),
+        FMT_I32 => (32, 4),
         _ => return false,
     };
     if rate <= 0 || channels <= 0 {
@@ -69,18 +70,24 @@ fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
         little_endian: true,
     }.validate().is_ok()
 }
-const FMT_I16:i32=1; const FMT_I24:i32=3;
+const FMT_I16:i32=1; const FMT_I24:i32=3; const FMT_I32:i32=4;
 const SHARING_EXCLUSIVE:i32=0; const SHARING_SHARED:i32=1;
 const STATE_OPEN:i32=2; const STATE_STARTING:i32=3; const STATE_STARTED:i32=4;
 const STATE_PAUSING:i32=5; const STATE_PAUSED:i32=6; const STATE_STOPPED:i32=10; const STATE_DISCONNECTED:i32=13;
 
 struct Output {
-    ring: Vec<f32>, capacity:u64, mask:u64, channels:usize, format:i32, rate:i32,
+    // Raw interleaved integer PCM bytes. The decoder's sample codes are never
+    // normalized through floating point on the Android-managed output path.
+    ring: Vec<u8>, capacity:u64, mask:u64, channels:usize, format:i32, rate:i32,
+    bytes_per_sample:usize,
     read:AtomicU64, write:AtomicU64, played:AtomicU64, volume:AtomicU32,
     active:AtomicBool, eof:AtomicBool, underruns:AtomicU64, error:AtomicI32,
 }
 impl Output {
-    fn gain(&self)->f32 { f32::from_bits(self.volume.load(Ordering::Relaxed)) }
+    fn gain_q31(&self)->i64 {
+        let gain = f32::from_bits(self.volume.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+        (gain as f64 * 2_147_483_648.0).round() as i64
+    }
 }
 struct Engine { stream:*mut AAudioStream, output:Option<Box<Output>>, last_open:[i64;11] }
 unsafe impl Send for Engine {}
@@ -162,14 +169,15 @@ pub(crate) fn output_queue_budget() -> Option<(usize, usize, usize)> {
     })
 }
 
-/// Copies interleaved float PCM into the output ring without crossing JNI.
-pub(crate) fn write_output_samples(samples: &[f32]) -> Result<usize, i32> {
+/// Copies complete interleaved integer PCM frames into the byte ring.
+pub(crate) fn write_output_pcm_bytes(samples: &[u8]) -> Result<usize, i32> {
     let mut engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let output = engine.output.as_mut().ok_or(INVALID_STATE)?;
-    if samples.len() % output.channels != 0 {
+    let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
+    if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
         return Err(INVALID_FORMAT);
     }
-    let requested_frames = samples.len() / output.channels;
+    let requested_frames = samples.len() / bytes_per_frame;
     let read = output.read.load(Ordering::Acquire);
     let write = output.write.load(Ordering::Relaxed);
     let queued = write.saturating_sub(read);
@@ -177,11 +185,13 @@ pub(crate) fn write_output_samples(samples: &[f32]) -> Result<usize, i32> {
     if frames == 0 {
         return Ok(0);
     }
-    let sample_count = frames * output.channels;
+    let byte_count = frames * bytes_per_frame;
     let ring_len = output.ring.len();
-    for (index, sample) in samples[..sample_count].iter().enumerate() {
-        let ring_index = (write as usize * output.channels + index) % ring_len;
-        output.ring[ring_index] = *sample;
+    let start = (write as usize * bytes_per_frame) % ring_len;
+    let first = byte_count.min(ring_len - start);
+    output.ring[start..start + first].copy_from_slice(&samples[..first]);
+    if first < byte_count {
+        output.ring[..byte_count - first].copy_from_slice(&samples[first..byte_count]);
     }
     output.write.store(write + frames as u64, Ordering::Release);
     Ok(frames)
@@ -206,23 +216,68 @@ unsafe extern "C" fn error_callback(_: *mut AAudioStream, data:*mut c_void, erro
 }
 unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio:*mut c_void, frames:i32)->i32{
     if data.is_null() || audio.is_null() || frames<=0{return 0;}
-    let o=&*(data as *const Output); let requested=frames as u64;
-    let read=o.read.load(Ordering::Relaxed); let write=o.write.load(Ordering::Acquire);
-    let count=requested.min(write.saturating_sub(read)); let gain=o.gain();
-    let bps=match o.format{FMT_I16=>2,FMT_I24=>3,_=>3};
-    for f in 0..count { for c in 0..o.channels {
-        let sample=(o.ring[(((read+f)&o.mask) as usize)*o.channels+c]*gain).clamp(-1.0,1.0);
-        let index=f as usize*o.channels+c;
-        match o.format {
-            FMT_I16=>(audio as *mut i16).add(index).write((sample*if sample<0.0{32768.0}else{32767.0}).round() as i16),
-            FMT_I24=>{let v=(sample*if sample<0.0{8388608.0}else{8388607.0}).round() as i32;let p=(audio as *mut u8).add(index*3);p.write(v as u8);p.add(1).write((v>>8) as u8);p.add(2).write((v>>16) as u8);},
-            _=>{}
+    let o=&*(data as *const Output);
+    let requested=frames as u64;
+    let read=o.read.load(Ordering::Relaxed);
+    let write=o.write.load(Ordering::Acquire);
+    let count=requested.min(write.saturating_sub(read));
+    let bytes_per_frame=o.channels*o.bytes_per_sample;
+    let byte_count=count as usize*bytes_per_frame;
+    let ring_len=o.ring.len();
+    let start=(read as usize*bytes_per_frame)%ring_len;
+    let first=byte_count.min(ring_len-start);
+    ptr::copy_nonoverlapping(o.ring.as_ptr().add(start),audio as *mut u8,first);
+    if first<byte_count {
+        ptr::copy_nonoverlapping(o.ring.as_ptr(),(audio as *mut u8).add(first),byte_count-first);
+    }
+    // Apply non-unity software gain with integer fixed-point arithmetic only.
+    // At unity gain, the PCM bytes above remain bit-for-bit unchanged.
+    let gain=o.gain_q31();
+    if gain != 2_147_483_648_i64 {
+        let output=audio as *mut u8;
+        for index in 0..(count as usize*o.channels) {
+            let offset=index*o.bytes_per_sample;
+            let value:i64=match o.format {
+                FMT_I16 => i16::from_le_bytes([output.add(offset).read(),output.add(offset+1).read()]) as i64,
+                FMT_I24 => {
+                    let raw=(output.add(offset).read() as i32)
+                        | ((output.add(offset+1).read() as i32)<<8)
+                        | ((output.add(offset+2).read() as i32)<<16);
+                    ((raw<<8)>>8) as i64
+                },
+                FMT_I32 => i32::from_le_bytes([
+                    output.add(offset).read(),output.add(offset+1).read(),
+                    output.add(offset+2).read(),output.add(offset+3).read()
+                ]) as i64,
+                _ => 0,
+            };
+            let scaled=((value as i128*gain as i128 + (1_i128<<30))>>31) as i64;
+            match o.format {
+                FMT_I16 => {
+                    let bytes=(scaled as i16).to_le_bytes();
+                    output.add(offset).write(bytes[0]);output.add(offset+1).write(bytes[1]);
+                },
+                FMT_I24 => {
+                    let v=scaled as i32;
+                    output.add(offset).write(v as u8);
+                    output.add(offset+1).write((v>>8) as u8);
+                    output.add(offset+2).write((v>>16) as u8);
+                },
+                FMT_I32 => {
+                    let bytes=(scaled as i32).to_le_bytes();
+                    for (byte_index,byte) in bytes.iter().enumerate(){output.add(offset+byte_index).write(*byte);}
+                },
+                _ => {},
+            }
         }
-    }}
+    }
     let remaining=requested-count;
-    if remaining>0 {ptr::write_bytes((audio as *mut u8).add(count as usize*o.channels*bps),0,remaining as usize*o.channels*bps);
-        if !o.eof.load(Ordering::Acquire){o.underruns.fetch_add(1,Ordering::Relaxed);}}
-    o.read.store(read+count,Ordering::Release);o.played.fetch_add(count,Ordering::Relaxed);
+    if remaining>0 {
+        ptr::write_bytes((audio as *mut u8).add(byte_count),0,remaining as usize*bytes_per_frame);
+        if !o.eof.load(Ordering::Acquire){o.underruns.fetch_add(1,Ordering::Relaxed);}
+    }
+    o.read.store(read+count,Ordering::Release);
+    o.played.fetch_add(count,Ordering::Relaxed);
     if remaining>0 && o.eof.load(Ordering::Acquire) && o.write.load(Ordering::Acquire)==read+count {o.active.store(false,Ordering::Release);1}else{0}
 }
 
@@ -449,7 +504,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,fail_on_shared:jboolean,format:jint,capacity:jint)->jint{
     if !(channels==1||channels==2) || capacity<2048 || !valid_integer_output_format(rate,channels,format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
-    let mut out=Box::new(Output{ring:vec![0.0;(cap as usize)*channels as usize],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
+    let bytes_per_sample=match format{FMT_I16=>2,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
+    let ring_bytes=(cap as usize).saturating_mul(channels as usize).saturating_mul(bytes_per_sample);
+    let mut out=Box::new(Output{ring:vec![0;ring_bytes],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,bytes_per_sample,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
     let sharing=if exclusive==JNI_TRUE{SHARING_EXCLUSIVE}else{SHARING_SHARED};
