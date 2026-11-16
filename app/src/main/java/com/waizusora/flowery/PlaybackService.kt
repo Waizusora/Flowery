@@ -15,6 +15,7 @@ import android.media.AudioManager
 import android.media.AudioDeviceInfo
 import android.media.AudioDeviceCallback
 import android.net.Uri
+import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.os.Build
 import android.os.IBinder
@@ -106,12 +107,15 @@ class PlaybackService : Service() {
         set(value) = queueState.setShuffle(value)
     private var currentTitle = "Flowery"
     private var currentArtist = "Local music"
+    private var currentArtwork: Bitmap? = null
+    private var currentArtworkKey = ""
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     @Volatile private var playRequestGeneration = 0L
     private var lastPublishedMetadataDuration = -1L
     @Volatile private var sourceMetadataDurationMs = 0L
     private var lastPublishedMetadataTitle = ""
     private var lastPublishedMetadataArtist = ""
+    private var lastPublishedArtworkKey = ""
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
     @Volatile private var outputRouteRestartPending = false
@@ -411,6 +415,8 @@ class PlaybackService : Service() {
 
         currentTitle = fallbackTitle
         currentArtist = fallbackArtist
+        currentArtwork = null
+        currentArtworkKey = ""
         sourceMetadataDurationMs = 0L
         lastPublishedMetadataDuration = -1L
         publishTrackMetadata(0L)
@@ -422,6 +428,7 @@ class PlaybackService : Service() {
             var resolvedTitle = fallbackTitle
             var resolvedArtist = fallbackArtist
             var resolvedDurationMs = 0L
+            var resolvedArtwork: AlbumArtworkDecoder.DecodedArtwork? = null
             Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$selectedIndex")
             runCatching {
                 val retriever = MediaMetadataRetriever()
@@ -431,6 +438,8 @@ class PlaybackService : Service() {
                     val embeddedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
                     resolvedDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
                         ?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                    resolvedArtwork = retriever.embeddedPicture
+                        ?.let(AlbumArtworkDecoder::decode)
                     if (!virtualEntry) resolvedTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: resolvedTitle
                     if (resolvedArtist == "Unknown artist") {
                         resolvedArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: resolvedArtist
@@ -446,6 +455,8 @@ class PlaybackService : Service() {
                 if (requestGeneration != playRequestGeneration) return@post
                 currentTitle = resolvedTitle
                 currentArtist = resolvedArtist
+                currentArtwork = resolvedArtwork?.bitmap
+                currentArtworkKey = resolvedArtwork?.cacheKey.orEmpty()
                 sourceMetadataDurationMs = resolvedDurationMs
                 publishTrackMetadata(sourceMetadataDurationMs)
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
@@ -474,17 +485,25 @@ class PlaybackService : Service() {
         if (!::session.isInitialized) return
         if (durationMs == lastPublishedMetadataDuration &&
             currentTitle == lastPublishedMetadataTitle &&
-            currentArtist == lastPublishedMetadataArtist
+            currentArtist == lastPublishedMetadataArtist &&
+            currentArtworkKey == lastPublishedArtworkKey
         ) return
 
         session.setMetadata(MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs.coerceAtLeast(0L))
+            .apply {
+                currentArtwork?.let { bitmap ->
+                    putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bitmap)
+                    putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bitmap)
+                }
+            }
             .build())
         lastPublishedMetadataDuration = durationMs
         lastPublishedMetadataTitle = currentTitle
         lastPublishedMetadataArtist = currentArtist
+        lastPublishedArtworkKey = currentArtworkKey
     }
 
     private fun outputDeviceSnapshot(): List<String> {
