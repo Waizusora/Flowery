@@ -19,7 +19,10 @@ use jni::sys::{jint, jlong};
 #[cfg(target_os = "android")]
 use jni::sys::jstring;
 use jni::JNIEnv;
-use symphonia::core::codecs::{Decoder, DecoderOptions};
+use symphonia::core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+use symphonia::core::codecs::registry::CodecRegistry;
+use symphonia::core::common::Tier;
+use symphonia_opus::OpusDecoder;
 #[cfg(target_os = "android")]
 use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
@@ -121,7 +124,7 @@ fn presentation_duration_ms(
 
 pub(super) struct StreamDecoder {
     format: Box<dyn FormatReader>,
-    decoder: Option<Box<dyn Decoder>>,
+    decoder: Option<Box<dyn AudioDecoder>>,
     track_id: u32,
     source_rate: usize,
     source_bits: u8,
@@ -153,18 +156,19 @@ impl StreamDecoder {
         let probed = symphonia::default::get_probe().format(&hint, source, &gapless_format_options(), &MetadataOptions::default())
             .map_err(|e| format!("Unable to open audio stream: {e}"))?;
         let format = probed.format;
-        let track = format.default_track().ok_or("No default audio track found")?;
+        let track = format.default_track(symphonia::core::formats::TrackType::Audio).ok_or("No default audio track found")?;
         let track_id = track.id;
-        let params = track.codec_params.clone();
-        let time_base = params.time_base;
+        let codec_params = track.codec_params.as_ref().ok_or("Audio codec parameters are unavailable")?;
+        let params = codec_params.audio().ok_or("Selected track does not contain audio codec parameters")?.clone();
+        let time_base = track.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_data_format = if params.codec == symphonia::core::codecs::CODEC_TYPE_MP3 {
+        let source_data_format = if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_MP3 {
             // Symphonia's MPEG Layer III decoder always produces interleaved
             // f32 samples, even when the container has no sample_format field.
             3 // UAC IEEE_FLOAT
         } else if matches!(
             params.codec,
-            symphonia::core::codecs::CODEC_TYPE_FLAC | symphonia::core::codecs::CODEC_TYPE_ALAC
+            symphonia::core::codecs::audio::well_known::CODEC_ID_FLAC | symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC
         ) {
             // Symphonia exposes FLAC and ALAC decoded integer samples as
             // left-aligned i32, independent of the encoded bit depth.
@@ -180,9 +184,9 @@ impl StreamDecoder {
                 _ => 0, // unknown or unsupported typed output; never guess
             }
         };
-        let source_bits = if params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE {
+        let source_bits = if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_PCM_F32LE {
             32
-        } else if params.codec == symphonia::core::codecs::CODEC_TYPE_ALAC {
+        } else if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC {
             // MP4/M4A ALAC tracks commonly omit bits_per_sample from the
             // container parameters. The mandatory magic cookie stores the
             // encoded PCM depth at byte 5.
@@ -200,16 +204,15 @@ impl StreamDecoder {
         // CodecParameters::n_frames includes the encoded stream extent. Delay and
         // padding identify decoded frames that must not contribute to presentation time.
         let duration_ms = presentation_duration_ms(
-            params.n_frames,
-            params.delay,
-            params.padding,
+            track.num_frames,
+            track.delay,
+            track.padding,
             source_rate as u32,
         );
         // Some MP4/M4A ALAC tracks expose neither a channel bitmask nor a
         // channel layout in Symphonia's track parameters. The mandatory ALAC
         // magic-cookie configuration still declares the channel count.
         let channels = params.channels.map(|channels| channels.count())
-            .or_else(|| params.channel_layout.map(|layout| layout.into_channels().count()))
             .or_else(|| {
                 (params.codec == symphonia::core::codecs::CODEC_TYPE_ALAC)
                     .then(|| alac_channel_count(params.extra_data.as_deref()))
@@ -217,7 +220,10 @@ impl StreamDecoder {
             })
             .ok_or("Audio channel layout is unavailable in track metadata and codec configuration")?;
         if channels == 0 || channels > 8 { return Err(format!("Audio stream channel count is outside the supported 1–8 channel envelope: {channels}")); }
-        let decoder = Some(symphonia::default::get_codecs().make(&params, &DecoderOptions::default())
+        let mut codec_registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut codec_registry);
+        codec_registry.register_audio_decoder_at_tier::<OpusDecoder>(Tier::Fallback);
+        let decoder = Some(codec_registry.make_audio_decoder(&params, &AudioDecoderOptions::default())
             .map_err(|error| format!("Unsupported audio codec: {error}"))?);
         Ok(Self {
             format, decoder, track_id, source_rate, source_bits, source_data_format, channels,
@@ -279,7 +285,8 @@ impl StreamDecoder {
     fn decode_packet(&mut self) -> Result<bool,String> {
         loop {
             let packet = match self.format.next_packet() {
-                Ok(p) => p,
+                Ok(Some(p)) => p,
+                Ok(None) => { self.eof = true; return Ok(false); }
                 Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
                     self.eof = true;
                     return Ok(false);
@@ -291,7 +298,7 @@ impl StreamDecoder {
                 Err(Error::IoError(error)) => return Err(format!("Audio stream I/O failed: {error}")),
                 Err(e) => return Err(format!("Audio packet read failed: {e}")),
             };
-            if packet.track_id() != self.track_id { continue; }
+            if packet.track_id != self.track_id { continue; }
             let decoder = self.decoder.as_mut().ok_or_else(|| "No PCM decoder is registered for this codec".to_string())?;
             match decoder.decode(&packet) {
                 Ok(decoded) => {

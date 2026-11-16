@@ -184,8 +184,8 @@ pub(super) enum UsbPcmSamples {
 }
 
 impl UsbPcmSamples {
-    pub fn from_audio_buffer(decoded: symphonia::core::audio::AudioBufferRef<'_>) -> Result<Self, &'static str> {
-        use symphonia::core::audio::{AudioBufferRef, Signal};
+    pub fn from_audio_buffer(decoded: symphonia::core::audio::GenericAudioBufferRef<'_>) -> Result<Self, &'static str> {
+        use symphonia::core::audio::{GenericAudioBufferRef, Signal};
         fn interleave<T: Copy>(buffer: &symphonia::core::audio::AudioBuffer<T>) -> Vec<T>
         where T: symphonia::core::sample::Sample {
             let channels = buffer.spec().channels.count();
@@ -199,7 +199,7 @@ impl UsbPcmSamples {
             samples
         }
         Ok(match decoded {
-            AudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
+            GenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
             AudioBufferRef::S16(buffer) => Self::S16(interleave(&buffer)),
             AudioBufferRef::S24(buffer) => Self::S24(interleave(&buffer).into_iter().map(|sample| sample.inner()).collect()),
             AudioBufferRef::S32(buffer) => Self::S32(interleave(&buffer)),

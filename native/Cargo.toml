@@ -8,7 +8,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jni = "0.21"
-symphonia = { version = "0.5.4", features = ["all", "isomp4", "alac"] }
+symphonia = { version = "0.6.1", features = ["all", "isomp4", "alac"] }
+symphonia-opus = "0.1.1"
 lofty = "0.25.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
