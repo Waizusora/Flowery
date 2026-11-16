@@ -305,7 +305,7 @@ impl StreamDecoder {
                 Ok(decoded) => {
                     self.consecutive_decode_errors = 0;
                     let spec = *decoded.spec();
-                    if spec.channels.count() != self.channels {
+                    if spec.channels().count() != self.channels {
                         return Err("The audio stream changed channel layout mid-track".into());
                     }
                     // Keep Symphonia's native decoded sample representation. Both
