@@ -645,12 +645,13 @@ mod tests {
 
     fn test_output(capacity: usize, channels: usize) -> Output {
         Output {
-            ring: vec![0.0; capacity * channels],
+            ring: vec![0; capacity * channels * 2],
             capacity: capacity as u64,
             mask: capacity as u64 - 1,
             channels,
             format: FMT_I16,
             rate: 48_000,
+            bytes_per_sample: 2,
             read: AtomicU64::new(0),
             write: AtomicU64::new(0),
             played: AtomicU64::new(0),
@@ -670,11 +671,17 @@ mod tests {
         output.played.store(100, Ordering::Relaxed);
 
         // Three queued stereo frames occupy ring slots 3, 0, and 1.
-        output.ring[6..8].copy_from_slice(&[0.1, -0.1]);
-        output.ring[0..2].copy_from_slice(&[0.2, -0.2]);
-        output.ring[2..4].copy_from_slice(&[0.3, -0.3]);
+        let frame3=[100_i16,-100_i16];
+        let frame0=[200_i16,-200_i16];
+        let frame1=[300_i16,-300_i16];
+        for (slot,frame) in [(3,frame3),(0,frame0),(1,frame1)] {
+            for (channel,sample) in frame.iter().enumerate() {
+                let offset=(slot*2+channel)*2;
+                output.ring[offset..offset+2].copy_from_slice(&sample.to_le_bytes());
+            }
+        }
 
-        let mut audio = [9.0_f32; 8];
+        let mut audio = [0x55_u8; 16];
         let result = unsafe {
             data_callback(
                 ptr::null_mut(),
@@ -685,8 +692,9 @@ mod tests {
         };
 
         assert_eq!(result, 0);
-        assert_eq!(&audio[..6], &[0.1, -0.1, 0.2, -0.2, 0.3, -0.3]);
-        assert_eq!(&audio[6..], &[0.0, 0.0]);
+        let expected=[100_i16,-100,200,-200,300,-300,0,0];
+        let expected_bytes:Vec<u8>=expected.iter().flat_map(|sample|sample.to_le_bytes()).collect();
+        assert_eq!(audio.as_slice(),expected_bytes.as_slice());
         assert_eq!(output.read.load(Ordering::Acquire), 6);
         assert_eq!(output.played.load(Ordering::Acquire), 103);
         assert_eq!(output.underruns.load(Ordering::Acquire), 1);
@@ -696,11 +704,11 @@ mod tests {
     #[test]
     fn data_callback_stops_only_after_eof_ring_is_drained() {
         let mut output = test_output(4, 1);
-        output.ring[0] = 0.25;
+        output.ring[0..2].copy_from_slice(&1234_i16.to_le_bytes());
         output.write.store(1, Ordering::Relaxed);
         output.eof.store(true, Ordering::Relaxed);
 
-        let mut final_frame = [0.0_f32; 1];
+        let mut final_frame = [0_u8; 2];
         let first_result = unsafe {
             data_callback(
                 ptr::null_mut(),
@@ -710,10 +718,10 @@ mod tests {
             )
         };
         assert_eq!(first_result, 0);
-        assert_eq!(final_frame, [0.25]);
+        assert_eq!(i16::from_le_bytes(final_frame), 1234);
         assert!(output.active.load(Ordering::Acquire));
 
-        let mut silence = [9.0_f32; 1];
+        let mut silence = [9_u8; 2];
         let second_result = unsafe {
             data_callback(
                 ptr::null_mut(),
@@ -723,7 +731,7 @@ mod tests {
             )
         };
         assert_eq!(second_result, 1);
-        assert_eq!(silence, [0.0]);
+        assert_eq!(silence, [0, 0]);
         assert!(!output.active.load(Ordering::Acquire));
         assert_eq!(output.underruns.load(Ordering::Acquire), 0);
     }
