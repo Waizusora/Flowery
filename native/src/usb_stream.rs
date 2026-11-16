@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "android")]
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -97,6 +97,13 @@ struct UsbStreamWorker {
 static WORKERS: OnceLock<Mutex<HashMap<i64, UsbStreamWorker>>> = OnceLock::new();
 #[cfg(target_os = "android")]
 static LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(target_os = "android")]
+static UNSAFE_SESSIONS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn unsafe_sessions() -> &'static Mutex<HashSet<i64>> {
+    UNSAFE_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 #[cfg(target_os = "android")]
 fn workers() -> &'static Mutex<HashMap<i64, UsbStreamWorker>> {
@@ -542,7 +549,8 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
         worker.stop.store(true, Ordering::Release);
         let _ = worker.thread.join();
         if worker.status.load(Ordering::Acquire) == -2 {
-            return Err("USB transfer cancellation could not be drained safely; close and reopen the USB session before starting or seeking again".into());
+            unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            return Err("USB transfer cancellation could not be drained safely; the Android USB connection must remain open to protect outstanding libusb transfers".into());
         }
     }
     Ok(())
@@ -571,10 +579,14 @@ pub(super) fn stop_session(session: i64) {
 /// Stop the worker and remove the session while holding the same lifecycle
 /// gate used by start/seek. This closes the lookup-vs-close race.
 #[cfg(target_os = "android")]
-pub(super) fn close_session(session: i64) {
+pub(super) fn close_session(session: i64) -> Result<(), String> {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
-    let _ = stop_worker_locked(session);
+    stop_worker_locked(session)?;
+    if unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session) {
+        return Err("USB session has outstanding transfers that could not be drained; retain the Android USB connection".into());
+    }
     crate::usb_libusb::remove_session(session);
+    Ok(())
 }
 
 #[cfg(target_os = "android")]
