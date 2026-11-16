@@ -54,9 +54,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetUsbBusSpe
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession(
-    _env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
-) {
-    crate::usb_libusb::close_session(handle);
+    mut env: JNIEnv, _class: JClass, handle: jni::sys::jlong,
+) -> jint {
+    match crate::usb_libusb::close_session(handle) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
 }
 
 
