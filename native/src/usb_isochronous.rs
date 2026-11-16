@@ -122,10 +122,21 @@ pub fn validate_isochronous_completion(
     transfer_status: i32,
     packets: &[IsochronousPacketCompletion],
 ) -> Result<(), String> {
+    validate_isochronous_completion_iter(transfer_status, packets.iter().copied())
+}
+
+/// Validate packet completions from a fixed-size or lazily produced iterator.
+/// This lets the Android transfer worker inspect libusb's flexible-array
+/// descriptors without allocating a temporary Vec while other transfers remain
+/// submitted.
+pub fn validate_isochronous_completion_iter(
+    transfer_status: i32,
+    packets: impl IntoIterator<Item = IsochronousPacketCompletion>,
+) -> Result<(), String> {
     if transfer_status != 0 {
         return Err(format!("Isochronous USB transfer {} (status {transfer_status})", transfer_status_name(transfer_status)));
     }
-    for (index, packet) in packets.iter().enumerate() {
+    for (index, packet) in packets.into_iter().enumerate() {
         if packet.status != 0 {
             return Err(format!("Isochronous USB packet {index} {} (status {})", transfer_status_name(packet.status), packet.status));
         }
