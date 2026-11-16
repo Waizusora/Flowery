@@ -27,15 +27,21 @@ use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 
-fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
+fn alac_magic_cookie(extra_data: Option<&[u8]>) -> Option<&[u8]> {
     let cookie = extra_data?;
     // Symphonia's ALAC decoder accepts the 24-byte mandatory configuration
     // or the 48-byte configuration with optional channel-layout information.
-    if cookie.len() != 24 && cookie.len() != 48 {
-        return None;
-    }
-    let channels = *cookie.get(9)? as usize;
+    matches!(cookie.len(), 24 | 48).then_some(cookie)
+}
+
+fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
+    let channels = *alac_magic_cookie(extra_data)?.get(9)? as usize;
     (1..=8).contains(&channels).then_some(channels)
+}
+
+fn alac_bit_depth(extra_data: Option<&[u8]>) -> Option<u8> {
+    let bit_depth = *alac_magic_cookie(extra_data)?.get(5)?;
+    matches!(bit_depth, 16 | 20 | 24 | 32).then_some(bit_depth)
 }
 
 fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
@@ -152,8 +158,11 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_data_format = if params.codec == symphonia::core::codecs::CODEC_TYPE_FLAC {
-            // Symphonia's FLAC decoder always exposes its decoded samples as
+        let source_data_format = if matches!(
+            params.codec,
+            symphonia::core::codecs::CODEC_TYPE_FLAC | symphonia::core::codecs::CODEC_TYPE_ALAC
+        ) {
+            // Symphonia exposes FLAC and ALAC decoded integer samples as
             // left-aligned i32, independent of the encoded bit depth.
             1
         } else {
@@ -169,6 +178,14 @@ impl StreamDecoder {
         };
         let source_bits = if params.codec == symphonia::core::codecs::CODEC_TYPE_PCM_F32LE {
             32
+        } else if params.codec == symphonia::core::codecs::CODEC_TYPE_ALAC {
+            // MP4/M4A ALAC tracks commonly omit bits_per_sample from the
+            // container parameters. The mandatory magic cookie stores the
+            // encoded PCM depth at byte 5.
+            alac_bit_depth(params.extra_data.as_deref())
+                .or_else(|| params.bits_per_coded_sample.or(params.bits_per_sample)
+                    .map(|bits| bits.min(u8::MAX as u32) as u8))
+                .unwrap_or(0)
         } else {
             params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8
         };
@@ -936,6 +953,32 @@ mod tests {
         assert_eq!(presentation_duration_ms(Some(48_000), None, None, 48_000), 1_000);
         assert_eq!(presentation_duration_ms(Some(48_000), None, None, 0), 0);
         assert_eq!(presentation_duration_ms(None, None, None, 48_000), 0);
+    }
+
+    #[test]
+    fn alac_bit_depth_reads_mandatory_magic_cookie_configuration() {
+        for bit_depth in [16_u8, 20, 24, 32] {
+            let mut cookie = vec![0_u8; 24];
+            cookie[5] = bit_depth;
+            assert_eq!(alac_bit_depth(Some(&cookie)), Some(bit_depth));
+        }
+
+        let mut extended_cookie = vec![0_u8; 48];
+        extended_cookie[5] = 24;
+        assert_eq!(alac_bit_depth(Some(&extended_cookie)), Some(24));
+    }
+
+    #[test]
+    fn alac_bit_depth_rejects_missing_or_invalid_magic_cookie_data() {
+        assert_eq!(alac_bit_depth(None), None);
+        assert_eq!(alac_bit_depth(Some(&[0_u8; 23])), None);
+        assert_eq!(alac_bit_depth(Some(&[0_u8; 47])), None);
+
+        let mut cookie = vec![0_u8; 24];
+        for invalid_depth in [0_u8, 8, 12, 18, 40] {
+            cookie[5] = invalid_depth;
+            assert_eq!(alac_bit_depth(Some(&cookie)), None);
+        }
     }
 
     #[test]
