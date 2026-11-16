@@ -34,6 +34,31 @@ def verify(label: str, declared: set[str], exported: set[str]) -> bool:
     return False
 
 
+def verify_usb_close_return_type() -> bool:
+    kotlin_source = (ROOT / "app/src/main/java/com/waizusora/flowery/NativeAudio.kt").read_text(encoding="utf-8")
+    kotlin_match = re.search(
+        r"external\\s+fun\\s+nativeCloseUsbAudioSession\\s*\\(\\s*handle:\\s*Long\\s*\\)\\s*:\\s*(\\w+)",
+        kotlin_source,
+    )
+    rust_sources = sorted((ROOT / "native" / "src").rglob("*.rs"))
+    rust_source = "\\n".join(path.read_text(encoding="utf-8") for path in rust_sources)
+    rust_match = re.search(
+        r"fn\\s+Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession\\s*\\([\\s\\S]*?\\)\\s*->\\s*([A-Za-z0-9_:]+)",
+        rust_source,
+    )
+    if kotlin_match is None or rust_match is None:
+        print("USB close JNI return contract could not be resolved", file=sys.stderr)
+        return False
+    if kotlin_match.group(1) != "Int" or rust_match.group(1) != "jint":
+        print(
+            "USB close JNI return contract mismatch: expected Kotlin Int and Rust jint",
+            file=sys.stderr,
+        )
+        return False
+    print("USB close JNI return contract matches (Kotlin Int / Rust jint)")
+    return True
+
+
 rust_sources = sorted((ROOT / "native" / "src").rglob("*.rs"))
 rust_symbols = exports(
     rust_sources,
@@ -44,5 +69,6 @@ ok = verify(
     declarations(ROOT / "app/src/main/java/com/waizusora/flowery/NativeAudio.kt"),
     rust_symbols,
 )
+ok = verify_usb_close_return_type() and ok
 
 raise SystemExit(0 if ok else 1)
