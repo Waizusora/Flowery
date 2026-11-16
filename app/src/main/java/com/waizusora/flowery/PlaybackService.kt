@@ -20,6 +20,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.media.session.MediaButtonReceiver
@@ -105,6 +106,7 @@ class PlaybackService : Service() {
     @Volatile private var playbackState = PlaybackStateCompat.STATE_STOPPED
     @Volatile private var playRequestGeneration = 0L
     private var lastPublishedMetadataDuration = -1L
+    @Volatile private var sourceMetadataDurationMs = 0L
     private var lastPublishedMetadataTitle = ""
     private var lastPublishedMetadataArtist = ""
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -156,7 +158,7 @@ class PlaybackService : Service() {
         override fun run() {
             if (::player.isInitialized) {
                 val position = player.positionMs()
-                val duration = player.durationMs()
+                val duration = player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs
                 if (::session.isInitialized) {
                     if (duration > 0L && duration != lastPublishedMetadataDuration) {
                         publishTrackMetadata(duration)
@@ -403,6 +405,8 @@ class PlaybackService : Service() {
 
         currentTitle = fallbackTitle
         currentArtist = fallbackArtist
+        sourceMetadataDurationMs = 0L
+        lastPublishedMetadataDuration = -1L
         publishTrackMetadata(0L)
         startForeground(NOTIFICATION_ID, buildNotification())
 
@@ -411,6 +415,7 @@ class PlaybackService : Service() {
         io.execute {
             var resolvedTitle = fallbackTitle
             var resolvedArtist = fallbackArtist
+            var resolvedDurationMs = 0L
             Log.i("FloweryDiagnostics", "PLAY_PHASE phase=metadata_retrieval_start index=$selectedIndex")
             runCatching {
                 val retriever = MediaMetadataRetriever()
@@ -418,6 +423,8 @@ class PlaybackService : Service() {
                     retriever.setDataSource(this, uri)
                     val embeddedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
                     val embeddedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                    resolvedDurationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                        ?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
                     if (!virtualEntry) resolvedTitle = embeddedTitle?.takeIf { it.isNotBlank() } ?: resolvedTitle
                     if (resolvedArtist == "Unknown artist") {
                         resolvedArtist = embeddedArtist?.takeIf { it.isNotBlank() } ?: resolvedArtist
@@ -433,7 +440,8 @@ class PlaybackService : Service() {
                 if (requestGeneration != playRequestGeneration) return@post
                 currentTitle = resolvedTitle
                 currentArtist = resolvedArtist
-                publishTrackMetadata(0L)
+                sourceMetadataDurationMs = resolvedDurationMs
+                publishTrackMetadata(sourceMetadataDurationMs)
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
 
                 io.execute {
@@ -609,7 +617,8 @@ class PlaybackService : Service() {
             else -> playbackState
         }
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
-            .putExtra(EXTRA_POSITION, player.positionMs()).putExtra(EXTRA_DURATION, player.durationMs())
+            .putExtra(EXTRA_POSITION, player.positionMs())
+            .putExtra(EXTRA_DURATION, player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs)
             .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
             .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
             .putExtra(EXTRA_CURRENT_CUE_PLAYLIST, queueCuePlaylists.getOrNull(queueIndex).orEmpty())
@@ -635,7 +644,8 @@ class PlaybackService : Service() {
         session.setPlaybackState(PlaybackStateCompat.Builder()
             .setActions(actions)
             .setState(playbackState, positionMs.coerceAtLeast(0L),
-                if (playbackState == PlaybackStateCompat.STATE_PLAYING) 1f else 0f)
+                if (playbackState == PlaybackStateCompat.STATE_PLAYING) 1f else 0f,
+                SystemClock.elapsedRealtime())
             .build())
     }
 
