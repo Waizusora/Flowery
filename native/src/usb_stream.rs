@@ -777,7 +777,7 @@ pub(super) fn start(
     if endpoint & 0x80 != 0 || endpoint & 0x0f == 0 {
         return Err("USB playback endpoint must be a non-zero OUT endpoint".into());
     }
-    if !(1..=16).contains(&interval) || sample_rate == 0 || channels == 0 {
+    if !(1..=16).contains(&interval) || !(1_000..=768_000).contains(&sample_rate) || channels == 0 {
         return Err("Invalid USB stream parameters".into());
     }
     if !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
@@ -812,12 +812,6 @@ pub(super) fn start(
         // High-speed bInterval encodes an exponential microframe interval.
         UsbBusSpeed::High => 125_u32.checked_mul(1_u32 << (interval - 1)),
     }.ok_or("USB service interval overflow")?;
-    let max_frames = (u64::from(sample_rate) * u64::from(interval_us) + 999_999) / 1_000_000;
-    let needed = max_frames * u64::from(channels) * u64::from(subslot_bytes);
-    if needed > u64::from(max_packet_bytes) {
-        return Err(format!("Endpoint packet capacity {max_packet_bytes} bytes is below required {needed} bytes"));
-    }
-
     let decoder = crate::streaming::decoder_ref(decoder_handle)
         .ok_or("Unknown stream decoder handle")?;
     {
@@ -857,6 +851,18 @@ pub(super) fn start(
         }
         None
     };
+    let required_packet_bytes = crate::usb_isochronous::required_isochronous_packet_capacity(
+        sample_rate,
+        channels,
+        subslot_bytes,
+        interval_us,
+        feedback_endpoint.is_some(),
+    )?;
+    if required_packet_bytes > max_packet_bytes {
+        return Err(format!(
+            "Endpoint packet capacity {max_packet_bytes} bytes is below required {required_packet_bytes} bytes for this USB clock mode"
+        ));
+    }
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes, data_format,
         max_packet_bytes, interval_us, feedback_endpoint, feedback_packet_bytes,
