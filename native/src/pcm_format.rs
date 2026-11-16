@@ -389,7 +389,7 @@ fn validate_sample_alignment(
 
 #[cfg(test)]
 mod tests {
-    use super::{encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
+    use super::{decoded_output_format, encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
 
 
     fn make_test_wav(format_tag: u16, bits: u16, sample_rate: u32, sample_bytes: &[u8]) -> Vec<u8> {
