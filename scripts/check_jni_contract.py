@@ -37,13 +37,13 @@ def verify(label: str, declared: set[str], exported: set[str]) -> bool:
 def verify_usb_close_return_type() -> bool:
     kotlin_source = (ROOT / "app/src/main/java/com/waizusora/flowery/NativeAudio.kt").read_text(encoding="utf-8")
     kotlin_match = re.search(
-        r"external\\s+fun\\s+nativeCloseUsbAudioSession\\s*\\(\\s*handle:\\s*Long\\s*\\)\\s*:\\s*(\\w+)",
+        r"external\s+fun\s+nativeCloseUsbAudioSession\s*\(\s*handle:\s*Long\s*\)\s*:\s*(\w+)",
         kotlin_source,
     )
     rust_sources = sorted((ROOT / "native" / "src").rglob("*.rs"))
-    rust_source = "\\n".join(path.read_text(encoding="utf-8") for path in rust_sources)
+    rust_source = "\n".join(path.read_text(encoding="utf-8") for path in rust_sources)
     rust_match = re.search(
-        r"fn\\s+Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession\\s*\\([\\s\\S]*?\\)\\s*->\\s*([A-Za-z0-9_:]+)",
+        r"fn\s+Java_com_waizusora_flowery_NativeAudio_nativeCloseUsbAudioSession\s*\([\s\S]*?\)\s*->\s*([A-Za-z0-9_:]+)",
         rust_source,
     )
     if kotlin_match is None or rust_match is None:
