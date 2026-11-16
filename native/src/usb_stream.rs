@@ -179,7 +179,11 @@ fn create_feedback_slot(
         );
         // libusb_fill_iso_transfer configures the transfer but does not set
         // individual isochronous packet lengths.
-        (*transfer).iso_packet_desc[0].length = u32::from(packet_bytes);
+        // libusb exposes iso_packet_desc as a C flexible array. Its Rust
+        // binding has length zero, so address the allocated trailing element
+        // through the base pointer instead of indexing the zero-length field.
+        let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();
+        (*descriptor).length = u32::from(packet_bytes);
     }
     Ok(FeedbackSlot { transfer, buffer, signal, submitted: false, submitted_at: None })
 }
