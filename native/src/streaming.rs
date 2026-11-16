@@ -162,9 +162,12 @@ impl StreamDecoder {
         let params = codec_params.audio().ok_or("Selected track does not contain audio codec parameters")?.clone();
         let time_base = track.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_data_format = if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_MP3 {
-            // Symphonia's MPEG Layer III decoder always produces interleaved
-            // f32 samples, even when the container has no sample_format field.
+        let source_data_format = if matches!(params.codec,
+            symphonia::core::codecs::audio::well_known::CODEC_ID_MP3
+                | symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS
+        ) {
+            // MP3 and Opus decoders produce f32 PCM, even when codec metadata
+            // does not declare a sample format.
             3 // UAC IEEE_FLOAT
         } else if matches!(
             params.codec,
@@ -203,12 +206,12 @@ impl StreamDecoder {
         };
         // CodecParameters::n_frames includes the encoded stream extent. Delay and
         // padding identify decoded frames that must not contribute to presentation time.
-        let duration_ms = presentation_duration_ms(
-            track.num_frames,
-            track.delay,
-            track.padding,
-            source_rate as u32,
-        );
+        // Symphonia 0.6 Track::num_frames already excludes encoder delay
+        // and padding, unlike the legacy CodecParameters::n_frames field.
+        let duration_ms = track.num_frames.map(|frames| {
+            ((u128::from(frames) * 1000) / u128::from(source_rate as u32))
+                .min(u128::from(u64::MAX)) as u64
+        }).unwrap_or(0);
         // Some MP4/M4A ALAC tracks expose neither a channel bitmask nor a
         // channel layout in Symphonia's track parameters. The mandatory ALAC
         // magic-cookie configuration still declares the channel count.
