@@ -37,7 +37,9 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     addFolder: () -> Unit, removeFolder: (LibraryFolder) -> Unit, status: String,
     folders: List<LibraryFolder>, tracks: List<AudioTrackItem>, scan: () -> Unit,
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
-    audioSourceLabel: String) {
+    audioSourceLabel: String,
+    currentTag: AudioTag?,
+    isPlaying: Boolean) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
@@ -87,7 +89,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
-            SettingsPage.AUDIO -> "Audio"; SettingsPage.LIBRARY -> "Library"
+            SettingsPage.AUDIO -> "Audio"; SettingsPage.INFO_AUDIO -> "Info Audio"; SettingsPage.LIBRARY -> "Library"
             SettingsPage.APPEARANCE -> "Appearance"; SettingsPage.OTHER -> "Other"; SettingsPage.ABOUT -> "About"; SettingsPage.OPEN_SOURCE -> "Open Source"
             SettingsPage.TRANSLATOR -> "Translator"; SettingsPage.CONTRIBUTORS -> "Contributor"; SettingsPage.ROOT -> "Settings"
         }, color)
@@ -101,6 +103,9 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             SettingCard("About", "Open-source licenses, credits and updates", color, muted, Icons.Default.Info) { navigate(SettingsPage.ABOUT) }
         }
         SettingsPage.AUDIO -> {
+            SettingCard("Info Audio", "Source, decoder, PCM and active output details", color, muted, Icons.Default.Info) {
+                navigate(SettingsPage.INFO_AUDIO)
+            }
             Text("OUTPUT ROUTE", color = color, fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleSmall)
             Text(detectedOutput.displayName, color = color,
@@ -155,6 +160,71 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         }
 
 
+        SettingsPage.INFO_AUDIO -> {
+            val usbDirect = status.contains("native USB audio", ignoreCase = true) ||
+                detectedOutput.displayName.contains("USB", ignoreCase = true)
+            val route = when {
+                usbDirect -> "USB Direct"
+                status.contains("AAudio", ignoreCase = true) -> "AAudio"
+                status.startsWith("Playing", ignoreCase = true) || status.startsWith("Paused", ignoreCase = true) -> "AAudio"
+                else -> "—"
+            }
+            val active = status.startsWith("Playing", ignoreCase = true) ||
+                status.startsWith("Paused", ignoreCase = true) ||
+                status.startsWith("Seeking", ignoreCase = true) ||
+                status.startsWith("Switching", ignoreCase = true)
+            val sampleRate = currentTag?.sampleRate?.takeIf { it > 0 }?.let { "$it Hz" } ?: "—"
+            val bitDepth = currentTag?.bitDepth?.takeIf { it > 0 }?.let { "$it-bit" } ?: "—"
+            val channels = currentTag?.channels?.takeIf { it > 0 }?.let {
+                when (it) { 1 -> "Mono"; 2 -> "Stereo"; else -> "$it channels" }
+            } ?: "—"
+            val pcmFormat = currentTag?.bitDepth?.takeIf { it > 0 }?.let {
+                when (it) { 16 -> "S16"; 24 -> "S24"; 32 -> "S32"; else -> "$it-bit integer PCM" }
+            } ?: "—"
+            Text(
+                if (active) "PLAYBACK ACTIVE" else "NO ACTIVE PLAYBACK",
+                color = if (active) MaterialTheme.colorScheme.primary else muted,
+                fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.labelMedium
+            )
+            Text(
+                if (active) currentTag?.title?.ifBlank { audioSourceLabel } ?: audioSourceLabel
+                else "Audio information is available while a track is loaded.",
+                color = color, style = MaterialTheme.typography.bodyMedium
+            )
+            HorizontalDivider(color = muted.copy(alpha = .25f))
+            AudioInfoSection("SOURCE", color, muted) {
+                AudioInfoRow("File format", currentTag?.fileType?.takeIf { it.isNotBlank() } ?: "—", color, muted)
+                AudioInfoRow("Sample rate", sampleRate, color, muted)
+                AudioInfoRow("Bit depth", bitDepth, color, muted)
+                AudioInfoRow("Channels", channels, color, muted)
+                AudioInfoRow("Bitrate", currentTag?.bitrateKbps?.takeIf { it > 0 }?.let { "$it kbps" } ?: "—", color, muted)
+            }
+            AudioInfoSection("DECODER / PCM", color, muted) {
+                AudioInfoRow("Decoder", if (currentTag != null) "Symphonia" else "—", color, muted)
+                AudioInfoRow("PCM format", pcmFormat, color, muted)
+                AudioInfoRow("Resampling", if (currentTag != null) "No · source rate preserved" else "—", color, muted)
+                AudioInfoRow("Flowery DSP", if (currentTag != null) "Off" else "—", color, muted)
+            }
+            AudioInfoSection("OUTPUT", color, muted) {
+                AudioInfoRow("Backend", route, color, muted)
+                AudioInfoRow("Device", if (!active) "—" else if (usbDirect) detectedOutput.displayName else detectedOutput.displayName, color, muted)
+                AudioInfoRow("Output sample rate", if (active) sampleRate else "—", color, muted)
+                AudioInfoRow("Output bit depth", if (active) bitDepth else "—", color, muted)
+                if (usbDirect) {
+                    AudioInfoRow("USB Audio Class", "—", color, muted)
+                    AudioInfoRow("Clock / feedback", "—", color, muted)
+                    AudioInfoRow("Transfer type", "—", color, muted)
+                    AudioInfoRow("Bit-perfect", "Not verified", color, muted)
+                } else {
+                    AudioInfoRow("Bit-perfect", "Not applicable", color, muted)
+                }
+            }
+            Text(
+                "Values marked — are not exposed by the active playback telemetry. Bit-perfect is not claimed without end-to-end verification.",
+                color = muted, style = MaterialTheme.typography.bodySmall
+            )
+        }
         SettingsPage.LIBRARY -> {
             Text("FOLDER SELECTION", color = color, fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleSmall)
@@ -286,6 +356,33 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         SettingsPage.CONTRIBUTORS -> Text("Contributor credits will be listed when contributions are recorded and confirmed.", color = muted)
     }
 }
+@Composable
+private fun AudioInfoSection(title: String, color: Color, muted: Color, content: @Composable ColumnScope.() -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            title, color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.fillMaxWidth()
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = .09f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        )
+        content()
+    }
+}
+
+@Composable
+private fun AudioInfoRow(label: String, value: String, color: Color, muted: Color) {
+    Row(
+        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, modifier = Modifier.weight(1f), color = muted, style = MaterialTheme.typography.bodyMedium)
+        Text(value, color = color, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+    }
+    HorizontalDivider(color = muted.copy(alpha = .14f))
+}
+
 @Composable
 private fun AudioFlowCard(
     title: String, active: Boolean, subtitle: String, stages: List<String>,
