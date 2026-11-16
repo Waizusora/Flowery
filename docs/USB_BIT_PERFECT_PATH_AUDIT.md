@@ -43,6 +43,19 @@ analog output.
   values. It is deliberately separate from the audio sample buffer and does not
   imply Float64 PCM support.
 
+## USB format and clock negotiation
+
+- UAC1 format tags are treated as a single advertised Type I format. UAC2
+  `bmFormats` is treated as a bitmask, so one alternate may advertise PCM,
+  PCM8, and/or IEEE Float32 simultaneously. The planner selects only the
+  requested format when its bit is present.
+- UAC2 playback resolves the selected streaming terminal's clock topology,
+  reads Clock Source `GET_RANGE` before changing frequency, checks selector
+  and multiplier paths, verifies `GET_CUR` after `SET_CUR`, and restores the
+  previous clock/selector state if native stream startup fails.
+- These control-transfer checks are covered by Kotlin fake-control tests;
+  actual DAC behavior and host-controller timing still require hardware tests.
+
 ## Android routing and volume isolation
 
 - `FloweryPlayer` routes a detected USB output to `UsbNativePlaybackSession`
