@@ -214,6 +214,10 @@ fn fill_and_submit(
         .ok_or("USB PCM frame size overflow")?;
     if frame_bytes == 0 { return Err("USB PCM frame size is zero".into()); }
 
+    // Bit-perfect boundary: USB consumes the decoder's typed PCM chunk directly.
+    // This worker must not apply software volume, normalization, EQ, mixing, or
+    // sample-rate conversion. The f64 feedback value above is clock scheduling
+    // metadata only; it never enters the PCM sample buffer.
     slot.buffer.fill(0);
     let mut offset = 0usize;
     let mut audio_frames = 0u64;
