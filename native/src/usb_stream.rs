@@ -290,19 +290,21 @@ fn fill_and_submit(
 fn transfer_packets_succeeded(slot: &TransferSlot) -> Result<(), String> {
     unsafe {
         let transfer_status = (*slot.transfer).status as i32;
-        let descriptors = std::slice::from_raw_parts(
-            (*slot.transfer).iso_packet_desc.as_ptr(),
-            PACKETS_PER_TRANSFER,
-        );
-        let packets: Vec<crate::usb_isochronous::IsochronousPacketCompletion> = descriptors
-            .iter()
-            .map(|packet| crate::usb_isochronous::IsochronousPacketCompletion {
-                status: packet.status as i32,
-                actual_length: packet.actual_length,
-                expected_length: packet.length,
+        let descriptors = (*slot.transfer).iso_packet_desc.as_ptr();
+        let mut packet_index = 0usize;
+        let packets = std::iter::from_fn(|| {
+            if packet_index >= PACKETS_PER_TRANSFER {
+                return None;
+            }
+            let descriptor = &*descriptors.add(packet_index);
+            packet_index += 1;
+            Some(crate::usb_isochronous::IsochronousPacketCompletion {
+                status: descriptor.status as i32,
+                actual_length: descriptor.actual_length,
+                expected_length: descriptor.length,
             })
-            .collect();
-        crate::usb_isochronous::validate_isochronous_completion(transfer_status, &packets)
+        });
+        crate::usb_isochronous::validate_isochronous_completion_iter(transfer_status, packets)
     }
 }
 
