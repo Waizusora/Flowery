@@ -52,8 +52,12 @@ pub(super) fn apply_integer_pcm_gain(
         };
         let product = raw as i128 * gain_q31 as i128;
         let half = 1_i128 << 30;
-        let rounded = if product >= 0 { product + half } else { product - half };
-        let scaled = (rounded >> 31).clamp(minimum as i128, maximum as i128) as i64;
+        let rounded = if product >= 0 {
+            (product + half) >> 31
+        } else {
+            -(((-product) + half) >> 31)
+        };
+        let scaled = rounded.clamp(minimum as i128, maximum as i128) as i64;
         match valid_bits {
             16 => sample.copy_from_slice(&(scaled as i16).to_le_bytes()),
             24 => {
