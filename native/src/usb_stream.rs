@@ -247,7 +247,8 @@ fn create_feedback_slot(
         // libusb exposes iso_packet_desc as a C flexible array. Its Rust
         // binding has length zero, so address the allocated trailing element
         // through the base pointer instead of indexing the zero-length field.
-        let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();        (*descriptor).length = u32::from(packet_bytes);
+        let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();
+        (*descriptor).length = u32::from(packet_bytes);
     }
     Ok(FeedbackSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, submitted_at: None })
 }
@@ -496,7 +497,8 @@ fn run_worker(
                                 &status,
                                 format!("Unable to cancel USB audio transfer {index}: libusb error {code}; waiting for callback before teardown"),
                             );
-                        }                    }
+                        }
+                    }
                 }
                 if let Some(feedback) = feedback_slot.as_mut() {
                     if feedback.submitted {
@@ -744,7 +746,8 @@ fn spawn_worker(
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn start(    session_handle: i64,
+pub(super) fn start(
+    session_handle: i64,
     decoder_handle: i64,
     endpoint: u8,
     raw_max_packet_size: u16,
