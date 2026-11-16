@@ -93,6 +93,7 @@ internal class UsbNativePlaybackSession private constructor(
 ) : Closeable {
     private var closed = false
 
+    @Synchronized
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
         val negotiateClock: () -> Result<Unit> = if (uac2ClockSourceEntity != null) {
@@ -135,10 +136,14 @@ internal class UsbNativePlaybackSession private constructor(
         )
     }
 
+    @Synchronized
     fun pause(): Result<Unit> = usb.pausePlayback()
+    @Synchronized
     fun resume(): Result<Unit> = usb.resumePlayback()
+    @Synchronized
     fun seek(positionMs: Long): Result<Long> = usb.seekPlayback(decoderHandle, positionMs)
 
+    @Synchronized
     fun positionMs(): Long {
         if (closed || sampleRate <= 0) return 0L
         return runCatching {
@@ -147,13 +152,16 @@ internal class UsbNativePlaybackSession private constructor(
         }.getOrDefault(0L)
     }
 
+    @Synchronized
     fun status(): JSONObject = JSONObject(usb.playbackStatus())
 
+    @Synchronized
     fun stopPlayback() {
         if (closed) return
         usb.stopPlayback()
     }
 
+    @Synchronized
     override fun close() {
         if (closed) return
         closed = true
