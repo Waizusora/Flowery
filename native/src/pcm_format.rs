@@ -412,7 +412,7 @@ mod tests {
         use symphonia::core::codecs::registry::CodecRegistry;
         use symphonia::core::formats::probe::Hint;
         use symphonia::core::errors::Error;
-        use symphonia::core::formats::{FormatOptions, FormatReader};
+        use symphonia::core::formats::{FormatOptions, TrackType};
         use symphonia::core::io::MediaSourceStream;
         use symphonia::core::meta::MetadataOptions;
         
@@ -424,10 +424,10 @@ mod tests {
             .probe(&hint, source, FormatOptions::default(), MetadataOptions::default())
             .expect("probe test audio");
         let mut format = probed;
-        let track = format.default_track().expect("default test track");
+        let track = format.default_track(TrackType::Audio).expect("default test track");
         let mut registry = CodecRegistry::new();
         symphonia::default::register_enabled_codecs(&mut registry);
-        let params = track.codec_params.as_ref().audio().expect("audio codec parameters");
+        let params = track.codec_params.as_ref().expect("codec parameters").audio().expect("audio codec parameters");
         let mut decoder = registry
             .make_audio_decoder(params, &AudioDecoderOptions::default())
             .expect("create test decoder");
@@ -435,6 +435,8 @@ mod tests {
         loop {
             let packet = match format.next_packet() {
                 Ok(packet) => packet,
+                Ok(Some(packet)) => packet,
+                Ok(None) => break,
                 Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => break,
                 Err(error) => panic!("read test packet: {error}"),
             };
