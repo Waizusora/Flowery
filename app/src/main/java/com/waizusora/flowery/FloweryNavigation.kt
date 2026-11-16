@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.sp
 import java.util.Locale
 
 private enum class Destination { WELCOME, PLAYER, FOLDERS, SETTINGS }
-internal enum class SettingsPage { ROOT, AUDIO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
+internal enum class SettingsPage { ROOT, AUDIO, INFO_AUDIO, LIBRARY, APPEARANCE, OTHER, ABOUT, OPEN_SOURCE, TRANSLATOR, CONTRIBUTORS }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -199,8 +199,11 @@ fun FloweryNavigation(
                 )
                 Destination.SETTINGS -> SettingsContent(settingsPage, foreground, muted, theme,
                     audioSourceLabel = audioSourceLabel,
+                    currentTag = currentTag,
+                    isPlaying = isPlaying,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
+                        SettingsPage.INFO_AUDIO -> SettingsPage.AUDIO
                         SettingsPage.OPEN_SOURCE, SettingsPage.TRANSLATOR, SettingsPage.CONTRIBUTORS -> SettingsPage.ABOUT
                         SettingsPage.ROOT -> SettingsPage.ROOT
                     } },
