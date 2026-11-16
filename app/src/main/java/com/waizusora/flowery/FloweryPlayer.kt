@@ -380,6 +380,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun outputSampleRateHz(): Int = outputSampleRate
     fun outputBitDepth(): Int = outputBitDepth
+    fun outputBackendLabel(): String = when {
+        !outputReady -> "—"
+        usbRouteActive -> "USB Direct"
+        else -> "AAudio"
+    }
 
     fun seekTo(positionMs: Long) {
         val boundedPosition = positionMs.coerceAtLeast(0L)
