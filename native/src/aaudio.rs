@@ -235,9 +235,14 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     if gain != 2_147_483_648_i64 {
         let valid_bits=match o.format { FMT_I16=>16, FMT_I24=>24, FMT_I32=>32, _=>0 };
         let output=std::slice::from_raw_parts_mut(audio as *mut u8, byte_count);
-        let _=crate::pcm_format::apply_integer_pcm_gain(
+        if crate::pcm_format::apply_integer_pcm_gain(
             output, valid_bits, count as usize * o.channels, gain,
-        );
+        ).is_err() {
+            o.error.store(INVALID_FORMAT, Ordering::Release);
+            ptr::write_bytes(audio as *mut u8, 0, requested as usize * bytes_per_frame);
+            o.active.store(false, Ordering::Release);
+            return 1;
+        }
     }
     let remaining=requested-count;
     if remaining>0 {
@@ -702,6 +707,30 @@ mod tests {
         assert_eq!(silence, [0, 0]);
         assert!(!output.active.load(Ordering::Acquire));
         assert_eq!(output.underruns.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn data_callback_stops_and_silences_output_on_invalid_gain_format() {
+        let mut output = test_output(2, 1);
+        output.format = 99;
+        output.ring[0..4].copy_from_slice(&[1, 2, 3, 4]);
+        output.write.store(2, Ordering::Relaxed);
+        output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+
+        let mut audio = [0x55_u8; 4];
+        let result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                (&mut output as *mut Output).cast::<c_void>(),
+                audio.as_mut_ptr().cast::<c_void>(),
+                2,
+            )
+        };
+
+        assert_eq!(result, 1);
+        assert_eq!(audio, [0, 0, 0, 0]);
+        assert_eq!(output.error.load(Ordering::Acquire), INVALID_FORMAT);
+        assert!(!output.active.load(Ordering::Acquire));
     }
 
     #[test]
