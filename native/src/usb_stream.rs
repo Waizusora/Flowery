@@ -18,6 +18,14 @@ use std::{
 #[cfg(target_os = "android")]
 use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
 
+#[cfg(any(target_os = "android", test))]
+fn retain_submitted_session<T>(session: std::sync::Arc<T>) -> *const T {
+    // A submitted libusb transfer may still reference callback-owned memory.
+    // Convert the slot's existing Arc into a raw reference so unwind cannot
+    // drop the USB session/context before the transfer is known to be drained.
+    std::sync::Arc::into_raw(session)
+}
+
 #[cfg(target_os = "android")]
 const TRANSFER_RING_SIZE: usize = 4;
 #[cfg(target_os = "android")]
@@ -66,7 +74,7 @@ impl Drop for TransferSlot {
             // This intentionally retains exactly one session reference without
             // incrementing the Arc count during panic unwinding.
             let session = unsafe { ManuallyDrop::take(&mut self.session) };
-            let _ = Arc::into_raw(session);
+            let _ = retain_submitted_session(session);
             return;
         }
         unsafe {
@@ -85,7 +93,7 @@ impl Drop for FeedbackSlot {
             // This intentionally retains exactly one session reference without
             // incrementing the Arc count during panic unwinding.
             let session = unsafe { ManuallyDrop::take(&mut self.session) };
-            let _ = Arc::into_raw(session);
+            let _ = retain_submitted_session(session);
             return;
         }
         unsafe {
@@ -961,6 +969,26 @@ pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn submitted_session_retention_preserves_exactly_one_existing_reference() {
+        use std::sync::Arc;
+
+        let session = Arc::new(());
+        let weak = Arc::downgrade(&session);
+        let slot_reference = Arc::clone(&session);
+        assert_eq!(Arc::strong_count(&session), 2);
+
+        let retained = super::retain_submitted_session(slot_reference);
+        assert_eq!(Arc::strong_count(&session), 2);
+        drop(session);
+        assert!(weak.upgrade().is_some());
+
+        // Reclaim the raw reference here; production intentionally leaves it
+        // retained because libusb has not proven that callback access ended.
+        unsafe { drop(Arc::from_raw(retained)); }
+        assert!(weak.upgrade().is_none());
+    }
+
     #[test]
     fn transfer_ring_and_packet_batch_are_bounded() {
         assert_eq!(super::TRANSFER_RING_SIZE, 4);
