@@ -39,7 +39,9 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     playTrack: (AudioTrackItem, List<AudioTrackItem>) -> Unit,
     audioSourceLabel: String,
     currentTag: AudioTag?,
-    isPlaying: Boolean) {
+    isPlaying: Boolean,
+    outputSampleRateHz: Int,
+    outputBitDepth: Int) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
@@ -209,8 +211,11 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             AudioInfoSection("OUTPUT", color, muted) {
                 AudioInfoRow("Backend", route, color, muted)
                 AudioInfoRow("Device", if (active) detectedOutput.displayName else "—", color, muted)
-                AudioInfoRow("Output sample rate", "—", color, muted)
-                AudioInfoRow("Output bit depth", "—", color, muted)
+                AudioInfoRow("Output sample rate", outputSampleRateHz.takeIf { active && it > 0 }?.let { "$it Hz" } ?: "—", color, muted)
+                AudioInfoRow("Output bit depth", outputBitDepth.takeIf { active && it > 0 }?.let { "$it-bit" } ?: "—", color, muted)
+                AudioInfoRow("Stream format", outputBitDepth.takeIf { active && it > 0 }?.let {
+                    when (it) { 16 -> "S16"; 24 -> "S24"; 32 -> "S32"; else -> "$it-bit PCM" }
+                } ?: "—", color, muted)
                 if (usbDirect) {
                     AudioInfoRow("USB Audio Class", "—", color, muted)
                     AudioInfoRow("Clock / feedback", "—", color, muted)
