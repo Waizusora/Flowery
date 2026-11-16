@@ -391,7 +391,8 @@ fn run_worker(
                 set_error(&error, &status, "USB isochronous OUT transfer timed out".into());
             } else if feedback_timed_out {
                 set_error(&error, &status, "USB explicit feedback transfer timed out".into());
-            }            if feedback_rate_hz.is_some()
+            }
+            if feedback_rate_hz.is_some()
                 && last_feedback_at
                     .map(|received| received.elapsed() > TRANSFER_COMPLETION_TIMEOUT)
                     .unwrap_or(true)
