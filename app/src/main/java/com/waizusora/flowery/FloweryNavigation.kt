@@ -5,6 +5,8 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -33,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -73,6 +76,22 @@ fun FloweryNavigation(
             .getBoolean("welcome_complete", false) || folders.isNotEmpty()) Destination.PLAYER else Destination.WELCOME)
     }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
+    val navigateBack = {
+        when (destination) {
+            Destination.PLAYER -> Unit
+            Destination.FOLDERS -> {
+                if (virtualCueFolder) virtualCueFolder = false
+                else if (selectedFolder != null) selectedFolder = null
+                else destination = Destination.PLAYER
+            }
+            Destination.SETTINGS -> {
+                if (settingsPage != SettingsPage.ROOT) settingsPage = SettingsPage.ROOT
+                else destination = Destination.PLAYER
+            }
+            Destination.WELCOME -> Unit
+        }
+    }
+    BackHandler(enabled = destination != Destination.WELCOME) { navigateBack() }
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
@@ -148,9 +167,58 @@ fun FloweryNavigation(
             }
         }
     }) { inset ->
-        Column(Modifier.fillMaxSize().background(background).padding(inset)
-            .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(
+            Modifier.fillMaxSize().background(background).padding(inset)
+                .pointerInput(destination, selectedFolder, virtualCueFolder, settingsPage) {
+                    var horizontalDistance = 0f
+                    detectHorizontalDragGestures(
+                        onHorizontalDrag = { change, dragAmount ->
+                            horizontalDistance += dragAmount
+                            change.consume()
+                        },
+                        onDragEnd = {
+                            val threshold = 72.dp.toPx()
+                            when {
+                                horizontalDistance >= threshold -> {
+                                    when (destination) {
+                                        Destination.PLAYER -> {
+                                            destination = Destination.FOLDERS
+                                            selectedFolder = null
+                                            virtualCueFolder = false
+                                        }
+                                        Destination.SETTINGS -> {
+                                            if (settingsPage != SettingsPage.ROOT) settingsPage = SettingsPage.ROOT
+                                            else destination = Destination.PLAYER
+                                        }
+                                        Destination.FOLDERS -> {
+                                            if (virtualCueFolder) virtualCueFolder = false
+                                            else if (selectedFolder != null) selectedFolder = null
+                                            else destination = Destination.PLAYER
+                                        }
+                                        Destination.WELCOME -> Unit
+                                    }
+                                }
+                                horizontalDistance <= -threshold -> {
+                                    when (destination) {
+                                        Destination.PLAYER -> {
+                                            destination = Destination.SETTINGS
+                                            settingsPage = SettingsPage.ROOT
+                                        }
+                                        Destination.FOLDERS -> {
+                                            if (selectedFolder == null && !virtualCueFolder) destination = Destination.PLAYER
+                                        }
+                                        Destination.SETTINGS, Destination.WELCOME -> Unit
+                                    }
+                                }
+                            }
+                            horizontalDistance = 0f
+                        },
+                        onDragCancel = { horizontalDistance = 0f }
+                    )
+                }
+                .verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
             when (destination) {
                 Destination.WELCOME -> WelcomeDestination(
                     foreground = foreground,
@@ -199,7 +267,7 @@ fun FloweryNavigation(
                     muted = muted,
                     libraryScanActive = libraryScanActive,
                     refreshRotation = refreshRotation,
-                    onBackToPlayer = { destination = Destination.PLAYER; lyricsVisible = false },
+                    onBackToPlayer = { navigateBack(); lyricsVisible = false },
                     onScan = onScan,
                     onRefreshFolder = onRefreshFolder,
                     onSelectedFolder = { selectedFolder = it },
