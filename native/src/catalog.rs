@@ -39,6 +39,10 @@ fn key(path: &str) -> Option<String> {
     if parts.is_empty() { None } else { Some(parts.join("/").to_lowercase()) }
 }
 fn parent(path: &str) -> &str { path.rsplit_once('/').map(|(p, _)| p).unwrap_or("") }
+fn folder_for(root: &str, path: &str) -> String {
+    let directory = parent(path);
+    if directory.is_empty() { root.to_owned() } else { format!("{root}/{directory}") }
+}
 fn ext(name: &str) -> &str { name.rsplit_once('.').map(|(_, e)| e).unwrap_or("") }
 
 fn cue_start_frame_to_ms(frame: i64) -> i64 {
@@ -87,7 +91,7 @@ fn build_root(root: &Root, tracks: &mut Vec<Track>, seen: &mut HashSet<String>) 
             tracks.push(Track {
                 uri: item.uri.clone(),
                 title: item.name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&item.name).to_owned(),
-                folder: root.name.clone(), mime_type: item.mime_type.clone(),
+                folder: folder_for(&root.name, &item.path), mime_type: item.mime_type.clone(),
                 sidecar_lyrics_uri: sidecars.get(&item.uri).cloned(),
                 cue_start_ms: None, cue_end_ms: None, cue_playlist: None,
                 playlist_name: None, playlist_order: None,
@@ -108,7 +112,7 @@ fn build_root(root: &Root, tracks: &mut Vec<Track>, seen: &mut HashSet<String>) 
                 let identity = format!("{}#cue:{}:{}", item.uri, label, cue.number);
                 if !seen.insert(identity) { continue; }
                 tracks.push(Track {
-                    uri: item.uri.clone(), title: cue.title, folder: root.name.clone(),
+                    uri: item.uri.clone(), title: cue.title, folder: folder_for(&root.name, &item.path),
                     mime_type: item.mime_type.clone(), sidecar_lyrics_uri: sidecars.get(&item.uri).cloned(),
                     cue_start_ms: Some(cue_start_frame_to_ms(cue.start_frame)),
                     cue_end_ms: cue.end_frame.map(cue_end_frame_to_ms),
@@ -127,7 +131,7 @@ fn build_root(root: &Root, tracks: &mut Vec<Track>, seen: &mut HashSet<String>) 
                     uri: item.uri.clone(),
                     title: entry.title.filter(|v| !v.trim().is_empty()).unwrap_or_else(||
                         item.name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&item.name).to_owned()),
-                    folder: root.name.clone(), mime_type: item.mime_type.clone(),
+                    folder: folder_for(&root.name, &item.path), mime_type: item.mime_type.clone(),
                     sidecar_lyrics_uri: sidecars.get(&item.uri).cloned(), cue_start_ms: None,
                     cue_end_ms: None, cue_playlist: None, playlist_name: Some(label.clone()),
                     playlist_order: Some(index),
@@ -205,6 +209,8 @@ mod tests {
         ]}]}"##;
         let catalog = build(serde_json::from_str::<Snapshot>(input).unwrap());
         assert_eq!(catalog.tracks.len(), 5);
+        assert_eq!(catalog.tracks[0].folder, "Music/Album");
+        assert_eq!(catalog.tracks[1].folder, "Music/Album");
         assert_eq!(catalog.tracks[1].sidecar_lyrics_uri.as_deref(), Some("content://lyric"));
         assert_eq!(catalog.tracks[2].title, "Intro");
         assert_eq!(catalog.tracks[2].cue_end_ms, Some(60_000));

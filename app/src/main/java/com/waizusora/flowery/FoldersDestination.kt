@@ -118,16 +118,38 @@ internal fun FoldersDestination(
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back to folders", tint = foreground)
                             }
                             Column(Modifier.weight(1f)) {
-                                Heading(selectedFolder!!.name, foreground)
+                                Heading(selectedFolder!!.name.substringAfterLast('/'), foreground)
                                 Text("FLOWERY LIBRARY", color = muted, style = MaterialTheme.typography.labelSmall)
                             }
-                            IconButton(onClick = { onRefreshFolder(selectedFolder!!) }, enabled = !libraryScanActive) {
+                            IconButton(onClick = { onRefreshFolder(selectedFolder!!.copy(name = selectedFolder!!.name.substringBefore('/'))) }, enabled = !libraryScanActive) {
                                 Icon(Icons.Default.Refresh, "Refresh folder", tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.graphicsLayer { rotationZ = if (libraryScanActive) refreshRotation else 0f })
                             }
                         }
-                        val folderTracks = tracks.filter { it.folder == selectedFolder!!.name }
-                        Text("${folderTracks.size} songs", color = muted)
+                        val currentPath = selectedFolder!!.name
+                        val folderTracks = tracks.filter { it.folder == currentPath }
+                        val childFolders = tracks.map { it.folder }
+                            .filter { it.startsWith("$currentPath/") }
+                            .map { it.removePrefix("$currentPath/").substringBefore('/') }
+                            .filter { it.isNotBlank() }.distinct().sorted()
+                        Text("${folderTracks.size} songs · ${childFolders.size} subfolders", color = muted)
+                        childFolders.forEach { childName ->
+                            val childPath = "$currentPath/$childName"
+                            val childTracks = tracks.filter { it.folder == childPath }
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    onSelectedFolder(selectedFolder!!.copy(name = childPath))
+                                }.padding(horizontal = 4.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Folder, null, tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(27.dp))
+                                Text(childName, color = foreground, fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f).padding(start = 14.dp))
+                                Text(childTracks.size.toString(), color = muted, style = MaterialTheme.typography.labelMedium)
+                            }
+                            HorizontalDivider(color = muted.copy(alpha = .16f))
+                        }
                         folderTracks.forEach { track ->
                             Row(Modifier.fillMaxWidth().clickable { onPlay(track, folderTracks) }.padding(vertical = 10.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
@@ -140,7 +162,7 @@ internal fun FoldersDestination(
                             }
                             HorizontalDivider(color = muted.copy(alpha = .2f))
                         }
-                        if (folderTracks.isEmpty()) Text("No songs indexed yet. Use Refresh to update this folder.", color = muted)
+                        if (folderTracks.isEmpty() && childFolders.isEmpty()) Text("No songs or subfolders indexed yet. Use Refresh to update this folder.", color = muted)
                     }
                 
 }

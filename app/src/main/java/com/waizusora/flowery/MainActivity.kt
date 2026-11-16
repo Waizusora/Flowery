@@ -384,7 +384,7 @@ class MainActivity : ComponentActivity() {
             )
         }
         persistFolders()
-        tracks.removeAll { it.folder == folder.name }
+        tracks.removeAll { it.folder == folder.name || it.folder.startsWith("${folder.name}/") }
         persistScannedTracks()
         status = "Folder removed"
     }
@@ -418,7 +418,7 @@ class MainActivity : ComponentActivity() {
             try {
                 val refreshed = LibraryScanner(this).scan(listOf(folder))
                 runOnUiThread {
-                    tracks.removeAll { it.folder == folder.name }
+                    tracks.removeAll { it.folder == folder.name || it.folder.startsWith("${folder.name}/") }
                     tracks.addAll(refreshed)
                     persistScannedTracks()
                     status = "Folder refreshed · ${refreshed.size} audio files"
