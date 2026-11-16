@@ -35,9 +35,24 @@ analog output.
 - `f64` used by USB feedback handling is clock-rate arithmetic only, not an
   audio sample representation.
 - Native `F32` source audio has a separate USB IEEE-float packing path. It is
-  not an integer-PCM conversion. `F64` source audio is not supported by the
-  exposed USB data-format contract and must not be treated as standard USB
-  Audio Type I PCM.
+  selected only for Float32 source samples and must match a DAC descriptor that
+  advertises the corresponding IEEE-float format; it is not an integer-PCM
+  conversion. `F64` source audio is not supported by the exposed USB data-format
+  contract and must not be treated as standard USB Audio Type I PCM.
+- `f64` in the feedback controller represents clock feedback / packet scheduling
+  values. It is deliberately separate from the audio sample buffer and does not
+  imply Float64 PCM support.
+
+## Android routing and volume isolation
+
+- `FloweryPlayer` routes a detected USB output to `UsbNativePlaybackSession`
+  and returns before opening the AAudio stream. AUX, speaker, and Bluetooth
+  continue through Android-managed AAudio output.
+- The USB route does not call the AAudio output-volume callback. System media
+  volume changes and software ducking are bypassed while direct USB playback is
+  active; the reported USB volume is unity gain.
+- Unit tests cover the route-aware volume policy, including unity gain during
+  ducking on USB and the existing ducking behavior on Android-managed routes.
 
 ## Scope and remaining verification
 
@@ -48,9 +63,8 @@ resampler is present in this path.
 This is not yet a complete end-to-end bit-perfect certification. Remaining
 work includes:
 
-- Run the Rust test suite and Android target builds in CI.
-- Verify Android/Kotlin routing never sends USB playback through the AAudio
-  software-volume callback or another processing path.
+- Confirm the current CI run completes successfully, including Rust tests,
+  Kotlin unit tests, JNI contract validation, and Android native builds.
 - Exercise real UAC1/UAC2 DACs at multiple rates and bit depths, including
   asynchronous feedback, and capture/compare USB payloads against source PCM.
 - Confirm the DAC's negotiated clock, accepted format, and downstream DSP
