@@ -28,7 +28,7 @@ use symphonia::core::errors::Error;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
+use symphonia::core::formats::probe::Hint;
 
 fn alac_magic_cookie(extra_data: Option<&[u8]>) -> Option<&[u8]> {
     let cookie = extra_data?;
@@ -178,12 +178,12 @@ impl StreamDecoder {
             1
         } else {
             match params.sample_format {
-                Some(symphonia::core::sample::SampleFormat::U8) => 2, // UAC PCM8
-                Some(symphonia::core::sample::SampleFormat::S16)
-                | Some(symphonia::core::sample::SampleFormat::S24)
-                | Some(symphonia::core::sample::SampleFormat::S32) => 1, // UAC PCM
-                Some(symphonia::core::sample::SampleFormat::F32) => 3, // UAC IEEE_FLOAT
-                Some(symphonia::core::sample::SampleFormat::F64) => 4, // not a standard UAC Type I float format
+                Some(symphonia::core::audio::sample::SampleFormat::U8) => 2, // UAC PCM8
+                Some(symphonia::core::audio::sample::SampleFormat::S16)
+                | Some(symphonia::core::audio::sample::SampleFormat::S24)
+                | Some(symphonia::core::audio::sample::SampleFormat::S32) => 1, // UAC PCM
+                Some(symphonia::core::audio::sample::SampleFormat::F32) => 3, // UAC IEEE_FLOAT
+                Some(symphonia::core::audio::sample::SampleFormat::F64) => 4, // not a standard UAC Type I float format
                 _ => 0, // unknown or unsupported typed output; never guess
             }
         };
@@ -197,7 +197,7 @@ impl StreamDecoder {
                 .or_else(|| params.bits_per_coded_sample.or(params.bits_per_sample)
                     .map(|bits| bits.min(u8::MAX as u32) as u8))
                 .unwrap_or(0)
-        } else if params.codec == symphonia::core::codecs::CODEC_TYPE_MP3 {
+        } else if params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_MP3 {
             // MP3 decodes to IEEE-float PCM in Symphonia; this is the decoded
             // output width, not a claim about the lossy source's quantization.
             32
@@ -217,7 +217,7 @@ impl StreamDecoder {
         // magic-cookie configuration still declares the channel count.
         let channels = params.channels.map(|channels| channels.count())
             .or_else(|| {
-                (params.codec == symphonia::core::codecs::CODEC_TYPE_ALAC)
+                (params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC)
                     .then(|| alac_channel_count(params.extra_data.as_deref()))
                     .flatten()
             })
