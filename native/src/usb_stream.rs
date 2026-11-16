@@ -318,6 +318,23 @@ fn run_worker(
     pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
 ) {
+    // Validate worker-local control state before allocating or submitting any
+    // libusb transfer. A panic after submission could unwind callback-owned
+    // buffers while libusb still references them.
+    let mut feedback_tracker = match FeedbackRateTracker::new(0.25) {
+        Ok(tracker) => tracker,
+        Err(message) => {
+            set_error(&error, &status, format!("Unable to initialize USB feedback tracker: {message}"));
+            return;
+        }
+    };
+    let mut feedback_outlier_guard = match FeedbackOutlierGuard::new(3) {
+        Ok(guard) => guard,
+        Err(message) => {
+            set_error(&error, &status, format!("Unable to initialize USB feedback outlier guard: {message}"));
+            return;
+        }
+    };
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
     for _ in 0..TRANSFER_RING_SIZE {
         match create_slot(session.handle, config.endpoint, config.max_packet_bytes) {
@@ -355,10 +372,8 @@ fn run_worker(
         },
         _ => None,
     };
-    let mut feedback_tracker = FeedbackRateTracker::new(0.25).expect("valid feedback smoothing");
     let mut feedback_rate_hz: Option<f64> = None;
     let mut last_feedback_at: Option<Instant> = None;
-    let mut feedback_outlier_guard = FeedbackOutlierGuard::new(3).expect("non-zero feedback outlier limit");
     let mut feedback_cancelling = false;
     let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
