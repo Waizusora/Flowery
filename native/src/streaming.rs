@@ -358,6 +358,25 @@ pub(super) fn read_usb_pcm_chunk(
     }
     let decoder = decoder_ref(handle).ok_or("Unknown stream decoder handle")?;
     let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+
+    // Re-check the negotiated USB format at the final PCM boundary. The stream
+    // plan validates these fields before starting, but this guard also protects
+    // direct/native callers and prevents an encoder from relabelling source PCM.
+    if decoder.source_rate == 0 || decoder.source_rate > u32::MAX as usize {
+        return Err("USB decoder sample rate is outside the supported range".into());
+    }
+    if decoder.source_bits != valid_bits {
+        return Err(format!(
+            "USB PCM bit resolution {valid_bits} does not match source precision {}",
+            decoder.source_bits
+        ));
+    }
+    if decoder.source_data_format != data_format {
+        return Err(format!(
+            "USB PCM data format {data_format} does not match decoder format {}",
+            decoder.source_data_format
+        ));
+    }
     let format = crate::pcm_format::PcmFormat {
         sample_rate: decoder.source_rate as u32,
         channels: decoder.channels as u16,
