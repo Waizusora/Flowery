@@ -150,7 +150,7 @@ impl StreamDecoder {
         if !extension.is_empty() { hint.with_extension(extension.trim_start_matches('.')); }
         let probed = symphonia::default::get_probe().probe(&hint, source, gapless_format_options(), MetadataOptions::default())
             .map_err(|e| format!("Unable to open audio stream: {e}"))?;
-        let format = probed.format;
+        let format = probed;
         let track = format.default_track(symphonia::core::formats::TrackType::Audio).ok_or("No default audio track found")?;
         let track_id = track.id;
         let codec_params = track.codec_params.as_ref().ok_or("Audio codec parameters are unavailable")?;
