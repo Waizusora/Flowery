@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(target_os = "android")]
-use crate::usb_feedback::{FeedbackBusSpeed, FeedbackRateTracker, PacketFrameScheduler};
+use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
 
 #[cfg(target_os = "android")]
 const TRANSFER_RING_SIZE: usize = 4;
@@ -23,8 +23,6 @@ const TRANSFER_RING_SIZE: usize = 4;
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
 const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
-#[cfg(target_os = "android")]
-const MAX_CONSECUTIVE_FEEDBACK_OUTLIERS: u8 = 3;
 #[cfg(target_os = "android")]
 const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "android")]
@@ -349,7 +347,7 @@ fn run_worker(
     let mut feedback_tracker = FeedbackRateTracker::new(0.25).expect("valid feedback smoothing");
     let mut feedback_rate_hz: Option<f64> = None;
     let mut last_feedback_at: Option<Instant> = None;
-    let mut consecutive_feedback_outliers = 0_u8;
+    let mut feedback_outlier_guard = FeedbackOutlierGuard::new(3).expect("non-zero feedback outlier limit");
     let mut feedback_cancelling = false;
     let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
@@ -393,9 +391,10 @@ fn run_worker(
                 set_error(&error, &status, "USB explicit feedback transfer timed out".into());
             }
             if feedback_rate_hz.is_some()
-                && last_feedback_at
-                    .map(|received| received.elapsed() > TRANSFER_COMPLETION_TIMEOUT)
-                    .unwrap_or(true)
+                && crate::usb_feedback::feedback_clock_is_stale(
+                    last_feedback_at.map(|received| received.elapsed()),
+                    TRANSFER_COMPLETION_TIMEOUT,
+                )
             {
                 set_error(&error, &status, "USB explicit feedback clock estimate became stale".into());
             }
@@ -508,11 +507,10 @@ fn run_worker(
                                         Ok(Some(estimate)) => {
                                             feedback_rate_hz = Some(estimate);
                                             last_feedback_at = Some(Instant::now());
-                                            consecutive_feedback_outliers = 0;
+                                            feedback_outlier_guard.record_accepted();
                                         }
                                         Ok(None) => {
-                                            consecutive_feedback_outliers = consecutive_feedback_outliers.saturating_add(1);
-                                            if consecutive_feedback_outliers >= MAX_CONSECUTIVE_FEEDBACK_OUTLIERS {
+                                            if feedback_outlier_guard.record_outlier() {
                                                 set_error(&error, &status, "USB feedback clock produced repeated abrupt rate changes".into());
                                             }
                                         }
