@@ -19,10 +19,17 @@ use std::{
 use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
 
 #[cfg(any(target_os = "android", test))]
-fn retain_submitted_session<T>(session: std::sync::Arc<T>) -> *const T {
-    // A submitted libusb transfer may still reference callback-owned memory.
-    // Convert the slot's existing Arc into a raw reference so unwind cannot
-    // drop the USB session/context before the transfer is known to be drained.
+fn retain_submitted_resources<B, S, T>(
+    buffer: Vec<B>,
+    signal: Box<S>,
+    session: std::sync::Arc<T>,
+) -> *const T {
+    // A submitted libusb transfer may still reference its buffer and callback
+    // state. Keep all three allocations alive if worker unwinding bypasses the
+    // normal callback-drain path; the raw transfer pointer is intentionally
+    // not freed by the slot either.
+    std::mem::forget(buffer);
+    std::mem::forget(signal);
     std::sync::Arc::into_raw(session)
 }
 
@@ -70,11 +77,13 @@ impl Drop for TransferSlot {
             // libusb may still access the transfer, buffer, and callback state.
             // Retain the session/context as well; leaking is safer than unwinding
             // into a use-after-free if the worker panics before observing a callback.
-            // Move the slot's existing strong reference into a raw pointer.
-            // This intentionally retains exactly one session reference without
-            // incrementing the Arc count during panic unwinding.
+            // Move every callback-visible allocation out of ManuallyDrop.
+            // The submitted transfer itself is a raw pointer and remains
+            // allocated; retain its buffer, callback state, and session too.
+            let buffer = unsafe { ManuallyDrop::take(&mut self.buffer) };
+            let signal = unsafe { ManuallyDrop::take(&mut self.signal) };
             let session = unsafe { ManuallyDrop::take(&mut self.session) };
-            let _ = retain_submitted_session(session);
+            let _ = retain_submitted_resources(buffer, signal, session);
             return;
         }
         unsafe {
@@ -89,11 +98,13 @@ impl Drop for TransferSlot {
 impl Drop for FeedbackSlot {
     fn drop(&mut self) {
         if self.submitted {
-            // Move the slot's existing strong reference into a raw pointer.
-            // This intentionally retains exactly one session reference without
-            // incrementing the Arc count during panic unwinding.
+            // Move every callback-visible allocation out of ManuallyDrop.
+            // The submitted transfer itself is a raw pointer and remains
+            // allocated; retain its buffer, callback state, and session too.
+            let buffer = unsafe { ManuallyDrop::take(&mut self.buffer) };
+            let signal = unsafe { ManuallyDrop::take(&mut self.signal) };
             let session = unsafe { ManuallyDrop::take(&mut self.session) };
-            let _ = retain_submitted_session(session);
+            let _ = retain_submitted_resources(buffer, signal, session);
             return;
         }
         unsafe {
@@ -969,23 +980,45 @@ pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn submitted_session_retention_preserves_exactly_one_existing_reference() {
-        use std::sync::Arc;
+    fn submitted_slot_retains_buffer_callback_state_and_exactly_one_session_reference() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
 
-        let session = Arc::new(());
-        let weak = Arc::downgrade(&session);
+        struct DropProbe(Arc<AtomicUsize>);
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let buffer_drops = Arc::new(AtomicUsize::new(0));
+        let signal_drops = Arc::new(AtomicUsize::new(0));
+        let session_drops = Arc::new(AtomicUsize::new(0));
+        let session = Arc::new(DropProbe(Arc::clone(&session_drops)));
+        let weak_session = Arc::downgrade(&session);
         let slot_reference = Arc::clone(&session);
         assert_eq!(Arc::strong_count(&session), 2);
 
-        let retained = super::retain_submitted_session(slot_reference);
+        let retained = super::retain_submitted_resources(
+            vec![DropProbe(Arc::clone(&buffer_drops))],
+            Box::new(DropProbe(Arc::clone(&signal_drops))),
+            slot_reference,
+        );
         assert_eq!(Arc::strong_count(&session), 2);
         drop(session);
-        assert!(weak.upgrade().is_some());
 
-        // Reclaim the raw reference here; production intentionally leaves it
-        // retained because libusb has not proven that callback access ended.
+        assert_eq!(buffer_drops.load(Ordering::SeqCst), 0);
+        assert_eq!(signal_drops.load(Ordering::SeqCst), 0);
+        assert_eq!(session_drops.load(Ordering::SeqCst), 0);
+        assert!(weak_session.upgrade().is_some());
+
+        // Reclaim the session reference in the test. Production intentionally
+        // retains it because libusb has not proven callback access has ended.
         unsafe { drop(Arc::from_raw(retained)); }
-        assert!(weak.upgrade().is_none());
+        assert_eq!(session_drops.load(Ordering::SeqCst), 1);
+        assert!(weak_session.upgrade().is_none());
     }
 
     #[test]
