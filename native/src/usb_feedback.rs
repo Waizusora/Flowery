@@ -68,8 +68,13 @@ pub fn validate_feedback_rate_hz(nominal_hz: u32, measured_hz: f64) -> Result<()
     if !measured_hz.is_finite() {
         return Err("USB feedback rate is not finite".into());
     }
-    let lower = f64::from(nominal_hz) * 0.75;
-    let upper = f64::from(nominal_hz) * 1.50;
+    // Feedback is a clock measurement, not a new stream rate. A value
+    // outside ±10% is almost certainly a unit/endpoint/speed decoding error.
+    // Keep this guard deliberately conservative before it reaches packet sizing.
+    const MIN_CLOCK_RATIO: f64 = 0.90;
+    const MAX_CLOCK_RATIO: f64 = 1.10;
+    let lower = f64::from(nominal_hz) * MIN_CLOCK_RATIO;
+    let upper = f64::from(nominal_hz) * MAX_CLOCK_RATIO;
     if measured_hz < lower || measured_hz > upper {
         return Err(format!(
             "USB feedback rate {measured_hz:.2} Hz is outside the allowed range for nominal {nominal_hz} Hz"
@@ -176,10 +181,13 @@ mod tests {
 
     #[test]
     fn validates_feedback_against_nominal_rate_tolerance() {
-        assert!(validate_feedback_rate_hz(48_000, 36_000.0).is_ok());
-        assert!(validate_feedback_rate_hz(48_000, 72_000.0).is_ok());
-        assert!(validate_feedback_rate_hz(48_000, 35_999.0).is_err());
-        assert!(validate_feedback_rate_hz(48_000, 72_001.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 45_600.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 50_400.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 45_599.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 50_401.0).is_err());
+        // Catch common wrong-unit and wrong-speed interpretations early.
+        assert!(validate_feedback_rate_hz(48_000, 6_000.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 384_000.0).is_err());
         assert!(validate_feedback_rate_hz(48_000, f64::INFINITY).is_err());
         assert!(validate_feedback_rate_hz(0, 48_000.0).is_err());
     }
