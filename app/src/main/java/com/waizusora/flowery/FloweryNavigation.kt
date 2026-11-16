@@ -29,7 +29,6 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -87,13 +86,12 @@ fun FloweryNavigation(
     val activeLyricIndex = remember(displayLyrics, positionMs) {
         if (hasSynchronizedLyrics) LrcParser.activeLineIndex(displayLyrics, positionMs) else -1
     }
-    val lyricDensity = LocalDensity.current
     LaunchedEffect(lyricsVisible, activeLyricIndex, displayLyrics.size, hasSynchronizedLyrics) {
         if (lyricsVisible && hasSynchronizedLyrics && displayLyrics.isNotEmpty()) {
             // Wait for a real, non-zero LazyColumn viewport. A single frame is
             // not sufficient on first entry or after the panel is resized.
             withFrameNanos { }
-            val viewportHeight = snapshotFlow { lyricListState.layoutInfo.viewportSize.height }
+            snapshotFlow { lyricListState.layoutInfo.viewportSize.height }
                 .first { it > 0 }
             val targetIndex = activeLyricIndex.coerceIn(0, displayLyrics.lastIndex)
             // First make the active line visible, then center its measured bounds
