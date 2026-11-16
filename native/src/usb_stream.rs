@@ -170,6 +170,9 @@ fn create_feedback_slot(
             transfer, handle, endpoint, buffer.as_mut_ptr(), buffer.len() as i32,
             1, transfer_callback, (&*signal as *const TransferSignal).cast_mut().cast(), 0,
         );
+        // libusb_fill_iso_transfer configures the transfer but does not set
+        // individual isochronous packet lengths.
+        (*transfer).iso_packet_desc[0].length = u32::from(packet_bytes);
     }
     Ok(FeedbackSlot { transfer, buffer, signal, submitted: false, submitted_at: None })
 }
