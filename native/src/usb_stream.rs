@@ -81,7 +81,11 @@ impl Drop for TransferSlot {
 impl Drop for FeedbackSlot {
     fn drop(&mut self) {
         if self.submitted {
-            let _ = Arc::into_raw(Arc::clone(&self.session));
+            // Move the slot's existing strong reference into a raw pointer.
+            // This intentionally retains exactly one session reference without
+            // incrementing the Arc count during panic unwinding.
+            let session = unsafe { ManuallyDrop::take(&mut self.session) };
+            let _ = Arc::into_raw(session);
             return;
         }
         unsafe {
