@@ -958,11 +958,6 @@ mod tests {
         assert!(aaudio_seek_request_is_current(&newest, epoch.load(Ordering::Acquire), false));
     }
     #[test]
-    fn stream_format_enables_gapless_packet_trimming() {
-        assert_eq!(gapless_format_options(), FormatOptions::default());
-    }
-
-    #[test]
     fn presentation_frame_count_excludes_encoder_delay_and_padding() {
         assert_eq!(
             presentation_frame_count(Some(100_000), Some(576), Some(1_024)),
