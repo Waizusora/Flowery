@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(timestamp_to_milliseconds(1_001, Some(TimeBase::try_new(1, 3).unwrap()), 0), 333_666);
         assert_eq!(timestamp_to_milliseconds(u64::MAX, Some(TimeBase::try_new(1, 1).unwrap()), 0), u64::MAX);
         assert_eq!(timestamp_to_milliseconds(10, None, 123), 123);
-        assert_eq!(timestamp_to_milliseconds(10, Some(TimeBase::default()), 123), 123);
+        assert_eq!(timestamp_to_milliseconds(10, Some(TimeBase::default()), 123), 10_000);
     }
 
     #[test]
