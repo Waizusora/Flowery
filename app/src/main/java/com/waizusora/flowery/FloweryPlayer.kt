@@ -2,7 +2,6 @@ package com.waizusora.flowery
 
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -180,10 +179,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // AUX, speaker, and Bluetooth use Android-managed AAudio routing; USB returned above to libusb.
                 softwareVolume = 1f
                 val deviceId = outputRoute.deviceId
-                // AAudio receives integer PCM for every Android-managed output target.
-                // USB exclusive mode is still subject to Android device and system audio policy.
-                // Select integer output width from the detected source bit depth.
-                val outputFormat = if (sourceBits <= 16 || Build.VERSION.SDK_INT < 31) 1 else 3 // PCM_I16 / PCM_I24
+                // AAudio receives the source integer PCM width unchanged. Never downgrade
+                // 24/32-bit material to fit a device: fail if this source format is unsupported.
+                val outputFormat = when (sourceBits) {
+                    16 -> 1 // AAUDIO_FORMAT_PCM_I16
+                    24 -> 3 // AAUDIO_FORMAT_PCM_I24_PACKED
+                    32 -> 4 // AAUDIO_FORMAT_PCM_I32
+                    else -> throw IllegalStateException(
+                        "Android output requires integer PCM 16/24/32-bit; source is $sourceBits-bit"
+                    )
+                }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(sourceRate)
