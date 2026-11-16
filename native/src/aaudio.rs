@@ -710,6 +710,53 @@ mod tests {
     }
 
     #[test]
+    fn data_callback_preserves_wrapped_pcm24_and_pcm32_frames_and_zero_fills_tail() {
+        let cases: [(i32, usize, Vec<u8>, Vec<u8>); 2] = [
+            (
+                FMT_I24,
+                3,
+                vec![0x00, 0x00, 0x80, 0xff, 0xff, 0x7f],
+                vec![0x00, 0x00, 0x80, 0xff, 0xff, 0x7f, 0, 0, 0],
+            ),
+            (
+                FMT_I32,
+                4,
+                i32::MIN.to_le_bytes().into_iter()
+                    .chain(i32::MAX.to_le_bytes()).collect(),
+                i32::MIN.to_le_bytes().into_iter()
+                    .chain(i32::MAX.to_le_bytes())
+                    .chain([0, 0, 0, 0]).collect(),
+            ),
+        ];
+
+        for (format, bytes_per_sample, ring, expected) in cases {
+            let mut output = test_output(2, 1);
+            output.format = format;
+            output.bytes_per_sample = bytes_per_sample;
+            output.ring = ring;
+            output.capacity = 2;
+            output.read.store(1, Ordering::Relaxed);
+            output.write.store(3, Ordering::Relaxed);
+
+            let mut audio = vec![0x55_u8; expected.len()];
+            let result = unsafe {
+                data_callback(
+                    ptr::null_mut(),
+                    (&mut output as *mut Output).cast::<c_void>(),
+                    audio.as_mut_ptr().cast::<c_void>(),
+                    3,
+                )
+            };
+
+            assert_eq!(result, 0, "format {format}");
+            assert_eq!(audio, expected, "format {format}");
+            assert_eq!(output.read.load(Ordering::Acquire), 3);
+            assert_eq!(output.played.load(Ordering::Acquire), 2);
+            assert_eq!(output.underruns.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
     fn data_callback_stops_and_silences_output_on_invalid_gain_format() {
         let mut output = test_output(2, 1);
         output.format = 99;
