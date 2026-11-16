@@ -83,6 +83,41 @@ pub fn validate_feedback_rate_hz(nominal_hz: u32, measured_hz: f64) -> Result<()
     Ok(())
 }
 
+/// Tracks consecutive abrupt feedback samples without coupling policy to libusb callbacks.
+#[derive(Debug, Clone, Copy)]
+pub struct FeedbackOutlierGuard {
+    consecutive: u8,
+    limit: u8,
+}
+
+impl FeedbackOutlierGuard {
+    pub fn new(limit: u8) -> Result<Self, String> {
+        if limit == 0 {
+            return Err("Feedback outlier limit must be non-zero".into());
+        }
+        Ok(Self { consecutive: 0, limit })
+    }
+
+    pub fn record_accepted(&mut self) {
+        self.consecutive = 0;
+    }
+
+    /// Returns true when the consecutive-outlier limit has been reached.
+    pub fn record_outlier(&mut self) -> bool {
+        self.consecutive = self.consecutive.saturating_add(1);
+        self.consecutive >= self.limit
+    }
+
+    pub fn consecutive(&self) -> u8 {
+        self.consecutive
+    }
+}
+
+/// Missing feedback and feedback older than the timeout are both stale.
+pub fn feedback_clock_is_stale(age: Option<std::time::Duration>, timeout: std::time::Duration) -> bool {
+    age.map(|elapsed| elapsed > timeout).unwrap_or(true)
+}
+
 /// A bounded low-pass estimate used by the packet scheduler. The caller must
 /// validate each sample against the selected format before updating the tracker.
 #[derive(Debug, Clone, Copy)]
@@ -236,6 +271,30 @@ mod tests {
         assert_eq!(tracker.update_checked(44_200.0, 0.02).unwrap(), Some(44_150.0));
         assert_eq!(tracker.update_checked(44_300.0, 0.02).unwrap(), Some(44_225.0));
     }
+    #[test]
+    fn outlier_guard_requires_consecutive_outliers_and_resets_on_acceptance() {
+        let mut guard = FeedbackOutlierGuard::new(3).unwrap();
+        assert!(!guard.record_outlier());
+        assert!(!guard.record_outlier());
+        guard.record_accepted();
+        assert_eq!(guard.consecutive(), 0);
+        assert!(!guard.record_outlier());
+        assert!(!guard.record_outlier());
+        assert!(guard.record_outlier());
+        assert_eq!(guard.consecutive(), 3);
+        assert!(FeedbackOutlierGuard::new(0).is_err());
+    }
+
+    #[test]
+    fn feedback_clock_staleness_handles_missing_and_expired_samples() {
+        use std::time::Duration;
+        let timeout = Duration::from_millis(500);
+        assert!(feedback_clock_is_stale(None, timeout));
+        assert!(!feedback_clock_is_stale(Some(timeout), timeout));
+        assert!(feedback_clock_is_stale(Some(timeout + Duration::from_nanos(1)), timeout));
+        assert!(!feedback_clock_is_stale(Some(Duration::from_millis(100)), timeout));
+    }
+
     #[test]
     fn smooths_feedback_without_unbounded_values() {
         let mut tracker = FeedbackRateTracker::new(0.25).unwrap();
