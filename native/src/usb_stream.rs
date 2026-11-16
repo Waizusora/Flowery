@@ -643,7 +643,14 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
     let worker = workers().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
-        let _ = worker.thread.join();
+        if worker.thread.join().is_err() {
+            // TransferSlot and FeedbackSlot retain callback-owned memory and the
+            // libusb session when unwinding with a submitted transfer. Keep the
+            // Java USB connection open as well; a panicked worker is not a clean
+            // teardown, even when its remaining resources were safely retained.
+            unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            return Err("USB stream worker panicked; outstanding transfer resources were retained and the Android USB connection must remain open".into());
+        }
         if worker.status.load(Ordering::Acquire) == -2 {
             unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
             return Err("USB transfer cancellation could not be drained safely; the Android USB connection must remain open to protect outstanding libusb transfers".into());
