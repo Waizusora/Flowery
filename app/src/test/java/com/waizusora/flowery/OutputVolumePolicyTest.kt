@@ -1,15 +1,28 @@
 package com.waizusora.flowery
 
-/**
- * Direct USB/libusb output bypasses Android's mixer. Keep system volume and
- * native software gain/ducking out of that route to preserve source PCM bytes.
- */
-internal object OutputVolumePolicy {
-    fun allowsSystemVolumeControl(usbRouteActive: Boolean): Boolean = !usbRouteActive
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
-    fun nativeGain(usbRouteActive: Boolean, ducked: Boolean, duckGain: Float): Float =
-        if (usbRouteActive) 1f else if (ducked) duckGain else 1f
+class OutputVolumePolicyTest {
+    @Test fun usbRouteDoesNotChangeAndroidSystemVolume() {
+        assertFalse(OutputVolumePolicy.allowsSystemVolumeControl(usbRouteActive = true))
+        assertTrue(OutputVolumePolicy.allowsSystemVolumeControl(usbRouteActive = false))
+    }
 
-    fun reportedVolume(usbRouteActive: Boolean, systemVolume: Float): Float =
-        if (usbRouteActive) 1f else systemVolume
+    @Test fun usbRouteAlwaysUsesUnityNativeGainEvenWhenDucked() {
+        assertEquals(1f, OutputVolumePolicy.nativeGain(true, true, 0.25f), 0f)
+        assertEquals(1f, OutputVolumePolicy.nativeGain(true, false, 0.25f), 0f)
+    }
+
+    @Test fun androidRoutesRetainDuckingPolicy() {
+        assertEquals(0.25f, OutputVolumePolicy.nativeGain(false, true, 0.25f), 0f)
+        assertEquals(1f, OutputVolumePolicy.nativeGain(false, false, 0.25f), 0f)
+    }
+
+    @Test fun usbVolumeIsReportedAsUnity() {
+        assertEquals(1f, OutputVolumePolicy.reportedVolume(true, 0.4f), 0f)
+        assertEquals(0.4f, OutputVolumePolicy.reportedVolume(false, 0.4f), 0f)
+    }
 }
