@@ -29,6 +29,9 @@ pub struct UsbAudioFormat {
     pub bit_resolution: Option<u8>,
     pub format_type: Option<u8>,
     pub data_format: Option<UsbAudioDataFormat>,
+    /// Every Type I data format advertised by the UAC alternate.
+    /// UAC1 has one format tag; UAC2 bmFormats is a bitmask and may advertise several.
+    pub supported_data_formats: Vec<UsbAudioDataFormat>,
     pub sample_rates: Vec<u32>,
     pub continuous_rate_range: Option<(u32, u32)>,
     pub endpoint_address: Option<u8>,
@@ -58,6 +61,7 @@ struct Alternate {
     bit_resolution: Option<u8>,
     format_type: Option<u8>,
     data_format: Option<UsbAudioDataFormat>,
+    supported_data_formats: Vec<UsbAudioDataFormat>,
     sample_rates: Vec<u32>,
     continuous_rate_range: Option<(u32, u32)>,
     endpoint_address: Option<u8>,
@@ -95,6 +99,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     bit_resolution: a.bit_resolution,
                     format_type: a.format_type,
                     data_format: a.data_format,
+                    supported_data_formats: a.supported_data_formats,
                     sample_rates: a.sample_rates,
                     continuous_rate_range: a.continuous_rate_range,
                     endpoint_address: a.endpoint_address,
@@ -156,6 +161,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                                     0x0003 => Some(UsbAudioDataFormat::IeeeFloat),
                                     _ => None,
                                 };
+                                a.supported_data_formats = a.data_format.into_iter().collect();
                             }
                             // FORMAT_TYPE_I: format, channels, subframe size, bit resolution, rate count.
                             0x02 if a.protocol == 0x00 && length >= 8 => {
@@ -186,11 +192,19 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                             0x01 if a.protocol == 0x20 && length >= 16 => {
                                 a.channels = Some(d[10]);
                                 let formats = u32::from_le_bytes([d[6], d[7], d[8], d[9]]);
-                                a.data_format = match formats {
-                                    0x0000_0001 => Some(UsbAudioDataFormat::Pcm),
-                                    0x0000_0002 => Some(UsbAudioDataFormat::Pcm8),
-                                    0x0000_0004 => Some(UsbAudioDataFormat::IeeeFloat),
-                                    _ => None,
+                                a.supported_data_formats = [
+                                    (0x0000_0001, UsbAudioDataFormat::Pcm),
+                                    (0x0000_0002, UsbAudioDataFormat::Pcm8),
+                                    (0x0000_0004, UsbAudioDataFormat::IeeeFloat),
+                                ].into_iter()
+                                    .filter_map(|(bit, format)| (formats & bit != 0).then_some(format))
+                                    .collect();
+                                // Preserve the legacy single-format summary while allowing
+                                // the planner to select any advertised UAC2 bmFormats bit.
+                                a.data_format = if a.supported_data_formats.len() == 1 {
+                                    a.supported_data_formats.first().copied()
+                                } else {
+                                    None
                                 };
                             }
                             // UAC2 FORMAT_TYPE: Type I, subslot size and bit resolution.
@@ -288,7 +302,7 @@ pub fn plan_pcm_playback_with_format(
             UsbAudioDataFormat::IeeeFloat => bits == 32 && subslot_bytes == 4,
         };
         if format.format_type != Some(1)
-            || format.data_format != Some(requested_format)
+            || !format.supported_data_formats.contains(&requested_format)
             || format_channels != channels
             || bits != bit_resolution
             || !valid_data_layout
@@ -580,8 +594,18 @@ mod tests {
         ];
         let parsed = parse_configuration_descriptors(&descriptors);
         assert_eq!(parsed.formats[0].data_format, None);
+        assert_eq!(
+            parsed.formats[0].supported_data_formats,
+            vec![UsbAudioDataFormat::Pcm, UsbAudioDataFormat::IeeeFloat]
+        );
         assert!(plan_pcm_playback_with_format(
             &descriptors, 48_000, 2, 32, UsbAudioDataFormat::IeeeFloat
+        ).is_ok());
+        assert!(plan_pcm_playback_with_format(
+            &descriptors, 48_000, 2, 32, UsbAudioDataFormat::Pcm
+        ).is_ok());
+        assert!(plan_pcm_playback_with_format(
+            &descriptors, 48_000, 2, 32, UsbAudioDataFormat::Pcm8
         ).is_err());
     }
 
