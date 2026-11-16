@@ -200,10 +200,10 @@ mod tests {
 
     #[test]
     fn validates_feedback_against_nominal_rate_tolerance() {
-        assert!(validate_feedback_rate_hz(48_000, 45_600.0).is_ok());
-        assert!(validate_feedback_rate_hz(48_000, 50_400.0).is_ok());
-        assert!(validate_feedback_rate_hz(48_000, 45_599.0).is_err());
-        assert!(validate_feedback_rate_hz(48_000, 50_401.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 43_200.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 52_800.0).is_ok());
+        assert!(validate_feedback_rate_hz(48_000, 43_199.0).is_err());
+        assert!(validate_feedback_rate_hz(48_000, 52_801.0).is_err());
         // Catch common wrong-unit and wrong-speed interpretations early.
         assert!(validate_feedback_rate_hz(48_000, 6_000.0).is_err());
         assert!(validate_feedback_rate_hz(48_000, 384_000.0).is_err());
