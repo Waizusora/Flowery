@@ -274,6 +274,61 @@ mod tests {
     }
 
     #[test]
+    fn validates_isochronous_completions_from_a_lazy_iterator() {
+        let packets = [
+            IsochronousPacketCompletion { status: 0, actual_length: 192, expected_length: 192 },
+            IsochronousPacketCompletion { status: 0, actual_length: 188, expected_length: 188 },
+        ];
+        assert_eq!(
+            validate_isochronous_completion_iter(0, packets.into_iter()),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn lazy_completion_validation_stops_at_the_first_invalid_packet() {
+        use std::cell::Cell;
+
+        let yielded = Cell::new(0);
+        let packets = std::iter::from_fn(|| {
+            let index = yielded.get();
+            yielded.set(index + 1);
+            match index {
+                0 => Some(IsochronousPacketCompletion {
+                    status: 2,
+                    actual_length: 0,
+                    expected_length: 8,
+                }),
+                1 => Some(IsochronousPacketCompletion {
+                    status: 0,
+                    actual_length: 8,
+                    expected_length: 8,
+                }),
+                _ => None,
+            }
+        });
+
+        let error = validate_isochronous_completion_iter(0, packets).unwrap_err();
+        assert!(error.contains("packet 0 timed out"));
+        assert_eq!(yielded.get(), 1);
+    }
+
+    #[test]
+    fn iterator_validation_rejects_transfer_error_before_polling_packets() {
+        use std::cell::Cell;
+
+        let polled = Cell::new(false);
+        let packets = std::iter::from_fn(|| {
+            polled.set(true);
+            None
+        });
+
+        let error = validate_isochronous_completion_iter(5, packets).unwrap_err();
+        assert!(error.contains("device disconnected"));
+        assert!(!polled.get());
+    }
+
+    #[test]
     fn describes_libusb_transfer_statuses_and_disconnect_errors() {
         assert_eq!(transfer_status_name(0), "completed");
         assert_eq!(transfer_status_name(2), "timed out");
