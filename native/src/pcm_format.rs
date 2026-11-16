@@ -260,6 +260,28 @@ impl UsbPcmSamples {
     }
 }
 
+
+/// Derive the PCM declaration from the decoder's actual output buffer.
+/// Container metadata is only a hint: lossy codecs commonly omit sample_format
+/// and bit-depth fields even though Symphonia emits valid typed PCM.
+pub(super) fn decoded_output_format(
+    samples: &UsbPcmSamples,
+    declared_bits: u8,
+) -> Result<(u8, u8), &'static str> {
+    match samples {
+        UsbPcmSamples::U8(_) => Ok((8, 2)),
+        UsbPcmSamples::S16(_) => Ok((16, 1)),
+        UsbPcmSamples::S24(_) => Ok((24, 1)),
+        UsbPcmSamples::S32(_) => Ok((
+            if matches!(declared_bits, 16 | 20 | 24 | 32) { declared_bits } else { 32 },
+            1,
+        )),
+        UsbPcmSamples::F32(_) => Ok((32, 3)),
+        UsbPcmSamples::F64(_) => Ok((64, 4)),
+        UsbPcmSamples::Empty => Err("Decoder has not produced a PCM sample buffer"),
+    }
+}
+
 /// Dispatch typed decoded samples to the matching USB integer or float encoder.
 pub(super) fn encode_usb_pcm(
     samples: &UsbPcmSamples,
@@ -424,6 +446,19 @@ mod tests {
                 .expect("stable decoded representation");
         }
         samples
+    }
+
+    #[test]
+    fn decoded_output_format_uses_actual_sample_representation_not_container_hints() {
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((32, 3)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((32, 3)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::S16(vec![1]), 0), Ok((16, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::S24(vec![1]), 0), Ok((24, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::S32(vec![1]), 24), Ok((24, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::S32(vec![1]), 0), Ok((32, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::U8(vec![1]), 0), Ok((8, 2)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F64(vec![0.25]), 0), Ok((64, 4)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::Empty, 0), Err("Decoder has not produced a PCM sample buffer"));
     }
 
     #[test]

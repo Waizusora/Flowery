@@ -135,7 +135,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePreparePlayb
         return std::ptr::null_mut();
     };
     let (source_rate, channels, source_bits, source_data_format) = {
-        let guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        let mut guard = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        #[cfg(target_os = "android")]
+        if let Err(error) = guard.prime_output_format() {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            return std::ptr::null_mut();
+        }
         guard.playback_metadata()
     };
     let route = select_playback_route();

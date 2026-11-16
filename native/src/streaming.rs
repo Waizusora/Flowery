@@ -249,6 +249,27 @@ impl StreamDecoder {
         (self.source_rate, self.channels, self.source_bits, self.source_data_format)
     }
 
+    /// Decode and retain the first non-empty PCM packet before publishing output
+    /// metadata. The typed decoder buffer is authoritative when codec parameters
+    /// omit the decoded sample representation.
+    #[cfg(target_os = "android")]
+    pub(super) fn prime_output_format(&mut self) -> Result<(), String> {
+        while self.usb_pending.as_ref().map(|samples| samples.len() == 0).unwrap_or(true)
+            && !self.eof
+        {
+            self.decode_packet()?;
+        }
+        let samples = self.usb_pending.as_ref()
+            .ok_or_else(|| "Audio decoder reached EOF before producing PCM samples".to_string())?;
+        let (bits, data_format) = crate::pcm_format::decoded_output_format(
+            samples,
+            self.source_bits,
+        ).map_err(str::to_string)?;
+        self.source_bits = bits;
+        self.source_data_format = data_format;
+        Ok(())
+    }
+
 
 
 
