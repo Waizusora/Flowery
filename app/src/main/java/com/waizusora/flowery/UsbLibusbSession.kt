@@ -583,15 +583,31 @@ internal class UsbLibusbSession internal constructor(
     override fun close() {
         if (closed) return
         closed = true
-        try {
-            NativeAudio.nativeCloseUsbAudioSession(nativeHandle)
-        } finally {
+        val safelyClosed = try {
+            NativeAudio.nativeCloseUsbAudioSession(nativeHandle) == 0
+        } catch (error: Throwable) {
+            connection?.let(unsafeConnections::add)
+            throw IllegalStateException(
+                "Native USB transfers could not be drained; retaining the Android USB connection to prevent closing an fd still used by libusb",
+                error
+            )
+        }
+        if (safelyClosed) {
             // libusb_wrap_sys_device does not own or close this descriptor.
             connection?.close()
+        } else {
+            connection?.let(unsafeConnections::add)
+            throw IllegalStateException(
+                "Native USB transfers could not be drained; retaining the Android USB connection to prevent closing an fd still used by libusb"
+            )
         }
     }
 
     companion object {
+        // Deliberately retain connections whose native transfer teardown was unsafe.
+        // Closing their fd could invalidate a still-submitted libusb transfer.
+        private val unsafeConnections = java.util.concurrent.CopyOnWriteArrayList<UsbDeviceConnection>()
+
         fun open(
             manager: UsbManager,
             device: UsbDevice,
