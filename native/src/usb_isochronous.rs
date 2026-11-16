@@ -139,6 +139,11 @@ pub fn validate_isochronous_completion(
     Ok(())
 }
 
+/// Maximum number of service intervals accepted by the pure schedule planner.
+/// Runtime transfers use a fixed, much smaller packet ring; this cap also keeps
+/// diagnostic/planning callers from requesting unbounded allocations.
+const MAX_SCHEDULE_SERVICES: u32 = 4_096;
+
 /// Build a deterministic PCM packet schedule for the requested USB service intervals.
 /// Fractional sample frames are distributed without long-term drift.
 pub fn build_isochronous_schedule(
@@ -152,6 +157,9 @@ pub fn build_isochronous_schedule(
 ) -> Result<IsochronousSchedule, String> {
     if sample_rate == 0 || channels == 0 || subslot_bytes == 0 || service_count == 0 {
         return Err("PCM parameters and service count must be non-zero".into());
+    }
+    if service_count > MAX_SCHEDULE_SERVICES {
+        return Err(format!("Isochronous schedule exceeds the {MAX_SCHEDULE_SERVICES}-service planning limit"));
     }
     if !(1..=16).contains(&b_interval) { return Err("Isochronous bInterval must be between 1 and 16".into()); }
 
@@ -167,7 +175,11 @@ pub fn build_isochronous_schedule(
 
     let numerator = u64::from(sample_rate) * u64::from(interval_us);
     let mut previous_total = 0u64;
-    let mut packets = Vec::with_capacity(service_count as usize);
+    let capacity = usize::try_from(service_count)
+        .map_err(|_| "Isochronous schedule service count exceeds platform limits")?;
+    let mut packets = Vec::new();
+    packets.try_reserve_exact(capacity)
+        .map_err(|_| "Unable to reserve memory for the isochronous schedule")?;
     for index in 0..service_count {
         let total = numerator.checked_mul(u64::from(index) + 1)
             .ok_or("Isochronous schedule frame count overflow")? / 1_000_000;
@@ -355,6 +367,22 @@ mod tests {
         assert!(max_isochronous_payload(0, UsbBusSpeed::Full).is_err());
         assert!(max_isochronous_payload(0xe400, UsbBusSpeed::High).is_err());
         assert!(build_isochronous_schedule(48_000, 2, 4, 0x0400, 0, UsbBusSpeed::High, 1).is_err());
+    }
+
+    #[test]
+    fn rejects_unbounded_service_count_before_allocating_schedule() {
+        let error = build_isochronous_schedule(
+            48_000, 2, 2, 0x0400, 1, UsbBusSpeed::High, u32::MAX
+        ).unwrap_err();
+        assert!(error.contains("planning limit"));
+    }
+
+    #[test]
+    fn accepts_schedule_at_service_count_limit() {
+        let schedule = build_isochronous_schedule(
+            48_000, 2, 2, 0x0400, 1, UsbBusSpeed::High, MAX_SCHEDULE_SERVICES
+        ).unwrap();
+        assert_eq!(schedule.packets.len(), MAX_SCHEDULE_SERVICES as usize);
     }
 
     #[test]
