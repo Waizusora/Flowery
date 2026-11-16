@@ -94,6 +94,7 @@ internal class PlaybackCoordinator(
     fun durationMs(): Long = engine.durationMs()
     fun outputSampleRateHz(): Int = engine.outputSampleRateHz()
     fun outputBitDepth(): Int = engine.outputBitDepth()
+    fun outputBackendLabel(): String = engine.outputBackendLabel()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
     @Synchronized fun setDucked(ducked: Boolean) = engine.setDucked(ducked)
 
