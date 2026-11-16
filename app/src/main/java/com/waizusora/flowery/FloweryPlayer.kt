@@ -27,6 +27,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
     @Volatile private var outputSampleRate = 0
+    @Volatile private var outputBitDepth = 0
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
@@ -144,6 +145,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         directUsb.seek(segmentStartMs + queued.coerceAtLeast(0L)).getOrThrow()
                     }
                     outputSampleRate = sourceRate
+                    outputBitDepth = sourceBits
                     val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                     outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
@@ -241,6 +243,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     throw IllegalStateException("$reason $device; $details")
                 }
                 outputSampleRate = sourceRate
+                outputBitDepth = sourceBits
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
@@ -375,6 +378,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun durationMs(): Long = outputDurationMs
 
+    fun outputSampleRateHz(): Int = outputSampleRate
+    fun outputBitDepth(): Int = outputBitDepth
+
     fun seekTo(positionMs: Long) {
         val boundedPosition = positionMs.coerceAtLeast(0L)
         if (decoderHandle == 0L || (usbRouteActive && !outputReady)) {
@@ -469,6 +475,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         worker?.interrupt()
         outputDurationMs = 0L
         outputSampleRate = 0
+        outputBitDepth = 0
         pendingSeekMs.set(-1L)
         usbRouteActive = false
         activeSegmentStartMs = 0L
