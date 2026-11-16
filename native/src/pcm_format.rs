@@ -188,18 +188,10 @@ impl UsbPcmSamples {
         use symphonia::core::audio::{Audio, GenericAudioBufferRef};
         fn interleave<T: Copy>(buffer: &symphonia::core::audio::AudioBuffer<T>) -> Vec<T>
         where T: symphonia::core::audio::sample::Sample {
-            let channels = buffer.spec().channels.count();
-            let frames = buffer.frames();
-            let mut samples = Vec::with_capacity(frames.saturating_mul(channels));
-            for frame in 0..frames {
-                for channel in 0..channels {
-                    samples.push(buffer.chan(channel)[frame]);
-                }
-            }
-            samples
+            buffer.iter_interleaved().copied().collect()
         }
         Ok(match decoded {
-            GenericGenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
+            GenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
             GenericAudioBufferRef::S16(buffer) => Self::S16(interleave(&buffer)),
             GenericAudioBufferRef::S24(buffer) => Self::S24(interleave(&buffer).into_iter().map(|sample| sample.inner()).collect()),
             GenericAudioBufferRef::S32(buffer) => Self::S32(interleave(&buffer)),
@@ -429,7 +421,7 @@ mod tests {
         let mut hint = Hint::new();
         hint.with_extension(extension);
         let probed = symphonia::default::get_probe()
-            .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
+            .probe(&hint, source, FormatOptions::default(), MetadataOptions::default())
             .expect("probe test audio");
         let mut format = probed.format;
         let track = format.default_track().expect("default test track");
