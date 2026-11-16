@@ -305,9 +305,26 @@ pub fn plan_pcm_playback_with_format(
             || (format.protocol == 0x20 && format.sample_rates.is_empty()
                 && format.continuous_rate_range.is_none());
         if !rate_supported { continue; }
-        if format.synchronization_type == Some(1) && format.feedback_endpoint_address.is_none() {
-            missing_async_feedback = true;
+        if !(1..=16).contains(&interval) {
             continue;
+        }
+        if format.synchronization_type == Some(1) {
+            let feedback_is_valid = matches!(
+                (
+                    format.feedback_endpoint_address,
+                    format.feedback_max_packet_size,
+                    format.feedback_interval,
+                ),
+                (Some(address), Some(packet_bytes), Some(feedback_interval))
+                    if address & 0x80 != 0
+                        && address & 0x0f != 0
+                        && packet_bytes > 0
+                        && (1..=16).contains(&feedback_interval)
+            );
+            if !feedback_is_valid {
+                missing_async_feedback = true;
+                continue;
+            }
         }
 
         return Ok(UsbAudioStreamPlan {
@@ -387,6 +404,41 @@ mod tests {
         assert!(!parsed.warnings.is_empty());
     }
     
+    #[test]
+    fn rejects_async_feedback_with_invalid_service_interval() {
+        let mut descriptors = vec![
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+        ];
+        let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
+        assert_eq!(plan.feedback_interval, Some(1));
+
+        // bInterval is reserved when zero for an isochronous endpoint.
+        let feedback_descriptor_interval_offset = descriptors.len() - 1;
+        descriptors[feedback_descriptor_interval_offset] = 0;
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+    }
+
+    #[test]
+    fn rejects_playback_endpoint_with_invalid_service_interval() {
+        let mut descriptors = vec![
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+        ];
+        let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
+        assert_eq!(plan.interval, 1);
+
+        descriptors[descriptors.len() - 1] = 0;
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+    }
+
     #[test]
     fn plans_matching_uac1_pcm_alternate() {
         let descriptors = [
