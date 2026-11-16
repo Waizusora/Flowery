@@ -139,6 +139,8 @@ class MainActivity : ComponentActivity() {
     private var volume by mutableStateOf(1f)
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
+    private var playbackOutputSampleRateHz by mutableStateOf(0)
+    private var playbackOutputBitDepth by mutableStateOf(0)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -177,6 +179,8 @@ class MainActivity : ComponentActivity() {
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
             if (reportedDuration > 0L) playbackDurationMs = reportedDuration
+            playbackOutputSampleRateHz = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_SAMPLE_RATE, playbackOutputSampleRateHz)
+            playbackOutputBitDepth = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_BIT_DEPTH, playbackOutputBitDepth)
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
             val currentCueStart = intent.getLongExtra(PlaybackService.EXTRA_CURRENT_CUE_START, 0L)
             val currentCuePlaylist = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_CUE_PLAYLIST).orEmpty().ifBlank { null }
@@ -256,6 +260,8 @@ class MainActivity : ComponentActivity() {
                 lyrics = lyrics,
                 positionMs = playbackPositionMs,
                 durationMs = playbackDurationMs,
+                outputSampleRateHz = playbackOutputSampleRateHz,
+                outputBitDepth = playbackOutputBitDepth,
                 onAddFolder = { folderPicker.launch(null) },
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
