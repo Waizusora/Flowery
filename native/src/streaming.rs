@@ -302,12 +302,25 @@ impl StreamDecoder {
     }
 
     #[cfg(target_os = "android")]
-    fn read_frames(&mut self, requested: usize) -> Result<Vec<f32>,String> {
-        while self.input_pending.is_empty() && !self.eof { self.decode_packet(false)?; }
-        if self.input_pending.is_empty() { return Ok(Vec::new()); }
-        let take = (requested * self.channels).min(self.input_pending.len());
-        let samples: Vec<f32> = self.input_pending.drain(..take).map(|sample| sample as f32).collect();
-        Ok(samples)
+    fn read_aaudio_pcm_frames(&mut self, requested: usize) -> Result<Vec<u8>,String> {
+        if !matches!(self.source_bits, 16 | 24 | 32) || self.source_data_format != 1 {
+            return Err(format!(
+                "Android AAudio integer output requires native integer PCM (16/24/32-bit); source is {}-bit data format {}",
+                self.source_bits, self.source_data_format
+            ));
+        }
+        let samples = self.read_usb_frames(requested)?;
+        let format = crate::pcm_format::PcmFormat {
+            sample_rate: self.source_rate as u32,
+            channels: self.channels as u16,
+            valid_bits: self.source_bits,
+            subslot_bytes: self.source_bits / 8,
+            little_endian: true,
+        }.validate().map_err(str::to_string)?;
+        let mut bytes = Vec::with_capacity(samples.len() * usize::from(format.subslot_bytes));
+        crate::pcm_format::encode_usb_pcm(&samples, format, &mut bytes)
+            .map_err(str::to_string)?;
+        Ok(bytes)
     }
 
     #[cfg(target_os = "android")]
@@ -651,7 +664,7 @@ fn start_stream_pump_worker(
                 }
                 frames = frames.min(remaining as usize);
             }
-            let samples = match decoder.read_frames(frames) {
+            let samples = match decoder.read_aaudio_pcm_frames(frames) {
                 Ok(samples) => samples,
                 Err(decode_error) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = decode_error;
@@ -665,15 +678,23 @@ fn start_stream_pump_worker(
                 break;
             }
             let channels = decoder.channels;
+            let bytes_per_sample = usize::from(decoder.source_bits / 8);
+            let bytes_per_frame = channels * bytes_per_sample;
             drop(decoder);
-            match crate::aaudio::write_output_samples(&samples) {
-                Ok(written) if written == samples.len() / channels => {
+            if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
+                *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
+                    "AAudio PCM byte chunk is not aligned to complete source frames".into();
+                thread_status.store(-2, Ordering::Release);
+                break;
+            }
+            match crate::aaudio::write_output_pcm_bytes(&samples) {
+                Ok(written) if written == samples.len() / bytes_per_frame => {
                     produced_frames = produced_frames.saturating_add(written as u64);
                 }
                 Ok(written) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = format!(
                         "AAudio ring buffer accepted an incomplete PCM chunk ({written} of {} frames)",
-                        samples.len() / channels
+                        samples.len() / bytes_per_frame
                     );
                     thread_status.store(-2, Ordering::Release);
                     break;
