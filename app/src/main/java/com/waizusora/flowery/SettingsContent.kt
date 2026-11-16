@@ -208,9 +208,9 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             }
             AudioInfoSection("OUTPUT", color, muted) {
                 AudioInfoRow("Backend", route, color, muted)
-                AudioInfoRow("Device", if (!active) "—" else if (usbDirect) detectedOutput.displayName else detectedOutput.displayName, color, muted)
-                AudioInfoRow("Output sample rate", if (active) sampleRate else "—", color, muted)
-                AudioInfoRow("Output bit depth", if (active) bitDepth else "—", color, muted)
+                AudioInfoRow("Device", if (active) detectedOutput.displayName else "—", color, muted)
+                AudioInfoRow("Output sample rate", "—", color, muted)
+                AudioInfoRow("Output bit depth", "—", color, muted)
                 if (usbDirect) {
                     AudioInfoRow("USB Audio Class", "—", color, muted)
                     AudioInfoRow("Clock / feedback", "—", color, muted)
