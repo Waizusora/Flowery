@@ -38,6 +38,38 @@ pub fn max_isochronous_payload(raw: u16, speed: UsbBusSpeed) -> Result<u32, Stri
     }
 }
 
+
+/// Calculate the endpoint capacity required for one service interval.
+/// Explicit-feedback streams reserve room for the full accepted +10% clock
+/// deviation; the scheduler itself is bounded to 768 kHz.
+pub fn required_isochronous_packet_capacity(
+    sample_rate: u32,
+    channels: u8,
+    subslot_bytes: u8,
+    interval_us: u32,
+    feedback_required: bool,
+) -> Result<u32, String> {
+    if !(1_000..=768_000).contains(&sample_rate) || channels == 0 || subslot_bytes == 0 || interval_us == 0 {
+        return Err("Invalid USB audio rate, PCM frame size, or service interval".into());
+    }
+    let nominal = u64::from(sample_rate);
+    let maximum_rate = if feedback_required {
+        ((nominal * 110 + 99) / 100).min(768_000)
+    } else {
+        nominal
+    };
+    let frames = maximum_rate
+        .checked_mul(u64::from(interval_us))
+        .and_then(|value| value.checked_add(999_999))
+        .ok_or("USB packet capacity calculation overflow")?
+        / 1_000_000;
+    let bytes = frames
+        .checked_mul(u64::from(channels))
+        .and_then(|value| value.checked_mul(u64::from(subslot_bytes)))
+        .ok_or("USB packet capacity calculation overflow")?;
+    u32::try_from(bytes).map_err(|_| "USB packet capacity exceeds supported limits".into())
+}
+
 /// Copy complete interleaved PCM frames into one isochronous packet payload.
 /// The destination is zero-filled first so a final short packet is silence-padded.
 pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: usize) -> Result<usize, String> {
@@ -425,6 +457,21 @@ mod tests {
         assert!(s.packets.iter().all(|p| p.payload_bytes <= 192));
         assert!(s.packets.iter().any(|p| p.sample_frames == 44));
         assert!(s.packets.iter().any(|p| p.sample_frames == 45));
+    }
+
+
+    #[test]
+    fn feedback_packet_capacity_reserves_the_accepted_clock_tolerance() {
+        assert_eq!(required_isochronous_packet_capacity(48_000, 2, 2, 1_000, false).unwrap(), 192);
+        assert_eq!(required_isochronous_packet_capacity(48_000, 2, 2, 1_000, true).unwrap(), 212);
+        assert_eq!(required_isochronous_packet_capacity(48_000, 2, 2, 125, true).unwrap(), 28);
+    }
+
+    #[test]
+    fn packet_capacity_rejects_rates_outside_the_scheduler_range() {
+        assert!(required_isochronous_packet_capacity(999, 2, 2, 1_000, false).is_err());
+        assert!(required_isochronous_packet_capacity(768_001, 2, 2, 1_000, false).is_err());
+        assert!(required_isochronous_packet_capacity(48_000, 0, 2, 1_000, false).is_err());
     }
 
     #[test]
