@@ -230,46 +230,14 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     if first<byte_count {
         ptr::copy_nonoverlapping(o.ring.as_ptr(),(audio as *mut u8).add(first),byte_count-first);
     }
-    // Apply non-unity software gain with integer fixed-point arithmetic only.
-    // At unity gain, the PCM bytes above remain bit-for-bit unchanged.
+    // Integer-only software gain; unity gain preserves source PCM bytes exactly.
     let gain=o.gain_q31();
     if gain != 2_147_483_648_i64 {
-        let output=audio as *mut u8;
-        for index in 0..(count as usize*o.channels) {
-            let offset=index*o.bytes_per_sample;
-            let value:i64=match o.format {
-                FMT_I16 => i16::from_le_bytes([output.add(offset).read(),output.add(offset+1).read()]) as i64,
-                FMT_I24 => {
-                    let raw=(output.add(offset).read() as i32)
-                        | ((output.add(offset+1).read() as i32)<<8)
-                        | ((output.add(offset+2).read() as i32)<<16);
-                    ((raw<<8)>>8) as i64
-                },
-                FMT_I32 => i32::from_le_bytes([
-                    output.add(offset).read(),output.add(offset+1).read(),
-                    output.add(offset+2).read(),output.add(offset+3).read()
-                ]) as i64,
-                _ => 0,
-            };
-            let scaled=((value as i128*gain as i128 + (1_i128<<30))>>31) as i64;
-            match o.format {
-                FMT_I16 => {
-                    let bytes=(scaled as i16).to_le_bytes();
-                    output.add(offset).write(bytes[0]);output.add(offset+1).write(bytes[1]);
-                },
-                FMT_I24 => {
-                    let v=scaled as i32;
-                    output.add(offset).write(v as u8);
-                    output.add(offset+1).write((v>>8) as u8);
-                    output.add(offset+2).write((v>>16) as u8);
-                },
-                FMT_I32 => {
-                    let bytes=(scaled as i32).to_le_bytes();
-                    for (byte_index,byte) in bytes.iter().enumerate(){output.add(offset+byte_index).write(*byte);}
-                },
-                _ => {},
-            }
-        }
+        let valid_bits=match o.format { FMT_I16=>16, FMT_I24=>24, FMT_I32=>32, _=>0 };
+        let output=std::slice::from_raw_parts_mut(audio as *mut u8, byte_count);
+        let _=crate::pcm_format::apply_integer_pcm_gain(
+            output, valid_bits, count as usize * o.channels, gain,
+        );
     }
     let remaining=requested-count;
     if remaining>0 {
