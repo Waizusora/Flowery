@@ -703,4 +703,54 @@ mod tests {
         assert!(!output.active.load(Ordering::Acquire));
         assert_eq!(output.underruns.load(Ordering::Acquire), 0);
     }
+
+    #[test]
+    fn data_callback_applies_integer_gain_for_pcm16_24_and_32() {
+        let cases: [(i32, usize, Vec<u8>, Vec<u8>); 3] = [
+            (
+                FMT_I16,
+                2,
+                [-2_i16, 2_i16].iter().flat_map(|v| v.to_le_bytes()).collect(),
+                [-1_i16, 1_i16].iter().flat_map(|v| v.to_le_bytes()).collect(),
+            ),
+            (
+                FMT_I24,
+                3,
+                vec![0xfe, 0xff, 0xff, 0x02, 0x00, 0x00],
+                vec![0xff, 0xff, 0xff, 0x01, 0x00, 0x00],
+            ),
+            (
+                FMT_I32,
+                4,
+                [-2_i32, 2_i32].iter().flat_map(|v| v.to_le_bytes()).collect(),
+                [-1_i32, 1_i32].iter().flat_map(|v| v.to_le_bytes()).collect(),
+            ),
+        ];
+
+        for (format, bytes_per_sample, source, expected) in cases {
+            let mut output = test_output(2, 1);
+            output.format = format;
+            output.bytes_per_sample = bytes_per_sample;
+            output.ring = source.clone();
+            output.capacity = 2;
+            output.write.store(2, Ordering::Relaxed);
+            output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+
+            let mut audio = vec![0_u8; source.len()];
+            let result = unsafe {
+                data_callback(
+                    ptr::null_mut(),
+                    (&mut output as *mut Output).cast::<c_void>(),
+                    audio.as_mut_ptr().cast::<c_void>(),
+                    2,
+                )
+            };
+
+            assert_eq!(result, 0, "format {format}");
+            assert_eq!(audio, expected, "format {format}");
+            assert_eq!(output.read.load(Ordering::Acquire), 2);
+            assert_eq!(output.played.load(Ordering::Acquire), 2);
+        }
+    }
+
 }
