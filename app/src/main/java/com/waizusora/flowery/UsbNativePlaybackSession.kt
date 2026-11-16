@@ -165,7 +165,9 @@ internal class UsbNativePlaybackSession private constructor(
     override fun close() {
         if (closed) return
         closed = true
-        usb.stopPlayback()
+        // Native close owns the complete stop, transfer-drain, and session-removal
+        // sequence. Do not call stop separately: close must still run if stop
+        // reports an asynchronous teardown failure.
         usb.close()
     }
 
