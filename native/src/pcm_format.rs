@@ -188,7 +188,7 @@ impl UsbPcmSamples {
         use symphonia::core::audio::{Audio, GenericAudioBufferRef};
         fn interleave<T: Copy>(buffer: &symphonia::core::audio::AudioBuffer<T>) -> Vec<T>
         where T: symphonia::core::audio::sample::Sample {
-            buffer.iter_interleaved().copied().collect()
+            buffer.iter_interleaved().collect()
         }
         Ok(match decoded {
             GenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
@@ -423,7 +423,7 @@ mod tests {
         let probed = symphonia::default::get_probe()
             .probe(&hint, source, FormatOptions::default(), MetadataOptions::default())
             .expect("probe test audio");
-        let mut format = probed.format;
+        let mut format = probed;
         let track = format.default_track().expect("default test track");
         let mut registry = CodecRegistry::new();
         symphonia::default::register_enabled_codecs(&mut registry);
