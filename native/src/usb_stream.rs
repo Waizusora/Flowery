@@ -62,7 +62,11 @@ impl Drop for TransferSlot {
             // libusb may still access the transfer, buffer, and callback state.
             // Retain the session/context as well; leaking is safer than unwinding
             // into a use-after-free if the worker panics before observing a callback.
-            let _ = Arc::into_raw(Arc::clone(&self.session));
+            // Move the slot's existing strong reference into a raw pointer.
+            // This intentionally retains exactly one session reference without
+            // incrementing the Arc count during panic unwinding.
+            let session = unsafe { ManuallyDrop::take(&mut self.session) };
+            let _ = Arc::into_raw(session);
             return;
         }
         unsafe {
