@@ -715,14 +715,14 @@ mod tests {
             (
                 FMT_I24,
                 3,
-                vec![0x00, 0x00, 0x80, 0xff, 0xff, 0x7f],
+                vec![0xff, 0xff, 0x7f, 0x00, 0x00, 0x80],
                 vec![0x00, 0x00, 0x80, 0xff, 0xff, 0x7f, 0, 0, 0],
             ),
             (
                 FMT_I32,
                 4,
-                i32::MIN.to_le_bytes().into_iter()
-                    .chain(i32::MAX.to_le_bytes()).collect(),
+                i32::MAX.to_le_bytes().into_iter()
+                    .chain(i32::MIN.to_le_bytes()).collect(),
                 i32::MIN.to_le_bytes().into_iter()
                     .chain(i32::MAX.to_le_bytes())
                     .chain([0, 0, 0, 0]).collect(),
