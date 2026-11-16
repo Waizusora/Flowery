@@ -55,6 +55,7 @@ fun FloweryNavigation(
     isPlaying: Boolean, shuffleEnabled: Boolean, repeatMode: Int, selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?, albumArtBytes: ByteArray?, displayTitle: String, displayArtist: String,
     lyrics: List<LyricLine>, positionMs: Long, durationMs: Long,
+    outputSampleRateHz: Int, outputBitDepth: Int,
     status: String,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -209,6 +210,8 @@ fun FloweryNavigation(
                     audioSourceLabel = audioSourceLabel,
                     currentTag = currentTag,
                     isPlaying = isPlaying,
+                    outputSampleRateHz = outputSampleRateHz,
+                    outputBitDepth = outputBitDepth,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.INFO_AUDIO -> SettingsPage.AUDIO
