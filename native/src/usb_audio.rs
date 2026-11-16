@@ -435,7 +435,8 @@ mod tests {
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.interval, 1);
 
-        descriptors[descriptors.len() - 1] = 0;
+        let last_descriptor_byte = descriptors.len() - 1;
+        descriptors[last_descriptor_byte] = 0;
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
     }
 
