@@ -111,6 +111,25 @@ impl FeedbackRateTracker {
         Ok(estimate)
     }
 
+    /// Accept a feedback sample only when it is close to the current clock
+    /// estimate. A rejected outlier does not mutate the estimator.
+    pub fn update_checked(
+        &mut self,
+        measured_hz: f64,
+        max_relative_step: f64,
+    ) -> Result<Option<f64>, String> {
+        if !max_relative_step.is_finite() || !(0.0..=1.0).contains(&max_relative_step) {
+            return Err("Feedback outlier threshold must be in the interval [0, 1]".into());
+        }
+        if !measured_hz.is_finite() || !(1_000.0..=768_000.0).contains(&measured_hz) {
+            return Err("Feedback rate is outside the supported USB audio range".into());
+        }
+        if let Some(previous) = self.estimate_hz {
+            let relative_step = (measured_hz - previous).abs() / previous;
+            if relative_step > max_relative_step { return Ok(None); }
+        }
+        self.update(measured_hz).map(Some)
+    }
     pub fn estimate_hz(&self) -> Option<f64> { self.estimate_hz }
 }
 
@@ -201,6 +220,22 @@ mod tests {
         assert_eq!(tracker.estimate_hz(), Some(48_000.0));
     }
 
+    #[test]
+    fn tracker_rejects_single_feedback_outlier_without_changing_clock_estimate() {
+        let mut tracker = FeedbackRateTracker::new(0.25).unwrap();
+        assert_eq!(tracker.update_checked(48_000.0, 0.02).unwrap(), Some(48_000.0));
+        assert_eq!(tracker.update_checked(52_000.0, 0.02).unwrap(), None);
+        assert_eq!(tracker.estimate_hz(), Some(48_000.0));
+        assert_eq!(tracker.update_checked(48_100.0, 0.02).unwrap(), Some(48_025.0));
+    }
+
+    #[test]
+    fn tracker_accepts_gradual_clock_drift_with_outlier_guard() {
+        let mut tracker = FeedbackRateTracker::new(0.5).unwrap();
+        assert_eq!(tracker.update_checked(44_100.0, 0.02).unwrap(), Some(44_100.0));
+        assert_eq!(tracker.update_checked(44_200.0, 0.02).unwrap(), Some(44_150.0));
+        assert_eq!(tracker.update_checked(44_300.0, 0.02).unwrap(), Some(44_225.0));
+    }
     #[test]
     fn smooths_feedback_without_unbounded_values() {
         let mut tracker = FeedbackRateTracker::new(0.25).unwrap();
