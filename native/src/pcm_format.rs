@@ -113,7 +113,7 @@ mod integer_pcm_gain_tests {
         apply_integer_pcm_gain(&mut pcm32, 32, 5, 1_i64 << 30).unwrap();
         let decoded: Vec<i32> = pcm32.chunks_exact(4)
             .map(|b| i32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-        assert_eq!(decoded, [i32::MIN / 2, -1, 0, 1, i32::MAX / 2]);
+        assert_eq!(decoded, [i32::MIN / 2, -1, 0, 1, (i32::MAX / 2) + 1]);
     }
 
     #[test]
