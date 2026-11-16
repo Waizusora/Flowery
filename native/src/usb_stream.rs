@@ -6,6 +6,7 @@
 #[cfg(target_os = "android")]
 use std::{
     collections::{HashMap, HashSet},
+    mem::ManuallyDrop,
     sync::{
         atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -36,8 +37,9 @@ struct TransferSignal {
 #[cfg(target_os = "android")]
 struct TransferSlot {
     transfer: *mut libusb1_sys::libusb_transfer,
-    buffer: Vec<u8>,
-    signal: Box<TransferSignal>,
+    buffer: ManuallyDrop<Vec<u8>>,
+    signal: ManuallyDrop<Box<TransferSignal>>,
+    session: ManuallyDrop<Arc<crate::usb_libusb::UsbSession>>,
     submitted: bool,
     audio_frames: u64,
     submitted_at: Option<Instant>,
@@ -46,10 +48,44 @@ struct TransferSlot {
 #[cfg(target_os = "android")]
 struct FeedbackSlot {
     transfer: *mut libusb1_sys::libusb_transfer,
-    buffer: Vec<u8>,
-    signal: Box<TransferSignal>,
+    buffer: ManuallyDrop<Vec<u8>>,
+    signal: ManuallyDrop<Box<TransferSignal>>,
+    session: ManuallyDrop<Arc<crate::usb_libusb::UsbSession>>,
     submitted: bool,
     submitted_at: Option<Instant>,
+}
+
+#[cfg(target_os = "android")]
+impl Drop for TransferSlot {
+    fn drop(&mut self) {
+        if self.submitted {
+            // libusb may still access the transfer, buffer, and callback state.
+            // Retain the session/context as well; leaking is safer than unwinding
+            // into a use-after-free if the worker panics before observing a callback.
+            let _ = Arc::into_raw(Arc::clone(&self.session));
+            return;
+        }
+        unsafe {
+            ManuallyDrop::drop(&mut self.buffer);
+            ManuallyDrop::drop(&mut self.signal);
+            ManuallyDrop::drop(&mut self.session);
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+impl Drop for FeedbackSlot {
+    fn drop(&mut self) {
+        if self.submitted {
+            let _ = Arc::into_raw(Arc::clone(&self.session));
+            return;
+        }
+        unsafe {
+            ManuallyDrop::drop(&mut self.buffer);
+            ManuallyDrop::drop(&mut self.signal);
+            ManuallyDrop::drop(&mut self.session);
+        }
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -139,10 +175,11 @@ fn set_error(error: &Arc<Mutex<String>>, status: &AtomicI32, message: String) {
 
 #[cfg(target_os = "android")]
 fn create_slot(
-    handle: *mut libusb1_sys::libusb_device_handle,
+    session: Arc<crate::usb_libusb::UsbSession>,
     endpoint: u8,
     max_packet_bytes: u32,
 ) -> Result<TransferSlot, String> {
+    let handle = session.handle;
     let buffer_len = (max_packet_bytes as usize)
         .checked_mul(PACKETS_PER_TRANSFER)
         .ok_or("USB transfer buffer size overflow")?;
@@ -168,15 +205,16 @@ fn create_slot(
             0,
         );
     }
-    Ok(TransferSlot { transfer, buffer, signal, submitted: false, audio_frames: 0, submitted_at: None })
+    Ok(TransferSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, audio_frames: 0, submitted_at: None })
 }
 
 #[cfg(target_os = "android")]
 fn create_feedback_slot(
-    handle: *mut libusb1_sys::libusb_device_handle,
+    session: Arc<crate::usb_libusb::UsbSession>,
     endpoint: u8,
     packet_bytes: u16,
 ) -> Result<FeedbackSlot, String> {
+    let handle = session.handle;
     let mut buffer = vec![0_u8; usize::from(packet_bytes)];
     let signal = Box::new(TransferSignal { completed: AtomicBool::new(false) });
     let transfer = unsafe { libusb1_sys::libusb_alloc_transfer(1) };
@@ -196,7 +234,7 @@ fn create_feedback_slot(
         let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();
         (*descriptor).length = u32::from(packet_bytes);
     }
-    Ok(FeedbackSlot { transfer, buffer, signal, submitted: false, submitted_at: None })
+    Ok(FeedbackSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, submitted_at: None })
 }
 
 #[cfg(target_os = "android")]
@@ -339,7 +377,7 @@ fn run_worker(
     };
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
     for _ in 0..TRANSFER_RING_SIZE {
-        match create_slot(session.handle, config.endpoint, config.max_packet_bytes) {
+        match create_slot(Arc::clone(&session), config.endpoint, config.max_packet_bytes) {
             Ok(slot) => slots.push(slot),
             Err(message) => {
                 set_error(&error, &status, message);
@@ -352,7 +390,7 @@ fn run_worker(
     }
 
     let mut feedback_slot = match (config.feedback_endpoint, config.feedback_packet_bytes) {
-        (Some(endpoint), Some(packet_bytes)) => match create_feedback_slot(session.handle, endpoint, packet_bytes) {
+        (Some(endpoint), Some(packet_bytes)) => match create_feedback_slot(Arc::clone(&session), endpoint, packet_bytes) {
             Ok(mut slot) => {
                 if let Err(message) = submit_feedback(&mut slot) {
                     set_error(&error, &status, message);
