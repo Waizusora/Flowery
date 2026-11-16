@@ -247,8 +247,7 @@ fn create_feedback_slot(
         // libusb exposes iso_packet_desc as a C flexible array. Its Rust
         // binding has length zero, so address the allocated trailing element
         // through the base pointer instead of indexing the zero-length field.
-        let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();
-        (*descriptor).length = u32::from(packet_bytes);
+        let descriptor = (*transfer).iso_packet_desc.as_mut_ptr();        (*descriptor).length = u32::from(packet_bytes);
     }
     Ok(FeedbackSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, submitted_at: None })
 }
@@ -497,8 +496,7 @@ fn run_worker(
                                 &status,
                                 format!("Unable to cancel USB audio transfer {index}: libusb error {code}; waiting for callback before teardown"),
                             );
-                        }
-                    }
+                        }                    }
                 }
                 if let Some(feedback) = feedback_slot.as_mut() {
                     if feedback.submitted {
@@ -659,17 +657,16 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
     let worker = workers().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
-        if worker.thread.join().is_err() {
-            // TransferSlot and FeedbackSlot retain callback-owned memory and the
-            // libusb session when unwinding with a submitted transfer. Keep the
-            // Java USB connection open as well; a panicked worker is not a clean
-            // teardown, even when its remaining resources were safely retained.
+        let worker_panicked = worker.thread.join().is_err();
+        let drain_timed_out = worker.status.load(Ordering::Acquire) == -2;
+        if let Some(message) = crate::usb_isochronous::worker_teardown_error(
+            worker_panicked,
+            drain_timed_out,
+        ) {
+            // Both a panic and an incomplete cancellation drain leave native
+            // ownership uncertain. Keep the registry session and Java fd alive.
             unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
-            return Err("USB stream worker panicked; outstanding transfer resources were retained and the Android USB connection must remain open".into());
-        }
-        if worker.status.load(Ordering::Acquire) == -2 {
-            unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
-            return Err("USB transfer cancellation could not be drained safely; the Android USB connection must remain open to protect outstanding libusb transfers".into());
+            return Err(message.into());
         }
     }
     Ok(())
@@ -747,8 +744,7 @@ fn spawn_worker(
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn start(
-    session_handle: i64,
+pub(super) fn start(    session_handle: i64,
     decoder_handle: i64,
     endpoint: u8,
     raw_max_packet_size: u16,

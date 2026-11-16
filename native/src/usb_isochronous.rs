@@ -214,9 +214,51 @@ pub fn build_isochronous_schedule(
     })
 }
 
+
+/// Classify worker termination before releasing the USB session and Android fd.
+/// A panic or incomplete transfer drain makes teardown permanently unsafe.
+pub fn worker_teardown_error(
+    worker_panicked: bool,
+    drain_timed_out: bool,
+) -> Option<&'static str> {
+    if worker_panicked {
+        Some("USB stream worker panicked; outstanding transfer resources were retained and the Android USB connection must remain open")
+    } else if drain_timed_out {
+        Some("USB transfer cancellation could not be drained safely; the Android USB connection must remain open to protect outstanding libusb transfers")
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_panic_is_classified_as_unsafe_teardown() {
+        let worker = std::thread::spawn(|| panic!("injected USB worker panic"));
+        let panicked = worker.join().is_err();
+
+        assert!(panicked);
+        assert_eq!(
+            worker_teardown_error(panicked, false),
+            Some("USB stream worker panicked; outstanding transfer resources were retained and the Android USB connection must remain open")
+        );
+    }
+
+    #[test]
+    fn incomplete_transfer_drain_is_classified_as_unsafe_teardown() {
+        assert_eq!(
+            worker_teardown_error(false, true),
+            Some("USB transfer cancellation could not be drained safely; the Android USB connection must remain open to protect outstanding libusb transfers")
+        );
+    }
+
+    #[test]
+    fn clean_worker_exit_allows_session_teardown() {
+        assert_eq!(worker_teardown_error(false, false), None);
+    }
+
 
     #[test]
     fn pause_acknowledgement_waits_for_all_audio_transfers() {
