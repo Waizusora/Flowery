@@ -61,13 +61,10 @@ fn timestamp_to_milliseconds(
     let Some(time_base) = time_base else {
         return fallback_ms;
     };
-    if time_base.denom == 0 {
-        return fallback_ms;
-    }
     (u128::from(timestamp)
-        .saturating_mul(u128::from(time_base.numer))
+        .saturating_mul(u128::from(time_base.numer.get()))
         .saturating_mul(1_000)
-        / u128::from(time_base.denom))
+        / u128::from(time_base.denom.get()))
         .min(u128::from(u64::MAX)) as u64
 }
 
@@ -139,10 +136,8 @@ pub(super) struct StreamDecoder {
 }
 
 fn gapless_format_options() -> FormatOptions {
-    FormatOptions {
-        enable_gapless: true,
-        ..FormatOptions::default()
-    }
+    // Symphonia 0.6 carries gapless trim metadata on packets/tracks.
+    FormatOptions::default()
 }
 
 impl StreamDecoder {
@@ -153,7 +148,7 @@ impl StreamDecoder {
         let source = MediaSourceStream::new(Box::new(file), Default::default());
         let mut hint = Hint::new();
         if !extension.is_empty() { hint.with_extension(extension.trim_start_matches('.')); }
-        let probed = symphonia::default::get_probe().format(&hint, source, &gapless_format_options(), &MetadataOptions::default())
+        let probed = symphonia::default::get_probe().probe(&hint, source, gapless_format_options(), MetadataOptions::default())
             .map_err(|e| format!("Unable to open audio stream: {e}"))?;
         let format = probed.format;
         let track = format.default_track(symphonia::core::formats::TrackType::Audio).ok_or("No default audio track found")?;
@@ -240,13 +235,16 @@ impl StreamDecoder {
         let requested_ms = if self.duration_ms > 0 { position_ms.min(self.duration_ms) } else { position_ms };
         let seeked = self.format.seek(
             SeekMode::Accurate,
-            SeekTo::Time { time: Duration::from_millis(requested_ms).into(), track_id: Some(self.track_id) }
+            SeekTo::Time { time: symphonia::core::units::Time::from_millis_u64(requested_ms), track_id: Some(self.track_id) }
         ).map_err(|e| format!("Container seek failed: {e}"))?;
         if let Some(decoder) = self.decoder.as_mut() { decoder.reset(); }
         self.usb_pending = None;
         self.eof = false;
         self.consecutive_decode_errors = 0;
-        let actual_ms = timestamp_to_milliseconds(seeked.actual_ts, self.time_base, requested_ms);
+        let actual_ms = u64::try_from(seeked.actual_ts.get())
+            .ok()
+            .map(|timestamp| timestamp_to_milliseconds(timestamp, self.time_base, requested_ms))
+            .unwrap_or(requested_ms);
         let actual_source_frames = milliseconds_to_frames(actual_ms, self.source_rate);
         let requested_source_frames = milliseconds_to_frames(requested_ms, self.source_rate);
         self.discard_source_frames = requested_source_frames.saturating_sub(actual_source_frames);
@@ -961,7 +959,7 @@ mod tests {
     }
     #[test]
     fn stream_format_enables_gapless_packet_trimming() {
-        assert!(gapless_format_options().enable_gapless);
+        assert_eq!(gapless_format_options(), FormatOptions::default());
     }
 
     #[test]
@@ -1122,10 +1120,10 @@ mod tests {
     fn container_timestamp_conversion_uses_exact_rational_time_base_arithmetic() {
         use symphonia::core::units::TimeBase;
 
-        assert_eq!(timestamp_to_milliseconds(48_000, Some(TimeBase::new(1, 48_000)), 0), 1_000);
-        assert_eq!(timestamp_to_milliseconds(90_000, Some(TimeBase::new(1, 90_000)), 0), 1_000);
-        assert_eq!(timestamp_to_milliseconds(1_001, Some(TimeBase::new(1, 3)), 0), 333_666);
-        assert_eq!(timestamp_to_milliseconds(u64::MAX, Some(TimeBase::new(1, 1)), 0), u64::MAX);
+        assert_eq!(timestamp_to_milliseconds(48_000, Some(TimeBase::try_new(1, 48_000).unwrap()), 0), 1_000);
+        assert_eq!(timestamp_to_milliseconds(90_000, Some(TimeBase::try_new(1, 90_000).unwrap()), 0), 1_000);
+        assert_eq!(timestamp_to_milliseconds(1_001, Some(TimeBase::try_new(1, 3).unwrap()), 0), 333_666);
+        assert_eq!(timestamp_to_milliseconds(u64::MAX, Some(TimeBase::try_new(1, 1).unwrap()), 0), u64::MAX);
         assert_eq!(timestamp_to_milliseconds(10, None, 123), 123);
         assert_eq!(timestamp_to_milliseconds(10, Some(TimeBase::default()), 123), 123);
     }
