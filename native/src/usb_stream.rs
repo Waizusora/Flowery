@@ -698,6 +698,11 @@ pub(super) fn start(
         }
     }
     stop_worker_locked(session_handle)?;
+    if feedback_endpoint != 0
+        && (feedback_endpoint & 0x80 == 0 || feedback_endpoint & 0x0f == 0)
+    {
+        return Err("USB feedback endpoint must be a non-zero IN endpoint".into());
+    }
     let feedback_endpoint = if feedback_endpoint == 0 { None } else { Some(feedback_endpoint) };
     let feedback_packet_bytes = if feedback_endpoint.is_some() {
         let expected = match speed { UsbBusSpeed::Full => 3, UsbBusSpeed::High => 4 };
