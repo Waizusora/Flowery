@@ -117,6 +117,22 @@ mod integer_pcm_gain_tests {
     }
 
     #[test]
+    fn zero_gain_mutes_signed_pcm16_24_and_32_without_changing_buffer_length() {
+        let cases = [
+            (16_u8, vec![0x00, 0x80, 0xff, 0x7f]),
+            (24_u8, vec![0x00, 0x00, 0x80, 0xff, 0xff, 0x7f]),
+            (32_u8, vec![0x00, 0x00, 0x00, 0x80, 0xff, 0xff, 0xff, 0x7f]),
+        ];
+        for (bits, mut pcm) in cases {
+            let original_len = pcm.len();
+            let samples = original_len / (bits as usize / 8);
+            apply_integer_pcm_gain(&mut pcm, bits, samples, 0).unwrap();
+            assert_eq!(pcm, vec![0; original_len], "bit depth {bits}");
+            assert_eq!(pcm.len(), original_len, "bit depth {bits}");
+        }
+    }
+
+    #[test]
     fn rejects_invalid_gain_depth_and_short_buffer() {
         assert!(apply_integer_pcm_gain(&mut [0; 4], 20, 1, 1_i64 << 31).is_err());
         assert!(apply_integer_pcm_gain(&mut [0; 2], 16, 2, 1_i64 << 31).is_err());
