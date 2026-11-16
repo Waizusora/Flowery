@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -95,9 +96,18 @@ fun FloweryNavigation(
             val viewportHeight = snapshotFlow { lyricListState.layoutInfo.viewportSize.height }
                 .first { it > 0 }
             val targetIndex = activeLyricIndex.coerceIn(0, displayLyrics.lastIndex)
-            val rowHeight = with(lyricDensity) { 88.dp.roundToPx() }
-            val centerOffset = ((viewportHeight - rowHeight) / 2).coerceAtLeast(0)
-            lyricListState.animateScrollToItem(targetIndex, scrollOffset = -centerOffset)
+            // First make the active line visible, then center its measured bounds
+            // against the actual list viewport. This avoids relying on a fixed
+            // text-row height when lyrics wrap or the device font scale changes.
+            lyricListState.animateScrollToItem(targetIndex)
+            withFrameNanos { }
+            val layout = lyricListState.layoutInfo
+            val activeItem = layout.visibleItemsInfo.firstOrNull { it.index == targetIndex }
+            if (activeItem != null) {
+                val viewportCenter = (layout.viewportStartOffset + layout.viewportEndOffset) / 2f
+                val itemCenter = activeItem.offset + activeItem.size / 2f
+                lyricListState.animateScrollBy(itemCenter - viewportCenter)
+            }
         }
     }
     val libraryScanActive = status.startsWith("Scanning selected folders") || status.startsWith("Refreshing ")
