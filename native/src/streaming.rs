@@ -304,7 +304,7 @@ impl StreamDecoder {
             match decoder.decode(&packet) {
                 Ok(decoded) => {
                     self.consecutive_decode_errors = 0;
-                    let spec = *decoded.spec();
+                    let spec = decoded.spec();
                     if spec.channels().count() != self.channels {
                         return Err("The audio stream changed channel layout mid-track".into());
                     }
