@@ -185,9 +185,9 @@ pub(super) enum UsbPcmSamples {
 
 impl UsbPcmSamples {
     pub fn from_audio_buffer(decoded: symphonia::core::audio::GenericAudioBufferRef<'_>) -> Result<Self, &'static str> {
-        use symphonia::core::audio::{GenericAudioBufferRef, Signal};
+        use symphonia::core::audio::{Audio, GenericAudioBufferRef};
         fn interleave<T: Copy>(buffer: &symphonia::core::audio::AudioBuffer<T>) -> Vec<T>
-        where T: symphonia::core::sample::Sample {
+        where T: symphonia::core::audio::sample::Sample {
             let channels = buffer.spec().channels.count();
             let frames = buffer.frames();
             let mut samples = Vec::with_capacity(frames.saturating_mul(channels));
@@ -199,14 +199,14 @@ impl UsbPcmSamples {
             samples
         }
         Ok(match decoded {
-            GenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
-            AudioBufferRef::S16(buffer) => Self::S16(interleave(&buffer)),
-            AudioBufferRef::S24(buffer) => Self::S24(interleave(&buffer).into_iter().map(|sample| sample.inner()).collect()),
-            AudioBufferRef::S32(buffer) => Self::S32(interleave(&buffer)),
-            AudioBufferRef::F32(buffer) => Self::F32(interleave(&buffer)),
-            AudioBufferRef::F64(buffer) => Self::F64(interleave(&buffer)),
-            AudioBufferRef::U16(_) | AudioBufferRef::U24(_) | AudioBufferRef::U32(_)
-            | AudioBufferRef::S8(_) => return Err("USB output does not support this Symphonia decoded sample representation yet"),
+            GenericGenericAudioBufferRef::U8(buffer) => Self::U8(interleave(&buffer)),
+            GenericAudioBufferRef::S16(buffer) => Self::S16(interleave(&buffer)),
+            GenericAudioBufferRef::S24(buffer) => Self::S24(interleave(&buffer).into_iter().map(|sample| sample.inner()).collect()),
+            GenericAudioBufferRef::S32(buffer) => Self::S32(interleave(&buffer)),
+            GenericAudioBufferRef::F32(buffer) => Self::F32(interleave(&buffer)),
+            GenericAudioBufferRef::F64(buffer) => Self::F64(interleave(&buffer)),
+            GenericAudioBufferRef::U16(_) | GenericAudioBufferRef::U24(_) | GenericAudioBufferRef::U32(_)
+            | GenericAudioBufferRef::S8(_) => return Err("USB output does not support this Symphonia decoded sample representation yet"),
         })
     }
 
@@ -416,12 +416,14 @@ mod tests {
 
     fn decode_test_audio(bytes: Vec<u8>, extension: &str) -> UsbPcmSamples {
         use std::io::{Cursor, ErrorKind};
-        use symphonia::core::codecs::{Decoder, DecoderOptions};
+        use symphonia::core::codecs::audio::AudioDecoderOptions;
+        use symphonia::core::codecs::registry::CodecRegistry;
+        use symphonia::core::formats::probe::Hint;
         use symphonia::core::errors::Error;
         use symphonia::core::formats::{FormatOptions, FormatReader};
         use symphonia::core::io::MediaSourceStream;
         use symphonia::core::meta::MetadataOptions;
-        use symphonia::core::probe::Hint;
+        
 
         let source = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
         let mut hint = Hint::new();
@@ -431,8 +433,11 @@ mod tests {
             .expect("probe test audio");
         let mut format = probed.format;
         let track = format.default_track().expect("default test track");
-        let mut decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
+        let mut registry = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut registry);
+        let params = track.codec_params.as_ref().audio().expect("audio codec parameters");
+        let mut decoder = registry
+            .make_audio_decoder(params, &AudioDecoderOptions::default())
             .expect("create test decoder");
         let mut samples = UsbPcmSamples::Empty;
         loop {
