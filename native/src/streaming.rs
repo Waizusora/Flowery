@@ -210,7 +210,7 @@ impl StreamDecoder {
         // Some MP4/M4A ALAC tracks expose neither a channel bitmask nor a
         // channel layout in Symphonia's track parameters. The mandatory ALAC
         // magic-cookie configuration still declares the channel count.
-        let channels = params.channels.map(|channels| channels.count())
+        let channels = params.channels.as_ref().map(|channels| channels.count())
             .or_else(|| {
                 (params.codec == symphonia::core::codecs::audio::well_known::CODEC_ID_ALAC)
                     .then(|| alac_channel_count(params.extra_data.as_deref()))
