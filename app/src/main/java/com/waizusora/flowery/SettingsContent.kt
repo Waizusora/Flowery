@@ -161,18 +161,18 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
 
 
         SettingsPage.INFO_AUDIO -> {
-            val usbDirect = status.contains("native USB audio", ignoreCase = true) ||
-                detectedOutput.displayName.contains("USB", ignoreCase = true)
-            val route = when {
-                usbDirect -> "USB Direct"
-                status.contains("AAudio", ignoreCase = true) -> "AAudio"
-                status.startsWith("Playing", ignoreCase = true) || status.startsWith("Paused", ignoreCase = true) -> "AAudio"
-                else -> "—"
-            }
-            val active = status.startsWith("Playing", ignoreCase = true) ||
+            val active = isPlaying ||
                 status.startsWith("Paused", ignoreCase = true) ||
                 status.startsWith("Seeking", ignoreCase = true) ||
                 status.startsWith("Switching", ignoreCase = true)
+            val usbDirect = active && (status.contains("native USB audio", ignoreCase = true) ||
+                detectedOutput.displayName.contains("USB", ignoreCase = true))
+            val route = when {
+                !active -> "—"
+                usbDirect -> "USB Direct"
+                status.contains("AAudio", ignoreCase = true) || active -> "AAudio"
+                else -> "—"
+            }
             val sampleRate = currentTag?.sampleRate?.takeIf { it > 0 }?.let { "$it Hz" } ?: "—"
             val bitDepth = currentTag?.bitDepth?.takeIf { it > 0 }?.let { "$it-bit" } ?: "—"
             val channels = currentTag?.channels?.takeIf { it > 0 }?.let {
