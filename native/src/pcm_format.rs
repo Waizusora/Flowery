@@ -434,7 +434,6 @@ mod tests {
         let mut samples = UsbPcmSamples::Empty;
         loop {
             let packet = match format.next_packet() {
-                Ok(packet) => packet,
                 Ok(Some(packet)) => packet,
                 Ok(None) => break,
                 Err(Error::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => break,
