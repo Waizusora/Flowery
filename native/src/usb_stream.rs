@@ -111,6 +111,17 @@ fn workers() -> &'static Mutex<HashMap<i64, UsbStreamWorker>> {
 }
 
 #[cfg(target_os = "android")]
+fn ensure_session_safe(session: i64) -> Result<(), String> {
+    if unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session) {
+        return Err(
+            "USB session previously failed to drain outstanding transfers and cannot be restarted; close it while retaining the Android USB connection"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
 fn lifecycle() -> &'static Mutex<()> {
     LIFECYCLE.get_or_init(|| Mutex::new(()))
 }
@@ -690,6 +701,7 @@ pub(super) fn start(
     // Serialize session lookup with close: once close acquires this gate,
     // no new worker can retain a handle to the session being removed.
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
+    ensure_session_safe(session_handle)?;
     let session = crate::usb_libusb::session_ref(session_handle)
         .ok_or("Unknown USB session handle")?;
     let device = unsafe { libusb1_sys::libusb_get_device(session.handle) };
@@ -782,6 +794,7 @@ pub(super) fn seek(
     position_ms: u64,
 ) -> Result<u64, String> {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
+    ensure_session_safe(session_handle)?;
     let (saved_decoder, config, was_paused) = {
         let map = workers().lock().unwrap_or_else(|e| e.into_inner());
         let worker = map.get(&session_handle).ok_or("USB stream worker is not running")?;
