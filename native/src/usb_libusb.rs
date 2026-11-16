@@ -142,9 +142,11 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
 }
 
 #[cfg(target_os = "android")]
-pub fn close_session(session: i64) {
-    if session <= 0 { return; }
-    crate::usb_stream::close_session(session);
+pub fn close_session(session: i64) -> Result<(), String> {
+    if session <= 0 {
+        return Err("Invalid USB session handle".into());
+    }
+    crate::usb_stream::close_session(session)
 }
 
 /// Remove the registry's session reference. Caller must hold the stream
