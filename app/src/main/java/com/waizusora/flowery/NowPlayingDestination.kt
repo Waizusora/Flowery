@@ -3,7 +3,6 @@ package com.waizusora.flowery
 import android.graphics.BitmapFactory
 import android.util.Base64
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.background
