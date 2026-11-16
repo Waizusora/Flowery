@@ -188,12 +188,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val deviceId = outputRoute.deviceId
                 // AAudio receives the source integer PCM width unchanged. Never downgrade
                 // 24/32-bit material to fit a device: fail if this source format is unsupported.
-                val outputFormat = when (sourceBits) {
-                    16 -> 1 // AAUDIO_FORMAT_PCM_I16
-                    24 -> 3 // AAUDIO_FORMAT_PCM_I24_PACKED
-                    32 -> 4 // AAUDIO_FORMAT_PCM_I32
+                val outputFormat = when {
+                    sourceDataFormat == 3 && sourceBits == 32 -> 2 // AAUDIO_FORMAT_PCM_FLOAT
+                    sourceDataFormat == 1 && sourceBits == 16 -> 1 // AAUDIO_FORMAT_PCM_I16
+                    sourceDataFormat == 1 && sourceBits == 24 -> 3 // AAUDIO_FORMAT_PCM_I24_PACKED
+                    sourceDataFormat == 1 && sourceBits == 32 -> 4 // AAUDIO_FORMAT_PCM_I32
                     else -> throw IllegalStateException(
-                        "Android output requires integer PCM 16/24/32-bit; source is $sourceBits-bit"
+                        "Android output requires integer PCM 16/24/32-bit or IEEE float PCM32; source is $sourceBits-bit data format $sourceDataFormat"
                     )
                 }
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread

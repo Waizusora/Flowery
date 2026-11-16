@@ -158,7 +158,11 @@ impl StreamDecoder {
         let params = track.codec_params.clone();
         let time_base = params.time_base;
         let source_rate = params.sample_rate.ok_or("Audio sample rate is unavailable")? as usize;
-        let source_data_format = if matches!(
+        let source_data_format = if params.codec == symphonia::core::codecs::CODEC_TYPE_MP3 {
+            // Symphonia's MPEG Layer III decoder always produces interleaved
+            // f32 samples, even when the container has no sample_format field.
+            3 // UAC IEEE_FLOAT
+        } else if matches!(
             params.codec,
             symphonia::core::codecs::CODEC_TYPE_FLAC | symphonia::core::codecs::CODEC_TYPE_ALAC
         ) {
@@ -186,6 +190,10 @@ impl StreamDecoder {
                 .or_else(|| params.bits_per_coded_sample.or(params.bits_per_sample)
                     .map(|bits| bits.min(u8::MAX as u32) as u8))
                 .unwrap_or(0)
+        } else if params.codec == symphonia::core::codecs::CODEC_TYPE_MP3 {
+            // MP3 decodes to IEEE-float PCM in Symphonia; this is the decoded
+            // output width, not a claim about the lossy source's quantization.
+            32
         } else {
             params.bits_per_coded_sample.or(params.bits_per_sample).unwrap_or(0).min(u8::MAX as u32) as u8
         };
@@ -304,9 +312,12 @@ impl StreamDecoder {
 
     #[cfg(target_os = "android")]
     fn read_aaudio_pcm_frames(&mut self, requested: usize) -> Result<Vec<u8>,String> {
-        if !matches!(self.source_bits, 16 | 24 | 32) || self.source_data_format != 1 {
+        let is_integer_pcm = matches!(self.source_bits, 16 | 24 | 32)
+            && self.source_data_format == 1;
+        let is_float_pcm = self.source_bits == 32 && self.source_data_format == 3;
+        if !is_integer_pcm && !is_float_pcm {
             return Err(format!(
-                "Android AAudio integer output requires native integer PCM (16/24/32-bit); source is {}-bit data format {}",
+                "Android AAudio output requires supported integer PCM (16/24/32-bit) or float PCM32; source is {}-bit data format {}",
                 self.source_bits, self.source_data_format
             ));
         }

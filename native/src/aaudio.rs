@@ -52,16 +52,19 @@ extern "C" {
 
 const OK:i32=0; const INVALID_STATE:i32=-895; const DEVICE_SELECTION_UNAVAILABLE:i32=-896; const DEVICE_MISMATCH:i32=-897; const INVALID_FORMAT:i32=-898;
 
-fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
+fn valid_output_format(rate: i32, channels: i32, format: i32) -> bool {
+    if rate <= 0 || channels <= 0 {
+        return false;
+    }
+    if format == FMT_FLOAT {
+        return channels <= 2;
+    }
     let (valid_bits, subslot_bytes) = match format {
         FMT_I16 => (16, 2),
         FMT_I24 => (24, 3),
         FMT_I32 => (32, 4),
         _ => return false,
     };
-    if rate <= 0 || channels <= 0 {
-        return false;
-    }
     PcmFormat {
         sample_rate: rate as u32,
         channels: channels as u16,
@@ -70,7 +73,7 @@ fn valid_integer_output_format(rate: i32, channels: i32, format: i32) -> bool {
         little_endian: true,
     }.validate().is_ok()
 }
-const FMT_I16:i32=1; const FMT_I24:i32=3; const FMT_I32:i32=4;
+const FMT_I16:i32=1; const FMT_FLOAT:i32=2; const FMT_I24:i32=3; const FMT_I32:i32=4;
 const SHARING_EXCLUSIVE:i32=0; const SHARING_SHARED:i32=1;
 const STATE_OPEN:i32=2; const STATE_STARTING:i32=3; const STATE_STARTED:i32=4;
 const STATE_PAUSING:i32=5; const STATE_PAUSED:i32=6; const STATE_STOPPED:i32=10; const STATE_DISCONNECTED:i32=13;
@@ -230,18 +233,25 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     if first<byte_count {
         ptr::copy_nonoverlapping(o.ring.as_ptr(),(audio as *mut u8).add(first),byte_count-first);
     }
-    // Integer-only software gain; unity gain preserves source PCM bytes exactly.
+    // Integer output keeps its byte-preserving unity-gain path. MP3's
+    // decoder-native float PCM uses a separate float gain path.
     let gain=o.gain_q31();
     if gain != 2_147_483_648_i64 {
-        let valid_bits=match o.format { FMT_I16=>16, FMT_I24=>24, FMT_I32=>32, _=>0 };
-        let output=std::slice::from_raw_parts_mut(audio as *mut u8, byte_count);
-        if crate::pcm_format::apply_integer_pcm_gain(
-            output, valid_bits, count as usize * o.channels, gain,
-        ).is_err() {
-            o.error.store(INVALID_FORMAT, Ordering::Release);
-            ptr::write_bytes(audio as *mut u8, 0, requested as usize * bytes_per_frame);
-            o.active.store(false, Ordering::Release);
-            return 1;
+        if o.format == FMT_FLOAT {
+            let output=std::slice::from_raw_parts_mut(audio as *mut f32, count as usize * o.channels);
+            let scale=(gain as f64 / 2_147_483_648.0) as f32;
+            for sample in output { *sample *= scale; }
+        } else {
+            let valid_bits=match o.format { FMT_I16=>16, FMT_I24=>24, FMT_I32=>32, _=>0 };
+            let output=std::slice::from_raw_parts_mut(audio as *mut u8, byte_count);
+            if crate::pcm_format::apply_integer_pcm_gain(
+                output, valid_bits, count as usize * o.channels, gain,
+            ).is_err() {
+                o.error.store(INVALID_FORMAT, Ordering::Release);
+                ptr::write_bytes(audio as *mut u8, 0, requested as usize * bytes_per_frame);
+                o.active.store(false, Ordering::Release);
+                return 1;
+            }
         }
     }
     let remaining=requested-count;
@@ -475,9 +485,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,fail_on_shared:jboolean,format:jint,capacity:jint)->jint{
-    if !(channels==1||channels==2) || capacity<2048 || !valid_integer_output_format(rate,channels,format){return INVALID_FORMAT;}
+    if !(channels==1||channels==2) || capacity<2048 || !valid_output_format(rate,channels,format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
-    let bytes_per_sample=match format{FMT_I16=>2,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
+    let bytes_per_sample=match format{FMT_I16=>2,FMT_FLOAT=>4,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
     let ring_bytes=(cap as usize).saturating_mul(channels as usize).saturating_mul(bytes_per_sample);
     let mut out=Box::new(Output{ring:vec![0;ring_bytes],capacity:cap,mask:cap-1,channels:channels as usize,format,rate,bytes_per_sample,read:AtomicU64::new(0),write:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
@@ -778,6 +788,36 @@ mod tests {
         assert_eq!(audio, [0, 0, 0, 0]);
         assert_eq!(output.error.load(Ordering::Acquire), INVALID_FORMAT);
         assert!(!output.active.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn data_callback_applies_float_gain_for_mp3_pcm_and_zero_fills_underrun() {
+        let mut output = test_output(4, 1);
+        output.format = FMT_FLOAT;
+        output.bytes_per_sample = 4;
+        output.ring = [0.5_f32, -0.25_f32].iter()
+            .flat_map(|sample| sample.to_le_bytes()).collect();
+        output.write.store(2, Ordering::Relaxed);
+        output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+
+        let mut audio = [0x55_u8; 12];
+        let result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                (&mut output as *mut Output).cast::<c_void>(),
+                audio.as_mut_ptr().cast::<c_void>(),
+                3,
+            )
+        };
+
+        assert_eq!(result, 0);
+        let samples: Vec<f32> = audio.chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            .collect();
+        assert_eq!(samples, [0.25, -0.125, 0.0]);
+        assert_eq!(output.read.load(Ordering::Acquire), 2);
+        assert_eq!(output.played.load(Ordering::Acquire), 2);
+        assert_eq!(output.underruns.load(Ordering::Acquire), 1);
     }
 
     #[test]
