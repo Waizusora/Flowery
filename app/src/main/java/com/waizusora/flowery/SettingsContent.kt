@@ -41,7 +41,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     currentTag: AudioTag?,
     isPlaying: Boolean,
     outputSampleRateHz: Int,
-    outputBitDepth: Int) {
+    outputBitDepth: Int,
+    outputBackend: String) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
@@ -167,14 +168,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 status.startsWith("Paused", ignoreCase = true) ||
                 status.startsWith("Seeking", ignoreCase = true) ||
                 status.startsWith("Switching", ignoreCase = true)
-            val usbDirect = active && (status.contains("native USB audio", ignoreCase = true) ||
-                detectedOutput.displayName.contains("USB", ignoreCase = true))
-            val route = when {
-                !active -> "—"
-                usbDirect -> "USB Direct"
-                status.contains("AAudio", ignoreCase = true) || active -> "AAudio"
-                else -> "—"
-            }
+            val usbDirect = active && outputBackend == "USB Direct"
+            val route = if (active) outputBackend else "—"
             val sampleRate = currentTag?.sampleRate?.takeIf { it > 0 }?.let { "$it Hz" } ?: "—"
             val bitDepth = currentTag?.bitDepth?.takeIf { it > 0 }?.let { "$it-bit" } ?: "—"
             val channels = currentTag?.channels?.takeIf { it > 0 }?.let {
@@ -210,7 +205,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             }
             AudioInfoSection("OUTPUT", color, muted) {
                 AudioInfoRow("Backend", route, color, muted)
-                AudioInfoRow("Device", if (active) detectedOutput.displayName else "—", color, muted)
+                AudioInfoRow("Device", if (!active) "—" else if (usbDirect) usbAudioScan.usbDevices.firstOrNull()?.productName ?: detectedOutput.displayName else detectedOutput.displayName, color, muted)
                 AudioInfoRow("Output sample rate", outputSampleRateHz.takeIf { active && it > 0 }?.let { "$it Hz" } ?: "—", color, muted)
                 AudioInfoRow("Output bit depth", outputBitDepth.takeIf { active && it > 0 }?.let { "$it-bit" } ?: "—", color, muted)
                 AudioInfoRow("Stream format", outputBitDepth.takeIf { active && it > 0 }?.let {
