@@ -89,6 +89,55 @@ class UsbLibusbSessionTest {
     }
 
     @Test
+    fun acceptsReservedClockControlOnlyWhenRequestedRateIsAlreadyActive() {
+        val fake = FakeUsbControl().apply { sourceRate = 48_000 }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 3,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 3,
+            sampleRate = 48_000,
+            clockPaths = listOf(path)
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(fake.writes.isEmpty())
+    }
+
+    @Test
+    fun rejectsReservedClockControlWhenRateChangeWouldBeRequired() {
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 3,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 3,
+            sampleRate = 48_000,
+            clockPaths = listOf(path)
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(fake.writes.isEmpty())
+        assertTrue(result.exceptionOrNull()?.message?.contains("read-only") == true)
+    }
+
+    @Test
     fun restoresClockSourceAndSelectorAfterStartupRollback() {
         val fake = FakeUsbControl()
         val session = UsbLibusbSession(null, 1L, fake)
