@@ -660,7 +660,7 @@ internal class UsbLibusbSession internal constructor(
             }
             Log.i("FloweryUsbNative", "SESSION_OPEN_BEGIN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId} interface=$interfaceNumber alternate=$alternateSetting")
             val connection = manager.openDevice(device)
-                ?: return Result.failure(IllegalStateException("Unable to open USB device")).also { Log.e("FloweryUsbNative", "ANDROID_OPEN_DEVICE_FAILED device=${device.deviceName}") }
+                ?: return Result.failure<UsbLibusbSession>(IllegalStateException("Unable to open USB device")).also { _: Result<UsbLibusbSession> -> Log.e("FloweryUsbNative", "ANDROID_OPEN_DEVICE_FAILED device=${device.deviceName}") }
             val fd = connection.fileDescriptor
             Log.i("FloweryUsbNative", "ANDROID_OPEN_DEVICE_OK device=${device.deviceName} fdValid=${fd >= 0}")
             if (fd < 0) {
