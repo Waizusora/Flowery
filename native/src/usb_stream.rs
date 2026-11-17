@@ -700,9 +700,9 @@ pub(super) fn bus_speed(session_handle: i64) -> i32 {
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn stop_session(session: i64) {
+pub(super) fn stop_session(session: i64) -> Result<(), String> {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
-    let _ = stop_worker_locked(session);
+    stop_worker_locked(session)
 }
 
 /// Stop the worker and remove the session while holding the same lifecycle
