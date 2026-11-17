@@ -50,6 +50,11 @@ static NEXT_SESSION: AtomicI64 = AtomicI64::new(1);
 static SESSIONS: OnceLock<Mutex<HashMap<i64, Arc<UsbSession>>>> = OnceLock::new();
 
 #[cfg(target_os = "android")]
+// Android's UsbManager grants access to one already-open fd. Avoid libusb's
+// global /sys and /dev enumeration, which is denied to unrooted apps.
+static LIBUSB_NO_DEVICE_DISCOVERY: OnceLock<i32> = OnceLock::new();
+
+#[cfg(target_os = "android")]
 fn sessions() -> &'static Mutex<HashMap<i64, Arc<UsbSession>>> {
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
@@ -74,6 +79,23 @@ pub(super) fn bus_speed(session: i64) -> i32 {
 pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> Result<i64, String> {
     if fd < 0 {
         return Err("Android USB connection returned an invalid file descriptor".into());
+    }
+
+    // Android apps cannot enumerate arbitrary /dev/bus/usb devices or sysfs
+    // entries. The permission-authorized UsbDeviceConnection fd is sufficient:
+    // tell libusb to skip discovery before creating a context, then wrap that fd.
+    // Use the process-wide default option exactly once, before the first context.
+    let no_device_discovery = *LIBUSB_NO_DEVICE_DISCOVERY.get_or_init(|| unsafe {
+        libusb1_sys::libusb_set_option(
+            std::ptr::null_mut(),
+            2, // LIBUSB_OPTION_NO_DEVICE_DISCOVERY
+            std::ptr::null_mut::<libc::c_void>(),
+        )
+    });
+    if no_device_discovery != 0 {
+        return Err(format!(
+            "libusb_set_option(NO_DEVICE_DISCOVERY) failed with code {no_device_discovery}"
+        ));
     }
 
     let mut context = std::ptr::null_mut();
