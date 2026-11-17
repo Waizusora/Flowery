@@ -682,6 +682,7 @@ mod tests {
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
 
         let feedback_offset = descriptors.len() - 7;
+        descriptors[feedback_offset + 2] = 0x81;
         descriptors[feedback_offset + 4] = 0x03;
         descriptors[feedback_offset + 5] = 0x20;
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
@@ -699,7 +700,8 @@ mod tests {
             7, 5, 0x02, 0x01, 0x00, 0x04, 1,
         ];
         let parsed = parse_configuration_descriptors(&descriptors);
-        assert!(parsed.formats.is_empty());
+        assert_eq!(parsed.formats.len(), 1);
+        assert_eq!(parsed.formats[0].endpoint_address, Some(0x01));
         assert!(parsed.warnings.iter().any(|warning| warning.contains("Truncated interface descriptor")));
     }
 
