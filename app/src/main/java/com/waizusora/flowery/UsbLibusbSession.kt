@@ -575,8 +575,15 @@ internal class UsbLibusbSession internal constructor(
         }
     }
     @Synchronized
-    fun stopPlayback() {
-        if (!closed) NativeAudio.nativeStopUsbPlayback(nativeHandle)
+    fun stopPlayback(): Result<Unit> {
+        if (closed) return Result.success(Unit)
+        return try {
+            val result = NativeAudio.nativeStopUsbPlayback(nativeHandle)
+            if (result == 0) Result.success(Unit)
+            else Result.failure(IllegalStateException("Native USB playback stop failed"))
+        } catch (error: Exception) {
+            Result.failure(error)
+        }
     }
 
     @Synchronized
