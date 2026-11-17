@@ -567,7 +567,11 @@ fn run_worker(
         }
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
-        if event_result < 0 && event_result != -10 {
+        if crate::usb_isochronous::event_loop_interrupted(event_result) {
+            // INTERRUPTED is retryable, but repeated signals must not turn the
+            // event loop into a busy spin while transfers remain outstanding.
+            thread::sleep(Duration::from_millis(1));
+        } else if event_result < 0 {
             set_error(&error, &status, crate::usb_isochronous::event_error_message(event_result));
             // Do not skip completion-signal inspection after an event-loop error:
             // a callback may have completed before libusb returned the error.
