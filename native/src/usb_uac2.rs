@@ -83,7 +83,9 @@ impl AudioControlInterface {
         clock_entities.push(entity_id);
 
         if let Some(&controls) = self.clock_sources.get(&entity_id) {
-            if !matches!(controls & 0x03, 0x01 | 0x02) {
+            // A zero frequency-control field is valid for a fixed/uncontrollable clock.
+            // The host must still verify GET_RANGE and GET_CUR before streaming.
+            if !matches!(controls & 0x03, 0x00 | 0x01 | 0x02) {
                 return Err(format!("UAC2 Clock Source {entity_id} has no usable frequency control"));
             }
             output.push(Uac2ClockPath {
@@ -298,6 +300,18 @@ mod tests {
         d.extend_from_slice(&[17,0x24,0x02,1,0x01,0x01,0,clock_id,2,3,0,0,0,0,0,0,0]);
         d.extend_from_slice(&[9,4,1,1,1,1,2,0x20,0]);
         d.extend_from_slice(&[16,0x24,0x01,1,0,1,0,0,0,0,2,3,0,0,0,0]);
+    }
+
+    #[test]
+    fn resolves_fixed_clock_source_without_frequency_control() {
+        let mut d = descriptor_prefix();
+        // Clock Source 7 advertises no frequency SET/GET control in bmControls.
+        d[14] = 0x00;
+        append_playback_terminal(&mut d, 7);
+        let info = parse_playback_clock_info(&d).unwrap();
+        assert_eq!(info.clock_paths.len(), 1);
+        assert_eq!(info.clock_paths[0].source_entity_id, 7);
+        assert_eq!(info.clock_paths[0].source_controls & 0x03, 0x00);
     }
 
     #[test]
