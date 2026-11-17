@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
+import android.util.Log
 import java.io.Closeable
 
 /**
@@ -110,9 +111,11 @@ internal class UsbLibusbSession internal constructor(
                 0x22, 0x01, 0x0100, endpointAddress,
                 payload, payload.size, 1_000
             )
+            Log.i("FloweryUsbNative", "UAC1_CLOCK_SET endpoint=0x${endpointAddress.toString(16)} requestedHz=$sampleRate transferred=$transferred")
             if (transferred == payload.size) Result.success(Unit)
             else Result.failure(IllegalStateException("UAC1 SET_CUR sampling frequency failed: controlTransfer=$transferred"))
         } catch (error: Exception) {
+            Log.e("FloweryUsbNative", "UAC1_CLOCK_SET_FAILED endpoint=0x${endpointAddress.toString(16)} requestedHz=$sampleRate", error)
             Result.failure(error)
         }
     }
@@ -339,6 +342,7 @@ internal class UsbLibusbSession internal constructor(
                         failures += mutationFailure
                         continue
                     }
+                    Log.i("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=${path.sourceEntityId} requestedOutputHz=$sampleRate sourceRequiredHz=$sourceRate sourceCurrentHz=$oldSourceRate sourceWritable=$sourceHostProgrammable selectors=${path.selectors.size} multipliers=${path.multipliers.size}")
                     pendingClockRollback = { restoreState() }
                     return Result.success(Unit)
                 }
@@ -447,7 +451,10 @@ internal class UsbLibusbSession internal constructor(
                 return Result.failure(IllegalStateException("UAC2 Clock Source GET_CUR failed: controlTransfer=$currentLength"))
             }
             val currentRate = readU32(current, 0)
-            if (currentRate == sourceSampleRate.toLong()) return Result.success(Unit)
+            if (currentRate == sourceSampleRate.toLong()) {
+                Log.i("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=$selectedClockSource requestedOutputHz=$sampleRate requiredSourceHz=$sourceSampleRate sourceCurrentHz=$currentRate sourceWritable=false")
+                return Result.success(Unit)
+            }
             if ((selectedClockControls and 0x03) != 0x02) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source is read-only at $currentRate Hz; requested $sourceSampleRate Hz"))
             }
@@ -468,8 +475,10 @@ internal class UsbLibusbSession internal constructor(
                 val actual = if (verifiedLength == 4) readU32(verified, 0).toString() else "unavailable"
                 return Result.failure(IllegalStateException("UAC2 Clock Source did not confirm $sourceSampleRate Hz after SET_CUR (current=$actual)"))
             }
+            Log.i("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=$selectedClockSource requestedOutputHz=$sampleRate requiredSourceHz=$sourceSampleRate previousSourceHz=$currentRate verifiedSourceHz=${readU32(verified, 0)} sourceWritable=true")
             Result.success(Unit)
         } catch (error: Exception) {
+            Log.e("FloweryUsbNative", "UAC2_CLOCK_NEGOTIATION_FAILED requestedOutputHz=$sampleRate", error)
             Result.failure(error)
         }
     }
@@ -503,9 +512,11 @@ internal class UsbLibusbSession internal constructor(
                 validBits, subslotBytes, dataFormat, feedbackEndpointAddress,
                 feedbackMaxPacketSize, initialPositionMs
             )
+            Log.i("FloweryUsbNative", "NATIVE_START result=$result sampleRate=$sampleRate channels=$channels validBits=$validBits subslotBytes=$subslotBytes dataFormat=$dataFormat endpoint=0x${endpointAddress.toString(16)} rawMaxPacketSize=$rawMaxPacketSize interval=$interval feedbackEndpoint=0x${feedbackEndpointAddress.toString(16)} feedbackPacketBytes=$feedbackMaxPacketSize initialPositionMs=$initialPositionMs")
             if (result == 0) Result.success(Unit)
-            else Result.failure(IllegalStateException("Native USB playback failed to start"))
+            else Result.failure(IllegalStateException("Native USB playback failed to start (result=$result)"))
         } catch (error: Exception) {
+            Log.e("FloweryUsbNative", "NATIVE_START_EXCEPTION sampleRate=$sampleRate endpoint=0x${endpointAddress.toString(16)}", error)
             Result.failure(error)
         }
     }
@@ -610,6 +621,7 @@ internal class UsbLibusbSession internal constructor(
     override fun close() {
         if (closed) return
         closed = true
+        Log.i("FloweryUsbNative", "SESSION_CLOSE_BEGIN nativeHandle=$nativeHandle")
         val safelyClosed = try {
             NativeAudio.nativeCloseUsbAudioSession(nativeHandle) == 0
         } catch (error: Throwable) {
@@ -621,8 +633,10 @@ internal class UsbLibusbSession internal constructor(
         }
         if (safelyClosed) {
             // libusb_wrap_sys_device does not own or close this descriptor.
+            Log.i("FloweryUsbNative", "SESSION_CLOSE_NATIVE_DRAINED nativeHandle=$nativeHandle; closing retained Android USB connection")
             connection?.close()
         } else {
+            Log.e("FloweryUsbNative", "SESSION_CLOSE_UNSAFE nativeHandle=$nativeHandle; retaining Android USB connection")
             connection?.let(unsafeConnections::add)
             throw IllegalStateException(
                 "Native USB transfers could not be drained; retaining the Android USB connection to prevent closing an fd still used by libusb"
@@ -644,9 +658,11 @@ internal class UsbLibusbSession internal constructor(
             if (!manager.hasPermission(device)) {
                 return Result.failure(SecurityException("USB permission has not been granted"))
             }
+            Log.i("FloweryUsbNative", "SESSION_OPEN_BEGIN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId} interface=$interfaceNumber alternate=$alternateSetting")
             val connection = manager.openDevice(device)
-                ?: return Result.failure(IllegalStateException("Unable to open USB device"))
+                ?: return Result.failure(IllegalStateException("Unable to open USB device")).also { Log.e("FloweryUsbNative", "ANDROID_OPEN_DEVICE_FAILED device=${device.deviceName}") }
             val fd = connection.fileDescriptor
+            Log.i("FloweryUsbNative", "ANDROID_OPEN_DEVICE_OK device=${device.deviceName} fdValid=${fd >= 0}")
             if (fd < 0) {
                 connection.close()
                 return Result.failure(IllegalStateException("Android returned an invalid USB file descriptor"))
@@ -659,19 +675,24 @@ internal class UsbLibusbSession internal constructor(
                 .asSequence()
                 .map(device::getInterface)
                 .firstOrNull { it.id == interfaceNumber && it.alternateSetting == alternateSetting }
-            if (usbInterface != null && !connection.claimInterface(usbInterface, true)) {
-                connection.close()
-                return Result.failure(
-                    IllegalStateException("Unable to claim USB AudioStreaming interface $interfaceNumber")
-                )
+            if (usbInterface == null) {
+                Log.e("FloweryUsbNative", "USB_INTERFACE_NOT_FOUND interface=$interfaceNumber alternate=$alternateSetting")
+            } else {
+                val claimed = connection.claimInterface(usbInterface, true)
+                Log.i("FloweryUsbNative", "USB_INTERFACE_CLAIM interface=$interfaceNumber alternate=$alternateSetting claimed=$claimed")
+                if (!claimed) {
+                    Log.e("FloweryUsbNative", "ANDROID_CONNECTION_CLOSE reason=claim-interface-failed device=${device.deviceName}")
+                    connection.close()
+                    return Result.failure(IllegalStateException("Unable to claim USB AudioStreaming interface $interfaceNumber"))
+                }
             }
             return try {
-                val handle = NativeAudio.nativeOpenUsbAudioSession(
-                    fd, interfaceNumber, alternateSetting
-                )
+                val handle = NativeAudio.nativeOpenUsbAudioSession(fd, interfaceNumber, alternateSetting)
+                Log.i("FloweryUsbNative", "NATIVE_SESSION_OPEN_RESULT handle=$handle interface=$interfaceNumber alternate=$alternateSetting")
                 if (handle <= 0) {
+                    Log.e("FloweryUsbNative", "ANDROID_CONNECTION_CLOSE reason=native-open-invalid-handle device=${device.deviceName}")
                     connection.close()
-                    Result.failure(IllegalStateException("Native libusb returned an invalid session"))
+                    Result.failure(IllegalStateException("Native libusb returned an invalid session (handle=$handle)"))
                 } else {
                     Result.success(
                         UsbLibusbSession(
@@ -683,12 +704,16 @@ internal class UsbLibusbSession internal constructor(
                                     .map(device::getInterface)
                                     .filter { it.id == number }
                                     .minByOrNull { it.alternateSetting }
-                                control != null && connection.claimInterface(control, true)
+                                val claimed = control != null && connection.claimInterface(control, true)
+                                Log.i("FloweryUsbNative", "USB_CONTROL_INTERFACE_CLAIM interface=$number found=${control != null} claimed=$claimed")
+                                claimed
                             }
                         )
                     )
                 }
             } catch (error: Exception) {
+                Log.e("FloweryUsbNative", "NATIVE_SESSION_OPEN_EXCEPTION device=${device.deviceName}", error)
+                Log.e("FloweryUsbNative", "ANDROID_CONNECTION_CLOSE reason=native-open-exception device=${device.deviceName}")
                 connection.close()
                 Result.failure(error)
             }
