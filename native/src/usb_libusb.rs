@@ -44,6 +44,10 @@ impl Drop for UsbSession {
     }
 }
 
+/// `LIBUSB_ERROR_BUSY`: the interface is owned by another driver or process.
+#[cfg(target_os = "android")]
+const LIBUSB_ERROR_BUSY: i32 = -6;
+
 #[cfg(target_os = "android")]
 static NEXT_SESSION: AtomicI64 = AtomicI64::new(1);
 #[cfg(target_os = "android")]
@@ -122,7 +126,37 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
         ));
     }
 
-    let claimed = unsafe { libusb1_sys::libusb_claim_interface(handle, i32::from(interface_number)) };
+    // The Android kernel binds snd-usb-audio to AudioStreaming interfaces of
+    // class-compliant DACs. Without detaching it, libusb_claim_interface fails
+    // with LIBUSB_ERROR_BUSY (-6). Request automatic detach so that the kernel
+    // driver is released on claim; this is a prerequisite for exclusive access.
+    // Platform backends that do not support the option report
+    // LIBUSB_ERROR_NOT_SUPPORTED, which is tolerated here and handled below.
+    let _ = unsafe { libusb1_sys::libusb_set_auto_detach_kernel_driver(handle, 1) };
+
+    let mut claimed =
+        unsafe { libusb1_sys::libusb_claim_interface(handle, i32::from(interface_number)) };
+    if claimed == LIBUSB_ERROR_BUSY {
+        // Fallback: explicitly detach an active kernel driver, then retry once.
+        let active =
+            unsafe { libusb1_sys::libusb_kernel_driver_active(handle, i32::from(interface_number)) };
+        if active == 1 {
+            let detached = unsafe {
+                libusb1_sys::libusb_detach_kernel_driver(handle, i32::from(interface_number))
+            };
+            if detached != 0 {
+                unsafe {
+                    libusb1_sys::libusb_close(handle);
+                    libusb1_sys::libusb_exit(context);
+                }
+                return Err(format!(
+                    "libusb_detach_kernel_driver failed with code {detached} after the interface was reported busy"
+                ));
+            }
+            claimed =
+                unsafe { libusb1_sys::libusb_claim_interface(handle, i32::from(interface_number)) };
+        }
+    }
     if claimed != 0 {
         unsafe {
             libusb1_sys::libusb_close(handle);

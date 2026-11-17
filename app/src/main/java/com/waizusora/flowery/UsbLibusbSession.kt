@@ -633,6 +633,20 @@ internal class UsbLibusbSession internal constructor(
                 connection.close()
                 return Result.failure(IllegalStateException("Android returned an invalid USB file descriptor"))
             }
+            // Detach the kernel audio driver (snd-usb-audio) from the selected
+            // AudioStreaming interface. The same file descriptor is later wrapped by
+            // libusb, so this claim is shared with the native session and avoids
+            // LIBUSB_ERROR_BUSY. Native code additionally requests auto-detach.
+            val usbInterface = (0 until device.interfaceCount)
+                .asSequence()
+                .map(device::getInterface)
+                .firstOrNull { it.id == interfaceNumber && it.alternateSetting == alternateSetting }
+            if (usbInterface != null && !connection.claimInterface(usbInterface, true)) {
+                connection.close()
+                return Result.failure(
+                    IllegalStateException("Unable to claim USB AudioStreaming interface $interfaceNumber")
+                )
+            }
             return try {
                 val handle = NativeAudio.nativeOpenUsbAudioSession(
                     fd, interfaceNumber, alternateSetting
