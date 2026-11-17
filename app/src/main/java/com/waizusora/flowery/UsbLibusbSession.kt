@@ -4,6 +4,7 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.util.Log
+import java.io.Closeable
 
 // Android's mockable android.jar throws from Log methods in local JVM tests.
 // Keep diagnostics best-effort so clock negotiation and rollback remain testable.
@@ -18,8 +19,6 @@ private fun safeUsbLogE(tag: String, message: String) {
 private fun safeUsbLogE(tag: String, message: String, error: Throwable) {
     try { Log.e(tag, message, error) } catch (_: RuntimeException) { }
 }
-
-import java.io.Closeable
 
 /**
  * Owns the Android USB connection for the lifetime of a native libusb session.
