@@ -97,6 +97,7 @@ internal class UsbNativePlaybackSession private constructor(
     @Synchronized
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
+        Log.i("FloweryUsbNative", "PLAYBACK_START_BEGIN sampleRate=$sampleRate channels=$channels validBits=$validBits subslotBytes=$subslotBytes dataFormat=$dataFormat endpoint=0x${endpoint.toString(16)} maxPacketSize=$maxPacketSize interval=$interval uac2=${uac2ClockSourceEntity != null} feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackMaxPacketSize")
         val negotiateClock: () -> Result<Unit> = if (uac2ClockSourceEntity != null) {
             val controlInterface = uac2ControlInterface
                 ?: return Result.failure(IllegalStateException("UAC2 control interface is missing"))
@@ -122,7 +123,7 @@ internal class UsbNativePlaybackSession private constructor(
             }
             operation
         }
-        return startUsbPlaybackTransaction(
+        val result = startUsbPlaybackTransaction(
             negotiateClock = negotiateClock,
             startNativePlayback = {
                 usb.startPlayback(
@@ -135,6 +136,12 @@ internal class UsbNativePlaybackSession private constructor(
             commitClock = { usb.commitClockNegotiation() },
             rollbackOnStartFailure = uac2ClockSourceEntity != null
         )
+        if (result.isSuccess) {
+            Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
+        } else {
+            Log.e("FloweryUsbNative", "PLAYBACK_START_FAILED sampleRate=$sampleRate endpoint=0x${endpoint.toString(16)}", result.exceptionOrNull())
+        }
+        return result
     }
 
     @Synchronized
@@ -253,6 +260,7 @@ internal class UsbNativePlaybackSession private constructor(
                         }
                 }
             }
+            Log.i("FloweryUsbNative", "DEVICE_SCAN candidates=${candidates.size} sourceRate=$sampleRate channels=$channels sourceBits=$sourceBits sourceFormat=$sourceDataFormat")
             if (candidates.isEmpty()) {
                 return Result.failure(IllegalStateException("No USB Audio playback device with an isochronous OUT endpoint is connected"))
             }
@@ -271,6 +279,7 @@ internal class UsbNativePlaybackSession private constructor(
                     lastError = IllegalStateException("Unable to open USB device ${device.deviceName}")
                     continue
                 }
+                Log.i("FloweryUsbNative", "USB_PROBE_OPEN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId}")
                 val planJson = try {
                     JSONObject(
                         NativeAudio.nativePlanUsbAudioPlayback(
@@ -278,13 +287,17 @@ internal class UsbNativePlaybackSession private constructor(
                         )
                     )
                 } catch (error: Throwable) {
+                    Log.e("FloweryUsbNative", "USB_PROBE_PLAN_EXCEPTION device=${device.deviceName}", error)
                     probe.close()
+                    Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=planner-exception")
                     lastError = error
                     continue
                 }
                 probe.close()
+                Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=descriptor-planning-complete")
 
                 if (!planJson.optBoolean("ok")) {
+                    Log.w("FloweryUsbNative", "USB_PLAN_REJECTED device=${device.deviceName} error=${planJson.optString("error", "unknown")}")
                     lastError = IllegalStateException(planJson.optString("error", "USB DAC does not advertise the source PCM format"))
                     continue
                 }
@@ -378,6 +391,7 @@ internal class UsbNativePlaybackSession private constructor(
                         clockPaths.isEmpty() ||
                         invalidClockPaths
                     )
+                Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits != sourceBits ||
@@ -394,9 +408,11 @@ internal class UsbNativePlaybackSession private constructor(
                 )
                 val native = opened.getOrNull()
                 if (native == null) {
+                    Log.e("FloweryUsbNative", "USB_NATIVE_SESSION_OPEN_FAILED device=${device.deviceName}", opened.exceptionOrNull())
                     lastError = opened.exceptionOrNull()
                     continue
                 }
+                Log.i("FloweryUsbNative", "USB_NATIVE_SESSION_READY device=${device.deviceName} busSpeed=${native.busSpeed()} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} requestedRate=$sampleRate")
                 return Result.success(
                     UsbNativePlaybackSession(
                         native, decoderHandle, sampleRate, endpoint, packet,
@@ -414,6 +430,7 @@ internal class UsbNativePlaybackSession private constructor(
                     )
                 )
             }
+            Log.e("FloweryUsbNative", "USB_OPEN_FAILED candidates=${candidates.size}", lastError)
             return Result.failure(lastError ?: IllegalStateException("No compatible USB DAC could be opened"))
         }
     }
