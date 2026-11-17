@@ -83,11 +83,10 @@ impl AudioControlInterface {
         clock_entities.push(entity_id);
 
         if let Some(&controls) = self.clock_sources.get(&entity_id) {
-            // A zero frequency-control field is valid for a fixed/uncontrollable clock.
-            // The host must still verify GET_RANGE and GET_CUR before streaming.
-            if !matches!(controls & 0x03, 0x00 | 0x01 | 0x02) {
-                return Err(format!("UAC2 Clock Source {entity_id} has no usable frequency control"));
-            }
+            // Preserve every two-bit frequency-control encoding from the descriptor.
+            // Kotlin treats only 0b10 as writable; 0b00, 0b01, and the reserved
+            // 0b11 encoding are candidates only when GET_RANGE and GET_CUR prove
+            // that the requested rate is already active. No SET_CUR is sent for them.
             output.push(Uac2ClockPath {
                 source_entity_id: entity_id,
                 source_controls: controls,
@@ -312,6 +311,18 @@ mod tests {
         assert_eq!(info.clock_paths.len(), 1);
         assert_eq!(info.clock_paths[0].source_entity_id, 7);
         assert_eq!(info.clock_paths[0].source_controls & 0x03, 0x00);
+    }
+
+    #[test]
+    fn preserves_reserved_clock_frequency_control_as_non_writable_candidate() {
+        let mut d = descriptor_prefix();
+        // Preserve bmControls=0b11 for conservative read-only validation in Kotlin.
+        d[14] = 0x03;
+        append_playback_terminal(&mut d, 7);
+        let info = parse_playback_clock_info(&d).unwrap();
+        assert_eq!(info.clock_paths.len(), 1);
+        assert_eq!(info.clock_paths[0].source_entity_id, 7);
+        assert_eq!(info.clock_paths[0].source_controls & 0x03, 0x03);
     }
 
     #[test]
