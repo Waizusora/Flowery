@@ -337,7 +337,7 @@ internal class UsbNativePlaybackSession private constructor(
                 val selectorSources = IntArray(selectorSourcesJson?.length() ?: 0) { selectorSourcesJson!!.optInt(it, -1) }
                 val selectorSourceControls = IntArray(selectorControlsJson?.length() ?: 0) { selectorControlsJson!!.optInt(it, -1) }
                 val invalidClockPaths = isUac2 && (clockPaths.isEmpty() || clockPaths.any { path ->
-                    path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
+                    path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 0..2 ||
                         !path.hasConsistentTopology() ||
                         path.selectors.any {
                             it.entityId !in 1..255 ||
