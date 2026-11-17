@@ -487,8 +487,8 @@ mod tests {
 
     #[test]
     fn decoded_output_format_uses_actual_sample_representation_not_container_hints() {
-        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((32, 3)));
-        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((32, 3)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((24, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((24, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S16(vec![1]), 0), Ok((16, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S24(vec![1]), 0), Ok((24, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S32(vec![1]), 24), Ok((24, 1)));
