@@ -268,7 +268,10 @@ pub(super) fn decoded_output_format(
             if matches!(declared_bits, 16 | 20 | 24 | 32) { declared_bits } else { 32 },
             1,
         )),
-        UsbPcmSamples::F32(_) => Ok((32, 3)),
+        // Lossy codecs commonly decode to normalized F32. USB DACs generally
+        // advertise integer PCM, so expose a 24-bit integer USB output format
+        // and quantize only at the USB boundary.
+        UsbPcmSamples::F32(_) => Ok((24, 1)),
         UsbPcmSamples::F64(_) => Ok((64, 4)),
         UsbPcmSamples::Empty => Err("Decoder has not produced a PCM sample buffer"),
     }
@@ -281,8 +284,10 @@ pub(super) fn encode_usb_pcm(
     output: &mut Vec<u8>,
 ) -> Result<(), &'static str> {
     match samples {
-        UsbPcmSamples::F32(_) | UsbPcmSamples::F64(_) =>
-            encode_usb_float_pcm(samples, format, output),
+        // F32 is the decoder's normalized internal representation for several
+        // lossy codecs, not a requirement that the USB DAC support IEEE_FLOAT.
+        UsbPcmSamples::F32(_) => encode_usb_integer_pcm(samples, format, output),
+        UsbPcmSamples::F64(_) => encode_usb_float_pcm(samples, format, output),
         _ => encode_usb_integer_pcm(samples, format, output),
     }
 }
@@ -294,7 +299,11 @@ pub(super) fn encode_usb_pcm_for_data_format(
     data_format: u8,
     output: &mut Vec<u8>,
 ) -> Result<(), &'static str> {
-    if !matches!(samples, UsbPcmSamples::Empty) && samples.data_format_code() != data_format {
+    let f32_to_integer_pcm = matches!(samples, UsbPcmSamples::F32(_)) && data_format == 1;
+    if !matches!(samples, UsbPcmSamples::Empty)
+        && samples.data_format_code() != data_format
+        && !f32_to_integer_pcm
+    {
         return Err("Decoded sample representation does not match the USB descriptor data format");
     }
     encode_usb_pcm(samples, format, output)
@@ -312,6 +321,32 @@ pub(super) fn encode_usb_integer_pcm(
     output.clear();
     if samples.len() == 0 { return Ok(()); }
     match samples {
+        UsbPcmSamples::F32(values)
+            if matches!(format.valid_bits, 16 | 24 | 32)
+                && matches!(format.subslot_bytes, 2 | 3 | 4)
+                && format.valid_bits as u16 <= format.subslot_bytes as u16 * 8 =>
+        {
+            // Symphonia emits normalized float PCM for lossy codecs. Convert
+            // to signed integer PCM only here, after the DAC's descriptor has
+            // selected a supported integer width. Non-finite samples are muted.
+            let scale = (1_i64 << (format.valid_bits - 1)) as f64;
+            let minimum = -(1_i64 << (format.valid_bits - 1));
+            let maximum = (1_i64 << (format.valid_bits - 1)) - 1;
+            for value in values {
+                let sample = if value.is_finite() {
+                    ((*value as f64).clamp(-1.0, 1.0) * scale).round() as i64
+                } else {
+                    0
+                }.clamp(minimum, maximum);
+                let aligned = if format.subslot_bytes == 4 && format.valid_bits < 32 {
+                    sample << (32 - format.valid_bits)
+                } else {
+                    sample
+                };
+                let bytes = aligned.to_le_bytes();
+                output.extend_from_slice(&bytes[..format.subslot_bytes as usize]);
+            }
+        },
         UsbPcmSamples::U8(values) if format.valid_bits == 8 && format.subslot_bytes == 1 =>
             output.extend(values),
         UsbPcmSamples::S16(values) if format.valid_bits == 16 && format.subslot_bytes == 2 =>
@@ -681,6 +716,33 @@ mod tests {
         let u8 = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 8, subslot_bytes: 1, little_endian: true };
         encode_usb_pcm(&UsbPcmSamples::U8(vec![0, 1, 127, 255]), u8, &mut output).unwrap();
         assert_eq!(output, vec![0, 1, 127, 255]);
+    }
+
+    #[test]
+    fn lossy_f32_samples_convert_to_descriptor_selected_integer_pcm() {
+        let samples = UsbPcmSamples::F32(vec![
+            -1.0, -0.5, -1.0 / 8_388_608.0, 0.0, 1.0 / 8_388_608.0, 0.5, 1.0,
+            f32::NAN, f32::INFINITY,
+        ]);
+        assert_eq!(decoded_output_format(&samples, 0).unwrap(), (24, 1));
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true };
+        let mut output = Vec::new();
+        encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).unwrap();
+        let decoded: Vec<i32> = output.chunks_exact(3).map(|b| {
+            let raw = i32::from(b[0]) | (i32::from(b[1]) << 8) | (i32::from(b[2]) << 16);
+            (raw << 8) >> 8
+        }).collect();
+        assert_eq!(decoded, vec![-8_388_608, -4_194_304, -1, 0, 1, 4_194_304, 8_388_607, 0, 0]);
+    }
+
+    #[test]
+    fn lossy_f32_samples_are_left_aligned_in_32_bit_usb_subslots() {
+        let samples = UsbPcmSamples::F32(vec![-1.0, 0.5, 1.0]);
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 4, little_endian: true };
+        let mut output = Vec::new();
+        encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).unwrap();
+        let decoded: Vec<i32> = output.chunks_exact(4).map(|b| i32::from_le_bytes(b.try_into().unwrap())).collect();
+        assert_eq!(decoded, [i32::MIN, 1_073_741_824, 2_147_483_392]);
     }
 
     #[test]
