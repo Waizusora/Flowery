@@ -149,9 +149,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeResumeUsbPla
 #[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopUsbPlayback(
-    _env: JNIEnv, _class: JClass, session: jni::sys::jlong,
-) {
-    crate::usb_stream::stop_session(session);
+    mut env: JNIEnv, _class: JClass, session: jni::sys::jlong,
+) -> jint {
+    match crate::usb_stream::stop_session(session) {
+        Ok(()) => 0,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", error);
+            -1
+        }
+    }
 }
 
 #[cfg(target_os = "android")]
