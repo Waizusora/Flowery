@@ -306,7 +306,11 @@ pub(super) fn encode_usb_pcm_for_data_format(
     {
         return Err("Decoded sample representation does not match the USB descriptor data format");
     }
-    encode_usb_pcm(samples, format, output)
+    if data_format == 3 {
+        encode_usb_float_pcm(samples, format, output)
+    } else {
+        encode_usb_integer_pcm(samples, format, output)
+    }
 }
 
 /// Pack integer samples in their native code representation. No float conversion
