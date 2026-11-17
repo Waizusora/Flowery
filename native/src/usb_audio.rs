@@ -11,6 +11,54 @@ pub enum UsbAudioDataFormat {
     Pcm,
     Pcm8,
     IeeeFloat,
+    #[test]
+    fn rejects_endpoint_zero_and_reserved_endpoint_address_bits() {
+        let prefix = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+        ];
+        for address in [0x00, 0x10, 0x70] {
+            let mut descriptors = prefix.to_vec();
+            descriptors.extend_from_slice(&[7, 5, address, 0x01, 0x00, 0x04, 1]);
+            assert!(parse_configuration_descriptors(&descriptors).formats.is_empty());
+        }
+    }
+
+    #[test]
+    fn ignores_feedback_endpoint_with_reserved_address_or_packet_bits() {
+        let mut descriptors = vec![
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 5, 0x91, 0x11, 0x03, 0x00, 1,
+        ];
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+
+        descriptors[descriptors.len() - 7 + 4] = 0x03;
+        descriptors[descriptors.len() - 7 + 5] = 0x20;
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+    }
+
+    #[test]
+    fn malformed_interface_descriptor_terminates_previous_alternate_context() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            4, 4, 3, 0,
+            7, 5, 0x02, 0x01, 0x00, 0x04, 1,
+        ];
+        let parsed = parse_configuration_descriptors(&descriptors);
+        assert!(parsed.formats.is_empty());
+        assert!(parsed.warnings.iter().any(|warning| warning.contains("Truncated interface descriptor")));
+    }
+
 }
 
 impl UsbAudioDataFormat {
@@ -79,6 +127,12 @@ fn le24(b: &[u8], i: usize) -> Option<u32> {
         | (u32::from(b.get(i + 2).copied()?) << 16))
 }
 
+fn valid_endpoint_address(address: u8, input: bool) -> bool {
+    address & 0x70 == 0
+        && address & 0x0f != 0
+        && (address & 0x80 != 0) == input
+}
+
 /// Parse a USB configuration descriptor blob returned by UsbDeviceConnection.getRawDescriptors().
 /// Malformed/truncated descriptors stop parsing safely and are reported as warnings.
 pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
@@ -88,8 +142,12 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
 
     let finish = |alt: Option<Alternate>, output: &mut UsbAudioParseResult| {
         if let Some(a) = alt {
-            if a.subclass == 0x02 && a.alternate_setting > 0 && a.endpoint_address
-                .map(|address| address & 0x80 == 0).unwrap_or(false) {
+            if a.subclass == 0x02
+                && a.alternate_setting > 0
+                && a.endpoint_address
+                    .map(|address| valid_endpoint_address(address, false))
+                    .unwrap_or(false)
+            {
                 output.formats.push(UsbAudioFormat {
                     interface_number: a.interface_number,
                     alternate_setting: a.alternate_setting,
@@ -127,7 +185,14 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
         }
         let d = &bytes[offset..offset + length];
         match kind {
-            0x04 if length >= 9 => {
+            0x04 if length < 9 => {
+                finish(current.take(), &mut result);
+                current = None;
+                result.warnings.push(format!(
+                    "Truncated interface descriptor at byte {offset}: expected at least 9 bytes, got {length}"
+                ));
+            }
+            0x04 => {
                 finish(current.take(), &mut result);
                 let class = d[5];
                 let subclass = d[6];
@@ -218,20 +283,34 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     }
                 }
             }
-            0x05 if length >= 7 => {
+            0x05 if length < 7 => {
+                result.warnings.push(format!(
+                    "Truncated endpoint descriptor at byte {offset}: expected at least 7 bytes, got {length}"
+                ));
+            }
+            0x05 => {
                 if let Some(a) = current.as_mut() {
                     if a.subclass == 0x02 && (d[3] & 0x03) == 0x01 {
                         let is_input = d[2] & 0x80 != 0;
                         let usage = (d[3] >> 4) & 0x03;
-                        if is_input && usage == 0x01 {
+                        let address_valid = valid_endpoint_address(d[2], is_input);
+                        let packet_size = u16::from_le_bytes([d[4], d[5]]);
+                        // Bits 15..13 are reserved in wMaxPacketSize for
+                        // isochronous endpoints at both Full- and High-Speed.
+                        let packet_size_valid = packet_size & 0xe000 == 0;
+                        if is_input && usage == 0x01 && address_valid && packet_size_valid {
                             a.feedback_endpoint_address = Some(d[2]);
-                            a.feedback_max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
+                            a.feedback_max_packet_size = Some(packet_size);
                             a.feedback_interval = Some(d[6]);
-                        } else if !is_input {
+                        } else if !is_input && usage == 0 && address_valid && packet_size_valid {
                             a.endpoint_address = Some(d[2]);
                             a.synchronization_type = Some((d[3] >> 2) & 0x03);
-                            a.max_packet_size = Some(u16::from_le_bytes([d[4], d[5]]));
+                            a.max_packet_size = Some(packet_size);
                             a.interval = Some(d[6]);
+                        } else if is_input || usage == 0 || !address_valid || !packet_size_valid {
+                            result.warnings.push(format!(
+                                "Ignored invalid isochronous endpoint descriptor at byte {offset}"
+                            ));
                         }
                     }
                 }
@@ -330,9 +409,9 @@ pub fn plan_pcm_playback_with_format(
                     format.feedback_interval,
                 ),
                 (Some(address), Some(packet_bytes), Some(feedback_interval))
-                    if address & 0x80 != 0
-                        && address & 0x0f != 0
+                    if valid_endpoint_address(address, true)
                         && packet_bytes > 0
+                        && packet_bytes & 0xe000 == 0
                         && (1..=16).contains(&feedback_interval)
             );
             if !feedback_is_valid {
