@@ -176,12 +176,10 @@ internal class UsbLibusbSession internal constructor(
             }
 
             fun canNegotiateSource(sourceId: Int, controls: Int, rate: Int): Boolean {
-                if (!supportsRate(sourceId, rate)) return false
-                val sourceIndex = (sourceId shl 8) or controlInterfaceNumber
-                val current = ByteArray(4)
-                val length = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, current, 4, 1_000)
-                if (length != 4) return false
-                return readU32(current, 0) == rate.toLong() || (controls and 0x03) == 0x02
+                // GET_RANGE is authoritative for both host-programmable and read-only
+                // Clock Sources. Rate selection for read-only sources is expected to
+                // follow the chosen AudioStreaming alternate setting.
+                return supportsRate(sourceId, rate)
             }
             if (clockPaths.isNotEmpty()) {
                 val failures = mutableListOf<String>()
@@ -230,11 +228,14 @@ internal class UsbLibusbSession internal constructor(
                     if (oldSourceRate !in 1..Int.MAX_VALUE.toLong()) {
                         failures += "source returned an invalid current rate"; continue
                     }
-                    // Only bmControls=0b10 permits SET_CUR. Reserved 0b11 is
-                    // treated conservatively as read-only and must already match the requested rate.
-                    if (oldSourceRate != sourceRate && (path.sourceControls and 0x03) != 2) {
-                        failures += "source frequency is read-only"; continue
-                    }
+                    // bmControls frequency field (bits 1:0):
+                    //   0b10 = host-programmable; SET_CUR is used when GET_CUR differs.
+                    //   0b00 / 0b01 / 0b11 = not host-writable. Many class-compliant DACs
+                    //   leave Clock Source GET_CUR at a nominal or previously negotiated
+                    //   rate and select the active rate via the AudioStreaming alternate
+                    //   setting. GET_RANGE (checked above) is the capability gate; do not
+                    //   reject a read-only source solely because GET_CUR does not match.
+                    val sourceHostProgrammable = (path.sourceControls and 0x03) == 2
 
                     data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
                     val selectorChanges = mutableListOf<SelectorChange>()
@@ -311,7 +312,7 @@ internal class UsbLibusbSession internal constructor(
                                 mutationFailure = "clock selector SET_CUR/verification failed"; break
                             }
                         }
-                        if (mutationFailure == null && oldSourceRate != sourceRate) {
+                        if (mutationFailure == null && sourceHostProgrammable && oldSourceRate != sourceRate) {
                             sourceWriteAttempted = true
                             val rate = sourceRate.toInt()
                             val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),

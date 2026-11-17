@@ -1,6 +1,6 @@
 # USB DAC bit-perfect path audit
 
-This audit covers Flowery's native USB Audio playback path on the `dev` branch.
+This audit covers Flowery's native USB Audio playback path on the `trial` branch.
 It describes transformations performed by Flowery before submitting isochronous
 USB transfers. It does not certify the DAC hardware, USB host controller, or
 analog output.
@@ -51,8 +51,16 @@ analog output.
   requested format when its bit is present.
 - UAC2 playback resolves the selected streaming terminal's clock topology,
   reads Clock Source `GET_RANGE` before changing frequency, checks selector
-  and multiplier paths, verifies `GET_CUR` after `SET_CUR`, and restores the
-  previous clock/selector state if native stream startup fails.
+  and multiplier paths, verifies `GET_CUR` after `SET_CUR` when the source is
+  host-programmable, and restores the previous clock/selector state if native
+  stream startup fails.
+- Clock Source frequency control encodings other than host-programmable
+  (`bmControls` frequency bits != `0b10`) are treated as read-only. For those
+  sources, `GET_RANGE` is the capability gate: if the requested rate is
+  advertised, negotiation succeeds without requiring `GET_CUR` to already match
+  and without issuing `SET_CUR`. Rate selection is expected to follow the chosen
+  AudioStreaming alternate setting, which is the common behavior for fixed-clock
+  class-compliant DACs.
 - These control-transfer checks are covered by Kotlin fake-control tests;
   actual DAC behavior and host-controller timing still require hardware tests.
 

@@ -89,7 +89,7 @@ class UsbLibusbSessionTest {
     }
 
     @Test
-    fun acceptsReservedClockControlOnlyWhenRequestedRateIsAlreadyActive() {
+    fun acceptsReadOnlyClockWhenRequestedRateIsAlreadyActive() {
         val fake = FakeUsbControl().apply { sourceRate = 48_000 }
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
@@ -113,7 +113,9 @@ class UsbLibusbSessionTest {
     }
 
     @Test
-    fun rejectsReservedClockControlWhenRateChangeWouldBeRequired() {
+    fun acceptsReadOnlyClockWhenGetRangeAdvertisesRequestedRate() {
+        // Current GET_CUR is 44100; requested rate is 48000 and is advertised by
+        // GET_RANGE. Read-only sources must not require GET_CUR to already match.
         val fake = FakeUsbControl()
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
@@ -132,9 +134,37 @@ class UsbLibusbSessionTest {
             clockPaths = listOf(path)
         )
 
+        assertTrue(result.isSuccess)
+        assertTrue(fake.writes.isEmpty())
+        assertEquals(44_100, fake.sourceRate)
+    }
+
+    @Test
+    fun rejectsReadOnlyClockWhenGetRangeDoesNotAdvertiseRequestedRate() {
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 3,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 3,
+            sampleRate = 96_000,
+            clockPaths = listOf(path)
+        )
+
         assertTrue(result.isFailure)
         assertTrue(fake.writes.isEmpty())
-        assertTrue(result.exceptionOrNull()?.message?.contains("read-only") == true)
+        assertTrue(
+            result.exceptionOrNull()?.message?.contains("does not advertise") == true ||
+                result.exceptionOrNull()?.message?.contains("No UAC2 clock path") == true
+        )
     }
 
     @Test
