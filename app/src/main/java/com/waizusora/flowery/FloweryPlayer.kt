@@ -475,7 +475,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stopped.set(true)
         pauseRequested.set(false)
         synchronized(outputLifecycleLock) { outputReady = false }
-        usbPlaybackSession?.let { usb -> runCatching { usb.stopPlayback() } }
+        usbPlaybackSession?.let { usb ->
+            runCatching { usb.stopPlayback().getOrThrow() }
+                .onFailure { error ->
+                    Log.e("FloweryDiagnostics", "USB_PLAYBACK_STOP_FAILURE; native close will still perform final drain", error)
+                }
+        }
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
