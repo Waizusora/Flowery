@@ -11,53 +11,6 @@ pub enum UsbAudioDataFormat {
     Pcm,
     Pcm8,
     IeeeFloat,
-    #[test]
-    fn rejects_endpoint_zero_and_reserved_endpoint_address_bits() {
-        let prefix = [
-            9, 4, 1, 0, 0, 1, 1, 0, 0,
-            9, 4, 2, 1, 1, 1, 2, 0, 0,
-            7, 0x24, 1, 1, 1, 1, 0,
-            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-        ];
-        for address in [0x00, 0x10, 0x70] {
-            let mut descriptors = prefix.to_vec();
-            descriptors.extend_from_slice(&[7, 5, address, 0x01, 0x00, 0x04, 1]);
-            assert!(parse_configuration_descriptors(&descriptors).formats.is_empty());
-        }
-    }
-
-    #[test]
-    fn ignores_feedback_endpoint_with_reserved_address_or_packet_bits() {
-        let mut descriptors = vec![
-            9, 4, 1, 0, 0, 1, 2, 0, 0,
-            9, 4, 2, 1, 2, 1, 2, 0, 0,
-            7, 0x24, 1, 1, 1, 1, 0,
-            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
-            7, 5, 0x91, 0x11, 0x03, 0x00, 1,
-        ];
-        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
-
-        descriptors[descriptors.len() - 7 + 4] = 0x03;
-        descriptors[descriptors.len() - 7 + 5] = 0x20;
-        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
-    }
-
-    #[test]
-    fn malformed_interface_descriptor_terminates_previous_alternate_context() {
-        let descriptors = [
-            9, 4, 1, 0, 0, 1, 1, 0, 0,
-            9, 4, 2, 1, 1, 1, 2, 0, 0,
-            7, 0x24, 1, 1, 1, 1, 0,
-            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
-            4, 4, 3, 0,
-            7, 5, 0x02, 0x01, 0x00, 0x04, 1,
-        ];
-        let parsed = parse_configuration_descriptors(&descriptors);
-        assert!(parsed.formats.is_empty());
-        assert!(parsed.warnings.iter().any(|warning| warning.contains("Truncated interface descriptor")));
-    }
 
 }
 
@@ -699,6 +652,55 @@ mod tests {
         ];
         let parsed = parse_configuration_descriptors(&descriptors);
         assert_eq!(parsed.formats[0].max_packet_size, Some(0x1400));
+    }
+
+    #[test]
+    fn rejects_endpoint_zero_and_reserved_endpoint_address_bits() {
+        let prefix = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+        ];
+        for address in [0x00, 0x10, 0x70] {
+            let mut descriptors = prefix.to_vec();
+            descriptors.extend_from_slice(&[7, 5, address, 0x01, 0x00, 0x04, 1]);
+            assert!(parse_configuration_descriptors(&descriptors).formats.is_empty());
+        }
+    }
+
+    #[test]
+    fn ignores_feedback_endpoint_with_reserved_address_or_packet_bits() {
+        let mut descriptors = vec![
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 5, 0x91, 0x11, 0x03, 0x00, 1,
+        ];
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+
+        let feedback_offset = descriptors.len() - 7;
+        descriptors[feedback_offset + 4] = 0x03;
+        descriptors[feedback_offset + 5] = 0x20;
+        assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
+    }
+
+    #[test]
+    fn malformed_interface_descriptor_terminates_previous_alternate_context() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            4, 4, 3, 0,
+            7, 5, 0x02, 0x01, 0x00, 0x04, 1,
+        ];
+        let parsed = parse_configuration_descriptors(&descriptors);
+        assert!(parsed.formats.is_empty());
+        assert!(parsed.warnings.iter().any(|warning| warning.contains("Truncated interface descriptor")));
     }
 
 }
