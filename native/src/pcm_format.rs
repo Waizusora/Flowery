@@ -766,15 +766,23 @@ mod tests {
     }
 
     #[test]
-    fn descriptor_format_dispatch_preserves_float_bytes_and_rejects_cross_format() {
+    fn descriptor_format_dispatch_preserves_float_and_converts_to_integer_pcm() {
         let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 32, subslot_bytes: 4, little_endian: true };
         let values = [0.0_f32, -0.5, 1.0, f32::from_bits(0x3f80_0001)];
         let samples = UsbPcmSamples::F32(values.to_vec());
         let mut output = Vec::new();
+
         encode_usb_pcm_for_data_format(&samples, format, 3, &mut output).unwrap();
-        let expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()).collect();
-        assert_eq!(output, expected);
-        assert!(encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).is_err());
+        let float_expected: Vec<u8> = values.iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(output, float_expected);
+
+        encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).unwrap();
+        let integer_expected: Vec<u8> = [0_i32, -1_073_741_824, i32::MAX, i32::MAX]
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        assert_eq!(output, integer_expected);
+
         assert!(encode_usb_pcm_for_data_format(
             &UsbPcmSamples::S32(vec![0, 1, -1, i32::MAX]), format, 3, &mut output
         ).is_err());
