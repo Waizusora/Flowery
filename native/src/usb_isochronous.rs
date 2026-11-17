@@ -145,6 +145,12 @@ pub fn transfer_status_name(status: i32) -> &'static str {
     }
 }
 
+/// libusb may return INTERRUPTED (-10) when an event wait is interrupted.
+/// This is retryable and must not transition the stream into a failed state.
+pub fn event_loop_interrupted(code: i32) -> bool {
+    code == -10
+}
+
 /// Translate libusb event-loop errors into actionable diagnostics.
 pub fn event_error_message(code: i32) -> String {
     match code {
@@ -406,6 +412,14 @@ mod tests {
         let error = validate_isochronous_completion_iter(5, packets).unwrap_err();
         assert!(error.contains("device disconnected"));
         assert!(!polled.get());
+    }
+
+    #[test]
+    fn retries_interrupted_libusb_event_wait_without_marking_stream_failed() {
+        assert!(event_loop_interrupted(-10));
+        assert!(!event_loop_interrupted(-4));
+        assert!(!event_loop_interrupted(-1));
+        assert!(!event_loop_interrupted(0));
     }
 
     #[test]
