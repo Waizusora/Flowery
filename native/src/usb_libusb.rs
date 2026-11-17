@@ -49,6 +49,17 @@ impl Drop for UsbSession {
 const LIBUSB_ERROR_BUSY: i32 = -6;
 
 #[cfg(target_os = "android")]
+fn libusb_error_name(code: i32) -> String {
+    unsafe {
+        let name = libusb1_sys::libusb_error_name(code);
+        if name.is_null() {
+            return "unknown".into();
+        }
+        std::ffi::CStr::from_ptr(name).to_string_lossy().into_owned()
+    }
+}
+
+#[cfg(target_os = "android")]
 static NEXT_SESSION: AtomicI64 = AtomicI64::new(1);
 #[cfg(target_os = "android")]
 static SESSIONS: OnceLock<Mutex<HashMap<i64, Arc<UsbSession>>>> = OnceLock::new();
@@ -127,13 +138,14 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
     }
 
     // The Android kernel binds snd-usb-audio to AudioStreaming interfaces of
-    // class-compliant DACs. Without detaching it, libusb_claim_interface fails
-    // with LIBUSB_ERROR_BUSY (-6). Request automatic detach so that the kernel
-    // driver is released on claim; this is a prerequisite for exclusive access.
-    // Platform backends that do not support the option report
-    // LIBUSB_ERROR_NOT_SUPPORTED, which is tolerated here and handled below.
-    let _ = unsafe { libusb1_sys::libusb_set_auto_detach_kernel_driver(handle, 1) };
-
+    // class-compliant DACs. The Kotlin layer force-claims the interface on the
+    // same file descriptor before this function runs, which detaches that driver
+    // and leaves the interface owned by usbfs for this file. A plain claim on
+    // that descriptor is therefore a no-op for the kernel.
+    //
+    // libusb auto-detach is deliberately NOT enabled: libusb implements it with
+    // USBDEVFS_DISCONNECT_CLAIM excluding the "usbfs" driver, which fails with
+    // EBUSY (LIBUSB_ERROR_BUSY) when the interface is already owned by usbfs.
     let mut claimed =
         unsafe { libusb1_sys::libusb_claim_interface(handle, i32::from(interface_number)) };
     if claimed == LIBUSB_ERROR_BUSY {
@@ -162,7 +174,10 @@ pub fn open_android_fd(fd: i32, interface_number: u8, alternate_setting: u8) -> 
             libusb1_sys::libusb_close(handle);
             libusb1_sys::libusb_exit(context);
         }
-        return Err(format!("libusb_claim_interface failed with code {claimed}"));
+        return Err(format!(
+            "libusb_claim_interface failed with code {claimed} ({})",
+            libusb_error_name(claimed)
+        ));
     }
 
     let selected = unsafe {
