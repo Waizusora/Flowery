@@ -42,6 +42,8 @@ const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
 #[cfg(target_os = "android")]
 const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "android")]
+const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(3);
+#[cfg(target_os = "android")]
 const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 
 #[cfg(target_os = "android")]
@@ -670,6 +672,25 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
     let worker = workers().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
     if let Some(worker) = worker {
         worker.stop.store(true, Ordering::Release);
+
+        // Joining directly can block forever if the worker is stuck outside
+        // libusb's bounded event loop (for example while producing a decoder
+        // chunk). Bound the caller's wait as well as the transfer-drain wait.
+        let join_deadline = Instant::now() + WORKER_JOIN_TIMEOUT;
+        while !worker.thread.is_finished() && Instant::now() < join_deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        if !worker.thread.is_finished() {
+            // Dropping this JoinHandle detaches the still-running worker. Keep
+            // the registry session and Java fd alive permanently: that worker
+            // may still access the libusb context or device handle.
+            unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            return Err(
+                "USB stream worker did not stop before the bounded join deadline; retaining the Android USB connection to prevent use-after-free"
+                    .into(),
+            );
+        }
+
         let worker_panicked = worker.thread.join().is_err();
         let drain_timed_out = worker.status.load(Ordering::Acquire) == -2;
         if let Some(message) = crate::usb_isochronous::worker_teardown_error(
