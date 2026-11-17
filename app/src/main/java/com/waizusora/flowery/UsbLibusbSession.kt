@@ -170,7 +170,7 @@ internal class UsbLibusbSession internal constructor(
             if (clockPaths.isNotEmpty()) {
                 val failures = mutableListOf<String>()
                 for (path in clockPaths) {
-                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 1..2 ||
+                    if (path.sourceEntityId !in 1..255 || (path.sourceControls and 0x03) !in 0..2 ||
                         !path.hasConsistentTopology()) {
                         failures += "invalid source controls"
                         continue
@@ -379,7 +379,7 @@ internal class UsbLibusbSession internal constructor(
                 selectedClockSource = selectorClockSources[chosenIndex]
                 selectedClockControls = selectorSourceControls[chosenIndex]
             }
-            if (selectedClockSource !in 1..255 || (selectedClockControls and 0x03) !in 1..2) {
+            if (selectedClockSource !in 1..255 || (selectedClockControls and 0x03) !in 0..2) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source has no usable frequency control"))
             }
 
