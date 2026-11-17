@@ -79,13 +79,15 @@ internal data class Uac2ClockMultiplierStep(val entityId: Int, val controls: Int
 internal class UsbLibusbSession internal constructor(
     private val connection: UsbDeviceConnection?,
     private val nativeHandle: Long,
-    transferOverride: UsbControlTransfer? = null
+    transferOverride: UsbControlTransfer? = null,
+    private val controlInterfaceClaimer: ((Int) -> Boolean)? = null
 ) : Closeable {
     private val controlTransfer: UsbControlTransfer = transferOverride ?: UsbControlTransfer { requestType, request, value, index, buffer, length, timeoutMs ->
         val usbConnection = connection ?: throw IllegalStateException("USB control connection is unavailable")
         usbConnection.controlTransfer(requestType, request, value, index, buffer, length, timeoutMs)
     }
     private var closed = false
+    private val claimedControlInterfaces = mutableSetOf<Int>()
     private var pendingClockRollback: (() -> List<String>)? = null
 
     /**
@@ -140,11 +142,25 @@ internal class UsbLibusbSession internal constructor(
             clockMultiplierEntityId !in 0..255 || clockMultiplierControls !in 0..255) {
             return Result.failure(IllegalArgumentException("Invalid UAC2 clock negotiation parameters"))
         }
+        // UAC2 clock requests are addressed to the AudioControl interface. usbfs
+        // requires the calling file to own the addressed interface, so the kernel
+        // audio driver must be detached from it as well; otherwise every request
+        // fails and no sample rate appears to be supported.
+        val claimer = controlInterfaceClaimer
+        if (claimer != null && claimedControlInterfaces.add(controlInterfaceNumber) &&
+            !claimer(controlInterfaceNumber)) {
+            claimedControlInterfaces.remove(controlInterfaceNumber)
+            return Result.failure(
+                IllegalStateException("Unable to claim USB AudioControl interface $controlInterfaceNumber")
+            )
+        }
         return try {
+            var lastRangeLength = 0
             fun supportsRate(sourceId: Int, rate: Int): Boolean {
                 val entityIndex = (sourceId shl 8) or controlInterfaceNumber
                 val range = ByteArray(2 + 12 * 32)
                 val length = controlTransfer.transfer(0xA1, 0x02, 0x0100, entityIndex, range, range.size, 1_000)
+                lastRangeLength = length
                 if (length < 2) return false
                 val count = (range[0].toInt() and 0xFF) or ((range[1].toInt() and 0xFF) shl 8)
                 if (count !in 1..32 || length < 2 + count * 12) return false
@@ -201,7 +217,8 @@ internal class UsbLibusbSession internal constructor(
                     }
                     if (!valid || sourceRate !in 1..Int.MAX_VALUE.toLong()) continue
                     if (!supportsRate(path.sourceEntityId, sourceRate.toInt())) {
-                        failures += "source " + path.sourceEntityId + " does not advertise " + sourceRate + " Hz"
+                        failures += "source " + path.sourceEntityId + " does not advertise " + sourceRate +
+                            " Hz (GET_RANGE transfer result " + lastRangeLength + ")"
                         continue
                     }
                     val sourceIndex = (path.sourceEntityId shl 8) or controlInterfaceNumber
@@ -655,7 +672,20 @@ internal class UsbLibusbSession internal constructor(
                     connection.close()
                     Result.failure(IllegalStateException("Native libusb returned an invalid session"))
                 } else {
-                    Result.success(UsbLibusbSession(connection, handle))
+                    Result.success(
+                        UsbLibusbSession(
+                            connection,
+                            handle,
+                            controlInterfaceClaimer = { number ->
+                                val control = (0 until device.interfaceCount)
+                                    .asSequence()
+                                    .map(device::getInterface)
+                                    .filter { it.id == number }
+                                    .minByOrNull { it.alternateSetting }
+                                control != null && connection.claimInterface(control, true)
+                            }
+                        )
+                    )
                 }
             } catch (error: Exception) {
                 connection.close()
