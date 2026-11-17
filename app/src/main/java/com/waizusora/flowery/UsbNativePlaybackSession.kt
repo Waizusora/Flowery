@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Build
+import android.util.Log
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import org.json.JSONArray
@@ -184,10 +185,20 @@ internal class UsbNativePlaybackSession private constructor(
                 override fun onReceive(context: Context?, intent: Intent?) {
                     if (intent?.action != action) return
                     val returnedDevice = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    if (returnedDevice?.deviceName == device.deviceName) {
-                        granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
-                        latch.countDown()
-                    }
+                    val sameDevice = returnedDevice == null ||
+                        returnedDevice.deviceName == device.deviceName
+                    val permissionExtra = intent.getBooleanExtra(
+                        UsbManager.EXTRA_PERMISSION_GRANTED, false
+                    )
+                    // The action is unique to this request, so always release the waiter.
+                    // Some Android USB stacks omit or re-parcel the device extra differently.
+                    granted = sameDevice && permissionExtra && manager.hasPermission(device)
+                    Log.i(
+                        "FloweryUsbPermission",
+                        "callback device=${device.deviceName} returnedDevice=${returnedDevice?.deviceName} " +
+                            "permissionExtra=$permissionExtra hasPermission=${manager.hasPermission(device)}"
+                    )
+                    latch.countDown()
                 }
             }
             val filter = IntentFilter(action)
@@ -200,9 +211,20 @@ internal class UsbNativePlaybackSession private constructor(
                 val permissionIntent = PendingIntent.getBroadcast(
                     context, device.deviceId, Intent(action).setPackage(context.packageName), flags
                 )
+                Log.i(
+                    "FloweryUsbPermission",
+                    "request device=${device.deviceName} id=${device.deviceId} " +
+                        "alreadyGranted=${manager.hasPermission(device)}"
+                )
                 manager.requestPermission(device, permissionIntent)
-                latch.await(30, TimeUnit.SECONDS)
-                return granted && manager.hasPermission(device)
+                val callbackReceived = latch.await(30, TimeUnit.SECONDS)
+                val hasPermission = manager.hasPermission(device)
+                Log.i(
+                    "FloweryUsbPermission",
+                    "result device=${device.deviceName} callbackReceived=$callbackReceived " +
+                        "callbackGranted=$granted hasPermission=$hasPermission"
+                )
+                return callbackReceived && granted && hasPermission
             } finally {
                 runCatching { context.unregisterReceiver(receiver) }
             }
