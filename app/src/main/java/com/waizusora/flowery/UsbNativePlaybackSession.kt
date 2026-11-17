@@ -156,9 +156,9 @@ internal class UsbNativePlaybackSession private constructor(
     fun status(): JSONObject = JSONObject(usb.playbackStatus())
 
     @Synchronized
-    fun stopPlayback() {
-        if (closed) return
-        usb.stopPlayback()
+    fun stopPlayback(): Result<Unit> {
+        if (closed) return Result.success(Unit)
+        return usb.stopPlayback()
     }
 
     @Synchronized
