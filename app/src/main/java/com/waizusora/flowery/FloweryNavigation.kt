@@ -1,5 +1,6 @@
 package com.waizusora.flowery
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -94,7 +95,14 @@ fun FloweryNavigation(
             Destination.WELCOME -> Unit
         }
     }
-    BackHandler(enabled = destination != Destination.WELCOME) { navigateBack() }
+    BackHandler(enabled = destination != Destination.WELCOME) {
+        if (destination == Destination.PLAYER) {
+            // Back from Now Playing backgrounds the task like Home; playback remains owned by PlaybackService.
+            (context as? Activity)?.moveTaskToBack(true)
+        } else {
+            navigateBack()
+        }
+    }
     var lyricsVisible by remember { mutableStateOf(false) }
     var showLyricsSearch by remember { mutableStateOf(false) }
     var downloadedLyrics by remember(selectedTrack?.uri) {
