@@ -1,0 +1,157 @@
+From: Flowery development
+Subject: [PATCH] UAC2: accept read-only Clock Source when GET_RANGE advertises the requested rate
+
+Many class-compliant DACs expose a fixed or non-host-programmable Clock
+Source and select sample rate via the AudioStreaming alternate setting.
+Requiring GET_CUR to already match the track rate caused USB exclusive
+playback to fail with "source frequency is read-only" for common 44.1/96 kHz
+libraries.
+
+GET_RANGE remains the capability gate. SET_CUR is issued only when the
+source frequency control is host-programmable (bmControls frequency bits
+0b10). Unit tests and the bit-perfect path audit document the policy.
+---
+
+diff --git a/app/src/main/java/com/waizusora/flowery/UsbLibusbSession.kt b/app/src/main/java/com/waizusora/flowery/UsbLibusbSession.kt
+--- a/app/src/main/java/com/waizusora/flowery/UsbLibusbSession.kt
++++ b/app/src/main/java/com/waizusora/flowery/UsbLibusbSession.kt
+@@ -176,12 +176,10 @@
+             }
+ 
+             fun canNegotiateSource(sourceId: Int, controls: Int, rate: Int): Boolean {
+-                if (!supportsRate(sourceId, rate)) return false
+-                val sourceIndex = (sourceId shl 8) or controlInterfaceNumber
+-                val current = ByteArray(4)
+-                val length = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, current, 4, 1_000)
+-                if (length != 4) return false
+-                return readU32(current, 0) == rate.toLong() || (controls and 0x03) == 0x02
++                // GET_RANGE is authoritative for both host-programmable and read-only
++                // Clock Sources. Rate selection for read-only sources is expected to
++                // follow the chosen AudioStreaming alternate setting.
++                return supportsRate(sourceId, rate)
+             }
+             if (clockPaths.isNotEmpty()) {
+                 val failures = mutableListOf<String>()
+@@ -230,11 +228,14 @@
+                     if (oldSourceRate !in 1..Int.MAX_VALUE.toLong()) {
+                         failures += "source returned an invalid current rate"; continue
+                     }
+-                    // Only bmControls=0b10 permits SET_CUR. Reserved 0b11 is
+-                    // treated conservatively as read-only and must already match the requested rate.
+-                    if (oldSourceRate != sourceRate && (path.sourceControls and 0x03) != 2) {
+-                        failures += "source frequency is read-only"; continue
+-                    }
++                    // bmControls frequency field (bits 1:0):
++                    //   0b10 = host-programmable; SET_CUR is used when GET_CUR differs.
++                    //   0b00 / 0b01 / 0b11 = not host-writable. Many class-compliant DACs
++                    //   leave Clock Source GET_CUR at a nominal or previously negotiated
++                    //   rate and select the active rate via the AudioStreaming alternate
++                    //   setting. GET_RANGE (checked above) is the capability gate; do not
++                    //   reject a read-only source solely because GET_CUR does not match.
++                    val sourceHostProgrammable = (path.sourceControls and 0x03) == 2
+ 
+                     data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
+                     val selectorChanges = mutableListOf<SelectorChange>()
+@@ -311,7 +312,7 @@
+                                 mutationFailure = "clock selector SET_CUR/verification failed"; break
+                             }
+                         }
+-                        if (mutationFailure == null && oldSourceRate != sourceRate) {
++                        if (mutationFailure == null && sourceHostProgrammable && oldSourceRate != sourceRate) {
+                             sourceWriteAttempted = true
+                             val rate = sourceRate.toInt()
+                             val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
+
+diff --git a/app/src/test/java/com/waizusora/flowery/UsbLibusbSessionTest.kt b/app/src/test/java/com/waizusora/flowery/UsbLibusbSessionTest.kt
+--- a/app/src/test/java/com/waizusora/flowery/UsbLibusbSessionTest.kt
++++ b/app/src/test/java/com/waizusora/flowery/UsbLibusbSessionTest.kt
+@@ -89,7 +89,7 @@
+     }
+ 
+     @Test
+-    fun acceptsReservedClockControlOnlyWhenRequestedRateIsAlreadyActive() {
++    fun acceptsReadOnlyClockWhenRequestedRateIsAlreadyActive() {
+         val fake = FakeUsbControl().apply { sourceRate = 48_000 }
+         val session = UsbLibusbSession(null, 1L, fake)
+         val path = Uac2ClockPath(
+@@ -113,7 +113,9 @@
+     }
+ 
+     @Test
+-    fun rejectsReservedClockControlWhenRateChangeWouldBeRequired() {
++    fun acceptsReadOnlyClockWhenGetRangeAdvertisesRequestedRate() {
++        // Current GET_CUR is 44100; requested rate is 48000 and is advertised by
++        // GET_RANGE. Read-only sources must not require GET_CUR to already match.
+         val fake = FakeUsbControl()
+         val session = UsbLibusbSession(null, 1L, fake)
+         val path = Uac2ClockPath(
+@@ -132,9 +134,37 @@
+             clockPaths = listOf(path)
+         )
+ 
++        assertTrue(result.isSuccess)
++        assertTrue(fake.writes.isEmpty())
++        assertEquals(44_100, fake.sourceRate)
++    }
++
++    @Test
++    fun rejectsReadOnlyClockWhenGetRangeDoesNotAdvertiseRequestedRate() {
++        val fake = FakeUsbControl()
++        val session = UsbLibusbSession(null, 1L, fake)
++        val path = Uac2ClockPath(
++            sourceEntityId = 9,
++            sourceControls = 3,
++            selectors = emptyList(),
++            multipliers = emptyList(),
++            clockEntities = listOf(9)
++        )
++
++        val result = session.negotiateUac2Clock(
++            controlInterfaceNumber = 0,
++            clockSourceEntityId = 9,
++            clockControls = 3,
++            sampleRate = 96_000,
++            clockPaths = listOf(path)
++        )
++
+         assertTrue(result.isFailure)
+         assertTrue(fake.writes.isEmpty())
+-        assertTrue(result.exceptionOrNull()?.message?.contains("read-only") == true)
++        assertTrue(
++            result.exceptionOrNull()?.message?.contains("does not advertise") == true ||
++                result.exceptionOrNull()?.message?.contains("No UAC2 clock path") == true
++        )
+     }
+ 
+     @Test
+
+diff --git a/docs/USB_BIT_PERFECT_PATH_AUDIT.md b/docs/USB_BIT_PERFECT_PATH_AUDIT.md
+--- a/docs/USB_BIT_PERFECT_PATH_AUDIT.md
++++ b/docs/USB_BIT_PERFECT_PATH_AUDIT.md
+@@ -1,6 +1,6 @@
+ # USB DAC bit-perfect path audit
+ 
+-This audit covers Flowery's native USB Audio playback path on the `dev` branch.
++This audit covers Flowery's native USB Audio playback path on the `trial` branch.
+ It describes transformations performed by Flowery before submitting isochronous
+ USB transfers. It does not certify the DAC hardware, USB host controller, or
+ analog output.
+@@ -51,8 +51,16 @@
+   requested format when its bit is present.
+ - UAC2 playback resolves the selected streaming terminal's clock topology,
+   reads Clock Source `GET_RANGE` before changing frequency, checks selector
+-  and multiplier paths, verifies `GET_CUR` after `SET_CUR`, and restores the
+-  previous clock/selector state if native stream startup fails.
++  and multiplier paths, verifies `GET_CUR` after `SET_CUR` when the source is
++  host-programmable, and restores the previous clock/selector state if native
++  stream startup fails.
++- Clock Source frequency control encodings other than host-programmable
++  (`bmControls` frequency bits != `0b10`) are treated as read-only. For those
++  sources, `GET_RANGE` is the capability gate: if the requested rate is
++  advertised, negotiation succeeds without requiring `GET_CUR` to already match
++  and without issuing `SET_CUR`. Rate selection is expected to follow the chosen
++  AudioStreaming alternate setting, which is the common behavior for fixed-clock
++  class-compliant DACs.
+ - These control-transfer checks are covered by Kotlin fake-control tests;
+   actual DAC behavior and host-controller timing still require hardware tests.
+ 
