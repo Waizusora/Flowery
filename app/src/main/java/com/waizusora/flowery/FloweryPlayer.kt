@@ -13,6 +13,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     companion object {
         private const val DECODE_CHUNK_FRAMES = 8_192
         private const val DUCK_GAIN = 0.25f
+        private const val PREVIOUS_WORKER_JOIN_TIMEOUT_MS = 15_000L
     }
 
     private var worker: Thread? = null
@@ -80,9 +81,23 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var sessionHandle = 0L
             var sessionFailed = false
             try {
-                previousWorker?.join(4_000L)
-                check(previousWorker?.isAlive != true) {
-                    "The previous playback session did not release its output device in time."
+                previousWorker?.let { previous ->
+                    if (previous !== Thread.currentThread()) {
+                        val waitStartedMs = android.os.SystemClock.elapsedRealtime()
+                        Log.i(
+                            "FloweryDiagnostics",
+                            "PLAYBACK_REPLACEMENT_WAIT_BEGIN generation=$generation previousThread=${previous.name}"
+                        )
+                        previous.join(PREVIOUS_WORKER_JOIN_TIMEOUT_MS)
+                        val waitedMs = android.os.SystemClock.elapsedRealtime() - waitStartedMs
+                        Log.i(
+                            "FloweryDiagnostics",
+                            "PLAYBACK_REPLACEMENT_WAIT_END generation=$generation previousThread=${previous.name} waitedMs=$waitedMs alive=${previous.isAlive}"
+                        )
+                        check(!previous.isAlive) {
+                            "The previous playback session did not release its output device within ${PREVIOUS_WORKER_JOIN_TIMEOUT_MS} ms."
+                        }
+                    }
                 }
                 onState("Opening audio stream…")
                 val openedSourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
@@ -475,12 +490,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         stopped.set(true)
         pauseRequested.set(false)
         synchronized(outputLifecycleLock) { outputReady = false }
-        usbPlaybackSession?.let { usb ->
-            runCatching { usb.stopPlayback().getOrThrow() }
-                .onFailure { error ->
-                    Log.e("FloweryDiagnostics", "USB_PLAYBACK_STOP_FAILURE; native close will still perform final drain", error)
-                }
-        }
+        // Do not synchronously stop USB transfers here. The playback worker owns the
+        // session and its finally block calls native close, which performs the complete
+        // stop, transfer drain, and session removal sequence. Calling stop first duplicated
+        // that teardown and could hold the session monitor while close waited for transfers.
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
         NativeAudio.nativeStopOutput()
         worker?.interrupt()
