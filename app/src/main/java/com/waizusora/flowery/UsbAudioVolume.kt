@@ -39,7 +39,8 @@ internal object UsbAudioVolumeDescriptorParser {
         var interfaceClass = -1
         var interfaceSubclass = -1
         var protocol = -1
-        var selected: UacVolumeControl? = null
+        val featureUnits = mutableListOf<UacVolumeControl>()
+        val playbackOutputSources = mutableSetOf<Int>()
 
         while (offset + 2 <= descriptors.size) {
             val length = descriptors[offset].toInt() and 0xff
@@ -54,20 +55,35 @@ internal object UsbAudioVolumeDescriptorParser {
                     interfaceSubclass = d[6].toInt() and 0xff
                     protocol = d[7].toInt() and 0xff
                 }
-                0x24 -> if (interfaceClass == 0x01 && interfaceSubclass == 0x01 &&
-                    d.size >= 3 && (d[2].toInt() and 0xff) == 0x06) {
-                    val parsed = parseFeatureUnit(d, interfaceNumber, protocol)
-                    if (parsed != null && parsed.supportsRead) {
-                        // Prefer the first Feature Unit with a usable volume control.
-                        if (selected == null || (!selected.supportsWrite && parsed.supportsWrite)) {
-                            selected = parsed
+                0x24 -> if (interfaceClass == 0x01 && interfaceSubclass == 0x01 && d.size >= 3) {
+                    when (d[2].toInt() and 0xff) {
+                        0x03 -> if (d.size >= 8) {
+                            // Ignore the USB-streaming Output Terminal used by capture.
+                            // A physical output terminal (speaker/headphone/etc.) is
+                            // the playback path whose source may be a Feature Unit.
+                            val terminalType = (d[4].toInt() and 0xff) or
+                                ((d[5].toInt() and 0xff) shl 8)
+                            val sourceId = d[7].toInt() and 0xff
+                            if (terminalType != 0x0101 && sourceId != 0) {
+                                playbackOutputSources += sourceId
+                            }
+                        }
+                        0x06 -> {
+                            val parsed = parseFeatureUnit(d, interfaceNumber, protocol)
+                            if (parsed != null && parsed.supportsRead) featureUnits += parsed
                         }
                     }
                 }
             }
             offset += length
         }
-        return selected
+
+        // Associate the volume unit with a physical playback Output Terminal.
+        // This prevents accidentally controlling a microphone/capture Feature Unit
+        // on full-duplex USB audio devices.
+        return featureUnits
+            .filter { it.unitId in playbackOutputSources }
+            .maxByOrNull { if (it.supportsWrite) 1 else 0 }
     }
 
     private fun parseFeatureUnit(
