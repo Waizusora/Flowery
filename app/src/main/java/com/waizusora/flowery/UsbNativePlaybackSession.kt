@@ -141,6 +141,12 @@ internal class UsbNativePlaybackSession private constructor(
         )
         if (result.isSuccess) {
             Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
+            Log.i(
+                "FloweryUsbNative",
+                "USB_VOLUME_CAPABILITY detected=${uacVolumeControl?.supportsRead == true} " +
+                    "writable=${uacVolumeControl?.supportsWrite == true} " +
+                    "unit=${uacVolumeControl?.unitId ?: -1}"
+            )
             uacVolumeControl?.let { control ->
                 val volume = usb.readUacVolume(control)
                 if (volume.isSuccess) {
