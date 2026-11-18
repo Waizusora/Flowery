@@ -60,6 +60,8 @@ fun FloweryNavigation(
     currentTag: AudioTag?, albumArtBytes: ByteArray?, displayTitle: String, displayArtist: String,
     lyrics: List<LyricLine>, positionMs: Long, durationMs: Long,
     outputSampleRateHz: Int, outputBitDepth: Int, outputBackend: String,
+    volume: Float, usbVolumeDetected: Boolean, usbVolumeWritable: Boolean,
+    usbVolumeVerified: Boolean, usbVolumeDb: Float,
     status: String,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -289,6 +291,12 @@ fun FloweryNavigation(
                     outputSampleRateHz = outputSampleRateHz,
                     outputBitDepth = outputBitDepth,
                     outputBackend = outputBackend,
+                    volume = volume,
+                    onVolume = onVolume,
+                    usbVolumeDetected = usbVolumeDetected,
+                    usbVolumeWritable = usbVolumeWritable,
+                    usbVolumeVerified = usbVolumeVerified,
+                    usbVolumeDb = usbVolumeDb,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.INFO_AUDIO -> SettingsPage.AUDIO
