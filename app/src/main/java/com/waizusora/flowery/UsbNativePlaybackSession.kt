@@ -94,6 +94,7 @@ internal class UsbNativePlaybackSession private constructor(
     private val uacVolumeControl: UacVolumeControl?
 ) : Closeable {
     private var closed = false
+    @Volatile private var cachedVolumeSnapshot: UacVolumeSnapshot? = null
 
     @Synchronized
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
@@ -174,19 +175,19 @@ internal class UsbNativePlaybackSession private constructor(
     fun volumeSnapshot(): Result<UacVolumeSnapshot> {
         val control = uacVolumeControl
             ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
-        return usb.readUacVolume(control)
+        return usb.readUacVolume(control).onSuccess { cachedVolumeSnapshot = it }
     }
 
     @Synchronized
     fun setVolumeFraction(fraction: Float): Result<UacVolumeSnapshot> {
         val control = uacVolumeControl
             ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
-        return usb.setUacVolume(control, fraction)
+        return usb.setUacVolume(control, fraction).onSuccess { cachedVolumeSnapshot = it }
     }
 
     @Synchronized
     fun currentVolumeFraction(): Float =
-        volumeSnapshot().getOrNull()?.asLinearFraction() ?: 1f
+        (cachedVolumeSnapshot ?: volumeSnapshot().getOrNull())?.asLinearFraction() ?: 1f
 
     @Synchronized
     fun pause(): Result<Unit> = usb.pausePlayback()
