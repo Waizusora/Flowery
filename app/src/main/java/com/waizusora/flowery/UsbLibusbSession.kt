@@ -246,13 +246,22 @@ internal class UsbLibusbSession internal constructor(
                         failures += "source returned an invalid current rate"; continue
                     }
                     // bmControls frequency field (bits 1:0):
-                    //   0b10 = host-programmable; SET_CUR is used when GET_CUR differs.
-                    //   0b00 / 0b01 / 0b11 = not host-writable. Many class-compliant DACs
-                    //   leave Clock Source GET_CUR at a nominal or previously negotiated
-                    //   rate and select the active rate via the AudioStreaming alternate
-                    //   setting. GET_RANGE (checked above) is the capability gate; do not
-                    //   reject a read-only source solely because GET_CUR does not match.
-                    val sourceHostProgrammable = (path.sourceControls and 0x03) == 2
+                    //   0b10 = host-programmable; SET_CUR is mandatory when GET_CUR differs,
+                    //         and a failed write or verification rejects the clock path.
+                    //   0b11 = reserved by the specification, but emitted by some DACs whose
+                    //         clock does accept SET_CUR. When GET_CUR differs from the required
+                    //         rate, a best-effort SET_CUR followed by GET_CUR verification is
+                    //         attempted; if the device refuses it, negotiation continues so
+                    //         that fixed-clock devices are not regressed.
+                    //   0b00 / 0b01 = not host-writable. Many class-compliant DACs leave
+                    //         Clock Source GET_CUR at a nominal or previously negotiated rate
+                    //         and select the active rate via the AudioStreaming alternate
+                    //         setting. GET_RANGE (checked above) is the capability gate; do not
+                    //         reject a read-only source solely because GET_CUR does not match.
+                    val sourceFrequencyControl = path.sourceControls and 0x03
+                    val sourceHostProgrammable = sourceFrequencyControl == 2
+                    val sourceBestEffortWrite = sourceFrequencyControl == 3
+                    var sourceActiveRate = oldSourceRate
 
                     data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
                     val selectorChanges = mutableListOf<SelectorChange>()
@@ -329,16 +338,26 @@ internal class UsbLibusbSession internal constructor(
                                 mutationFailure = "clock selector SET_CUR/verification failed"; break
                             }
                         }
-                        if (mutationFailure == null && sourceHostProgrammable && oldSourceRate != sourceRate) {
-                            sourceWriteAttempted = true
+                        if (mutationFailure == null && oldSourceRate != sourceRate &&
+                            (sourceHostProgrammable || sourceBestEffortWrite)) {
+                            // A mandatory write is tracked for rollback before it is issued. A
+                            // best-effort write is tracked only once the device has confirmed it,
+                            // so that a refused request never triggers a failing restore.
+                            if (sourceHostProgrammable) sourceWriteAttempted = true
                             val rate = sourceRate.toInt()
                             val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
                                 (rate ushr 16).toByte(), (rate ushr 24).toByte())
                             val written = controlTransfer.transfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
                             val verify = ByteArray(4)
                             val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
-                            if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
+                            val confirmed = written == 4 && read == 4 && readU32(verify, 0) == sourceRate
+                            if (confirmed) {
+                                sourceWriteAttempted = true
+                                sourceActiveRate = sourceRate
+                            } else if (sourceHostProgrammable) {
                                 mutationFailure = "clock source SET_CUR/verification failed"
+                            } else {
+                                safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_SET_CUR_UNCONFIRMED sourceEntity=${path.sourceEntityId} requiredSourceHz=$sourceRate currentSourceHz=$oldSourceRate controls=${path.sourceControls} setCurResult=$written getCurResult=$read; continuing without a clock change")
                             }
                         }
     
@@ -356,7 +375,7 @@ internal class UsbLibusbSession internal constructor(
                         failures += mutationFailure
                         continue
                     }
-                    safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=${path.sourceEntityId} requestedOutputHz=$sampleRate sourceRequiredHz=$sourceRate sourceCurrentHz=$oldSourceRate sourceWritable=$sourceHostProgrammable selectors=${path.selectors.size} multipliers=${path.multipliers.size}")
+                    safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=${path.sourceEntityId} requestedOutputHz=$sampleRate sourceRequiredHz=$sourceRate sourceCurrentHz=$oldSourceRate sourceActiveHz=$sourceActiveRate sourceWritable=$sourceHostProgrammable sourceBestEffortWrite=$sourceBestEffortWrite selectors=${path.selectors.size} multipliers=${path.multipliers.size}")
                     pendingClockRollback = { restoreState() }
                     return Result.success(Unit)
                 }

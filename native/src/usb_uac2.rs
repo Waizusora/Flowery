@@ -84,9 +84,11 @@ impl AudioControlInterface {
 
         if let Some(&controls) = self.clock_sources.get(&entity_id) {
             // Preserve every two-bit frequency-control encoding from the descriptor.
-            // Kotlin treats only 0b10 as writable; 0b00, 0b01, and the reserved
-            // 0b11 encoding are candidates only when GET_RANGE and GET_CUR prove
-            // that the requested rate is already active. No SET_CUR is sent for them.
+            // Kotlin treats 0b10 as host-programmable (SET_CUR is mandatory when
+            // GET_CUR differs) and the reserved 0b11 encoding as best-effort
+            // (SET_CUR is attempted and verified, and a refusal is tolerated).
+            // 0b00 and 0b01 are read-only: GET_RANGE is the capability gate and
+            // no SET_CUR is sent.
             output.push(Uac2ClockPath {
                 source_entity_id: entity_id,
                 source_controls: controls,

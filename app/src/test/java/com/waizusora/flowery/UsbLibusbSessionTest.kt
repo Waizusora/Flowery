@@ -114,9 +114,65 @@ class UsbLibusbSessionTest {
 
     @Test
     fun acceptsReadOnlyClockWhenGetRangeAdvertisesRequestedRate() {
-        // Current GET_CUR is 44100; requested rate is 48000 and is advertised by
-        // GET_RANGE. Read-only sources must not require GET_CUR to already match.
+        // Frequency control 0b01 (read-only). Current GET_CUR is 44100; the requested
+        // rate is 48000 and is advertised by GET_RANGE. Read-only sources must not
+        // require GET_CUR to already match, and no SET_CUR may be issued.
         val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 1,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 1,
+            sampleRate = 48_000,
+            clockPaths = listOf(path)
+        )
+
+        assertTrue(result.isSuccess)
+        assertTrue(fake.writes.isEmpty())
+        assertEquals(44_100, fake.sourceRate)
+    }
+
+    @Test
+    fun programsClockWhenReservedFrequencyControlEncodingMismatchesRequestedRate() {
+        // Frequency control 0b11 is reserved by UAC2 but is emitted by DACs whose clock
+        // accepts SET_CUR. A mismatching GET_CUR must be corrected and verified;
+        // otherwise the DAC plays at its stale rate and the audio is pitch-shifted.
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 3,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 3,
+            sampleRate = 48_000,
+            clockPaths = listOf(path)
+        )
+
+        assertTrue(result.isSuccess)
+        assertEquals(listOf("source:48000"), fake.writes)
+        assertEquals(48_000, fake.sourceRate)
+    }
+
+    @Test
+    fun continuesWhenReservedFrequencyControlEncodingRefusesSetCur() {
+        // A fixed-clock device that merely mislabels its control must keep working:
+        // a refused best-effort SET_CUR is not fatal and leaves no rollback pending.
+        val fake = FakeUsbControl().apply { failNextSourceWrite = true }
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
             sourceEntityId = 9,
