@@ -225,10 +225,10 @@ internal class UsbLibusbSession internal constructor(
                     val index = (control.unitId shl 8) or control.controlInterface
                     val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
                     val payload = byteArrayOf(target.toByte(), (target ushr 8).toByte())
-                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
-                    // Record the mutation before verification so a failed verification
-                    // still triggers restoration of the device's possibly changed value.
+                    // Record before the request: a transport exception may occur after
+                    // the device accepted the control transfer.
                     changed += Changed(channel, oldValue)
+                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
                     val verified = readVolumeValue(control, channel, 0x81)
                     if (written != 2 || verified != target) {
                         throw IllegalStateException("Feature Unit volume SET_CUR verification failed for channel $channel")
