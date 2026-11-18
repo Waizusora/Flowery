@@ -209,7 +209,7 @@ internal class UsbLibusbSession internal constructor(
         }
         data class Changed(val channel: Int, val oldValue: Int)
         val changed = mutableListOf<Changed>()
-        try {
+        return try {
             var resultSnapshot: UacVolumeSnapshot? = null
             for (channel in control.writableChannels.distinct()) {
                 val range = readVolumeRange(control, channel)
