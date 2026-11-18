@@ -95,6 +95,7 @@ internal class UsbNativePlaybackSession private constructor(
 ) : Closeable {
     private var closed = false
     @Volatile private var cachedVolumeSnapshot: UacVolumeSnapshot? = null
+    @Volatile private var volumeWriteVerified = false
 
     @Synchronized
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
@@ -183,8 +184,24 @@ internal class UsbNativePlaybackSession private constructor(
     fun setVolumeFraction(fraction: Float): Result<UacVolumeSnapshot> {
         val control = uacVolumeControl
             ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
-        return usb.setUacVolume(control, fraction).onSuccess { cachedVolumeSnapshot = it }
+        return usb.setUacVolume(control, fraction)
+            .onSuccess {
+                cachedVolumeSnapshot = it
+                volumeWriteVerified = true
+                Log.i(
+                    "FloweryUsbNative",
+                    "USB_VOLUME_SET_VERIFIED unit=${control.unitId} channel=${it.channel} " +
+                        "currentDb256=${it.currentDb256} requestedFraction=$fraction"
+                )
+            }
+            .onFailure {
+                Log.w("FloweryUsbNative", "USB_VOLUME_SET_FAILED unit=${control.unitId} reason=${it.message}")
+            }
     }
+
+    fun hasVerifiedVolumeWrite(): Boolean = volumeWriteVerified
+
+    fun cachedVolumeSnapshot(): UacVolumeSnapshot? = cachedVolumeSnapshot
 
     @Synchronized
     fun currentVolumeFraction(): Float =
