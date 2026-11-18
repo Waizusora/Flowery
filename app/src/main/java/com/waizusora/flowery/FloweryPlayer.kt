@@ -393,6 +393,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbRouteActive) usbPlaybackSession?.currentVolumeFraction() ?: 1f
         else volumeController.systemVolumeFraction()
 
+    fun usbVolumeControlDetected(): Boolean =
+        usbRouteActive && usbPlaybackSession?.hasHardwareVolumeControl() == true
+
+    fun usbVolumeControlWritable(): Boolean =
+        usbRouteActive && usbPlaybackSession?.hasWritableHardwareVolumeControl() == true
+
+    fun usbVolumeWriteVerified(): Boolean =
+        usbRouteActive && usbPlaybackSession?.hasVerifiedVolumeWrite() == true
+
+    fun usbVolumeCurrentDb(): Float =
+        usbPlaybackSession?.cachedVolumeSnapshot()?.currentDb256?.div(256f) ?: Float.NaN
+
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->
             return (usb.positionMs() - activeSegmentStartMs).coerceAtLeast(0L)
