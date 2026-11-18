@@ -144,6 +144,7 @@ internal class UsbNativePlaybackSession private constructor(
                 val volume = usb.readUacVolume(control)
                 if (volume.isSuccess) {
                     val snapshot = volume.getOrThrow()
+                    cachedVolumeSnapshot = snapshot
                     Log.i(
                         "FloweryUsbNative",
                         "USB_VOLUME_READY unit=${control.unitId} protocol=${control.protocol} channel=${snapshot.channel} " +
