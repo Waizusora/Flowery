@@ -1,5 +1,20 @@
 package com.waizusora.flowery
 
+import kotlin.math.pow
+
+internal data class UacVolumeRange(val minimum: Int, val maximum: Int, val resolution: Int)
+internal data class UacVolumeSnapshot(
+    val currentDb256: Int,
+    val minimumDb256: Int,
+    val maximumDb256: Int,
+    val resolutionDb256: Int,
+    val writable: Boolean,
+    val channel: Int
+) {
+    fun asLinearFraction(): Float =
+        (10.0.pow(currentDb256 / (256.0 * 20.0))).toFloat().coerceIn(0f, 1f)
+}
+
 /**
  * Descriptor-derived USB Audio Feature Unit volume capability.
  *
