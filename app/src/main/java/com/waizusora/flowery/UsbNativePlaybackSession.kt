@@ -139,6 +139,25 @@ internal class UsbNativePlaybackSession private constructor(
         )
         if (result.isSuccess) {
             Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
+            uacVolumeControl?.let { control ->
+                val volume = usb.readUacVolume(control)
+                if (volume.isSuccess) {
+                    val snapshot = volume.getOrThrow()
+                    Log.i(
+                        "FloweryUsbNative",
+                        "USB_VOLUME_READY unit=${control.unitId} protocol=${control.protocol} channel=${snapshot.channel} " +
+                            "currentDb256=${snapshot.currentDb256} minDb256=${snapshot.minimumDb256} " +
+                            "maxDb256=${snapshot.maximumDb256} resolutionDb256=${snapshot.resolutionDb256} " +
+                            "readableChannels=${control.readableChannels.joinToString(separator = ",")} " +
+                            "writableChannels=${control.writableChannels.joinToString(separator = ",")}"
+                    )
+                } else {
+                    Log.w(
+                        "FloweryUsbNative",
+                        "USB_VOLUME_READ_UNAVAILABLE unit=${control.unitId} reason=${volume.exceptionOrNull()?.message}"
+                    )
+                }
+            }
         } else {
             Log.e("FloweryUsbNative", "PLAYBACK_START_FAILED sampleRate=$sampleRate endpoint=0x${endpoint.toString(16)}", result.exceptionOrNull())
         }
