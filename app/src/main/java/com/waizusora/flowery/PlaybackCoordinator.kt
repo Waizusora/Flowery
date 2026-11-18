@@ -95,6 +95,10 @@ internal class PlaybackCoordinator(
     fun outputSampleRateHz(): Int = engine.outputSampleRateHz()
     fun outputBitDepth(): Int = engine.outputBitDepth()
     fun outputBackendLabel(): String = engine.outputBackendLabel()
+    fun usbVolumeControlDetected(): Boolean = engine.usbVolumeControlDetected()
+    fun usbVolumeControlWritable(): Boolean = engine.usbVolumeControlWritable()
+    fun usbVolumeWriteVerified(): Boolean = engine.usbVolumeWriteVerified()
+    fun usbVolumeCurrentDb(): Float = engine.usbVolumeCurrentDb()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
     @Synchronized fun setDucked(ducked: Boolean) = engine.setDucked(ducked)
 
