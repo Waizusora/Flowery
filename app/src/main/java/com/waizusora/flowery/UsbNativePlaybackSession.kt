@@ -90,9 +90,11 @@ internal class UsbNativePlaybackSession private constructor(
     private val uac2SelectorSourceControls: IntArray,
     private val uac2ClockMultiplierEntity: Int?,
     private val uac2ClockMultiplierControls: Int?,
-    private val uac2ClockPaths: List<Uac2ClockPath>
+    private val uac2ClockPaths: List<Uac2ClockPath>,
+    private val uacVolumeControl: UacVolumeControl?
 ) : Closeable {
     private var closed = false
+    @Volatile private var cachedVolumeSnapshot: UacVolumeSnapshot? = null
 
     @Synchronized
     fun start(initialPositionMs: Long = 0L): Result<Unit> {
@@ -138,11 +140,55 @@ internal class UsbNativePlaybackSession private constructor(
         )
         if (result.isSuccess) {
             Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
+            uacVolumeControl?.let { control ->
+                val volume = usb.readUacVolume(control)
+                if (volume.isSuccess) {
+                    val snapshot = volume.getOrThrow()
+                    cachedVolumeSnapshot = snapshot
+                    Log.i(
+                        "FloweryUsbNative",
+                        "USB_VOLUME_READY unit=${control.unitId} protocol=${control.protocol} channel=${snapshot.channel} " +
+                            "currentDb256=${snapshot.currentDb256} minDb256=${snapshot.minimumDb256} " +
+                            "maxDb256=${snapshot.maximumDb256} resolutionDb256=${snapshot.resolutionDb256} " +
+                            "readableChannels=${control.readableChannels.joinToString(separator = ",")} " +
+                            "writableChannels=${control.writableChannels.joinToString(separator = ",")}"
+                    )
+                } else {
+                    Log.w(
+                        "FloweryUsbNative",
+                        "USB_VOLUME_READ_UNAVAILABLE unit=${control.unitId} reason=${volume.exceptionOrNull()?.message}"
+                    )
+                }
+            }
         } else {
             Log.e("FloweryUsbNative", "PLAYBACK_START_FAILED sampleRate=$sampleRate endpoint=0x${endpoint.toString(16)}", result.exceptionOrNull())
         }
         return result
     }
+
+    /** True only when descriptors expose a readable Feature Unit volume control. */
+    fun hasHardwareVolumeControl(): Boolean = uacVolumeControl?.supportsRead == true
+
+    /** True only when at least one Feature Unit channel advertises host-writable volume. */
+    fun hasWritableHardwareVolumeControl(): Boolean = uacVolumeControl?.supportsWrite == true
+
+    @Synchronized
+    fun volumeSnapshot(): Result<UacVolumeSnapshot> {
+        val control = uacVolumeControl
+            ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
+        return usb.readUacVolume(control).onSuccess { cachedVolumeSnapshot = it }
+    }
+
+    @Synchronized
+    fun setVolumeFraction(fraction: Float): Result<UacVolumeSnapshot> {
+        val control = uacVolumeControl
+            ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
+        return usb.setUacVolume(control, fraction).onSuccess { cachedVolumeSnapshot = it }
+    }
+
+    @Synchronized
+    fun currentVolumeFraction(): Float =
+        (cachedVolumeSnapshot ?: volumeSnapshot().getOrNull())?.asLinearFraction() ?: 1f
 
     @Synchronized
     fun pause(): Result<Unit> = usb.pausePlayback()
@@ -280,10 +326,18 @@ internal class UsbNativePlaybackSession private constructor(
                     continue
                 }
                 Log.i("FloweryUsbNative", "USB_PROBE_OPEN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId}")
+                val rawDescriptors = probe.rawDescriptors
+                val volumeControl = UsbAudioVolumeDescriptorParser.parse(rawDescriptors)
+                Log.i(
+                    "FloweryUsbNative",
+                    "USB_VOLUME_CAPABILITY device=${device.deviceName} featureUnit=${volumeControl?.unitId ?: 0} " +
+                        "readable=${volumeControl?.readableChannels?.joinToString(separator = ",") ?: "none"} " +
+                        "writable=${volumeControl?.writableChannels?.joinToString(separator = ",") ?: "none"}"
+                )
                 val planJson = try {
                     JSONObject(
                         NativeAudio.nativePlanUsbAudioPlayback(
-                            probe.rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
+                            rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
                         )
                     )
                 } catch (error: Throwable) {
@@ -433,7 +487,8 @@ internal class UsbNativePlaybackSession private constructor(
                         selectorSourceControls,
                         if (isUac2 && clockMultiplierEntity != 0) clockMultiplierEntity else null,
                         if (isUac2) clockMultiplierControls else null,
-                        clockPaths
+                        clockPaths,
+                        volumeControl
                     )
                 )
             }

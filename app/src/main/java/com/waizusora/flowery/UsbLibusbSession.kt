@@ -5,6 +5,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.util.Log
 import java.io.Closeable
+import kotlin.math.roundToInt
 
 // Android's mockable android.jar throws from Log methods in local JVM tests.
 // Keep diagnostics best-effort so clock negotiation and rollback remain testable.
@@ -19,6 +20,8 @@ private fun safeUsbLogE(tag: String, message: String) {
 private fun safeUsbLogE(tag: String, message: String, error: Throwable) {
     try { Log.e(tag, message, error) } catch (_: RuntimeException) { }
 }
+
+private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
 
 /**
  * Owns the Android USB connection for the lifetime of a native libusb session.
@@ -104,6 +107,171 @@ internal class UsbLibusbSession internal constructor(
     private var closed = false
     private val claimedControlInterfaces = mutableSetOf<Int>()
     private var pendingClockRollback: (() -> List<String>)? = null
+
+    private fun ensureControlInterfaceClaimed(interfaceNumber: Int): Boolean {
+        if (interfaceNumber !in 0..255) return false
+        if (interfaceNumber in claimedControlInterfaces) return true
+        val claimer = controlInterfaceClaimer ?: return true
+        if (!claimer(interfaceNumber)) return false
+        claimedControlInterfaces += interfaceNumber
+        return true
+    }
+
+    private fun readVolumeValue(control: UacVolumeControl, channel: Int, request: Int): Int? {
+        val index = (control.unitId shl 8) or control.controlInterface
+        val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
+        val bytes = ByteArray(2)
+        val length = controlTransfer.transfer(0xA1, request, value, index, bytes, 2, 1_000)
+        if (length != 2) return null
+        return ((bytes[0].toInt() and 0xff) or ((bytes[1].toInt() and 0xff) shl 8))
+            .let { if (it and 0x8000 != 0) it - 0x10000 else it }
+    }
+
+    private fun readVolumeRange(control: UacVolumeControl, channel: Int): UacVolumeRange? {
+        if (control.protocol == 0x00) {
+            val minimum = readVolumeValue(control, channel, 0x82) ?: return null
+            val maximum = readVolumeValue(control, channel, 0x83) ?: return null
+            val resolution = readVolumeValue(control, channel, 0x84) ?: return null
+            if (minimum > maximum || resolution < 0) return null
+            return UacVolumeRange(minimum, maximum, resolution)
+        }
+        val index = (control.unitId shl 8) or control.controlInterface
+        val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
+        val bytes = ByteArray(2 + 6 * 16)
+        val length = controlTransfer.transfer(0xA1, 0x82, value, index, bytes, bytes.size, 1_000)
+        if (length < 8) return null
+        val count = (bytes[0].toInt() and 0xff) or ((bytes[1].toInt() and 0xff) shl 8)
+        if (count !in 1..16 || length < 2 + count * 6) return null
+        // Multiple disjoint ranges are unusual for volume. Use the range containing
+        // the current value; otherwise the first descriptor-advertised range.
+        val current = readVolumeValue(control, channel, 0x81)
+        val ranges = (0 until count).mapNotNull { rangeIndex ->
+            val offset = 2 + rangeIndex * 6
+            fun signed16(at: Int): Int {
+                val raw = (bytes[at].toInt() and 0xff) or ((bytes[at + 1].toInt() and 0xff) shl 8)
+                return if (raw and 0x8000 != 0) raw - 0x10000 else raw
+            }
+            val minimum = signed16(offset)
+            val maximum = signed16(offset + 2)
+            val resolution = signed16(offset + 4)
+            if (minimum <= maximum && resolution >= 0) UacVolumeRange(minimum, maximum, resolution) else null
+        }
+        return ranges.firstOrNull { current != null && current in it.minimum..it.maximum }
+            ?: ranges.firstOrNull()
+    }
+
+    /** Reads descriptor-advertised Feature Unit volume in signed 1/256 dB units. */
+    @Synchronized
+    fun readUacVolume(control: UacVolumeControl): Result<UacVolumeSnapshot> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        if (!control.supportsRead || !ensureControlInterfaceClaimed(control.controlInterface)) {
+            return Result.failure(IllegalStateException("USB Audio Feature Unit volume is not readable"))
+        }
+        return try {
+            val channel = (control.writableChannels.firstOrNull() ?: control.readableChannels.firstOrNull()) ?: return Result.failure(
+                IllegalStateException("Feature Unit has no readable volume channel")
+            )
+            val range = readVolumeRange(control, channel)
+                ?: return Result.failure(IllegalStateException("Feature Unit GET_RANGE/GET_MIN failed"))
+            val current = readVolumeValue(control, channel, 0x81)
+                ?: return Result.failure(IllegalStateException("Feature Unit GET_CUR failed"))
+            if (current !in range.minimum..range.maximum) {
+                return Result.failure(IllegalStateException("Feature Unit returned volume outside its advertised range"))
+            }
+            Result.success(
+                UacVolumeSnapshot(
+                    currentDb256 = current,
+                    minimumDb256 = range.minimum,
+                    maximumDb256 = range.maximum,
+                    resolutionDb256 = range.resolution,
+                    writable = control.supportsWrite,
+                    channel = channel
+                )
+            )
+        } catch (error: Exception) {
+            safeUsbLogE("FloweryUsbNative", "USB_VOLUME_READ_FAILED unit=${control.unitId}", error)
+            Result.failure(error)
+        }
+    }
+
+    /**
+     * Sets Feature Unit volume for every advertised writable channel and verifies
+     * each SET_CUR with GET_CUR. Partial writes are rolled back on failure.
+     */
+    @Synchronized
+    fun setUacVolume(control: UacVolumeControl, fraction: Float): Result<UacVolumeSnapshot> {
+        if (closed) return Result.failure(IllegalStateException("USB session is closed"))
+        if (!fraction.isFinite() || fraction !in 0f..1f) {
+            return Result.failure(IllegalArgumentException("USB volume fraction must be finite and within 0..1"))
+        }
+        if (!control.supportsWrite || !ensureControlInterfaceClaimed(control.controlInterface)) {
+            return Result.failure(IllegalStateException("USB DAC does not expose a writable Feature Unit volume control"))
+        }
+        data class Changed(val channel: Int, val oldValue: Int)
+        val changed = mutableListOf<Changed>()
+        return try {
+            var resultSnapshot: UacVolumeSnapshot? = null
+            for (channel in control.writableChannels.distinct()) {
+                val range = readVolumeRange(control, channel)
+                    ?: throw IllegalStateException("Feature Unit volume range unavailable for channel $channel")
+                val oldValue = readVolumeValue(control, channel, 0x81)
+                    ?: throw IllegalStateException("Feature Unit GET_CUR failed for channel $channel")
+                val targetDb = if (fraction <= 0f) range.minimum / 256.0
+                    else (20.0 * kotlin.math.ln(fraction.toDouble()) / kotlin.math.ln(10.0))
+                var target = (targetDb * 256.0).roundToInt().coerceIn(range.minimum, range.maximum)
+                if (range.resolution > 0) {
+                    target = (range.minimum + ((target - range.minimum).toDouble() / range.resolution)
+                        .roundToInt() * range.resolution).coerceIn(range.minimum, range.maximum)
+                }
+                if (target != oldValue) {
+                    val index = (control.unitId shl 8) or control.controlInterface
+                    val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
+                    val payload = byteArrayOf(target.toByte(), (target ushr 8).toByte())
+                    // Record before the request: a transport exception may occur after
+                    // the device accepted the control transfer.
+                    changed += Changed(channel, oldValue)
+                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    val verified = readVolumeValue(control, channel, 0x81)
+                    if (written != 2 || verified != target) {
+                        throw IllegalStateException("Feature Unit volume SET_CUR verification failed for channel $channel")
+                    }
+                }
+                if (channel == control.readableChannels.firstOrNull()) {
+                    resultSnapshot = UacVolumeSnapshot(
+                        currentDb256 = target,
+                        minimumDb256 = range.minimum,
+                        maximumDb256 = range.maximum,
+                        resolutionDb256 = range.resolution,
+                        writable = true,
+                        channel = channel
+                    )
+                }
+            }
+            val snapshot = resultSnapshot ?: readUacVolume(control).getOrThrow()
+            safeUsbLogI("FloweryUsbNative", "USB_VOLUME_SET unit=${control.unitId} channel=${snapshot.channel} requestedFraction=$fraction currentDb256=${snapshot.currentDb256} writable=true")
+            Result.success(snapshot)
+        } catch (error: Exception) {
+            val rollbackErrors = mutableListOf<String>()
+            for (change in changed.asReversed()) {
+                try {
+                    val index = (control.unitId shl 8) or control.controlInterface
+                    val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or change.channel
+                    val payload = byteArrayOf(change.oldValue.toByte(), (change.oldValue ushr 8).toByte())
+                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    val verified = readVolumeValue(control, change.channel, 0x81)
+                    if (written != 2 || verified != change.oldValue) {
+                        rollbackErrors += "channel ${change.channel} restore verification failed"
+                    }
+                } catch (rollbackError: Exception) {
+                    rollbackErrors += "channel ${change.channel}: ${rollbackError.message ?: rollbackError.javaClass.simpleName}"
+                }
+            }
+            val detail = if (rollbackErrors.isEmpty()) error.message
+                else "${error.message}; rollback: ${rollbackErrors.joinToString()}"
+            safeUsbLogE("FloweryUsbNative", "USB_VOLUME_SET_FAILED unit=${control.unitId}", error)
+            Result.failure(IllegalStateException(detail ?: "Feature Unit volume update failed", error))
+        }
+    }
 
     /**
      * Applies the descriptor-advertised UAC1 endpoint sampling frequency.

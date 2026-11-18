@@ -40,10 +40,19 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var activeSegmentEndMs = -1L
 
     fun setVolume(value: Float) {
-        // Direct libusb playback bypasses Android's mixer and must remain at unity gain.
-        // Do not change STREAM_MUSIC volume as a side effect of a USB DAC volume gesture.
-        if (!OutputVolumePolicy.allowsSystemVolumeControl(usbRouteActive)) return
-        volumeController.setSystemVolume(value.coerceIn(0f, 1f))
+        val requested = value.coerceIn(0f, 1f)
+        if (usbRouteActive) {
+            val session = usbPlaybackSession ?: return
+            val result = session.setVolumeFraction(requested)
+            if (result.isFailure) {
+                Log.w(
+                    "FloweryUsbNative",
+                    "USB_VOLUME_UNAVAILABLE requestedFraction=$requested reason=${result.exceptionOrNull()?.message}"
+                )
+            }
+            return
+        }
+        volumeController.setSystemVolume(requested)
         softwareVolume = 1f
     }
 
@@ -381,7 +390,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun currentVolumeFraction(): Float =
-        OutputVolumePolicy.reportedVolume(usbRouteActive, volumeController.systemVolumeFraction())
+        if (usbRouteActive) usbPlaybackSession?.currentVolumeFraction() ?: 1f
+        else volumeController.systemVolumeFraction()
 
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->
