@@ -166,7 +166,7 @@ internal class UsbLibusbSession internal constructor(
             return Result.failure(IllegalStateException("USB Audio Feature Unit volume is not readable"))
         }
         return try {
-            val channel = control.readableChannels.firstOrNull() ?: return Result.failure(
+            val channel = (control.writableChannels.firstOrNull() ?: control.readableChannels.firstOrNull()) ?: return Result.failure(
                 IllegalStateException("Feature Unit has no readable volume channel")
             )
             val range = readVolumeRange(control, channel)
