@@ -54,13 +54,28 @@ analog output.
   and multiplier paths, verifies `GET_CUR` after `SET_CUR` when the source is
   host-programmable, and restores the previous clock/selector state if native
   stream startup fails.
-- Clock Source frequency control encodings other than host-programmable
-  (`bmControls` frequency bits != `0b10`) are treated as read-only. For those
-  sources, `GET_RANGE` is the capability gate: if the requested rate is
-  advertised, negotiation succeeds without requiring `GET_CUR` to already match
-  and without issuing `SET_CUR`. Rate selection is expected to follow the chosen
-  AudioStreaming alternate setting, which is the common behavior for fixed-clock
-  class-compliant DACs.
+- Clock Source frequency control (`bmControls` bits 1:0) is handled per encoding:
+  - `0b10` (host-programmable): `SET_CUR` is issued whenever `GET_CUR` differs
+    from the required rate and the result is verified with `GET_CUR`. A failed
+    write or verification rejects the clock path and triggers rollback.
+  - `0b11` (reserved by the UAC2 specification): some DACs emit this encoding
+    while accepting `SET_CUR`. When `GET_CUR` differs from the required rate, a
+    best-effort `SET_CUR` followed by `GET_CUR` verification is attempted. If
+    the device refuses or does not confirm the write, negotiation continues
+    without a clock change so that fixed-clock devices are not regressed; the
+    event is logged as `UAC2_CLOCK_SET_CUR_UNCONFIRMED`. A confirmed write is
+    restored on later startup failure, like a host-programmable write.
+  - `0b00` / `0b01` (read-only): `GET_RANGE` is the capability gate. If the
+    requested rate is advertised, negotiation succeeds without requiring
+    `GET_CUR` to already match and without issuing `SET_CUR`. Rate selection is
+    expected to follow the chosen AudioStreaming alternate setting, which is the
+    common behavior for fixed-clock class-compliant DACs.
+- Rationale for the `0b11` handling: a DAC whose clock remains at a stale rate
+  (for example 384 kHz while 96 kHz PCM is streamed) consumes samples at the
+  wrong speed, producing audio that is pitch-shifted by the ratio of the two
+  rates. `UAC2_CLOCK_READY` logs both `sourceCurrentHz` (before negotiation) and
+  `sourceActiveHz` (after negotiation); a difference between `sourceActiveHz`
+  and `sourceRequiredHz` indicates the clock was not aligned.
 - These control-transfer checks are covered by Kotlin fake-control tests;
   actual DAC behavior and host-controller timing still require hardware tests.
 
