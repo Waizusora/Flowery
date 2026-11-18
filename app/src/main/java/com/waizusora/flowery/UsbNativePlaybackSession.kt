@@ -182,6 +182,7 @@ internal class UsbNativePlaybackSession private constructor(
 
     @Synchronized
     fun setVolumeFraction(fraction: Float): Result<UacVolumeSnapshot> {
+        volumeWriteVerified = false
         val control = uacVolumeControl
             ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
         return usb.setUacVolume(control, fraction)
