@@ -5,6 +5,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.util.Log
 import java.io.Closeable
+import kotlin.math.roundToInt
 
 // Android's mockable android.jar throws from Log methods in local JVM tests.
 // Keep diagnostics best-effort so clock negotiation and rollback remain testable.
@@ -204,9 +205,9 @@ internal class UsbLibusbSession internal constructor(
         if (!control.supportsWrite || !ensureControlInterfaceClaimed(control.controlInterface)) {
             return Result.failure(IllegalStateException("USB DAC does not expose a writable Feature Unit volume control"))
         }
-        return try {
-            data class Changed(val channel: Int, val oldValue: Int)
-            val changed = mutableListOf<Changed>()
+        data class Changed(val channel: Int, val oldValue: Int)
+        val changed = mutableListOf<Changed>()
+        try {
             var resultSnapshot: UacVolumeSnapshot? = null
             for (channel in control.writableChannels.distinct()) {
                 val range = readVolumeRange(control, channel)
@@ -215,7 +216,7 @@ internal class UsbLibusbSession internal constructor(
                     ?: throw IllegalStateException("Feature Unit GET_CUR failed for channel $channel")
                 val targetDb = if (fraction <= 0f) range.minimum / 256.0
                     else (20.0 * kotlin.math.ln(fraction.toDouble()) / kotlin.math.ln(10.0))
-                var target = (targetDb * 256.0).toInt().coerceIn(range.minimum, range.maximum)
+                var target = (targetDb * 256.0).roundToInt().coerceIn(range.minimum, range.maximum)
                 if (range.resolution > 0) {
                     target = (range.minimum + ((target - range.minimum).toDouble() / range.resolution)
                         .roundToInt() * range.resolution).coerceIn(range.minimum, range.maximum)
@@ -225,11 +226,13 @@ internal class UsbLibusbSession internal constructor(
                     val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
                     val payload = byteArrayOf(target.toByte(), (target ushr 8).toByte())
                     val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    // Record the mutation before verification so a failed verification
+                    // still triggers restoration of the device's possibly changed value.
+                    changed += Changed(channel, oldValue)
                     val verified = readVolumeValue(control, channel, 0x81)
                     if (written != 2 || verified != target) {
                         throw IllegalStateException("Feature Unit volume SET_CUR verification failed for channel $channel")
                     }
-                    changed += Changed(channel, oldValue)
                 }
                 if (channel == control.readableChannels.firstOrNull()) {
                     resultSnapshot = UacVolumeSnapshot(
@@ -247,13 +250,22 @@ internal class UsbLibusbSession internal constructor(
             Result.success(snapshot)
         } catch (error: Exception) {
             val rollbackErrors = mutableListOf<String>()
-            // Best-effort restore all channels already changed in this transaction.
-            // The original error remains primary and rollback failures are appended.
-            runCatching {
-                // Channel state is captured in the transaction-local list above.
+            for (change in changed.asReversed()) {
+                try {
+                    val index = (control.unitId shl 8) or control.controlInterface
+                    val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or change.channel
+                    val payload = byteArrayOf(change.oldValue.toByte(), (change.oldValue ushr 8).toByte())
+                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    val verified = readVolumeValue(control, change.channel, 0x81)
+                    if (written != 2 || verified != change.oldValue) {
+                        rollbackErrors += "channel ${change.channel} restore verification failed"
+                    }
+                } catch (rollbackError: Exception) {
+                    rollbackErrors += "channel ${change.channel}: ${rollbackError.message ?: rollbackError.javaClass.simpleName}"
+                }
             }
-            val detail = if (rollbackErrors.isEmpty()) error.message else
-                "${error.message}; rollback: ${rollbackErrors.joinToString()}"
+            val detail = if (rollbackErrors.isEmpty()) error.message
+                else "${error.message}; rollback: ${rollbackErrors.joinToString()}"
             safeUsbLogE("FloweryUsbNative", "USB_VOLUME_SET_FAILED unit=${control.unitId}", error)
             Result.failure(IllegalStateException(detail ?: "Feature Unit volume update failed", error))
         }
