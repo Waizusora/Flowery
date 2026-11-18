@@ -142,6 +142,10 @@ class MainActivity : ComponentActivity() {
     private var playbackOutputSampleRateHz by mutableStateOf(0)
     private var playbackOutputBitDepth by mutableStateOf(0)
     private var playbackOutputBackend by mutableStateOf("—")
+    private var usbVolumeDetected by mutableStateOf(false)
+    private var usbVolumeWritable by mutableStateOf(false)
+    private var usbVolumeVerified by mutableStateOf(false)
+    private var usbVolumeDb by mutableStateOf(Float.NaN)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -183,6 +187,12 @@ class MainActivity : ComponentActivity() {
             playbackOutputSampleRateHz = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_SAMPLE_RATE, playbackOutputSampleRateHz)
             playbackOutputBitDepth = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_BIT_DEPTH, playbackOutputBitDepth)
             playbackOutputBackend = intent.getStringExtra(PlaybackService.EXTRA_OUTPUT_BACKEND) ?: playbackOutputBackend
+            if (intent.hasExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED)) {
+                usbVolumeDetected = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED, false)
+                usbVolumeWritable = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_WRITABLE, false)
+                usbVolumeVerified = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_VERIFIED, false)
+                usbVolumeDb = intent.getFloatExtra(PlaybackService.EXTRA_USB_VOLUME_DB, Float.NaN)
+            }
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
             val currentCueStart = intent.getLongExtra(PlaybackService.EXTRA_CURRENT_CUE_START, 0L)
             val currentCuePlaylist = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_CUE_PLAYLIST).orEmpty().ifBlank { null }
@@ -265,6 +275,11 @@ class MainActivity : ComponentActivity() {
                 outputSampleRateHz = playbackOutputSampleRateHz,
                 outputBitDepth = playbackOutputBitDepth,
                 outputBackend = playbackOutputBackend,
+                volume = volume,
+                usbVolumeDetected = usbVolumeDetected,
+                usbVolumeWritable = usbVolumeWritable,
+                usbVolumeVerified = usbVolumeVerified,
+                usbVolumeDb = usbVolumeDb,
                 onAddFolder = { folderPicker.launch(null) },
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
