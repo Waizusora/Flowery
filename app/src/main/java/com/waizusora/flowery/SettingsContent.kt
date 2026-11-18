@@ -42,7 +42,13 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     isPlaying: Boolean,
     outputSampleRateHz: Int,
     outputBitDepth: Int,
-    outputBackend: String) {
+    outputBackend: String,
+    volume: Float,
+    onVolume: (Float) -> Unit,
+    usbVolumeDetected: Boolean,
+    usbVolumeWritable: Boolean,
+    usbVolumeVerified: Boolean,
+    usbVolumeDb: Float) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
@@ -113,6 +119,41 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 style = MaterialTheme.typography.titleSmall)
             Text(detectedOutput.displayName, color = color,
                 style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("USB DAC HARDWARE VOLUME", color = color,
+                        fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+                    val usbDirectActive = outputBackend == "USB Direct"
+                    val volumeStatus = when {
+                        !usbDirectActive -> "Inactive · start USB Direct playback"
+                        !usbVolumeDetected -> "No readable Feature Unit volume control detected"
+                        !usbVolumeWritable -> "Detected · hardware volume is read-only"
+                        usbVolumeVerified -> "Verified · SET_CUR read back successfully with GET_CUR"
+                        else -> "Writable · adjust the slider to verify hardware control"
+                    }
+                    Text(volumeStatus, color = if (usbVolumeVerified) MaterialTheme.colorScheme.primary else muted,
+                        style = MaterialTheme.typography.bodySmall)
+                    if (usbVolumeDetected && usbVolumeDb.isFinite()) {
+                        Text("Hardware level: %.2f dB".format(java.util.Locale.ROOT, usbVolumeDb),
+                            color = color, style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = volume.coerceIn(0f, 1f),
+                        onValueChange = onVolume,
+                        enabled = usbDirectActive && usbVolumeWritable
+                    )
+                    Text(
+                        if (usbDirectActive && usbVolumeWritable)
+                            "This control changes the DAC Feature Unit. It does not change Android system volume or PCM samples."
+                        else
+                            "Connect a supported USB DAC and start playback using USB Direct to enable this control.",
+                        color = muted, style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
             HorizontalDivider(color = muted.copy(alpha = .25f))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("USB AUDIO DEVICES", modifier = Modifier.weight(1f), color = color,
