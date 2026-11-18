@@ -75,6 +75,10 @@ class PlaybackService : Service() {
         const val EXTRA_OUTPUT_SAMPLE_RATE = "output_sample_rate_hz"
         const val EXTRA_OUTPUT_BIT_DEPTH = "output_bit_depth"
         const val EXTRA_OUTPUT_BACKEND = "output_backend"
+        const val EXTRA_USB_VOLUME_DETECTED = "usb_volume_detected"
+        const val EXTRA_USB_VOLUME_WRITABLE = "usb_volume_writable"
+        const val EXTRA_USB_VOLUME_VERIFIED = "usb_volume_verified"
+        const val EXTRA_USB_VOLUME_DB = "usb_volume_db"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -178,6 +182,10 @@ class PlaybackService : Service() {
                     .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
                     .putExtra(EXTRA_OUTPUT_BIT_DEPTH, player.outputBitDepth())
                     .putExtra(EXTRA_OUTPUT_BACKEND, player.outputBackendLabel())
+                    .putExtra(EXTRA_USB_VOLUME_DETECTED, player.usbVolumeControlDetected())
+                    .putExtra(EXTRA_USB_VOLUME_WRITABLE, player.usbVolumeControlWritable())
+                    .putExtra(EXTRA_USB_VOLUME_VERIFIED, player.usbVolumeWriteVerified())
+                    .putExtra(EXTRA_USB_VOLUME_DB, player.usbVolumeCurrentDb())
                     .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
                     .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
                     .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
