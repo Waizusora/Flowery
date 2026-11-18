@@ -322,6 +322,13 @@ internal class UsbNativePlaybackSession private constructor(
                 }
                 val feedbackEndpoint = plan.optInt("feedback_endpoint_address", 0)
                 val feedbackPacket = plan.optInt("feedback_max_packet_size", 0)
+                val synchronizationType = plan.optInt("synchronization_type", -1)
+                val synchronizationName = when (synchronizationType) {
+                    1 -> "asynchronous"
+                    2 -> "adaptive"
+                    3 -> "synchronous"
+                    else -> "unknown"
+                }
                 val isUac2 = plan.optBoolean("requires_uac2_clock_negotiation")
                 val clockControlInterface = if (isUac2) plan.optInt("uac2_control_interface_number", -1) else -1
                 val clockSourceEntity = if (isUac2) plan.optInt("uac2_clock_source_entity_id", -1) else -1
@@ -391,7 +398,7 @@ internal class UsbNativePlaybackSession private constructor(
                         clockPaths.isEmpty() ||
                         invalidClockPaths
                     )
-                Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
+                Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval synchronizationType=$synchronizationType synchronization=$synchronizationName sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits != sourceBits ||
