@@ -6,7 +6,9 @@
 #[cfg(target_os = "android")]
 use std::{
     collections::{HashMap, HashSet},
+    ffi::CString,
     mem::ManuallyDrop,
+    os::raw::c_char,
     sync::{
         atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering},
         Arc, Mutex, OnceLock,
@@ -45,6 +47,42 @@ const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(target_os = "android")]
 const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
+
+#[cfg(target_os = "android")]
+#[link(name = "log")]
+extern "C" {
+    fn __android_log_write(priority: i32, tag: *const c_char, text: *const c_char) -> i32;
+}
+
+#[cfg(target_os = "android")]
+fn log_usb_diagnostic(message: &str) {
+    let tag = CString::new("FloweryUsbNative").expect("static log tag");
+    let safe_message = message.replace('\0', " ");
+    let text = CString::new(safe_message).expect("NUL bytes were replaced");
+    unsafe {
+        __android_log_write(4, tag.as_ptr(), text.as_ptr());
+    }
+}
+
+#[cfg(target_os = "android")]
+fn transfer_packet_metrics(slot: &TransferSlot) -> (u64, u64, u32, i32) {
+    unsafe {
+        let transfer_status = (*slot.transfer).status as i32;
+        let descriptors = (*slot.transfer).iso_packet_desc.as_ptr();
+        let mut expected_bytes = 0u64;
+        let mut actual_bytes = 0u64;
+        let mut packet_errors = 0u32;
+        for index in 0..PACKETS_PER_TRANSFER {
+            let descriptor = &*descriptors.add(index);
+            expected_bytes = expected_bytes.saturating_add(u64::from(descriptor.length));
+            actual_bytes = actual_bytes.saturating_add(u64::from(descriptor.actual_length));
+            if descriptor.status != 0 || descriptor.actual_length != descriptor.length {
+                packet_errors = packet_errors.saturating_add(1);
+            }
+        }
+        (expected_bytes, actual_bytes, packet_errors, transfer_status)
+    }
+}
 
 #[cfg(target_os = "android")]
 struct TransferSignal {
@@ -443,6 +481,14 @@ fn run_worker(
     };
     let mut feedback_rate_hz: Option<f64> = None;
     let mut last_feedback_at: Option<Instant> = None;
+    let mut feedback_samples = 0u64;
+    let mut last_feedback_raw = String::from("none");
+    let mut completed_transfers = 0u64;
+    let mut completed_frames = 0u64;
+    let mut expected_bytes = 0u64;
+    let mut actual_bytes = 0u64;
+    let mut packet_errors = 0u64;
+    let mut last_diagnostic_at = Instant::now();
     let mut feedback_cancelling = false;
     let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
@@ -599,6 +645,10 @@ fn run_worker(
                     } else {
                         match crate::usb_feedback::decode_feedback_rate_hz(&feedback.buffer, config.feedback_speed) {
                             Ok(measured) => {
+                                feedback_samples = feedback_samples.saturating_add(1);
+                                last_feedback_raw = feedback.buffer.iter()
+                                    .map(|byte| format!("{byte:02x}"))
+                                    .collect::<String>();
                                 if let Err(message) = crate::usb_feedback::validate_feedback_rate_hz(config.sample_rate, measured) {
                                     set_error(&error, &status, message);
                                 } else {
@@ -633,9 +683,36 @@ fn run_worker(
             slot.submitted = false;
             slot.submitted_at = None;
             if !cancelling {
-                if let Err(message) = transfer_packets_succeeded(slot) { set_error(&error, &status, message); continue; }
+                let (transfer_expected, transfer_actual, transfer_packet_errors, transfer_status) =
+                    transfer_packet_metrics(slot);
+                completed_transfers = completed_transfers.saturating_add(1);
+                completed_frames = completed_frames.saturating_add(slot.audio_frames);
+                expected_bytes = expected_bytes.saturating_add(transfer_expected);
+                actual_bytes = actual_bytes.saturating_add(transfer_actual);
+                packet_errors = packet_errors.saturating_add(u64::from(transfer_packet_errors));
+                if let Err(message) = transfer_packets_succeeded(slot) {
+                    log_usb_diagnostic(&format!(
+                        "TRANSFER_INVALID endpoint=0x{:02x} transferStatus={} packetErrors={} expectedBytes={} actualBytes={}",
+                        config.endpoint, transfer_status, transfer_packet_errors,
+                        transfer_expected, transfer_actual
+                    ));
+                    set_error(&error, &status, message);
+                    continue;
+                }
                 played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
             }
+        }
+        if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
+            log_usb_diagnostic(&format!(
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={}",
+                config.endpoint, config.sample_rate, config.channels, config.interval_us,
+                config.max_packet_bytes, config.feedback_speed, completed_transfers,
+                completed_frames, expected_bytes, actual_bytes, packet_errors,
+                feedback_samples, last_feedback_raw,
+                feedback_rate_hz.map(|rate| format!("{rate:.3}")).unwrap_or_else(|| "none".into()),
+                played_frames.load(Ordering::Acquire)
+            ));
+            last_diagnostic_at = Instant::now();
         }
     }
 
