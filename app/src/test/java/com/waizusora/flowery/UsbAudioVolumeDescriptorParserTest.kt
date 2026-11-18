@@ -53,7 +53,7 @@ class UsbAudioVolumeDescriptorParserTest {
     @Test fun rejectsMalformedFeatureUnitLength() {
         val descriptors = byteArrayOf(
             9, 4, 0, 0, 0, 1, 1, 0, 0,
-            9, 0x24, 0x06, 5, 4, 2, 0x02, 0x02, 0
+            8, 0x24, 0x06, 5, 4, 2, 0x02, 0x02
         )
         assertEquals(null, UsbAudioVolumeDescriptorParser.parse(descriptors))
     }
