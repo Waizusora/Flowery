@@ -21,6 +21,8 @@ private fun safeUsbLogE(tag: String, message: String, error: Throwable) {
     try { Log.e(tag, message, error) } catch (_: RuntimeException) { }
 }
 
+private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
+
 /**
  * Owns the Android USB connection for the lifetime of a native libusb session.
  *
@@ -269,10 +271,6 @@ internal class UsbLibusbSession internal constructor(
             safeUsbLogE("FloweryUsbNative", "USB_VOLUME_SET_FAILED unit=${control.unitId}", error)
             Result.failure(IllegalStateException(detail ?: "Feature Unit volume update failed", error))
         }
-    }
-
-    companion object {
-        private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
     }
 
     /**
