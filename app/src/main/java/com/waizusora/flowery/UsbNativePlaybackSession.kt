@@ -90,7 +90,8 @@ internal class UsbNativePlaybackSession private constructor(
     private val uac2SelectorSourceControls: IntArray,
     private val uac2ClockMultiplierEntity: Int?,
     private val uac2ClockMultiplierControls: Int?,
-    private val uac2ClockPaths: List<Uac2ClockPath>
+    private val uac2ClockPaths: List<Uac2ClockPath>,
+    private val uacVolumeControl: UacVolumeControl?
 ) : Closeable {
     private var closed = false
 
@@ -143,6 +144,30 @@ internal class UsbNativePlaybackSession private constructor(
         }
         return result
     }
+
+    /** True only when descriptors expose a readable Feature Unit volume control. */
+    fun hasHardwareVolumeControl(): Boolean = uacVolumeControl?.supportsRead == true
+
+    /** True only when at least one Feature Unit channel advertises host-writable volume. */
+    fun hasWritableHardwareVolumeControl(): Boolean = uacVolumeControl?.supportsWrite == true
+
+    @Synchronized
+    fun volumeSnapshot(): Result<UacVolumeSnapshot> {
+        val control = uacVolumeControl
+            ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
+        return usb.readUacVolume(control)
+    }
+
+    @Synchronized
+    fun setVolumeFraction(fraction: Float): Result<UacVolumeSnapshot> {
+        val control = uacVolumeControl
+            ?: return Result.failure(IllegalStateException("USB DAC does not advertise a Feature Unit volume control"))
+        return usb.setUacVolume(control, fraction)
+    }
+
+    @Synchronized
+    fun currentVolumeFraction(): Float =
+        volumeSnapshot().getOrNull()?.asLinearFraction() ?: 1f
 
     @Synchronized
     fun pause(): Result<Unit> = usb.pausePlayback()
@@ -280,10 +305,18 @@ internal class UsbNativePlaybackSession private constructor(
                     continue
                 }
                 Log.i("FloweryUsbNative", "USB_PROBE_OPEN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId}")
+                val rawDescriptors = probe.rawDescriptors
+                val volumeControl = UsbAudioVolumeDescriptorParser.parse(rawDescriptors)
+                Log.i(
+                    "FloweryUsbNative",
+                    "USB_VOLUME_CAPABILITY device=${device.deviceName} featureUnit=${volumeControl?.unitId ?: 0} " +
+                        "readable=${volumeControl?.readableChannels?.joinToString(separator = ",") ?: "none"} " +
+                        "writable=${volumeControl?.writableChannels?.joinToString(separator = ",") ?: "none"}"
+                )
                 val planJson = try {
                     JSONObject(
                         NativeAudio.nativePlanUsbAudioPlayback(
-                            probe.rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
+                            rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
                         )
                     )
                 } catch (error: Throwable) {
@@ -433,7 +466,8 @@ internal class UsbNativePlaybackSession private constructor(
                         selectorSourceControls,
                         if (isUac2 && clockMultiplierEntity != 0) clockMultiplierEntity else null,
                         if (isUac2) clockMultiplierControls else null,
-                        clockPaths
+                        clockPaths,
+                        volumeControl
                     )
                 )
             }
