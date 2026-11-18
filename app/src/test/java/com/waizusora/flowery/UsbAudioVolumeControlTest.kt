@@ -74,6 +74,46 @@ class UsbAudioVolumeControlTest {
         assertEquals(fake.currentByChannel.getValue(1), fake.currentByChannel.getValue(2))
     }
 
+    @Test fun usesUac2GetRangeForHardwareVolume() {
+        var current = -6_144
+        var rangeRead = false
+        val fake = object : UsbControlTransfer {
+            override fun transfer(
+                requestType: Int, request: Int, value: Int, index: Int,
+                buffer: ByteArray, length: Int, timeoutMs: Int
+            ): Int {
+                if (requestType == 0xA1 && request == 0x82 && length >= 8) {
+                    rangeRead = true
+                    buffer[0] = 1
+                    buffer[1] = 0
+                    val values = intArrayOf(-24_576, 0, 256)
+                    values.forEachIndexed { item, number ->
+                        val offset = 2 + item * 2
+                        buffer[offset] = number.toByte()
+                        buffer[offset + 1] = (number ushr 8).toByte()
+                    }
+                    return 8
+                }
+                if (requestType == 0xA1 && request == 0x81 && length == 2) {
+                    buffer[0] = current.toByte()
+                    buffer[1] = (current ushr 8).toByte()
+                    return 2
+                }
+                if (requestType == 0x21 && request == 0x01 && length == 2) {
+                    current = (buffer[0].toInt() and 0xff) or ((buffer[1].toInt() and 0xff) shl 8)
+                    if (current and 0x8000 != 0) current -= 0x10000
+                    return 2
+                }
+                return -1
+            }
+        }
+        val session = UsbLibusbSession(null, 1L, fake)
+        val control = UacVolumeControl(2, 7, 0x20, listOf(0), listOf(0))
+        val result = session.setUacVolume(control, 0.25f).getOrThrow()
+        assertTrue(rangeRead)
+        assertTrue(result.currentDb256 in -3_300..-2_900)
+    }
+
     @Test fun readOnlyFeatureUnitRejectsVolumeWrites() {
         val fake = FakeVolumeControl()
         val session = UsbLibusbSession(null, 1L, fake)
