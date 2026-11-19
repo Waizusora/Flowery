@@ -98,6 +98,8 @@ struct TransferSlot {
     submitted: bool,
     audio_frames: u64,
     submitted_at: Option<Instant>,
+    fill_duration_us: u64,
+    zero_padded_frames: u64,
 }
 
 #[cfg(target_os = "android")]
@@ -272,7 +274,7 @@ fn create_slot(
             0,
         );
     }
-    Ok(TransferSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, audio_frames: 0, submitted_at: None })
+    Ok(TransferSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, audio_frames: 0, submitted_at: None, fill_duration_us: 0, zero_padded_frames: 0 })
 }
 
 #[cfg(target_os = "android")]
@@ -330,6 +332,9 @@ fn fill_and_submit(
         .ok_or("USB PCM frame size overflow")?;
     if frame_bytes == 0 { return Err("USB PCM frame size is zero".into()); }
 
+    let fill_started_at = Instant::now();
+    let mut scheduled_frames = 0u64;
+
     // Bit-perfect boundary: USB consumes the decoder's typed PCM chunk directly.
     // This worker must not apply software volume, normalization, EQ, mixing, or
     // sample-rate conversion. The f64 feedback value above is clock scheduling
@@ -342,6 +347,7 @@ fn fill_and_submit(
             feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)),
             config.interval_us,
         )?;
+        scheduled_frames = scheduled_frames.saturating_add(frames as u64);
         let expected = frames.checked_mul(frame_bytes).ok_or("USB packet byte count overflow")?;
         if expected > config.max_packet_bytes as usize {
             return Err(format!(
@@ -381,6 +387,8 @@ fn fill_and_submit(
     }
 
     slot.audio_frames = audio_frames;
+    slot.zero_padded_frames = scheduled_frames.saturating_sub(audio_frames);
+    slot.fill_duration_us = fill_started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
     slot.signal.completed.store(false, Ordering::Release);
     let result = unsafe { libusb1_sys::libusb_submit_transfer(slot.transfer) };
     if result != 0 {
@@ -488,6 +496,14 @@ fn run_worker(
     let mut expected_bytes = 0u64;
     let mut actual_bytes = 0u64;
     let mut packet_errors = 0u64;
+    let mut fill_calls = 0u64;
+    let mut fill_total_us = 0u64;
+    let mut fill_max_us = 0u64;
+    let mut submit_gap_max_us = 0u64;
+    let mut last_submit_at: Option<Instant> = None;
+    let mut event_loop_max_us = 0u64;
+    let mut pending_min = usize::MAX;
+    let mut zero_padded_frames = 0u64;
     let mut last_diagnostic_at = Instant::now();
     let mut feedback_cancelling = false;
     let mut packet_scheduler = PacketFrameScheduler::default();
@@ -499,6 +515,15 @@ fn run_worker(
                 set_error(&error, &status, message);
                 break;
             }
+            fill_calls = fill_calls.saturating_add(1);
+            fill_total_us = fill_total_us.saturating_add(slot.fill_duration_us);
+            fill_max_us = fill_max_us.max(slot.fill_duration_us);
+            zero_padded_frames = zero_padded_frames.saturating_add(slot.zero_padded_frames);
+            let submitted_at = Instant::now();
+            if let Some(previous) = last_submit_at {
+                submit_gap_max_us = submit_gap_max_us.max(previous.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
+            }
+            last_submit_at = Some(submitted_at);
         }
     }
 
@@ -597,6 +622,15 @@ fn run_worker(
                     if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
                         set_error(&error, &status, message); break;
                     }
+                    fill_calls = fill_calls.saturating_add(1);
+                    fill_total_us = fill_total_us.saturating_add(slot.fill_duration_us);
+                    fill_max_us = fill_max_us.max(slot.fill_duration_us);
+                    zero_padded_frames = zero_padded_frames.saturating_add(slot.zero_padded_frames);
+                    let submitted_at = Instant::now();
+                    if let Some(previous) = last_submit_at {
+                        submit_gap_max_us = submit_gap_max_us.max(previous.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
+                    }
+                    last_submit_at = Some(submitted_at);
                     if eof { break; }
                 }
             }
@@ -611,8 +645,12 @@ fn run_worker(
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
             thread::sleep(Duration::from_millis(1)); continue;
         }
+        let pending_now = slots.iter().filter(|slot| slot.submitted).count();
+        pending_min = pending_min.min(pending_now);
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
+        let event_started_at = Instant::now();
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
+        event_loop_max_us = event_loop_max_us.max(event_started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
         if crate::usb_isochronous::event_loop_interrupted(event_result) {
             // INTERRUPTED is retryable, but repeated signals must not turn the
             // event loop into a busy spin while transfers remain outstanding.
@@ -704,13 +742,20 @@ fn run_worker(
         }
         if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
                 feedback_samples, last_feedback_raw,
                 feedback_rate_hz.map(|rate| format!("{rate:.3}")).unwrap_or_else(|| "none".into()),
-                played_frames.load(Ordering::Acquire)
+                played_frames.load(Ordering::Acquire),
+                fill_calls,
+                if fill_calls == 0 { 0 } else { fill_total_us / fill_calls },
+                fill_max_us,
+                submit_gap_max_us,
+                if pending_min == usize::MAX { 0 } else { pending_min },
+                zero_padded_frames,
+                event_loop_max_us
             ));
             last_diagnostic_at = Instant::now();
         }
