@@ -81,6 +81,9 @@ class PlaybackService : Service() {
         const val EXTRA_USB_VOLUME_WRITABLE = "usb_volume_writable"
         const val EXTRA_USB_VOLUME_VERIFIED = "usb_volume_verified"
         const val EXTRA_USB_VOLUME_DB = "usb_volume_db"
+        const val EXTRA_USB_VOLUME_MIN_DB = "usb_volume_min_db"
+        const val EXTRA_USB_VOLUME_MAX_DB = "usb_volume_max_db"
+        const val EXTRA_USB_VOLUME_RESOLUTION_DB = "usb_volume_resolution_db"
         private const val CHANNEL_ID = "flowery_playback"
         private const val NOTIFICATION_ID = 41
     }
@@ -197,6 +200,9 @@ class PlaybackService : Service() {
                     .putExtra(EXTRA_USB_VOLUME_WRITABLE, player.usbVolumeControlWritable())
                     .putExtra(EXTRA_USB_VOLUME_VERIFIED, player.usbVolumeWriteVerified())
                     .putExtra(EXTRA_USB_VOLUME_DB, player.usbVolumeCurrentDb())
+                    .putExtra(EXTRA_USB_VOLUME_MIN_DB, player.usbVolumeMinimumDb())
+                    .putExtra(EXTRA_USB_VOLUME_MAX_DB, player.usbVolumeMaximumDb())
+                    .putExtra(EXTRA_USB_VOLUME_RESOLUTION_DB, player.usbVolumeResolutionDb())
                     .putExtra(EXTRA_IS_PLAYING, playbackState == PlaybackStateCompat.STATE_PLAYING)
                     .putExtra(EXTRA_CURRENT_URI, queue.getOrNull(queueIndex).orEmpty())
                     .putExtra(EXTRA_CURRENT_CUE_START, queueCueStarts.getOrNull(queueIndex) ?: 0L)
@@ -323,6 +329,9 @@ class PlaybackService : Service() {
                                 .putExtra(EXTRA_USB_VOLUME_WRITABLE, player.usbVolumeControlWritable())
                                 .putExtra(EXTRA_USB_VOLUME_VERIFIED, verified)
                                 .putExtra(EXTRA_USB_VOLUME_DB, player.usbVolumeCurrentDb())
+                                .putExtra(EXTRA_USB_VOLUME_MIN_DB, player.usbVolumeMinimumDb())
+                                .putExtra(EXTRA_USB_VOLUME_MAX_DB, player.usbVolumeMaximumDb())
+                                .putExtra(EXTRA_USB_VOLUME_RESOLUTION_DB, player.usbVolumeResolutionDb())
                         )
                     }
                 }
