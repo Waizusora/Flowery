@@ -26,7 +26,7 @@ class UsbAudioVolumeDescriptorParserTest {
             9, 4, 2, 0, 0, 1, 1, 0x20, 0,
             18, 0x24, 0x06, 7, 4,
             0x04, 0, 0, 0, // master: read-only
-            0x08, 0, 0, 0, // left: read/write
+            0x0c, 0, 0, 0, // left: read/write
             0x04, 0, 0, 0, // right: read-only
             0,
             10, 0x24, 0x03, 10, 0x01, 0x03, 0, 7, 7, 0
@@ -75,10 +75,10 @@ class UsbAudioVolumeDescriptorParserTest {
         assertEquals(null, UsbAudioVolumeDescriptorParser.parse(descriptors))
     }
 
-    @Test fun doesNotTreatReservedUac2VolumeEncodingAsWritable() {
+    @Test fun doesNotTreatReservedUac2VolumeEncodingAsReadableOrWritable() {
         val descriptors = byteArrayOf(
             9, 4, 0, 0, 0, 1, 1, 0x20, 0,
-            10, 0x24, 0x06, 5, 4, 0x0c, 0, 0, 0, 0,
+            10, 0x24, 0x06, 5, 4, 0x08, 0, 0, 0, 0,
             10, 0x24, 0x03, 10, 0x01, 0x03, 0, 5, 7, 0
         )
         assertEquals(null, UsbAudioVolumeDescriptorParser.parse(descriptors))
