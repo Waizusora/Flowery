@@ -301,7 +301,7 @@ internal class UsbLibusbSession internal constructor(
                     val index = (control.unitId shl 8) or control.controlInterface
                     val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or change.channel
                     val payload = byteArrayOf(change.oldValue.toByte(), (change.oldValue ushr 8).toByte())
-                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    val written = volumeControlTransfer("ROLLBACK_ch${change.channel}", 0x21, 0x01, value, index, payload, 2)
                     val verified = readVolumeValue(control, change.channel, 0x81)
                     if (written != 2 || verified != change.oldValue) {
                         rollbackErrors += "channel ${change.channel} restore verification failed"
