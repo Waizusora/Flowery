@@ -493,7 +493,9 @@ fn fill_and_submit(
     if frame_bytes == 0 { return Err("USB PCM frame size is zero".into()); }
 
     let (queued_frames, producer_eof, producer_error) = pcm_queue.occupancy();
-    pcm_queue.record_occupancy(queued_frames);
+    if queued_frames > 0 {
+        pcm_queue.record_occupancy(queued_frames);
+    }
     if let Some(message) = producer_error {
         return Err(format!("USB PCM decoder producer failed: {message}"));
     }
@@ -518,7 +520,6 @@ fn fill_and_submit(
             feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)),
             config.interval_us,
         )?;
-        let frames = usize::try_from(frames).map_err(|_| "USB packet frame count overflow")?;
         *packet_frames = frames;
         scheduled_frames = scheduled_frames.checked_add(frames)
             .ok_or("USB transfer frame count overflow")?;
@@ -948,7 +949,7 @@ fn run_worker(
             let (decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
                 pcm_starvation_count, pcm_queued_min_frames) = pcm_queue.metrics();
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmStarvationCount={} pcmQueuedMinFrames={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
