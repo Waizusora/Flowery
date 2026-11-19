@@ -166,7 +166,7 @@ class UsbAudioVolumeControlTest {
 
     @Test fun safeStartupNeverRaisesAnAlreadyQuieterDac() {
         val snapshot = UacVolumeSnapshot(-40 * 256, -50 * 256, 0, 128, true, 1)
-        assertEquals(null, UacVolumeMath.safeStartupTarget(snapshot))
+        assertTrue(UacVolumeMath.safeStartupTarget(snapshot) == null)
     }
 
     @Test fun safeStartupUsesDeviceMinimumWhenThirtyDbAttenuationIsUnavailable() {
