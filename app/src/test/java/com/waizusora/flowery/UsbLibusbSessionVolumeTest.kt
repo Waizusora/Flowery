@@ -20,11 +20,13 @@ class UsbLibusbSessionVolumeTest {
             length: Int,
             timeoutMs: Int
         ): Int {
-            if (requestType == 0xA1 && request == 0x82) {
+            // UAC2 RANGE is bRequest 0x02 (not UAC1 GET_MIN 0x82).
+            if (requestType == 0xA1 && request == 0x02) {
                 rangeRequestLengths += length
                 return -1
             }
-            if (requestType == 0xA1 && request == 0x81) {
+            // UAC2 CUR is bRequest 0x01 (not UAC1 GET_CUR 0x81).
+            if (requestType == 0xA1 && request == 0x01) {
                 if (!supportsGetCur) return -1
                 buffer[0] = currentDb256.toByte()
                 buffer[1] = (currentDb256 ushr 8).toByte()
@@ -61,7 +63,7 @@ class UsbLibusbSessionVolumeTest {
             length: Int,
             timeoutMs: Int
         ): Int {
-            if (requestType == 0xA1 && request == 0x82) {
+            if (requestType == 0xA1 && request == 0x02) {
                 rangeRequestLengths += length
                 if (length < 8) return -1
                 buffer[0] = 1
@@ -71,7 +73,7 @@ class UsbLibusbSessionVolumeTest {
                 putS16(buffer, 6, 256)
                 return 8
             }
-            if (requestType == 0xA1 && request == 0x81) {
+            if (requestType == 0xA1 && request == 0x01) {
                 putS16(buffer, 0, currentDb256)
                 return 2
             }

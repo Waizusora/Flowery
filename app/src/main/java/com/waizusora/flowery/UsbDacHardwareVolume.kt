@@ -110,7 +110,7 @@ internal class UsbDacHardwareVolume(context: Context) {
                         ?: return Result.failure(
                             IllegalStateException("Feature Unit volume range unavailable for channel $channel")
                         )
-                    val oldValue = readVolumeValue(transfer, control, channel, UAC_GET_CUR)
+                    val oldValue = readVolumeValue(transfer, control, channel, getCurRequest(control))
                         ?: return Result.failure(
                             IllegalStateException("Feature Unit GET_CUR failed for channel $channel")
                         )
@@ -128,7 +128,7 @@ internal class UsbDacHardwareVolume(context: Context) {
                             2,
                             CONTROL_TIMEOUT_MS
                         )
-                        val verified = readVolumeValue(transfer, control, channel, UAC_GET_CUR)
+                        val verified = readVolumeValue(transfer, control, channel, getCurRequest(control))
                         if (written != 2 || verified != target) {
                             return Result.failure(
                                 IllegalStateException(
@@ -196,7 +196,7 @@ internal class UsbDacHardwareVolume(context: Context) {
                 val transfer = connectionAsTransfer(connection)
                 val channel = control.readableChannels.firstOrNull() ?: return null
                 val range = readVolumeRange(transfer, control, channel)
-                val current = readVolumeValue(transfer, control, channel, UAC_GET_CUR)
+                val current = readVolumeValue(transfer, control, channel, getCurRequest(control))
                 val snapshot = if (range != null && current != null) {
                     UacVolumeSnapshot(
                         currentDb256 = current,
@@ -290,39 +290,44 @@ internal class UsbDacHardwareVolume(context: Context) {
         return if (raw and 0x8000 != 0) raw - 0x10000 else raw
     }
 
+    private fun getCurRequest(control: UacVolumeControl): Int =
+        if (control.protocol == 0x20) UAC2_CUR else UAC1_GET_CUR
+
     private fun readVolumeRange(
         transfer: UsbControlTransfer,
         control: UacVolumeControl,
         channel: Int
     ): UacVolumeRange? {
-        // Prefer GET_RANGE (UAC2); fall back to discrete MIN/MAX/RES (UAC1 style).
-        val rangeBuffer = ByteArray(8)
-        val index = (control.unitId shl 8) or control.controlInterface
-        val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
-        val rangeLen = transfer.transfer(
-            USB_INTERFACE_IN_CLASS,
-            UAC_GET_RANGE,
-            value,
-            index,
-            rangeBuffer,
-            rangeBuffer.size,
-            CONTROL_TIMEOUT_MS
-        )
-        if (rangeLen >= 8) {
-            fun signedAt(offset: Int): Int {
-                val raw = (rangeBuffer[offset].toInt() and 0xff) or
-                    ((rangeBuffer[offset + 1].toInt() and 0xff) shl 8)
-                return if (raw and 0x8000 != 0) raw - 0x10000 else raw
+        if (control.protocol == 0x20) {
+            // UAC2 RANGE (bRequest=0x02), not UAC1 GET_MIN (0x82).
+            val rangeBuffer = ByteArray(8)
+            val index = (control.unitId shl 8) or control.controlInterface
+            val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
+            val rangeLen = transfer.transfer(
+                USB_INTERFACE_IN_CLASS,
+                UAC2_RANGE,
+                value,
+                index,
+                rangeBuffer,
+                rangeBuffer.size,
+                CONTROL_TIMEOUT_MS
+            )
+            if (rangeLen >= 8) {
+                fun signedAt(offset: Int): Int {
+                    val raw = (rangeBuffer[offset].toInt() and 0xff) or
+                        ((rangeBuffer[offset + 1].toInt() and 0xff) shl 8)
+                    return if (raw and 0x8000 != 0) raw - 0x10000 else raw
+                }
+                val min = signedAt(2)
+                val max = signedAt(4)
+                val res = signedAt(6).coerceAtLeast(1)
+                if (min <= max) return UacVolumeRange(min, max, res)
             }
-            // UAC2 GET_RANGE layout: wNumSubRanges (2) then min/max/res triples.
-            val min = signedAt(2)
-            val max = signedAt(4)
-            val res = signedAt(6).coerceAtLeast(1)
-            if (min <= max) return UacVolumeRange(min, max, res)
+            return null
         }
-        val minimum = readVolumeValue(transfer, control, channel, UAC_GET_MIN) ?: return null
-        val maximum = readVolumeValue(transfer, control, channel, UAC_GET_MAX) ?: return null
-        val resolution = readVolumeValue(transfer, control, channel, UAC_GET_RES) ?: 1
+        val minimum = readVolumeValue(transfer, control, channel, UAC1_GET_MIN) ?: return null
+        val maximum = readVolumeValue(transfer, control, channel, UAC1_GET_MAX) ?: return null
+        val resolution = readVolumeValue(transfer, control, channel, UAC1_GET_RES) ?: 1
         if (minimum > maximum) return null
         return UacVolumeRange(minimum, maximum, resolution.coerceAtLeast(1))
     }
@@ -356,12 +361,14 @@ internal class UsbDacHardwareVolume(context: Context) {
         private const val USB_INTERFACE_IN_CLASS = 0xA1
         private const val USB_INTERFACE_OUT_CLASS = 0x21
         private const val UAC_SET_CUR = 0x01
-        private const val UAC_GET_CUR = 0x81
-        private const val UAC_GET_MIN = 0x82
-        private const val UAC_GET_MAX = 0x83
-        private const val UAC_GET_RES = 0x84
-        private const val UAC_GET_RANGE = 0x02
+        private const val UAC1_GET_CUR = 0x81
+        private const val UAC1_GET_MIN = 0x82
+        private const val UAC1_GET_MAX = 0x83
+        private const val UAC1_GET_RES = 0x84
+        private const val UAC2_CUR = 0x01
+        private const val UAC2_RANGE = 0x02
         private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
         private const val CONTROL_TIMEOUT_MS = 1_000
     }
 }
+

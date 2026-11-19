@@ -15,7 +15,8 @@ package com.waizusora.flowery
 internal object UsbFeatureUnitProbe {
     private const val MAX_ENTITY_ID = 10
     private const val MAX_INTERFACE = 3
-    private const val UAC_GET_CUR = 0x81
+    /** UAC2 CUR request (Audio 2.0). UAC1 GET_CUR is 0x81 and must not be used here. */
+    private const val UAC2_CUR = 0x01
     private const val CLASS_INTERFACE_IN = 0xA1
     private const val TIMEOUT_MS = 500
 
@@ -49,7 +50,7 @@ internal object UsbFeatureUnitProbe {
         val buffer = ByteArray(length)
         val index = (entity shl 8) or interfaceNumber
         val result = try {
-            transfer.transfer(CLASS_INTERFACE_IN, UAC_GET_CUR, value, index, buffer, length, TIMEOUT_MS)
+            transfer.transfer(CLASS_INTERFACE_IN, UAC2_CUR, value, index, buffer, length, TIMEOUT_MS)
         } catch (error: Exception) {
             Int.MIN_VALUE
         }

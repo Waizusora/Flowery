@@ -82,7 +82,8 @@ class UsbAudioVolumeControlTest {
                 requestType: Int, request: Int, value: Int, index: Int,
                 buffer: ByteArray, length: Int, timeoutMs: Int
             ): Int {
-                if (requestType == 0xA1 && request == 0x82 && length >= 8) {
+                // UAC2 RANGE (0x02) / CUR (0x01) — not UAC1 0x82 / 0x81.
+                if (requestType == 0xA1 && request == 0x02 && length >= 8) {
                     rangeRead = true
                     buffer[0] = 1
                     buffer[1] = 0
@@ -94,7 +95,7 @@ class UsbAudioVolumeControlTest {
                     }
                     return 8
                 }
-                if (requestType == 0xA1 && request == 0x81 && length == 2) {
+                if (requestType == 0xA1 && request == 0x01 && length == 2) {
                     buffer[0] = current.toByte()
                     buffer[1] = (current ushr 8).toByte()
                     return 2

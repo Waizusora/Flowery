@@ -83,6 +83,10 @@ analog output.
   volume control. For UAC2, the per-channel `bmaControls` bit pair uses the same
   encoding as above (`0b01` read-only, `0b11` programmable). No VID/PID
   heuristics are used.
+- Request codes are protocol-specific. UAC1 uses `GET_CUR=0x81` and discrete
+  `GET_MIN/MAX/RES` (`0x82`–`0x84`). UAC2 uses `CUR=0x01` and `RANGE=0x02`
+  (the same codes as Clock Source negotiation). Sending UAC1 codes to a UAC2
+  Feature Unit causes every volume transfer to fail (`transferred=-1`).
 - Two control paths are supported:
   1. **USB Direct session** (`UsbLibusbSession` / `UsbNativePlaybackSession`):
      Feature Unit transfers share the open libusb connection. Multi-channel
