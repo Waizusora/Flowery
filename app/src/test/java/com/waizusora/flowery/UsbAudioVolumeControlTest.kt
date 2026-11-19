@@ -159,4 +159,27 @@ class UsbAudioVolumeControlTest {
         assertEquals(-6_144, fake.current.getValue(0))
         assertEquals(-6_144, fake.current.getValue(1))
     }
+    @Test fun safeStartupTargetsThirtyDbBelowMaximumAndHonoursResolution() {
+        val snapshot = UacVolumeSnapshot(0, -50 * 256, 0, 128, true, 1)
+        assertEquals(-30 * 256, UacVolumeMath.safeStartupTarget(snapshot))
+    }
+
+    @Test fun safeStartupNeverRaisesAnAlreadyQuieterDac() {
+        val snapshot = UacVolumeSnapshot(-40 * 256, -50 * 256, 0, 128, true, 1)
+        assertEquals(null, UacVolumeMath.safeStartupTarget(snapshot))
+    }
+
+    @Test fun safeStartupUsesDeviceMinimumWhenThirtyDbAttenuationIsUnavailable() {
+        val snapshot = UacVolumeSnapshot(-10 * 256, -20 * 256, 0, 256, true, 1)
+        assertEquals(-20 * 256, UacVolumeMath.safeStartupTarget(snapshot))
+    }
+
+    @Test fun dbStepIsClampedAndQuantizedToAdvertisedResolution() {
+        val snapshot = UacVolumeSnapshot(-10 * 256, -50 * 256, 0, 128, true, 1)
+        assertEquals(-8 * 256, UacVolumeMath.stepTarget(snapshot, 1, 256))
+        assertEquals(-12 * 256, UacVolumeMath.stepTarget(snapshot, -1, 512))
+        val atMaximum = snapshot.copy(currentDb256 = 0)
+        assertEquals(0, UacVolumeMath.stepTarget(atMaximum, 1, 128))
+    }
+
 }
