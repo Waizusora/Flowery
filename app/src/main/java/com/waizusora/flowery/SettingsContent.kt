@@ -133,11 +133,15 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                         fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
                     val usbDirectActive = outputBackend == "USB Direct"
                     val volumeStatus = when {
-                        !usbDirectActive -> "Inactive · start USB Direct playback"
-                        !usbVolumeDetected -> "No readable Feature Unit volume control detected"
+                        !usbVolumeDetected ->
+                            "No readable Feature Unit volume control · grant USB permission if a DAC is connected"
                         !usbVolumeWritable -> "Detected · hardware volume is read-only"
-                        usbVolumeVerified -> "Verified · SET_CUR read back successfully with GET_CUR"
-                        else -> "Writable · adjust the slider to verify hardware control"
+                        usbVolumeVerified ->
+                            if (usbDirectActive) "Verified (USB Direct) · SET_CUR confirmed with GET_CUR"
+                            else "Verified · SET_CUR confirmed with GET_CUR"
+                        else ->
+                            if (usbDirectActive) "Writable (USB Direct) · adjust the slider to verify"
+                            else "Writable · adjust the slider to set Feature Unit volume"
                     }
                     Text(volumeStatus, color = if (usbVolumeVerified) MaterialTheme.colorScheme.primary else muted,
                         style = MaterialTheme.typography.bodySmall)
@@ -155,13 +159,17 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                             volumeDragging = false
                             onVolume(sliderVolume)
                         },
-                        enabled = usbDirectActive && usbVolumeWritable
+                        enabled = usbVolumeWritable
                     )
                     Text(
-                        if (usbDirectActive && usbVolumeWritable)
-                            "This control changes the DAC Feature Unit. It does not change Android system volume or PCM samples."
-                        else
-                            "Connect a supported USB DAC and start playback using USB Direct to enable this control.",
+                        when {
+                            usbVolumeWritable && usbDirectActive ->
+                                "This control changes the DAC Feature Unit on the open USB Direct session. It does not alter PCM samples or Android system volume."
+                            usbVolumeWritable ->
+                                "This control changes the DAC Feature Unit via USB Audio Control transfers. Physical DAC keys, if present, typically share the same Feature Unit."
+                            else ->
+                                "Connect a USB DAC that advertises a host-writable Feature Unit volume control and grant USB permission when prompted."
+                        },
                         color = muted, style = MaterialTheme.typography.bodySmall
                     )
                 }

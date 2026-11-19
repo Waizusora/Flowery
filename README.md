@@ -48,6 +48,10 @@ This is Android-managed USB audio output through AAudio, not a raw USB Audio Cla
 
 The USB inventory reports VID/PID, interface subclass/protocol, and endpoint transfer direction. Android output capabilities are reported separately because the public AudioDeviceInfo API does not expose USB VID/PID for a reliable cross-API device match. An isochronous OUT endpoint is only a candidate indicator; it does not prove that an application can claim the interface or stream USB audio directly. Android's public USB Host API does not provide isochronous transfer support.
 
+### USB DAC hardware volume
+
+Settings → Volume can drive a descriptor-advertised UAC Feature Unit volume control on a permitted USB DAC. Detection is automatic when USB Host permission has been granted: the control is available during USB Direct playback and, independently, via short-lived Audio Control transfers when the DAC is connected but USB Direct is not active. Physical volume keys on the DAC, when present, typically share the same Feature Unit; the app reads the current level with `GET_CUR` and verifies every `SET_CUR`. Devices that do not advertise a host-writable Feature Unit remain read-only or unavailable. See `docs/USB_BIT_PERFECT_PATH_AUDIT.md` for control semantics and limitations.
+
 ## Lyrics
 
 Flowery reads same-directory sidecar `.lrc` files whose base filename matches the audio file. LRC timestamps drive the active-line highlight and scrolling position. The parser also accepts enhanced LRC word timestamp markers. Users can search LRCLIB and download plain-text, synchronized LRC, or word-synchronized YAML lyrics. Downloaded lyrics are stored in app-private storage and associated with the selected audio URI; malformed or empty downloads are rejected without terminating the application. The lyrics view uses the downloaded lyric list when available and otherwise falls back to sidecar lyrics.

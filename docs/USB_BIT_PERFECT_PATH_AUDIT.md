@@ -81,15 +81,35 @@ analog output.
 
 - Volume is read and written only through a descriptor-advertised Feature Unit
   volume control. For UAC2, the per-channel `bmaControls` bit pair uses the same
-  encoding as above (`0b01` read-only, `0b11` programmable).
-- Every `SET_CUR` is verified with `GET_CUR`. A mismatch rolls back the channels
-  already written and is reported as a failed command; the UI then shows the
-  value the device actually reports.
-- `GET_RANGE` is authoritative. Some DAC firmware advertises a programmable
-  volume control but STALLs `GET_RANGE` while honouring `GET_CUR`/`SET_CUR`. In
-  that case only, an attenuation-only range is assumed: the maximum is the
-  greater of 0 dB and the current value (the host never boosts above unity
-  gain) and the minimum is -90 dB. The assumption is logged as
+  encoding as above (`0b01` read-only, `0b11` programmable). No VID/PID
+  heuristics are used.
+- Two control paths are supported:
+  1. **USB Direct session** (`UsbLibusbSession` / `UsbNativePlaybackSession`):
+     Feature Unit transfers share the open libusb connection. Multi-channel
+     writes are transactional: a failed `SET_CUR` verification rolls back
+     channels already changed.
+  2. **Standalone control** (`UsbDacHardwareVolume`): short-lived
+     `UsbDeviceConnection` control transfers on the Audio Control interface
+     only. No AudioStreaming interface is claimed. This path enables Settings →
+     Volume when a permitted USB DAC is present even if USB Direct playback is
+     not active (including AAudio USB routing). Physical DAC keys, when present,
+     typically adjust the same Feature Unit; the host reads the current level
+     via `GET_CUR`.
+- Path selection in `FloweryPlayer.setVolume`: USB Direct session when active;
+  otherwise standalone Feature Unit control when a writable unit is detected;
+  otherwise Android `STREAM_MUSIC` system volume.
+- Auto-detection: `PlaybackService` periodically calls
+  `refreshStandaloneUsbVolumeDetection()` so attach/detach of a permitted DAC
+  updates Settings without requiring playback start. Detection requires USB
+  Host permission for the device.
+- Every `SET_CUR` is verified with `GET_CUR`. On the USB Direct path a mismatch
+  rolls back the channels already written and is reported as a failed command;
+  the UI then shows the value the device actually reports.
+- `GET_RANGE` is preferred. Some DAC firmware advertises a programmable volume
+  control but STALLs `GET_RANGE` while honouring `GET_CUR`/`SET_CUR`. On the
+  USB Direct path only, an attenuation-only range may be assumed: the maximum
+  is the greater of 0 dB and the current value (the host never boosts above
+  unity gain) and the minimum is -90 dB. The assumption is logged as
   `USB_VOLUME_RANGE_ASSUMED`, and the refusal is cached for the session so that
   periodic polling does not repeat a request known to STALL.
 - On the first refusal, a read-only probe logs `GET_RANGE` with alternative

@@ -18,6 +18,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     private var worker: Thread? = null
     private val volumeController = OutputVolumeController(context)
+    private val dacHardwareVolume = UsbDacHardwareVolume(context)
     private val sourceResolver = AudioSourceResolver(context)
 
     private val stopped = AtomicBoolean(false)
@@ -38,7 +39,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val pendingSeekMs = AtomicLong(-1L)
     @Volatile private var activeSegmentStartMs = 0L
     @Volatile private var activeSegmentEndMs = -1L
+    /** Last successful standalone DAC volume detection (null when none). */
+    @Volatile private var standaloneDacVolume: UsbDacHardwareVolume.Detection? = null
+    @Volatile private var standaloneVolumeVerified = false
 
+    /**
+     * Applies volume according to the active output path.
+     *
+     * - USB Direct (libusb): Feature Unit via the open session.
+     * - Otherwise, if a permitted USB DAC advertises a writable Feature Unit:
+     *   short-lived control transfers via [UsbDacHardwareVolume].
+     * - Fallback: Android STREAM_MUSIC system volume.
+     */
     fun setVolume(value: Float) {
         val requested = value.coerceIn(0f, 1f)
         if (usbRouteActive) {
@@ -48,6 +60,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 Log.w(
                     "FloweryUsbNative",
                     "USB_VOLUME_UNAVAILABLE requestedFraction=$requested reason=${result.exceptionOrNull()?.message}"
+                )
+            }
+            return
+        }
+        val detection = standaloneDacVolume ?: dacHardwareVolume.detect()?.also { standaloneDacVolume = it }
+        if (detection != null && detection.writable) {
+            val result = dacHardwareVolume.setVolumeFraction(detection.deviceName, requested)
+            result.onSuccess {
+                standaloneDacVolume = it
+                standaloneVolumeVerified = true
+            }.onFailure { error ->
+                Log.w(
+                    "FloweryUsbVolume",
+                    "USB_DAC_VOLUME_SET_FAILED requestedFraction=$requested reason=${error.message}"
                 )
             }
             return
@@ -390,20 +416,40 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     }
 
     fun currentVolumeFraction(): Float =
-        if (usbRouteActive) usbPlaybackSession?.currentVolumeFraction() ?: 1f
-        else volumeController.systemVolumeFraction()
+        when {
+            usbRouteActive -> usbPlaybackSession?.currentVolumeFraction() ?: 1f
+            standaloneDacVolume != null -> standaloneDacVolume?.currentFraction ?: 1f
+            else -> volumeController.systemVolumeFraction()
+        }
+
+    /**
+     * Refreshes standalone Feature Unit detection when USB Direct is inactive.
+     * Safe to call from the service IO thread; does not block the UI.
+     */
+    fun refreshStandaloneUsbVolumeDetection() {
+        if (usbRouteActive) return
+        standaloneDacVolume = dacHardwareVolume.detect()
+        if (standaloneDacVolume == null) standaloneVolumeVerified = false
+    }
 
     fun usbVolumeControlDetected(): Boolean =
-        usbRouteActive && usbPlaybackSession?.hasHardwareVolumeControl() == true
+        if (usbRouteActive) usbPlaybackSession?.hasHardwareVolumeControl() == true
+        else standaloneDacVolume != null
 
     fun usbVolumeControlWritable(): Boolean =
-        usbRouteActive && usbPlaybackSession?.hasWritableHardwareVolumeControl() == true
+        if (usbRouteActive) usbPlaybackSession?.hasWritableHardwareVolumeControl() == true
+        else standaloneDacVolume?.writable == true
 
     fun usbVolumeWriteVerified(): Boolean =
-        usbRouteActive && usbPlaybackSession?.hasVerifiedVolumeWrite() == true
+        if (usbRouteActive) usbPlaybackSession?.hasVerifiedVolumeWrite() == true
+        else standaloneVolumeVerified
 
     fun usbVolumeCurrentDb(): Float =
-        usbPlaybackSession?.cachedVolumeSnapshot()?.currentDb256?.div(256f) ?: Float.NaN
+        if (usbRouteActive) {
+            usbPlaybackSession?.cachedVolumeSnapshot()?.currentDb256?.div(256f) ?: Float.NaN
+        } else {
+            standaloneDacVolume?.currentDb ?: Float.NaN
+        }
 
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->

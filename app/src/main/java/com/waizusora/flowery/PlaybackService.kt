@@ -167,9 +167,18 @@ class PlaybackService : Service() {
             if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pausePlayback()
         }
     }
+    private var lastStandaloneVolumeProbeMs = 0L
+
     private val progressUpdates = object : Runnable {
         override fun run() {
             if (::player.isInitialized) {
+                val nowMs = android.os.SystemClock.elapsedRealtime()
+                // Refresh Feature Unit detection a few times per minute so Settings
+                // reflects DAC attach/detach without requiring USB Direct playback.
+                if (nowMs - lastStandaloneVolumeProbeMs >= 5_000L) {
+                    lastStandaloneVolumeProbeMs = nowMs
+                    runCatching { player.refreshStandaloneUsbVolumeDetection() }
+                }
                 val position = player.positionMs()
                 val duration = player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs
                 if (::session.isInitialized) {
@@ -297,6 +306,7 @@ class PlaybackService : Service() {
                 io.execute {
                     if (::player.isInitialized) {
                         Log.i("FloweryDiagnostics", "USB_VOLUME_COMMAND_START id=$commandId requestedFraction=$requestedVolume")
+                        player.refreshStandaloneUsbVolumeDetection()
                         player.setVolume(requestedVolume)
                         val actualVolume = player.currentVolumeFraction().coerceIn(0f, 1f)
                         val verified = player.usbVolumeWriteVerified()
