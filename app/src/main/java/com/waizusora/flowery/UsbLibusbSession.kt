@@ -203,7 +203,6 @@ internal class UsbLibusbSession internal constructor(
      * repeat a request that is known to STALL.
      */
     private val volumeRangeRefusedChannels = mutableSetOf<Int>()
-    private val volumeProbeLogged = mutableSetOf<Int>()
 
     /**
      * Resolves the volume range for [channel].
@@ -223,7 +222,6 @@ internal class UsbLibusbSession internal constructor(
             if (control.protocol == 0x00) return null
             volumeRangeRefusedChannels += channel
         }
-        if (volumeProbeLogged.add(channel)) probeVolumeControl(control, channel)
         val current = readCurrentVolume(control, channel) ?: return null
         val maximum = maxOf(current, 0)
         safeUsbLogI(
@@ -232,29 +230,6 @@ internal class UsbLibusbSession internal constructor(
                 "minimumDb256=${minOf(ASSUMED_UAC_VOLUME_MIN_DB256, current)} maximumDb256=$maximum reason=GET_RANGE-refused"
         )
         return UacVolumeRange(minOf(ASSUMED_UAC_VOLUME_MIN_DB256, current), maximum, 0)
-    }
-
-    /**
-     * One-shot, read-only diagnostic: records how the device answers GET_RANGE with
-     * alternative request lengths. No SET_CUR is issued.
-     */
-    private fun probeVolumeControl(control: UacVolumeControl, channel: Int) {
-        val index = (control.unitId shl 8) or control.controlInterface
-        val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
-        val rangeRequest = if (control.protocol == 0x20) UAC2_RANGE else UAC1_GET_MIN
-        val curRequest = volumeGetCurRequest(control)
-        for (length in intArrayOf(2, 14, 26)) {
-            volumeControlTransfer(
-                "PROBE_GET_RANGE_len${length}_ch$channel",
-                0xA1,
-                rangeRequest,
-                value,
-                index,
-                ByteArray(length),
-                length
-            )
-        }
-        volumeControlTransfer("PROBE_GET_CUR_ch$channel", 0xA1, curRequest, value, index, ByteArray(2), 2)
     }
 
     private fun readAdvertisedVolumeRange(control: UacVolumeControl, channel: Int): UacVolumeRange? {
@@ -308,51 +283,6 @@ internal class UsbLibusbSession internal constructor(
         }
         return ranges.firstOrNull { current != null && current in it.minimum..it.maximum }
             ?: ranges.firstOrNull()
-    }
-
-    /**
-     * One-shot, read-only diagnostic of the Feature Unit control endpoint. Issues only
-     * GET_CUR and GET_RANGE requests; no SET_CUR is sent. [phase] labels the log lines
-     * so that requests made before and after isochronous streaming can be compared.
-     */
-    @Synchronized
-    fun probeUacVolumeControl(control: UacVolumeControl, phase: String) {
-        if (closed || control.protocol != 0x20 || !ensureControlInterfaceClaimed(control.controlInterface)) return
-        val index = (control.unitId shl 8) or control.controlInterface
-        val volumeSelector = UAC_FEATURE_VOLUME_CONTROL shl 8
-        val muteSelector = 0x01 shl 8
-        for (channel in intArrayOf(1, 2, 0)) {
-            volumeControlTransfer(
-                "PROBE_${phase}_GET_CUR_VOL_ch$channel",
-                0xA1,
-                UAC2_CUR,
-                volumeSelector or channel,
-                index,
-                ByteArray(2),
-                2
-            )
-        }
-        volumeControlTransfer(
-            "PROBE_${phase}_GET_RANGE_VOL_ch1",
-            0xA1,
-            UAC2_RANGE,
-            volumeSelector or 1,
-            index,
-            ByteArray(8),
-            8
-        )
-        volumeControlTransfer(
-            "PROBE_${phase}_GET_CUR_MUTE_ch0",
-            0xA1,
-            UAC2_CUR,
-            muteSelector,
-            index,
-            ByteArray(1),
-            1
-        )
-        UsbFeatureUnitProbe.run(phase, control.controlInterface, control.unitId, controlTransfer) {
-            safeUsbLogI("FloweryUsbNative", it)
-        }
     }
 
     /** Reads descriptor-advertised Feature Unit volume in signed 1/256 dB units. */
