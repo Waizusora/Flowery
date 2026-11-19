@@ -62,6 +62,7 @@ fun FloweryNavigation(
     outputSampleRateHz: Int, outputBitDepth: Int, outputBackend: String,
     volume: Float, usbVolumeDetected: Boolean, usbVolumeWritable: Boolean,
     usbVolumeVerified: Boolean, usbVolumeDb: Float,
+    usbVolumeMinDb: Float, usbVolumeMaxDb: Float, usbVolumeResolutionDb: Float,
     status: String,
     onAddFolder: () -> Unit,
     onRemoveFolder: (LibraryFolder) -> Unit, onToggleFolder: (LibraryFolder, Boolean) -> Unit,
@@ -297,6 +298,9 @@ fun FloweryNavigation(
                     usbVolumeWritable = usbVolumeWritable,
                     usbVolumeVerified = usbVolumeVerified,
                     usbVolumeDb = usbVolumeDb,
+                    usbVolumeMinDb = usbVolumeMinDb,
+                    usbVolumeMaxDb = usbVolumeMaxDb,
+                    usbVolumeResolutionDb = usbVolumeResolutionDb,
                     status = status, onBack = { settingsPage = when (settingsPage) {
                         SettingsPage.AUDIO, SettingsPage.LIBRARY, SettingsPage.APPEARANCE, SettingsPage.OTHER, SettingsPage.ABOUT -> SettingsPage.ROOT
                         SettingsPage.INFO_AUDIO -> SettingsPage.AUDIO
