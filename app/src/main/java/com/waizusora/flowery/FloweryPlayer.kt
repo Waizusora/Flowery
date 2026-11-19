@@ -498,6 +498,22 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     } else {
         standaloneDacVolume?.snapshot
     }
+    /** Compact playback telemetry for correlating audible dropouts with buffer/xrun counters. */
+    fun audioPipelineDiagnostics(): String {
+        if (usbRouteActive) {
+            val status = runCatching { usbPlaybackSession?.status()?.toString() ?: "unavailable" }
+                .getOrElse { "error=${it.message}" }
+            return "backend=USB_DIRECT sourceRateHz=$outputSampleRate bitDepth=$outputBitDepth status=$status"
+        }
+        val d = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
+            ?: return "backend=AAudio diagnostics=unavailable"
+        if (d.size <= 26) return "backend=AAudio diagnosticsSize=${d.size}"
+        return "backend=AAudio sourceRateHz=$outputSampleRate bitDepth=$outputBitDepth " +
+            "callbackUnderruns=${d[0]} xrunCount=${d[1]} queuedFrames=${d[2]} ringCapacityFrames=${d[3]} " +
+            "bufferSizeFrames=${d[4]} framesPerBurst=${d[5]} streamState=${d[6]} " +
+            "actualRateHz=${d[7]} deviceId=${d[8]} sharingMode=${d[9]} format=${d[10]} " +
+            "channels=${d[11]} performanceMode=${d[12]} bufferCapacityFrames=${d[26]}"
+    }
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->
             return (usb.positionMs() - activeSegmentStartMs).coerceAtLeast(0L)
