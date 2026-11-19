@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "android")]
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ffi::CString,
     mem::ManuallyDrop,
     os::raw::c_char,
@@ -47,6 +47,166 @@ const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(target_os = "android")]
 const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
+
+#[cfg(target_os = "android")]
+const PCM_QUEUE_CAPACITY_FRAMES: usize = 16_384;
+#[cfg(target_os = "android")]
+const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
+
+#[cfg(target_os = "android")]
+struct PcmQueueState {
+    bytes: VecDeque<u8>,
+    eof: bool,
+    error: Option<String>,
+}
+
+#[cfg(target_os = "android")]
+struct PcmQueue {
+    state: Mutex<PcmQueueState>,
+    frame_bytes: usize,
+    capacity_bytes: usize,
+    decoder_read_calls: AtomicU64,
+    decoder_read_total_us: AtomicU64,
+    decoder_read_max_us: AtomicU64,
+    starvation_count: AtomicU64,
+    queued_min_frames: AtomicU64,
+}
+
+#[cfg(target_os = "android")]
+impl PcmQueue {
+    fn new(frame_bytes: usize) -> Result<Self, String> {
+        if frame_bytes == 0 { return Err("PCM queue frame size is zero".into()); }
+        let capacity_bytes = frame_bytes.checked_mul(PCM_QUEUE_CAPACITY_FRAMES)
+            .ok_or("PCM queue capacity overflow")?;
+        Ok(Self {
+            state: Mutex::new(PcmQueueState {
+                bytes: VecDeque::with_capacity(capacity_bytes), eof: false, error: None,
+            }),
+            frame_bytes, capacity_bytes,
+            decoder_read_calls: AtomicU64::new(0),
+            decoder_read_total_us: AtomicU64::new(0),
+            decoder_read_max_us: AtomicU64::new(0),
+            starvation_count: AtomicU64::new(0),
+            queued_min_frames: AtomicU64::new(u64::MAX),
+        })
+    }
+
+    fn occupancy(&self) -> (usize, bool, Option<String>) {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        (state.bytes.len() / self.frame_bytes, state.eof, state.error.clone())
+    }
+
+    fn record_occupancy(&self, frames: usize) {
+        self.queued_min_frames.fetch_min(frames as u64, Ordering::Relaxed);
+    }
+
+    fn record_starvation(&self) {
+        self.starvation_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn push(&self, bytes: &[u8]) -> Result<(), String> {
+        if bytes.len() % self.frame_bytes != 0 {
+            return Err("Decoder produced PCM that is not aligned to complete frames".into());
+        }
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.eof || state.error.is_some() {
+            return Err("PCM producer attempted to write after terminal state".into());
+        }
+        if state.bytes.len().saturating_add(bytes.len()) > self.capacity_bytes {
+            return Err("PCM producer exceeded the bounded queue capacity".into());
+        }
+        state.bytes.extend(bytes.iter().copied());
+        Ok(())
+    }
+
+    fn finish(&self, error: Option<String>) {
+        let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
+        if let Some(message) = error { state.error = Some(message); }
+        state.eof = true;
+    }
+
+    fn take_frames(&self, requested: usize, allow_partial: bool) -> Option<Vec<u8>> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let available = state.bytes.len() / self.frame_bytes;
+        if available < requested && !allow_partial { return None; }
+        let frames = available.min(requested);
+        let bytes = frames.checked_mul(self.frame_bytes)?;
+        Some(state.bytes.drain(..bytes).collect())
+    }
+
+    fn is_drained_eof(&self) -> bool {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.eof && state.bytes.is_empty()
+    }
+
+    fn metrics(&self) -> (u64, u64, u64, u64, u64) {
+        let calls = self.decoder_read_calls.load(Ordering::Relaxed);
+        let total = self.decoder_read_total_us.load(Ordering::Relaxed);
+        let max = self.decoder_read_max_us.load(Ordering::Relaxed);
+        let starvation = self.starvation_count.load(Ordering::Relaxed);
+        let minimum = self.queued_min_frames.load(Ordering::Relaxed);
+        (calls, if calls == 0 { 0 } else { total / calls }, max, starvation,
+            if minimum == u64::MAX { 0 } else { minimum })
+    }
+}
+
+#[cfg(target_os = "android")]
+fn start_pcm_producer(
+    decoder_handle: i64,
+    config: StreamConfig,
+    stop: Arc<AtomicBool>,
+) -> Result<(Arc<PcmQueue>, JoinHandle<()>), String> {
+    let frame_bytes = usize::from(config.channels)
+        .checked_mul(usize::from(config.subslot_bytes))
+        .ok_or("PCM producer frame size overflow")?;
+    let queue = Arc::new(PcmQueue::new(frame_bytes)?);
+    let producer_queue = Arc::clone(&queue);
+    let worker = thread::Builder::new()
+        .name("flowery-usb-pcm-decode".into())
+        .spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                let free_frames = {
+                    let state = producer_queue.state.lock()
+                        .unwrap_or_else(|error| error.into_inner());
+                    if state.eof || state.error.is_some() { break; }
+                    producer_queue.capacity_bytes.saturating_sub(state.bytes.len())
+                        / producer_queue.frame_bytes
+                };
+                if free_frames == 0 {
+                    thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+                let request_frames = free_frames.min(PCM_PRODUCER_CHUNK_FRAMES);
+                let started = Instant::now();
+                let decoded = crate::streaming::read_usb_pcm_chunk(
+                    decoder_handle, request_frames, config.valid_bits,
+                    config.subslot_bytes, config.data_format,
+                );
+                let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+                producer_queue.decoder_read_calls.fetch_add(1, Ordering::Relaxed);
+                producer_queue.decoder_read_total_us.fetch_add(elapsed, Ordering::Relaxed);
+                producer_queue.decoder_read_max_us.fetch_max(elapsed, Ordering::Relaxed);
+                match decoded {
+                    Ok(bytes) if bytes.is_empty() => {
+                        producer_queue.finish(None);
+                        break;
+                    }
+                    Ok(bytes) => {
+                        if let Err(message) = producer_queue.push(&bytes) {
+                            producer_queue.finish(Some(message));
+                            break;
+                        }
+                    }
+                    Err(message) => {
+                        producer_queue.finish(Some(message));
+                        break;
+                    }
+                }
+            }
+        })
+        .map_err(|error| error.to_string())?;
+    Ok((queue, worker))
+}
 
 #[cfg(target_os = "android")]
 #[link(name = "log")]
@@ -322,32 +482,46 @@ fn submit_feedback(slot: &mut FeedbackSlot) -> Result<(), String> {
 fn fill_and_submit(
     slot: &mut TransferSlot,
     config: StreamConfig,
-    decoder_handle: i64,
+    pcm_queue: &PcmQueue,
     scheduler: &mut PacketFrameScheduler,
     eof: &mut bool,
     feedback_rate_hz: Option<f64>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let frame_bytes = usize::from(config.channels)
         .checked_mul(usize::from(config.subslot_bytes))
         .ok_or("USB PCM frame size overflow")?;
     if frame_bytes == 0 { return Err("USB PCM frame size is zero".into()); }
 
-    let fill_started_at = Instant::now();
-    let mut scheduled_frames = 0u64;
+    let (queued_frames, producer_eof, producer_error) = pcm_queue.occupancy();
+    pcm_queue.record_occupancy(queued_frames);
+    if let Some(message) = producer_error {
+        return Err(format!("USB PCM decoder producer failed: {message}"));
+    }
 
-    // Bit-perfect boundary: USB consumes the decoder's typed PCM chunk directly.
-    // This worker must not apply software volume, normalization, EQ, mixing, or
-    // sample-rate conversion. The f64 feedback value above is clock scheduling
-    // metadata only; it never enters the PCM sample buffer.
-    slot.buffer.fill(0);
-    let mut offset = 0usize;
-    let mut audio_frames = 0u64;
-    for packet_index in 0..PACKETS_PER_TRANSFER {
+    // Keep a complete transfer queued before advancing the fractional scheduler.
+    // The margin covers fractional packet scheduling and small feedback changes.
+    let conservative_packet_frames = (
+        (f64::from(config.sample_rate) * 1.10 * f64::from(config.interval_us) / 1_000_000.0)
+            .ceil() as usize
+    ).saturating_add(1);
+    let minimum_frames = conservative_packet_frames.saturating_mul(PACKETS_PER_TRANSFER);
+    if queued_frames < minimum_frames && !producer_eof {
+        pcm_queue.record_starvation();
+        return Ok(false);
+    }
+
+    let fill_started_at = Instant::now();
+    let mut scheduled_packet_frames = [0usize; PACKETS_PER_TRANSFER];
+    let mut scheduled_frames = 0usize;
+    for (packet_index, packet_frames) in scheduled_packet_frames.iter_mut().enumerate() {
         let frames = scheduler.next_frames(
             feedback_rate_hz.unwrap_or(f64::from(config.sample_rate)),
             config.interval_us,
         )?;
-        scheduled_frames = scheduled_frames.saturating_add(frames as u64);
+        let frames = usize::try_from(frames).map_err(|_| "USB packet frame count overflow")?;
+        *packet_frames = frames;
+        scheduled_frames = scheduled_frames.checked_add(frames)
+            .ok_or("USB transfer frame count overflow")?;
         let expected = frames.checked_mul(frame_bytes).ok_or("USB packet byte count overflow")?;
         if expected > config.max_packet_bytes as usize {
             return Err(format!(
@@ -355,40 +529,44 @@ fn fill_and_submit(
                 config.max_packet_bytes
             ));
         }
+    }
 
-        let mut written = 0usize;
-        while written < expected && !*eof {
-            let remaining_frames = (expected - written) / frame_bytes;
-            let chunk = crate::streaming::read_usb_pcm_chunk(
-                decoder_handle,
-                remaining_frames,
-                config.valid_bits,
-                config.subslot_bytes,
-                config.data_format,
-            )?;
-            if chunk.is_empty() {
-                *eof = true;
-                break;
-            }
-            let chunk_end = offset.checked_add(written)
-                .and_then(|start| start.checked_add(chunk.len()))
-                .ok_or("USB PCM chunk buffer offset overflow")?;
-            let packet_region = &mut slot.buffer[offset + written..chunk_end];
-            let copy = crate::usb_isochronous::copy_pcm_into_packet(packet_region, &chunk, frame_bytes)
-                .map_err(|message| format!("Invalid PCM data for USB isochronous packet: {message}"))?;
-            written += copy;
+    let Some(pcm) = pcm_queue.take_frames(scheduled_frames, producer_eof) else {
+        pcm_queue.record_starvation();
+        return Ok(false);
+    };
+    if pcm.is_empty() {
+        if pcm_queue.is_drained_eof() { *eof = true; }
+        return Ok(false);
+    }
+    if pcm.len() % frame_bytes != 0 {
+        return Err("PCM queue returned a partial USB frame".into());
+    }
+
+    slot.buffer.fill(0);
+    let mut source_offset = 0usize;
+    let mut buffer_offset = 0usize;
+    for (packet_index, frames) in scheduled_packet_frames.iter().copied().enumerate() {
+        let expected = frames.checked_mul(frame_bytes).ok_or("USB packet byte count overflow")?;
+        let copy_bytes = pcm.len().saturating_sub(source_offset).min(expected);
+        if copy_bytes > 0 {
+            let source_end = source_offset.checked_add(copy_bytes).ok_or("PCM source offset overflow")?;
+            let destination_end = buffer_offset.checked_add(copy_bytes)
+                .ok_or("USB packet destination offset overflow")?;
+            slot.buffer[buffer_offset..destination_end]
+                .copy_from_slice(&pcm[source_offset..source_end]);
+            source_offset = source_end;
         }
-
-        audio_frames = audio_frames.saturating_add((written / frame_bytes) as u64);
         let descriptor = unsafe { (*slot.transfer).iso_packet_desc.as_mut_ptr().add(packet_index) };
         unsafe { (*descriptor).length = expected as u32; }
-        offset = offset.checked_add(expected)
+        buffer_offset = buffer_offset.checked_add(expected)
             .ok_or("USB packet buffer offset overflow")?;
     }
 
-    slot.audio_frames = audio_frames;
-    slot.zero_padded_frames = scheduled_frames.saturating_sub(audio_frames);
+    slot.audio_frames = (pcm.len() / frame_bytes) as u64;
+    slot.zero_padded_frames = scheduled_frames.saturating_sub(pcm.len() / frame_bytes) as u64;
     slot.fill_duration_us = fill_started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+    *eof = pcm_queue.is_drained_eof();
     slot.signal.completed.store(false, Ordering::Release);
     let result = unsafe { libusb1_sys::libusb_submit_transfer(slot.transfer) };
     if result != 0 {
@@ -396,7 +574,7 @@ fn fill_and_submit(
     }
     slot.submitted = true;
     slot.submitted_at = Some(Instant::now());
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(target_os = "android")]
@@ -450,11 +628,25 @@ fn run_worker(
             return;
         }
     };
+    let producer_stop = Arc::new(AtomicBool::new(false));
+    let (pcm_queue, producer_thread) = match start_pcm_producer(
+        decoder_handle, config, Arc::clone(&producer_stop),
+    ) {
+        Ok(worker) => worker,
+        Err(message) => {
+            set_error(&error, &status, format!("Unable to start USB PCM decoder producer: {message}"));
+            return;
+        }
+    };
     let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
     for _ in 0..TRANSFER_RING_SIZE {
         match create_slot(Arc::clone(&session), config.endpoint, config.max_packet_bytes) {
             Ok(slot) => slots.push(slot),
             Err(message) => {
+                producer_stop.store(true, Ordering::Release);
+                let _ = producer_thread.join();
+                producer_stop.store(true, Ordering::Release);
+                let _ = producer_thread.join();
                 set_error(&error, &status, message);
                 for slot in slots.drain(..) {
                     unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
@@ -468,6 +660,8 @@ fn run_worker(
         (Some(endpoint), Some(packet_bytes)) => match create_feedback_slot(Arc::clone(&session), endpoint, packet_bytes) {
             Ok(mut slot) => {
                 if let Err(message) = submit_feedback(&mut slot) {
+                    producer_stop.store(true, Ordering::Release);
+                    let _ = producer_thread.join();
                     set_error(&error, &status, message);
                     unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
                     for audio_slot in slots.drain(..) {
@@ -511,9 +705,10 @@ fn run_worker(
     if crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
         for slot in &mut slots {
             if eof || paused.load(Ordering::Acquire) { break; }
-            if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
-                set_error(&error, &status, message);
-                break;
+            match fill_and_submit(slot, config, &pcm_queue, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
+                Ok(true) => {}
+                Ok(false) => break,
+                Err(message) => { set_error(&error, &status, message); break; }
             }
             fill_calls = fill_calls.saturating_add(1);
             fill_total_us = fill_total_us.saturating_add(slot.fill_duration_us);
@@ -531,6 +726,12 @@ fn run_worker(
     let mut drain_started_at: Option<Instant> = None;
     let mut unsafe_to_free = false;
     loop {
+        let (_, _, producer_error) = pcm_queue.occupancy();
+        if status.load(Ordering::Acquire) >= 0 {
+            if let Some(message) = producer_error {
+                set_error(&error, &status, format!("USB PCM decoder producer failed: {message}"));
+            }
+        }
         if let Some(started_at) = drain_started_at {
             let pending = slots.iter().any(|slot| slot.submitted)
                 || feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
@@ -568,6 +769,7 @@ fn run_worker(
         if stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0 {
             if !cancelling {
                 cancelling = true;
+                producer_stop.store(true, Ordering::Release);
                 drain_started_at = Some(Instant::now());
                 for (index, slot) in slots.iter().enumerate() {
                     if slot.submitted {
@@ -619,8 +821,10 @@ fn run_worker(
         ) && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
             for slot in &mut slots {
                 if !slot.submitted {
-                    if let Err(message) = fill_and_submit(slot, config, decoder_handle, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
-                        set_error(&error, &status, message); break;
+                    match fill_and_submit(slot, config, &pcm_queue, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
+                        Ok(true) => {}
+                        Ok(false) => break,
+                        Err(message) => { set_error(&error, &status, message); break; }
                     }
                     fill_calls = fill_calls.saturating_add(1);
                     fill_total_us = fill_total_us.saturating_add(slot.fill_duration_us);
@@ -759,6 +963,11 @@ fn run_worker(
             ));
             last_diagnostic_at = Instant::now();
         }
+    }
+
+    producer_stop.store(true, Ordering::Release);
+    if producer_thread.join().is_err() {
+        set_error(&error, &status, "USB PCM decoder producer thread panicked".into());
     }
 
     if unsafe_to_free {
