@@ -37,9 +37,11 @@ The direct USB isochronous path logs a `TRANSFER_SUMMARY` record under the tag `
 - `pcmQueuedMinFrames`, `pcmQueueWaits`, `zeroPaddedFrames`: health of the decoder-to-submitter PCM queue. A low `pcmQueuedMinFrames` or non-zero `zeroPaddedFrames` points at the decoder rather than at scheduling.
 - `activeSlotsMin`, `pendingMin`: minimum number of submitted transfers observed.
 
+If a completed transfer fails validation, the worker logs `TRANSFER_INVALID` followed by `USB_TRANSFER_INVALID_DETAIL slot=<n> ringSize=<n> completedTransfers=<n> audioFrames=<n> packets(length/actual/status)=<list>`. The list gives, for each of the eight packets, the submitted length, the length the host controller reports as transferred, and the packet status.
+
 At stream start the worker logs:
 
-- `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. The ring is sized to cover about 32 ms, bounded to 4..32 transfers and to half of the PCM queue at high sample rates.
+- `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. The ring is currently four transfers (about 4 ms). A 32 ms ring was evaluated on one USB 2.0 DAC and failed deterministically at the 34th completed transfer (see `USB_TRANSFER_INVALID_DETAIL`), so deeper rings are disabled until that behavior is understood.
 - `USB_THREAD_PRIORITY thread=<name> requestedNice=<n> result=<n> errno=<n>`: outcome of the best-effort request to raise the scheduling priority of the USB submit and PCM decode threads. `result=0` means the request was accepted; any other value means Android refused it and the thread keeps its default priority.
 
 Capture command:

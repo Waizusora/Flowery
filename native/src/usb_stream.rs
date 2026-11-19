@@ -42,17 +42,14 @@ const MIN_TRANSFER_RING_SIZE: usize = 4;
 #[cfg(any(target_os = "android", test))]
 const MAX_TRANSFER_RING_SIZE: usize = 32;
 /// Target amount of audio, in microseconds, submitted to the host controller ahead
-/// of playback. A scheduling stall of the worker thread shorter than this does not
-/// starve the bus. The previous fixed ring of four 1 ms transfers tolerated only
-/// about 4 ms, which is shorter than the multi-millisecond stalls observed while the
-/// application runs in the background.
+/// of playback; it determines the transfer ring depth (see [`transfer_ring_size`]).
+///
+/// Kept at 4 ms (four 1 ms transfers). A 32 ms ring was evaluated on a USB 2.0 DAC
+/// (vendor 0x31B2, product 0x0111) and failed deterministically at the 34th completed
+/// transfer with every packet reporting `actual_length != length`, so deeper rings
+/// remain disabled until that behavior is understood. See `USB_TRANSFER_INVALID_DETAIL`.
 #[cfg(any(target_os = "android", test))]
-const TARGET_RING_BUFFER_US: u64 = 32_000;
-/// Requested nice values (Android `THREAD_PRIORITY_URGENT_AUDIO` is -19).
-#[cfg(target_os = "android")]
-const USB_WORKER_THREAD_NICE: i32 = -19;
-#[cfg(target_os = "android")]
-const PCM_DECODE_THREAD_NICE: i32 = -16;
+const TARGET_RING_BUFFER_US: u64 = 4_000;
 #[cfg(any(target_os = "android", test))]
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
@@ -169,13 +166,19 @@ impl PcmQueue {
 /// Number of isochronous transfers to keep in flight for a stream.
 ///
 /// The ring covers [`TARGET_RING_BUFFER_US`] of audio, bounded to
-/// [`MIN_TRANSFER_RING_SIZE`]..=[`MAX_TRANSFER_RING_SIZE`]. The ring is additionally
-/// limited so that it never holds more than half of the PCM queue, which keeps the
-/// producer ahead of the submitter at high sample rates.
+/// [`MIN_TRANSFER_RING_SIZE`]..=[`MAX_TRANSFER_RING_SIZE`].
 #[cfg(any(target_os = "android", test))]
 fn transfer_ring_size(sample_rate: u32, interval_us: u32) -> usize {
+    transfer_ring_size_for(TARGET_RING_BUFFER_US, sample_rate, interval_us)
+}
+
+/// Ring depth for an explicit buffering target. The ring is additionally limited so
+/// that it never holds more than half of the PCM queue, which keeps the producer
+/// ahead of the submitter at high sample rates.
+#[cfg(any(target_os = "android", test))]
+fn transfer_ring_size_for(target_us: u64, sample_rate: u32, interval_us: u32) -> usize {
     let transfer_us = (PACKETS_PER_TRANSFER as u64).saturating_mul(u64::from(interval_us.max(1)));
-    let wanted = ((TARGET_RING_BUFFER_US + transfer_us - 1) / transfer_us)
+    let wanted = ((target_us + transfer_us - 1) / transfer_us)
         .clamp(MIN_TRANSFER_RING_SIZE as u64, MAX_TRANSFER_RING_SIZE as u64) as usize;
     let frames_per_transfer = ((u64::from(sample_rate) * transfer_us + 999_999) / 1_000_000).max(1) as usize;
     let queue_limited = (PCM_QUEUE_CAPACITY_FRAMES / 2) / frames_per_transfer;
@@ -288,6 +291,21 @@ fn transfer_packet_metrics(slot: &TransferSlot) -> (u64, u64, u32, i32) {
             }
         }
         (expected_bytes, actual_bytes, packet_errors, transfer_status)
+    }
+}
+
+/// Per-packet `length/actual_length/status` of a completed transfer, for diagnostics.
+#[cfg(target_os = "android")]
+fn describe_transfer_packets(slot: &TransferSlot) -> String {
+    unsafe {
+        let descriptors = (*slot.transfer).iso_packet_desc.as_ptr();
+        (0..PACKETS_PER_TRANSFER)
+            .map(|index| {
+                let descriptor = &*descriptors.add(index);
+                format!("{}/{}/{}", descriptor.length, descriptor.actual_length, descriptor.status)
+            })
+            .collect::<Vec<_>>()
+            .join(",")
     }
 }
 
@@ -1017,7 +1035,8 @@ fn run_worker(
                 }
             }
         }
-        for slot in &mut slots {
+        let slots_len = slots.len();
+        for (slot_index, slot) in slots.iter_mut().enumerate() {
             if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) { continue; }
             slot.submitted = false;
             slot.submitted_at = None;
@@ -1038,6 +1057,11 @@ fn run_worker(
                         "TRANSFER_INVALID endpoint=0x{:02x} transferStatus={} packetErrors={} expectedBytes={} actualBytes={}",
                         config.endpoint, transfer_status, transfer_packet_errors,
                         transfer_expected, transfer_actual
+                    ));
+                    log_usb_diagnostic(&format!(
+                        "USB_TRANSFER_INVALID_DETAIL slot={} ringSize={} completedTransfers={} audioFrames={} packets(length/actual/status)={}",
+                        slot_index, slots_len, completed_transfers, slot.audio_frames,
+                        describe_transfer_packets(slot)
                     ));
                     set_error(&error, &status, message);
                     continue;
@@ -1506,24 +1530,30 @@ mod tests {
     }
 
     #[test]
-    fn high_speed_ring_covers_target_buffer() {
-        // 8 packets x 125 us = 1 ms per transfer -> 32 transfers = 32 ms.
-        assert_eq!(super::transfer_ring_size(44_100, 125), 32);
-        assert_eq!(super::transfer_ring_size(96_000, 125), 32);
+    fn default_ring_matches_known_good_depth() {
+        assert_eq!(super::transfer_ring_size(44_100, 125), 4);
+        assert_eq!(super::transfer_ring_size(96_000, 125), 4);
+    }
+
+    #[test]
+    fn ring_depth_scales_with_buffering_target() {
+        // 8 packets x 125 us = 1 ms per transfer.
+        assert_eq!(super::transfer_ring_size_for(32_000, 44_100, 125), 32);
+        assert_eq!(super::transfer_ring_size_for(8_000, 44_100, 125), 8);
     }
 
     #[test]
     fn full_speed_ring_keeps_minimum() {
         // 8 packets x 1000 us = 8 ms per transfer -> 4 transfers = 32 ms.
-        assert_eq!(super::transfer_ring_size(44_100, 1_000), 4);
+        assert_eq!(super::transfer_ring_size_for(32_000, 44_100, 1_000), 4);
     }
 
     #[test]
     fn ring_is_limited_by_pcm_queue_at_high_sample_rates() {
         // 768 kHz: 768 frames per 1 ms transfer -> at most 8192 / 768 = 10 transfers.
-        assert_eq!(super::transfer_ring_size(768_000, 125), 10);
+        assert_eq!(super::transfer_ring_size_for(32_000, 768_000, 125), 10);
         // 384 kHz: 384 frames per transfer -> 8192 / 384 = 21 transfers.
-        assert_eq!(super::transfer_ring_size(384_000, 125), 21);
+        assert_eq!(super::transfer_ring_size_for(32_000, 384_000, 125), 21);
     }
 
     #[test]
