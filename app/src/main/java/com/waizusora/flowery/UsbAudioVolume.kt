@@ -121,9 +121,9 @@ internal object UsbAudioVolumeDescriptorParser {
                 for (channel in 0 until channelCount) {
                     val controls = readUnsigned(descriptor, 5 + channel * 4, 4).toInt()
                     when ((controls ushr 2) and 0x03) {
-                        1 -> readable += channel // read-only
-                        2 -> { readable += channel; writable += channel }
-                        // 0 = absent, 3 = reserved: neither is assumed usable.
+                        1 -> readable += channel // 01b: host read-only
+                        3 -> { readable += channel; writable += channel } // 11b: host read/write
+                        // 00b = absent; 10b = reserved and must not be used.
                     }
                 }
             }
