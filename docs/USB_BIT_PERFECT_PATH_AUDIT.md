@@ -97,6 +97,12 @@ analog output.
   op=PROBE_*`). No `SET_CUR` is issued by the probe.
 - If `GET_CUR` is also unavailable, the volume control is reported as
   unavailable and no write is attempted.
+- A second read-only probe runs after clock negotiation and before the
+  isochronous stream starts (`PROBE_PRESTREAM_*`). It issues `GET_CUR` for the
+  volume of channels 1, 2 and 0, `GET_RANGE` for channel 1, and `GET_CUR` for
+  master mute. Comparing it with the post-start requests distinguishes
+  interference from active streaming from a device that does not answer Feature
+  Unit requests at all. No `SET_CUR` is sent by either probe.
 - Actual DAC behavior still requires hardware validation.
 
 ## Android routing and volume isolation

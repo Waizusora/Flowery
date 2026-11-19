@@ -105,7 +105,7 @@ internal class UsbNativePlaybackSession private constructor(
             val controlInterface = uac2ControlInterface
                 ?: return Result.failure(IllegalStateException("UAC2 control interface is missing"))
             val operation: () -> Result<Unit> = {
-                usb.negotiateUac2Clock(
+                val clockResult = usb.negotiateUac2Clock(
                     controlInterface,
                     uac2ClockSourceEntity,
                     uac2ClockControls ?: 0,
@@ -118,6 +118,13 @@ internal class UsbNativePlaybackSession private constructor(
                     uac2ClockMultiplierControls ?: 0,
                     uac2ClockPaths
                 )
+                // Read-only diagnostic: record how the Feature Unit answers before the
+                // isochronous stream starts, to distinguish stream-related interference
+                // from a device that never answers Feature Unit requests.
+                if (clockResult.isSuccess) {
+                    uacVolumeControl?.let { usb.probeUacVolumeControl(it, "PRESTREAM") }
+                }
+                clockResult
             }
             operation
         } else {

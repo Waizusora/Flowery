@@ -268,6 +268,24 @@ internal class UsbLibusbSession internal constructor(
             ?: ranges.firstOrNull()
     }
 
+    /**
+     * One-shot, read-only diagnostic of the Feature Unit control endpoint. Issues only
+     * GET_CUR and GET_RANGE requests; no SET_CUR is sent. [phase] labels the log lines
+     * so that requests made before and after isochronous streaming can be compared.
+     */
+    @Synchronized
+    fun probeUacVolumeControl(control: UacVolumeControl, phase: String) {
+        if (closed || control.protocol != 0x20 || !ensureControlInterfaceClaimed(control.controlInterface)) return
+        val index = (control.unitId shl 8) or control.controlInterface
+        val volumeSelector = UAC_FEATURE_VOLUME_CONTROL shl 8
+        val muteSelector = 0x01 shl 8
+        for (channel in intArrayOf(1, 2, 0)) {
+            volumeControlTransfer("PROBE_${phase}_GET_CUR_VOL_ch$channel", 0xA1, 0x81, volumeSelector or channel, index, ByteArray(2), 2)
+        }
+        volumeControlTransfer("PROBE_${phase}_GET_RANGE_VOL_ch1", 0xA1, 0x82, volumeSelector or 1, index, ByteArray(8), 8)
+        volumeControlTransfer("PROBE_${phase}_GET_CUR_MUTE_ch0", 0xA1, 0x81, muteSelector, index, ByteArray(1), 1)
+    }
+
     /** Reads descriptor-advertised Feature Unit volume in signed 1/256 dB units. */
     @Synchronized
     fun readUacVolume(control: UacVolumeControl): Result<UacVolumeSnapshot> {
