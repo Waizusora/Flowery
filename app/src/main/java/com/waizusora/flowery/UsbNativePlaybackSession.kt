@@ -351,6 +351,35 @@ internal class UsbNativePlaybackSession private constructor(
                 }
                 Log.i("FloweryUsbNative", "USB_PROBE_OPEN device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId}")
                 val rawDescriptors = probe.rawDescriptors
+                // Preserve the exact AudioControl entity topology in diagnostics. This
+                // distinguishes a DAC with no Feature Unit from a parser/topology mismatch.
+                var descriptorOffset = 0
+                var descriptorInterfaceClass = -1
+                var descriptorInterfaceSubclass = -1
+                var audioControlDescriptorsLogged = 0
+                while (descriptorOffset + 2 <= rawDescriptors.size) {
+                    val descriptorLength = rawDescriptors[descriptorOffset].toInt() and 0xff
+                    val descriptorType = rawDescriptors[descriptorOffset + 1].toInt() and 0xff
+                    if (descriptorLength < 2 || descriptorOffset + descriptorLength > rawDescriptors.size) {
+                        Log.w("FloweryUsbNative", "USB_DESCRIPTOR_MALFORMED offset=$descriptorOffset length=$descriptorLength total=${rawDescriptors.size}")
+                        break
+                    }
+                    if (descriptorType == 0x04 && descriptorLength >= 9) {
+                        descriptorInterfaceClass = rawDescriptors[descriptorOffset + 5].toInt() and 0xff
+                        descriptorInterfaceSubclass = rawDescriptors[descriptorOffset + 6].toInt() and 0xff
+                    } else if (descriptorType == 0x24 &&
+                        descriptorInterfaceClass == 0x01 && descriptorInterfaceSubclass == 0x01 &&
+                        audioControlDescriptorsLogged < 64
+                    ) {
+                        val descriptorHex = rawDescriptors.copyOfRange(
+                            descriptorOffset, descriptorOffset + descriptorLength
+                        ).joinToString("") { "%02X".format(it.toInt() and 0xff) }
+                        Log.i("FloweryUsbNative", "USB_AC_DESCRIPTOR offset=$descriptorOffset bytes=$descriptorHex")
+                        audioControlDescriptorsLogged++
+                    }
+                    descriptorOffset += descriptorLength
+                }
+                Log.i("FloweryUsbNative", "USB_AC_DESCRIPTOR_SUMMARY count=$audioControlDescriptorsLogged rawBytes=${rawDescriptors.size}")
                 val volumeControl = UsbAudioVolumeDescriptorParser.parse(rawDescriptors)
                 Log.i(
                     "FloweryUsbNative",
