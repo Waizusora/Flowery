@@ -213,6 +213,23 @@ internal class UsbNativePlaybackSession private constructor(
             }
     }
 
+    /** Applies the conservative startup attenuation after the Feature Unit has been read. */
+    @Synchronized
+    fun applySafeStartupVolume(): Result<UacVolumeSnapshot> {
+        val snapshot = cachedVolumeSnapshot ?: volumeSnapshot().getOrElse {
+            return Result.failure(it)
+        }
+        val target = UacVolumeMath.safeStartupTarget(snapshot)
+            ?: return Result.success(snapshot)
+        val fraction = UacVolumeMath.fractionForDb256(target)
+        Log.i(
+            "FloweryUsbNative",
+            "USB_VOLUME_SAFE_STARTUP requestedDb256=$target currentDb256=${snapshot.currentDb256} " +
+                "minimumDb256=${snapshot.minimumDb256} maximumDb256=${snapshot.maximumDb256} " +
+                "resolutionDb256=${snapshot.resolutionDb256}"
+        )
+        return setVolumeFraction(fraction)
+    }
     fun hasVerifiedVolumeWrite(): Boolean = volumeWriteVerified
 
     fun cachedVolumeSnapshot(): UacVolumeSnapshot? = cachedVolumeSnapshot
