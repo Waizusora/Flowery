@@ -192,17 +192,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         context, handle, sourceRate, channels, sourceBits, sourceDataFormat
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
-                    directUsb.start(actualStartPositionMs).getOrThrow()
-                    if (!safeUsbVolumeInitialized) {
-                        val safeResult = directUsb.applySafeStartupVolume()
-                        safeResult.onSuccess { snapshot ->
-                            safeUsbVolumeInitialized = true
-                            Log.i("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_COMPLETE currentDb256=${snapshot.currentDb256} applied=true")
-                        }.onFailure { error ->
-                            safeUsbVolumeInitialized = true
-                            Log.w("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_FAILED reason=${error.message}")
-                        }
-                    }
+                    val applySafeStartupVolume = !safeUsbVolumeInitialized
+                    directUsb.start(actualStartPositionMs, applySafeStartupVolume = applySafeStartupVolume).getOrThrow()
+                    if (applySafeStartupVolume) safeUsbVolumeInitialized = true
                     pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { queued ->
                         directUsb.seek(segmentStartMs + queued.coerceAtLeast(0L)).getOrThrow()
                     }
