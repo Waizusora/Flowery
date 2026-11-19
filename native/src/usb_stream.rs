@@ -645,8 +645,6 @@ fn run_worker(
             Err(message) => {
                 producer_stop.store(true, Ordering::Release);
                 let _ = producer_thread.join();
-                producer_stop.store(true, Ordering::Release);
-                let _ = producer_thread.join();
                 set_error(&error, &status, message);
                 for slot in slots.drain(..) {
                     unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
@@ -672,6 +670,8 @@ fn run_worker(
                 Some(slot)
             }
             Err(message) => {
+                producer_stop.store(true, Ordering::Release);
+                let _ = producer_thread.join();
                 set_error(&error, &status, message);
                 for slot in slots.drain(..) {
                     unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
@@ -945,8 +945,10 @@ fn run_worker(
         let pending_now = slots.iter().filter(|slot| slot.submitted).count();
         pending_min = pending_min.min(pending_now);
         if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
+            let (decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
+                pcm_starvation_count, pcm_queued_min_frames) = pcm_queue.metrics();
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmStarvationCount={} pcmQueuedMinFrames={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
@@ -959,7 +961,9 @@ fn run_worker(
                 submit_gap_max_us,
                 if pending_min == usize::MAX { 0 } else { pending_min },
                 zero_padded_frames,
-                event_loop_max_us
+                event_loop_max_us,
+                decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
+                pcm_starvation_count, pcm_queued_min_frames
             ));
             last_diagnostic_at = Instant::now();
         }
