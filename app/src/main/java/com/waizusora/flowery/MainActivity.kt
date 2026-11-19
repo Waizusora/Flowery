@@ -148,6 +148,9 @@ class MainActivity : ComponentActivity() {
     private var usbVolumeWritable by mutableStateOf(false)
     private var usbVolumeVerified by mutableStateOf(false)
     private var usbVolumeDb by mutableStateOf(Float.NaN)
+    private var usbVolumeMinDb by mutableStateOf(Float.NaN)
+    private var usbVolumeMaxDb by mutableStateOf(Float.NaN)
+    private var usbVolumeResolutionDb by mutableStateOf(Float.NaN)
     private val io = Executors.newSingleThreadExecutor()
     private val playbackReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -200,6 +203,9 @@ class MainActivity : ComponentActivity() {
                 usbVolumeWritable = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_WRITABLE, false)
                 usbVolumeVerified = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_VERIFIED, false)
                 usbVolumeDb = intent.getFloatExtra(PlaybackService.EXTRA_USB_VOLUME_DB, Float.NaN)
+                usbVolumeMinDb = intent.getFloatExtra(PlaybackService.EXTRA_USB_VOLUME_MIN_DB, Float.NaN)
+                usbVolumeMaxDb = intent.getFloatExtra(PlaybackService.EXTRA_USB_VOLUME_MAX_DB, Float.NaN)
+                usbVolumeResolutionDb = intent.getFloatExtra(PlaybackService.EXTRA_USB_VOLUME_RESOLUTION_DB, Float.NaN)
             }
             val currentUri = intent.getStringExtra(PlaybackService.EXTRA_CURRENT_URI)
             val currentCueStart = intent.getLongExtra(PlaybackService.EXTRA_CURRENT_CUE_START, 0L)
@@ -288,6 +294,9 @@ class MainActivity : ComponentActivity() {
                 usbVolumeWritable = usbVolumeWritable,
                 usbVolumeVerified = usbVolumeVerified,
                 usbVolumeDb = usbVolumeDb,
+                usbVolumeMinDb = usbVolumeMinDb,
+                usbVolumeMaxDb = usbVolumeMaxDb,
+                usbVolumeResolutionDb = usbVolumeResolutionDb,
                 onAddFolder = { folderPicker.launch(null) },
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
