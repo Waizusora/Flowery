@@ -21,7 +21,8 @@ class UsbFeatureUnitProbeTest {
         ) { logs += it }
 
         assertTrue(requests.isNotEmpty())
-        assertTrue(requests.all { it == (0xA1 to 0x81) })
+        // UAC2 CUR is 0x01 (not UAC1 GET_CUR 0x81).
+        assertTrue(requests.all { it == (0xA1 to 0x01) })
         assertEquals(requests.size, logs.size)
         assertTrue(logs.all { it.startsWith("UAC2_SWEEP phase=TEST ") })
     }
