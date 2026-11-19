@@ -57,6 +57,8 @@ class PlaybackService : Service() {
         const val EXTRA_CURRENT_PLAYLIST_NAME = "current_playlist_name"
         const val EXTRA_CURRENT_PLAYLIST_ORDER = "current_playlist_order"
         const val EXTRA_VALUE = "value"
+        const val EXTRA_VOLUME_COMMAND_ID = "volume_command_id"
+        const val EXTRA_VOLUME_COMMAND_COMPLETE = "volume_command_complete"
         const val EXTRA_TITLE = "media_title"
         const val EXTRA_ARTIST = "media_artist"
         const val EXTRA_CURRENT_TITLE = "current_title"
@@ -290,8 +292,30 @@ class PlaybackService : Service() {
             ACTION_NEXT -> skipNext()
             ACTION_PREVIOUS -> skipPrevious()
             ACTION_VOLUME -> {
-                val requestedVolume = intent.getFloatExtra(EXTRA_VALUE, 1f)
-                io.execute { if (::player.isInitialized) player.setVolume(requestedVolume) }
+                val requestedVolume = intent.getFloatExtra(EXTRA_VALUE, 1f).coerceIn(0f, 1f)
+                val commandId = intent.getLongExtra(EXTRA_VOLUME_COMMAND_ID, -1L)
+                io.execute {
+                    if (::player.isInitialized) {
+                        Log.i("FloweryDiagnostics", "USB_VOLUME_COMMAND_START id=$commandId requestedFraction=$requestedVolume")
+                        player.setVolume(requestedVolume)
+                        val actualVolume = player.currentVolumeFraction().coerceIn(0f, 1f)
+                        val verified = player.usbVolumeWriteVerified()
+                        Log.i(
+                            "FloweryDiagnostics",
+                            "USB_VOLUME_COMMAND_COMPLETE id=$commandId requestedFraction=$requestedVolume actualFraction=$actualVolume verified=$verified"
+                        )
+                        sendBroadcast(
+                            Intent(BROADCAST_STATE).setPackage(packageName)
+                                .putExtra(EXTRA_VOLUME, actualVolume)
+                                .putExtra(EXTRA_VOLUME_COMMAND_ID, commandId)
+                                .putExtra(EXTRA_VOLUME_COMMAND_COMPLETE, true)
+                                .putExtra(EXTRA_USB_VOLUME_DETECTED, player.usbVolumeControlDetected())
+                                .putExtra(EXTRA_USB_VOLUME_WRITABLE, player.usbVolumeControlWritable())
+                                .putExtra(EXTRA_USB_VOLUME_VERIFIED, verified)
+                                .putExtra(EXTRA_USB_VOLUME_DB, player.usbVolumeCurrentDb())
+                        )
+                    }
+                }
             }
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
