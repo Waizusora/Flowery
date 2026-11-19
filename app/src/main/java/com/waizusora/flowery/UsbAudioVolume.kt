@@ -2,6 +2,50 @@ package com.waizusora.flowery
 
 import kotlin.math.pow
 
+
+/**
+ * Shared dB-domain policy for UAC1 and UAC2 Feature Unit volume controls.
+ * USB Audio volume values are signed 1/256 dB; the descriptor range and
+ * resolution remain authoritative for every device.
+ */
+internal object UacVolumeMath {
+    const val SAFE_STARTUP_ATTENUATION_DB256 = 30 * 256
+    const val DEFAULT_STEP_DB256 = 128 // 0.5 dB
+
+    /** Returns a lower startup target only; it never raises an already quieter DAC. */
+    fun safeStartupTarget(snapshot: UacVolumeSnapshot): Int? {
+        if (!snapshot.writable || snapshot.minimumDb256 > snapshot.maximumDb256) return null
+        val ceiling = snapshot.maximumDb256 - SAFE_STARTUP_ATTENUATION_DB256
+        val desired = minOf(snapshot.currentDb256, ceiling)
+            .coerceIn(snapshot.minimumDb256, snapshot.maximumDb256)
+        val target = quantizeDown(desired, snapshot.minimumDb256, snapshot.maximumDb256, snapshot.resolutionDb256)
+        return target.takeIf { it < snapshot.currentDb256 }
+    }
+
+    fun stepTarget(snapshot: UacVolumeSnapshot, direction: Int, stepDb256: Int): Int {
+        require(direction == -1 || direction == 1)
+        require(stepDb256 > 0)
+        val desired = (snapshot.currentDb256.toLong() + direction.toLong() * stepDb256)
+            .coerceIn(snapshot.minimumDb256.toLong(), snapshot.maximumDb256.toLong()).toInt()
+        return quantizeNearest(desired, snapshot.minimumDb256, snapshot.maximumDb256, snapshot.resolutionDb256)
+    }
+
+    fun fractionForDb256(db256: Int): Float =
+        kotlin.math.pow(10.0, db256 / (256.0 * 20.0)).toFloat().coerceIn(0f, 1f)
+
+    private fun quantizeDown(value: Int, minimum: Int, maximum: Int, resolution: Int): Int {
+        if (resolution <= 0) return value.coerceIn(minimum, maximum)
+        val steps = ((value.toLong() - minimum) / resolution).coerceAtLeast(0L)
+        return (minimum.toLong() + steps * resolution).toInt().coerceIn(minimum, maximum)
+    }
+
+    private fun quantizeNearest(value: Int, minimum: Int, maximum: Int, resolution: Int): Int {
+        if (resolution <= 0) return value.coerceIn(minimum, maximum)
+        val steps = ((value.toLong() - minimum).toDouble() / resolution).let { kotlin.math.round(it) }
+        return (minimum.toLong() + steps.toLong() * resolution).toInt().coerceIn(minimum, maximum)
+    }
+}
+
 internal data class UacVolumeRange(val minimum: Int, val maximum: Int, val resolution: Int)
 internal data class UacVolumeSnapshot(
     val currentDb256: Int,
