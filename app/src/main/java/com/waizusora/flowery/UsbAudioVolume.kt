@@ -31,7 +31,7 @@ internal object UacVolumeMath {
     }
 
     fun fractionForDb256(db256: Int): Float =
-        kotlin.math.pow(10.0, db256 / (256.0 * 20.0)).toFloat().coerceIn(0f, 1f)
+        10.0.pow(db256 / (256.0 * 20.0)).toFloat().coerceIn(0f, 1f)
 
     private fun quantizeDown(value: Int, minimum: Int, maximum: Int, resolution: Int): Int {
         if (resolution <= 0) return value.coerceIn(minimum, maximum)
