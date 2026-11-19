@@ -35,9 +35,25 @@ fn retain_submitted_resources<B, S, T>(
     std::sync::Arc::into_raw(session)
 }
 
+/// Lower bound of isochronous transfers kept in flight.
+#[cfg(any(target_os = "android", test))]
+const MIN_TRANSFER_RING_SIZE: usize = 4;
+/// Upper bound of isochronous transfers kept in flight.
+#[cfg(any(target_os = "android", test))]
+const MAX_TRANSFER_RING_SIZE: usize = 32;
+/// Target amount of audio, in microseconds, submitted to the host controller ahead
+/// of playback. A scheduling stall of the worker thread shorter than this does not
+/// starve the bus. The previous fixed ring of four 1 ms transfers tolerated only
+/// about 4 ms, which is shorter than the multi-millisecond stalls observed while the
+/// application runs in the background.
+#[cfg(any(target_os = "android", test))]
+const TARGET_RING_BUFFER_US: u64 = 32_000;
+/// Requested nice values (Android `THREAD_PRIORITY_URGENT_AUDIO` is -19).
 #[cfg(target_os = "android")]
-const TRANSFER_RING_SIZE: usize = 4;
+const USB_WORKER_THREAD_NICE: i32 = -19;
 #[cfg(target_os = "android")]
+const PCM_DECODE_THREAD_NICE: i32 = -16;
+#[cfg(any(target_os = "android", test))]
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
 const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
@@ -48,7 +64,7 @@ const WORKER_JOIN_TIMEOUT: Duration = Duration::from_secs(3);
 #[cfg(target_os = "android")]
 const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 const PCM_QUEUE_CAPACITY_FRAMES: usize = 16_384;
 #[cfg(target_os = "android")]
 const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
@@ -150,6 +166,36 @@ impl PcmQueue {
     }
 }
 
+/// Number of isochronous transfers to keep in flight for a stream.
+///
+/// The ring covers [`TARGET_RING_BUFFER_US`] of audio, bounded to
+/// [`MIN_TRANSFER_RING_SIZE`]..=[`MAX_TRANSFER_RING_SIZE`]. The ring is additionally
+/// limited so that it never holds more than half of the PCM queue, which keeps the
+/// producer ahead of the submitter at high sample rates.
+#[cfg(any(target_os = "android", test))]
+fn transfer_ring_size(sample_rate: u32, interval_us: u32) -> usize {
+    let transfer_us = (PACKETS_PER_TRANSFER as u64).saturating_mul(u64::from(interval_us.max(1)));
+    let wanted = ((TARGET_RING_BUFFER_US + transfer_us - 1) / transfer_us)
+        .clamp(MIN_TRANSFER_RING_SIZE as u64, MAX_TRANSFER_RING_SIZE as u64) as usize;
+    let frames_per_transfer = ((u64::from(sample_rate) * transfer_us + 999_999) / 1_000_000).max(1) as usize;
+    let queue_limited = (PCM_QUEUE_CAPACITY_FRAMES / 2) / frames_per_transfer;
+    wanted.min(queue_limited).max(MIN_TRANSFER_RING_SIZE)
+}
+
+/// Raises the scheduling priority of the calling thread (negative nice value).
+///
+/// Best effort: Android may refuse the request, in which case the thread keeps its
+/// default priority and the outcome is logged.
+#[cfg(target_os = "android")]
+fn raise_current_thread_priority(label: &str, nice: i32) {
+    let tid = unsafe { libc::gettid() };
+    let result = unsafe { libc::setpriority(libc::PRIO_PROCESS, tid as libc::id_t, nice) };
+    let errno = if result == 0 { 0 } else { std::io::Error::last_os_error().raw_os_error().unwrap_or(-1) };
+    log_usb_diagnostic(&format!(
+        "USB_THREAD_PRIORITY thread={label} requestedNice={nice} result={result} errno={errno}"
+    ));
+}
+
 #[cfg(target_os = "android")]
 fn start_pcm_producer(
     decoder_handle: i64,
@@ -164,6 +210,7 @@ fn start_pcm_producer(
     let worker = thread::Builder::new()
         .name("flowery-usb-pcm-decode".into())
         .spawn(move || {
+            raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
             while !stop.load(Ordering::Acquire) {
                 let free_frames = {
                     let state = producer_queue.state.lock()
@@ -654,8 +701,14 @@ fn run_worker(
             return;
         }
     };
-    let mut slots = Vec::with_capacity(TRANSFER_RING_SIZE);
-    for _ in 0..TRANSFER_RING_SIZE {
+    let ring_size = transfer_ring_size(config.sample_rate, config.interval_us);
+    log_usb_diagnostic(&format!(
+        "USB_TRANSFER_RING slots={} packetsPerTransfer={} bufferedUs={}",
+        ring_size, PACKETS_PER_TRANSFER,
+        (ring_size as u64) * (PACKETS_PER_TRANSFER as u64) * u64::from(config.interval_us)
+    ));
+    let mut slots = Vec::with_capacity(ring_size);
+    for _ in 0..ring_size {
         match create_slot(Arc::clone(&session), config.endpoint, config.max_packet_bytes) {
             Ok(slot) => slots.push(slot),
             Err(message) => {
@@ -714,6 +767,7 @@ fn run_worker(
     let mut event_loop_max_us = 0u64;
     let mut pending_min = usize::MAX;
     let mut active_slots_min = usize::MAX;
+    let mut ring_dry_events = 0u64;
     let mut callback_dispatch_max_us = 0u64;
     let mut callback_to_resubmit_max_us = 0u64;
     let mut callback_to_resubmit_total_us = 0u64;
@@ -839,6 +893,22 @@ fn run_worker(
         }
         let active_before_refill = slots.iter().filter(|slot| slot.submitted).count();
         active_slots_min = active_slots_min.min(active_before_refill);
+        // A ring with no submitted transfer while audio should be flowing means the
+        // host controller had nothing to play: an audible gap.
+        if active_before_refill == 0
+            && completed_transfers > slots.len() as u64
+            && !eof
+            && !paused.load(Ordering::Acquire)
+        {
+            ring_dry_events = ring_dry_events.saturating_add(1);
+            if ring_dry_events <= 20 || ring_dry_events % 100 == 0 {
+                log_usb_diagnostic(&format!(
+                    "USB_RING_DRY event={} completedTransfers={} sinceLastSubmitUs={}",
+                    ring_dry_events, completed_transfers,
+                    last_submit_at.map(|t| t.elapsed().as_micros()).unwrap_or(0)
+                ));
+            }
+        }
         if crate::usb_isochronous::audio_submission_allowed(
             paused.load(Ordering::Acquire), cancelling, eof,
         ) && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
@@ -982,7 +1052,7 @@ fn run_worker(
             let (decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
                 pcm_starvation_count, pcm_queued_min_frames) = pcm_queue.metrics();
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} activeSlotsMin={} callbackDispatchMaxUs={} callbackToResubmitAvgUs={} callbackToResubmitMaxUs={} callbackToResubmitCount={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} activeSlotsMin={} callbackDispatchMaxUs={} callbackToResubmitAvgUs={} callbackToResubmitMaxUs={} callbackToResubmitCount={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={} ringDryEvents={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
@@ -1002,7 +1072,7 @@ fn run_worker(
                 zero_padded_frames,
                 event_loop_max_us,
                 decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
-                pcm_starvation_count, pcm_queued_min_frames
+                pcm_starvation_count, pcm_queued_min_frames, ring_dry_events
             ));
             last_diagnostic_at = Instant::now();
         }
@@ -1140,10 +1210,13 @@ fn spawn_worker(
     let thread_error = Arc::clone(&error);
     let worker_thread = thread::Builder::new()
         .name("flowery-usb-iso-out".into())
-        .spawn(move || run_worker(
-            session, decoder_handle, config, thread_stop, thread_status,
-            thread_played_frames, thread_paused, thread_pause_drained, thread_error,
-        ))
+        .spawn(move || {
+            raise_current_thread_priority("flowery-usb-iso-out", USB_WORKER_THREAD_NICE);
+            run_worker(
+                session, decoder_handle, config, thread_stop, thread_status,
+                thread_played_frames, thread_paused, thread_pause_drained, thread_error,
+            )
+        })
         .map_err(|e| e.to_string())?;
     workers().lock().unwrap_or_else(|e| e.into_inner()).insert(
         session_handle,
@@ -1427,7 +1500,35 @@ mod tests {
 
     #[test]
     fn transfer_ring_and_packet_batch_are_bounded() {
-        assert_eq!(super::TRANSFER_RING_SIZE, 4);
+        assert_eq!(super::MIN_TRANSFER_RING_SIZE, 4);
+        assert_eq!(super::MAX_TRANSFER_RING_SIZE, 32);
         assert_eq!(super::PACKETS_PER_TRANSFER, 8);
+    }
+
+    #[test]
+    fn high_speed_ring_covers_target_buffer() {
+        // 8 packets x 125 us = 1 ms per transfer -> 32 transfers = 32 ms.
+        assert_eq!(super::transfer_ring_size(44_100, 125), 32);
+        assert_eq!(super::transfer_ring_size(96_000, 125), 32);
+    }
+
+    #[test]
+    fn full_speed_ring_keeps_minimum() {
+        // 8 packets x 1000 us = 8 ms per transfer -> 4 transfers = 32 ms.
+        assert_eq!(super::transfer_ring_size(44_100, 1_000), 4);
+    }
+
+    #[test]
+    fn ring_is_limited_by_pcm_queue_at_high_sample_rates() {
+        // 768 kHz: 768 frames per 1 ms transfer -> at most 8192 / 768 = 10 transfers.
+        assert_eq!(super::transfer_ring_size(768_000, 125), 10);
+        // 384 kHz: 384 frames per transfer -> 8192 / 384 = 21 transfers.
+        assert_eq!(super::transfer_ring_size(384_000, 125), 21);
+    }
+
+    #[test]
+    fn ring_never_drops_below_minimum_or_divides_by_zero() {
+        assert!(super::transfer_ring_size(44_100, 0) >= super::MIN_TRANSFER_RING_SIZE);
+        assert!(super::transfer_ring_size(u32::MAX, 125) >= super::MIN_TRANSFER_RING_SIZE);
     }
 }

@@ -26,3 +26,26 @@ Historical process-exit information is only available after the app is launched 
 5. Share the output and approximate reproduction time.
 
 The diagnostic intentionally avoids recording full content URIs or filesystem paths.
+
+## USB streaming timing diagnostics
+
+The direct USB isochronous path logs a `TRANSFER_SUMMARY` record under the tag `FloweryUsbNative` every five seconds. Fields relevant to intermittent gaps, stutter, or delayed audio:
+
+- `packetErrors`, `expectedBytes`, `actualBytes`: bus-level transfer integrity. Non-zero `packetErrors` or a byte mismatch indicates the device or host controller rejected or truncated packets.
+- `ringDryEvents`: number of times no isochronous transfer was submitted while audio should have been flowing, which is an audible gap. A non-zero value means the worker thread was not scheduled in time to keep the transfer ring filled. Each of the first twenty events (and every hundredth afterwards) is also logged as `USB_RING_DRY`, with the time since the last submission.
+- `submitGapMaxUs`, `eventLoopMaxUs`, `callbackToResubmitMaxUs`: worst-case scheduling latencies since the stream started. They should stay well below the buffered duration reported by `USB_TRANSFER_RING`.
+- `pcmQueuedMinFrames`, `pcmQueueWaits`, `zeroPaddedFrames`: health of the decoder-to-submitter PCM queue. A low `pcmQueuedMinFrames` or non-zero `zeroPaddedFrames` points at the decoder rather than at scheduling.
+- `activeSlotsMin`, `pendingMin`: minimum number of submitted transfers observed.
+
+At stream start the worker logs:
+
+- `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. The ring is sized to cover about 32 ms, bounded to 4..32 transfers and to half of the PCM queue at high sample rates.
+- `USB_THREAD_PRIORITY thread=<name> requestedNice=<n> result=<n> errno=<n>`: outcome of the best-effort request to raise the scheduling priority of the USB submit and PCM decode threads. `result=0` means the request was accepted; any other value means Android refused it and the thread keeps its default priority.
+
+Capture command:
+
+```sh
+adb logcat -c
+# reproduce the stutter and note the wall-clock time
+adb logcat -d -v threadtime -s FloweryUsbNative FloweryDiagnostics
+```
