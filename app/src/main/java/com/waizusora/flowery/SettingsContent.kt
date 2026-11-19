@@ -95,6 +95,11 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         }
     }
     var encodingExpanded by remember(page) { mutableStateOf(false) }
+    var sliderVolume by remember { mutableStateOf(volume.coerceIn(0f, 1f)) }
+    var volumeDragging by remember { mutableStateOf(false) }
+    LaunchedEffect(volume) {
+        if (!volumeDragging) sliderVolume = volume.coerceIn(0f, 1f)
+    }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
@@ -141,8 +146,15 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                             color = color, style = MaterialTheme.typography.labelMedium)
                     }
                     Slider(
-                        value = volume.coerceIn(0f, 1f),
-                        onValueChange = onVolume,
+                        value = sliderVolume,
+                        onValueChange = {
+                            sliderVolume = it
+                            volumeDragging = true
+                        },
+                        onValueChangeFinished = {
+                            volumeDragging = false
+                            onVolume(sliderVolume)
+                        },
                         enabled = usbDirectActive && usbVolumeWritable
                     )
                     Text(
