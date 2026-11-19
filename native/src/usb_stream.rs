@@ -247,6 +247,16 @@ fn transfer_packet_metrics(slot: &TransferSlot) -> (u64, u64, u32, i32) {
 #[cfg(target_os = "android")]
 struct TransferSignal {
     completed: AtomicBool,
+    completed_at_us: AtomicU64,
+}
+
+#[cfg(target_os = "android")]
+static CALLBACK_CLOCK_ORIGIN: OnceLock<Instant> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn callback_clock_us() -> u64 {
+    CALLBACK_CLOCK_ORIGIN.get_or_init(Instant::now)
+        .elapsed().as_micros().min(u128::from(u64::MAX)) as u64
 }
 
 #[cfg(target_os = "android")]
@@ -260,6 +270,7 @@ struct TransferSlot {
     submitted_at: Option<Instant>,
     fill_duration_us: u64,
     zero_padded_frames: u64,
+    completion_at_us: Option<u64>,
 }
 
 #[cfg(target_os = "android")]
@@ -323,6 +334,7 @@ extern "system" fn transfer_callback(transfer: *mut libusb1_sys::libusb_transfer
     unsafe {
         let signal = (*transfer).user_data as *const TransferSignal;
         if !signal.is_null() {
+            (*signal).completed_at_us.store(callback_clock_us(), Ordering::Relaxed);
             (*signal).completed.store(true, Ordering::Release);
         }
     }
@@ -416,7 +428,7 @@ fn create_slot(
         return Err("USB transfer buffer exceeds libusb limits".into());
     }
     let mut buffer = vec![0_u8; buffer_len];
-    let signal = Box::new(TransferSignal { completed: AtomicBool::new(false) });
+    let signal = Box::new(TransferSignal { completed: AtomicBool::new(false), completed_at_us: AtomicU64::new(0) });
     let transfer = unsafe { libusb1_sys::libusb_alloc_transfer(PACKETS_PER_TRANSFER as i32) };
     if transfer.is_null() {
         return Err("libusb_alloc_transfer returned null".into());
@@ -434,7 +446,7 @@ fn create_slot(
             0,
         );
     }
-    Ok(TransferSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, audio_frames: 0, submitted_at: None, fill_duration_us: 0, zero_padded_frames: 0 })
+    Ok(TransferSlot { transfer, buffer: ManuallyDrop::new(buffer), signal: ManuallyDrop::new(signal), session: ManuallyDrop::new(session), submitted: false, audio_frames: 0, submitted_at: None, fill_duration_us: 0, zero_padded_frames: 0, completion_at_us: None })
 }
 
 #[cfg(target_os = "android")]
@@ -445,7 +457,7 @@ fn create_feedback_slot(
 ) -> Result<FeedbackSlot, String> {
     let handle = session.handle;
     let mut buffer = vec![0_u8; usize::from(packet_bytes)];
-    let signal = Box::new(TransferSignal { completed: AtomicBool::new(false) });
+    let signal = Box::new(TransferSignal { completed: AtomicBool::new(false), completed_at_us: AtomicU64::new(0) });
     let transfer = unsafe { libusb1_sys::libusb_alloc_transfer(1) };
     if transfer.is_null() {
         return Err("libusb_alloc_transfer failed for the feedback endpoint".into());
@@ -612,6 +624,9 @@ fn run_worker(
     pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
 ) {
+    // Initialize the monotonic callback clock before any transfer can complete.
+    let _ = CALLBACK_CLOCK_ORIGIN.get_or_init(Instant::now);
+
     // Validate worker-local control state before allocating or submitting any
     // libusb transfer. A panic after submission could unwind callback-owned
     // buffers while libusb still references them.
@@ -698,6 +713,11 @@ fn run_worker(
     let mut last_submit_at: Option<Instant> = None;
     let mut event_loop_max_us = 0u64;
     let mut pending_min = usize::MAX;
+    let mut active_slots_min = usize::MAX;
+    let mut callback_dispatch_max_us = 0u64;
+    let mut callback_to_resubmit_max_us = 0u64;
+    let mut callback_to_resubmit_total_us = 0u64;
+    let mut callback_to_resubmit_count = 0u64;
     let mut zero_padded_frames = 0u64;
     let mut last_diagnostic_at = Instant::now();
     let mut feedback_cancelling = false;
@@ -817,6 +837,8 @@ fn run_worker(
                 }
             }
         }
+        let active_before_refill = slots.iter().filter(|slot| slot.submitted).count();
+        active_slots_min = active_slots_min.min(active_before_refill);
         if crate::usb_isochronous::audio_submission_allowed(
             paused.load(Ordering::Acquire), cancelling, eof,
         ) && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
@@ -826,6 +848,12 @@ fn run_worker(
                         Ok(true) => {}
                         Ok(false) => break,
                         Err(message) => { set_error(&error, &status, message); break; }
+                    }
+                    if let Some(completed_at_us) = slot.completion_at_us.take() {
+                        let elapsed_us = callback_clock_us().saturating_sub(completed_at_us);
+                        callback_to_resubmit_max_us = callback_to_resubmit_max_us.max(elapsed_us);
+                        callback_to_resubmit_total_us = callback_to_resubmit_total_us.saturating_add(elapsed_us);
+                        callback_to_resubmit_count = callback_to_resubmit_count.saturating_add(1);
                     }
                     fill_calls = fill_calls.saturating_add(1);
                     fill_total_us = fill_total_us.saturating_add(slot.fill_duration_us);
@@ -923,6 +951,10 @@ fn run_worker(
             if !slot.submitted || !slot.signal.completed.swap(false, Ordering::AcqRel) { continue; }
             slot.submitted = false;
             slot.submitted_at = None;
+            let completed_at_us = slot.signal.completed_at_us.load(Ordering::Acquire);
+            let observed_at_us = callback_clock_us();
+            callback_dispatch_max_us = callback_dispatch_max_us.max(observed_at_us.saturating_sub(completed_at_us));
+            slot.completion_at_us = Some(completed_at_us);
             if !cancelling {
                 let (transfer_expected, transfer_actual, transfer_packet_errors, transfer_status) =
                     transfer_packet_metrics(slot);
@@ -945,11 +977,12 @@ fn run_worker(
         }
         let pending_now = slots.iter().filter(|slot| slot.submitted).count();
         pending_min = pending_min.min(pending_now);
+        active_slots_min = active_slots_min.min(pending_now);
         if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
             let (decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
                 pcm_starvation_count, pcm_queued_min_frames) = pcm_queue.metrics();
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} activeSlotsMin={} callbackDispatchMaxUs={} callbackToResubmitAvgUs={} callbackToResubmitMaxUs={} callbackToResubmitCount={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
@@ -961,6 +994,11 @@ fn run_worker(
                 fill_max_us,
                 submit_gap_max_us,
                 if pending_min == usize::MAX { 0 } else { pending_min },
+                if active_slots_min == usize::MAX { 0 } else { active_slots_min },
+                callback_dispatch_max_us,
+                if callback_to_resubmit_count == 0 { 0 } else { callback_to_resubmit_total_us / callback_to_resubmit_count },
+                callback_to_resubmit_max_us,
+                callback_to_resubmit_count,
                 zero_padded_frames,
                 event_loop_max_us,
                 decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
