@@ -127,6 +127,7 @@ class PlaybackService : Service() {
     private var lastPublishedArtworkKey = ""
     private val mainHandler = Handler(Looper.getMainLooper())
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
+    private var lastAudioDiagnosticMs = 0L
     @Volatile private var outputRouteRestartPending = false
     private val outputRouteCheck = Runnable {
         val current = outputDeviceSnapshot()
@@ -181,6 +182,11 @@ class PlaybackService : Service() {
                 if (nowMs - lastStandaloneVolumeProbeMs >= 5_000L) {
                     lastStandaloneVolumeProbeMs = nowMs
                     runCatching { player.refreshStandaloneUsbVolumeDetection() }
+                }
+                if (playbackState == PlaybackStateCompat.STATE_PLAYING &&
+                    nowMs - lastAudioDiagnosticMs >= 5_000L) {
+                    lastAudioDiagnosticMs = nowMs
+                    Log.i("FloweryDiagnostics", "AUDIO_PIPELINE ${player.audioPipelineDiagnostics()}")
                 }
                 val position = player.positionMs()
                 val duration = player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs
