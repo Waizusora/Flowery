@@ -497,6 +497,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             standaloneDacVolume?.currentDb ?: Float.NaN
         }
 
+    fun usbVolumeMinimumDb(): Float = usbVolumeSnapshot()?.minimumDb256?.div(256f) ?: Float.NaN
+    fun usbVolumeMaximumDb(): Float = usbVolumeSnapshot()?.maximumDb256?.div(256f) ?: Float.NaN
+    fun usbVolumeResolutionDb(): Float = usbVolumeSnapshot()?.resolutionDb256?.div(256f) ?: Float.NaN
+
+    private fun usbVolumeSnapshot(): UacVolumeSnapshot? = if (usbRouteActive) {
+        usbPlaybackSession?.cachedVolumeSnapshot()
+    } else {
+        standaloneDacVolume?.snapshot
+    }
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->
             return (usb.positionMs() - activeSegmentStartMs).coerceAtLeast(0L)
