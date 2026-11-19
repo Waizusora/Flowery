@@ -57,9 +57,9 @@ class UsbAudioVolumeDescriptorParserTest {
         val descriptors = byteArrayOf(
             9, 4, 0, 0, 0, 1, 1, 0x20, 0,
             18, 0x24, 0x06, 5, 4,
-            0x08, 0, 0, 0,
-            0x08, 0, 0, 0,
-            0x08, 0, 0, 0,
+            0x0c, 0, 0, 0,
+            0x0c, 0, 0, 0,
+            0x0c, 0, 0, 0,
             0,
             10, 0x24, 0x03, 10, 0x01, 0x01, 0, 5, 7, 0
         )
