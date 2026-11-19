@@ -42,6 +42,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     /** Last successful standalone DAC volume detection (null when none). */
     @Volatile private var standaloneDacVolume: UsbDacHardwareVolume.Detection? = null
     @Volatile private var standaloneVolumeVerified = false
+    @Volatile private var safeUsbVolumeInitialized = false
 
     /**
      * Applies volume according to the active output path.
@@ -65,6 +66,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             return
         }
         val detection = standaloneDacVolume ?: dacHardwareVolume.detect()?.also { standaloneDacVolume = it }
+        if (detection != null && !safeUsbVolumeInitialized) applyStandaloneSafeStartupVolume(detection)
         if (detection != null && detection.writable) {
             val result = dacHardwareVolume.setVolumeFraction(detection.deviceName, requested)
             result.onSuccess {
@@ -191,6 +193,16 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     ).getOrThrow()
                     usbPlaybackSession = directUsb
                     directUsb.start(actualStartPositionMs).getOrThrow()
+                    if (!safeUsbVolumeInitialized) {
+                        val safeResult = directUsb.applySafeStartupVolume()
+                        safeResult.onSuccess { snapshot ->
+                            safeUsbVolumeInitialized = true
+                            Log.i("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_COMPLETE currentDb256=${snapshot.currentDb256} applied=true")
+                        }.onFailure { error ->
+                            safeUsbVolumeInitialized = true
+                            Log.w("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_FAILED reason=${error.message}")
+                        }
+                    }
                     pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { queued ->
                         directUsb.seek(segmentStartMs + queued.coerceAtLeast(0L)).getOrThrow()
                     }
@@ -429,7 +441,41 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun refreshStandaloneUsbVolumeDetection() {
         if (usbRouteActive) return
         standaloneDacVolume = dacHardwareVolume.detect()
-        if (standaloneDacVolume == null) standaloneVolumeVerified = false
+        val detection = standaloneDacVolume
+        if (detection == null) {
+            standaloneVolumeVerified = false
+            safeUsbVolumeInitialized = false
+        } else if (!safeUsbVolumeInitialized) {
+            applyStandaloneSafeStartupVolume(detection)
+        }
+    }
+
+    private fun applyStandaloneSafeStartupVolume(detection: UsbDacHardwareVolume.Detection) {
+        val snapshot = detection.snapshot
+        if (snapshot == null || !detection.writable) {
+            safeUsbVolumeInitialized = true
+            Log.i("FloweryUsbVolume", "USB_VOLUME_SAFE_STARTUP_SKIPPED readable=${snapshot != null} writable=${detection.writable}")
+            return
+        }
+        val target = UacVolumeMath.safeStartupTarget(snapshot)
+        if (target == null) {
+            safeUsbVolumeInitialized = true
+            Log.i("FloweryUsbVolume", "USB_VOLUME_SAFE_STARTUP_ALREADY_SAFE currentDb256=${snapshot.currentDb256}")
+            return
+        }
+        val result = dacHardwareVolume.setVolumeFraction(
+            detection.deviceName,
+            UacVolumeMath.fractionForDb256(target)
+        )
+        result.onSuccess { updated ->
+            standaloneDacVolume = updated
+            standaloneVolumeVerified = true
+            safeUsbVolumeInitialized = true
+            Log.i("FloweryUsbVolume", "USB_VOLUME_SAFE_STARTUP_COMPLETE requestedDb256=$target currentDb256=${updated.snapshot?.currentDb256} applied=true")
+        }.onFailure { error ->
+            safeUsbVolumeInitialized = true
+            Log.w("FloweryUsbVolume", "USB_VOLUME_SAFE_STARTUP_FAILED requestedDb256=$target reason=${error.message}")
+        }
     }
 
     fun usbVolumeControlDetected(): Boolean =
