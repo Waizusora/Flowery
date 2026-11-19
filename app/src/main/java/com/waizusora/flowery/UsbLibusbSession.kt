@@ -117,11 +117,35 @@ internal class UsbLibusbSession internal constructor(
         return true
     }
 
+    private fun volumeControlTransfer(
+        operation: String,
+        requestType: Int,
+        request: Int,
+        value: Int,
+        index: Int,
+        buffer: ByteArray,
+        length: Int
+    ): Int {
+        val transferred = controlTransfer.transfer(
+            requestType, request, value, index, buffer, length, 1_000
+        )
+        val dataLength = transferred.coerceIn(0, minOf(length, buffer.size))
+        val data = buffer.copyOfRange(0, dataLength)
+            .joinToString("") { "%02X".format(it.toInt() and 0xff) }
+        safeUsbLogI(
+            "FloweryUsbNative",
+            "USB_VOLUME_CONTROL_TRANSFER op=$operation bmRequestType=0x\${requestType.toString(16)} " +
+                "bRequest=0x\${request.toString(16)} wValue=0x\${value.toString(16)} " +
+                "wIndex=0x\${index.toString(16)} requested=$length transferred=$transferred data=$data"
+        )
+        return transferred
+    }
+
     private fun readVolumeValue(control: UacVolumeControl, channel: Int, request: Int): Int? {
         val index = (control.unitId shl 8) or control.controlInterface
         val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
         val bytes = ByteArray(2)
-        val length = controlTransfer.transfer(0xA1, request, value, index, bytes, 2, 1_000)
+        val length = volumeControlTransfer("GET_CUR_ch$channel", 0xA1, request, value, index, bytes, 2)
         if (length != 2) return null
         return ((bytes[0].toInt() and 0xff) or ((bytes[1].toInt() and 0xff) shl 8))
             .let { if (it and 0x8000 != 0) it - 0x10000 else it }
@@ -137,11 +161,31 @@ internal class UsbLibusbSession internal constructor(
         }
         val index = (control.unitId shl 8) or control.controlInterface
         val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
-        val bytes = ByteArray(2 + 6 * 16)
-        val length = controlTransfer.transfer(0xA1, 0x82, value, index, bytes, bytes.size, 1_000)
-        if (length < 8) return null
-        val count = (bytes[0].toInt() and 0xff) or ((bytes[1].toInt() and 0xff) shl 8)
-        if (count !in 1..16 || length < 2 + count * 6) return null
+
+        // UAC2 volume RANGE uses a two-byte subrange count followed by 16-bit
+        // MIN/MAX/RES triplets. Request one complete triplet first (8 bytes),
+        // rather than an oversized 98-byte block: some DAC firmware STALLs an
+        // otherwise valid class request when wLength exceeds its range response.
+        val firstRange = ByteArray(8)
+        val firstLength = volumeControlTransfer(
+            "GET_RANGE_ch$channel", 0xA1, 0x82, value, index, firstRange, firstRange.size
+        )
+        if (firstLength < firstRange.size) return null
+        val count = (firstRange[0].toInt() and 0xff) or
+            ((firstRange[1].toInt() and 0xff) shl 8)
+        if (count !in 1..16) return null
+
+        val bytes = if (count == 1) {
+            firstRange
+        } else {
+            val fullRange = ByteArray(2 + count * 6)
+            val fullLength = volumeControlTransfer(
+                "GET_RANGE_FULL_ch$channel", 0xA1, 0x82, value, index, fullRange, fullRange.size
+            )
+            if (fullLength < fullRange.size) return null
+            fullRange
+        }
+
         // Multiple disjoint ranges are unusual for volume. Use the range containing
         // the current value; otherwise the first descriptor-advertised range.
         val current = readVolumeValue(control, channel, 0x81)
@@ -230,7 +274,7 @@ internal class UsbLibusbSession internal constructor(
                     // Record before the request: a transport exception may occur after
                     // the device accepted the control transfer.
                     changed += Changed(channel, oldValue)
-                    val written = controlTransfer.transfer(0x21, 0x01, value, index, payload, 2, 1_000)
+                    val written = volumeControlTransfer("SET_CUR_ch$channel", 0x21, 0x01, value, index, payload, 2)
                     val verified = readVolumeValue(control, channel, 0x81)
                     if (written != 2 || verified != target) {
                         throw IllegalStateException("Feature Unit volume SET_CUR verification failed for channel $channel")
