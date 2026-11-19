@@ -7,7 +7,6 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.util.Log
 import kotlin.math.ln
-import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
@@ -89,7 +88,12 @@ internal class UsbDacHardwareVolume(context: Context) {
         if (!usbManager.hasPermission(device)) {
             return Result.failure(IllegalStateException("USB permission is required for hardware volume"))
         }
-        return openConnection(device).use { connection ->
+        val connection = try {
+            openConnection(device)
+        } catch (error: Exception) {
+            return Result.failure(error)
+        }
+        return try {
             val control = parseVolumeControl(connection)
                 ?: return Result.failure(IllegalStateException("No readable Feature Unit volume control"))
             if (!control.supportsWrite) {
@@ -164,55 +168,63 @@ internal class UsbDacHardwareVolume(context: Context) {
             } finally {
                 releaseControlInterface(connection, device, control.controlInterface)
             }
+        } finally {
+            connection.close()
         }
     }
 
     private fun openAndDetect(device: UsbDevice): Detection? {
+        val connection = try {
+            openConnection(device)
+        } catch (error: Exception) {
+            Log.w(TAG, "USB_DAC_VOLUME_DETECT_FAILED device=${device.deviceName}: ${error.message}")
+            return null
+        }
         return try {
-            openConnection(device).use { connection ->
-                val control = parseVolumeControl(connection) ?: return null
-                if (!claimControlInterface(connection, device, control.controlInterface)) {
-                    return Detection(
-                        deviceName = device.deviceName,
-                        productName = device.productName ?: device.deviceName,
-                        vendorId = device.vendorId,
-                        productId = device.productId,
-                        control = control,
-                        snapshot = null
+            val control = parseVolumeControl(connection) ?: return null
+            if (!claimControlInterface(connection, device, control.controlInterface)) {
+                return Detection(
+                    deviceName = device.deviceName,
+                    productName = device.productName ?: device.deviceName,
+                    vendorId = device.vendorId,
+                    productId = device.productId,
+                    control = control,
+                    snapshot = null
+                )
+            }
+            try {
+                val transfer = connectionAsTransfer(connection)
+                val channel = control.readableChannels.firstOrNull() ?: return null
+                val range = readVolumeRange(transfer, control, channel)
+                val current = readVolumeValue(transfer, control, channel, UAC_GET_CUR)
+                val snapshot = if (range != null && current != null) {
+                    UacVolumeSnapshot(
+                        currentDb256 = current,
+                        minimumDb256 = range.minimum,
+                        maximumDb256 = range.maximum,
+                        resolutionDb256 = range.resolution,
+                        writable = control.supportsWrite,
+                        channel = channel
                     )
+                } else {
+                    null
                 }
-                try {
-                    val transfer = connectionAsTransfer(connection)
-                    val channel = control.readableChannels.firstOrNull() ?: return null
-                    val range = readVolumeRange(transfer, control, channel)
-                    val current = readVolumeValue(transfer, control, channel, UAC_GET_CUR)
-                    val snapshot = if (range != null && current != null) {
-                        UacVolumeSnapshot(
-                            currentDb256 = current,
-                            minimumDb256 = range.minimum,
-                            maximumDb256 = range.maximum,
-                            resolutionDb256 = range.resolution,
-                            writable = control.supportsWrite,
-                            channel = channel
-                        )
-                    } else {
-                        null
-                    }
-                    Detection(
-                        deviceName = device.deviceName,
-                        productName = device.productName ?: device.deviceName,
-                        vendorId = device.vendorId,
-                        productId = device.productId,
-                        control = control,
-                        snapshot = snapshot
-                    )
-                } finally {
-                    releaseControlInterface(connection, device, control.controlInterface)
-                }
+                Detection(
+                    deviceName = device.deviceName,
+                    productName = device.productName ?: device.deviceName,
+                    vendorId = device.vendorId,
+                    productId = device.productId,
+                    control = control,
+                    snapshot = snapshot
+                )
+            } finally {
+                releaseControlInterface(connection, device, control.controlInterface)
             }
         } catch (error: Exception) {
             Log.w(TAG, "USB_DAC_VOLUME_DETECT_FAILED device=${device.deviceName}: ${error.message}")
             null
+        } finally {
+            connection.close()
         }
     }
 

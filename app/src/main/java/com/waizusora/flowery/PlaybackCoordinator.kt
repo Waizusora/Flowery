@@ -99,6 +99,7 @@ internal class PlaybackCoordinator(
     fun usbVolumeControlWritable(): Boolean = engine.usbVolumeControlWritable()
     fun usbVolumeWriteVerified(): Boolean = engine.usbVolumeWriteVerified()
     fun usbVolumeCurrentDb(): Float = engine.usbVolumeCurrentDb()
+    fun refreshStandaloneUsbVolumeDetection() = engine.refreshStandaloneUsbVolumeDetection()
     @Synchronized fun setVolume(value: Float) = engine.setVolume(value)
     @Synchronized fun setDucked(ducked: Boolean) = engine.setDucked(ducked)
 
