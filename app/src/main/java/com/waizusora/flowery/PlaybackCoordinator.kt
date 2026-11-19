@@ -99,6 +99,7 @@ internal class PlaybackCoordinator(
     fun usbVolumeControlWritable(): Boolean = engine.usbVolumeControlWritable()
     fun usbVolumeWriteVerified(): Boolean = engine.usbVolumeWriteVerified()
     fun usbVolumeCurrentDb(): Float = engine.usbVolumeCurrentDb()
+    fun audioPipelineDiagnostics(): String = engine.audioPipelineDiagnostics()
     fun usbVolumeMinimumDb(): Float = engine.usbVolumeMinimumDb()
     fun usbVolumeMaximumDb(): Float = engine.usbVolumeMaximumDb()
     fun usbVolumeResolutionDb(): Float = engine.usbVolumeResolutionDb()
