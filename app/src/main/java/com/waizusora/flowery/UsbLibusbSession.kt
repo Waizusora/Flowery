@@ -134,9 +134,9 @@ internal class UsbLibusbSession internal constructor(
             .joinToString("") { "%02X".format(it.toInt() and 0xff) }
         safeUsbLogI(
             "FloweryUsbNative",
-            "USB_VOLUME_CONTROL_TRANSFER op=$operation bmRequestType=0x\${requestType.toString(16)} " +
-                "bRequest=0x\${request.toString(16)} wValue=0x\${value.toString(16)} " +
-                "wIndex=0x\${index.toString(16)} requested=$length transferred=$transferred data=$data"
+            "USB_VOLUME_CONTROL_TRANSFER op=$operation bmRequestType=0x${requestType.toString(16)} " +
+                "bRequest=0x${request.toString(16)} wValue=0x${value.toString(16)} " +
+                "wIndex=0x${index.toString(16)} requested=$length transferred=$transferred data=$data"
         )
         return transferred
     }
