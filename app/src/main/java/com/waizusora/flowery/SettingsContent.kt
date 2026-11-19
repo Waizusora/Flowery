@@ -48,7 +48,10 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     usbVolumeDetected: Boolean,
     usbVolumeWritable: Boolean,
     usbVolumeVerified: Boolean,
-    usbVolumeDb: Float) {
+    usbVolumeDb: Float,
+    usbVolumeMinDb: Float,
+    usbVolumeMaxDb: Float,
+    usbVolumeResolutionDb: Float) {
     val context = LocalContext.current
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
@@ -95,11 +98,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
         }
     }
     var encodingExpanded by remember(page) { mutableStateOf(false) }
-    var sliderVolume by remember { mutableStateOf(volume.coerceIn(0f, 1f)) }
-    var volumeDragging by remember { mutableStateOf(false) }
-    LaunchedEffect(volume) {
-        if (!volumeDragging) sliderVolume = volume.coerceIn(0f, 1f)
-    }
+    var selectedVolumeStepDb256 by remember(page) { mutableStateOf(UacVolumeMath.DEFAULT_STEP_DB256) }
     if (page != SettingsPage.ROOT) Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back", tint = color) }
         Heading(when(page) {
@@ -140,8 +139,8 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                             if (usbDirectActive) "Verified (USB Direct) · SET_CUR confirmed with GET_CUR"
                             else "Verified · SET_CUR confirmed with GET_CUR"
                         else ->
-                            if (usbDirectActive) "Writable (USB Direct) · adjust the slider to verify"
-                            else "Writable · adjust the slider to set Feature Unit volume"
+                            if (usbDirectActive) "Writable (USB Direct) · use − / + to adjust"
+                            else "Writable · use − / + to set Feature Unit volume"
                     }
                     Text(volumeStatus, color = if (usbVolumeVerified) MaterialTheme.colorScheme.primary else muted,
                         style = MaterialTheme.typography.bodySmall)
@@ -149,18 +148,57 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                         Text("Hardware level: %.2f dB".format(java.util.Locale.ROOT, usbVolumeDb),
                             color = color, style = MaterialTheme.typography.labelMedium)
                     }
-                    Slider(
-                        value = sliderVolume,
-                        onValueChange = {
-                            sliderVolume = it
-                            volumeDragging = true
-                        },
-                        onValueChangeFinished = {
-                            volumeDragging = false
-                            onVolume(sliderVolume)
-                        },
-                        enabled = usbVolumeWritable
-                    )
+                    val volumeSnapshot = if (usbVolumeDb.isFinite() && usbVolumeMinDb.isFinite() &&
+                        usbVolumeMaxDb.isFinite() && usbVolumeResolutionDb.isFinite()) {
+                        UacVolumeSnapshot(
+                            currentDb256 = (usbVolumeDb * 256f).toInt(),
+                            minimumDb256 = (usbVolumeMinDb * 256f).toInt(),
+                            maximumDb256 = (usbVolumeMaxDb * 256f).toInt(),
+                            resolutionDb256 = (usbVolumeResolutionDb * 256f).toInt(),
+                            writable = usbVolumeWritable,
+                            channel = 1
+                        )
+                    } else null
+                    val minusTarget = volumeSnapshot?.let { UacVolumeMath.stepTarget(it, -1, selectedVolumeStepDb256) }
+                    val plusTarget = volumeSnapshot?.let { UacVolumeMath.stepTarget(it, 1, selectedVolumeStepDb256) }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        FilledTonalIconButton(
+                            onClick = { minusTarget?.let { onVolume(UacVolumeMath.fractionForDb256(it)) } },
+                            enabled = usbVolumeWritable && minusTarget != null && volumeSnapshot != null && minusTarget < volumeSnapshot.currentDb256
+                        ) { Icon(Icons.Default.Remove, contentDescription = "Decrease DAC volume") }
+                        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                if (usbVolumeDb.isFinite()) "%.2f dB".format(java.util.Locale.ROOT, usbVolumeDb) else "— dB",
+                                color = color, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineMedium
+                            )
+                            Text("DAC hardware level", color = muted, style = MaterialTheme.typography.labelSmall)
+                        }
+                        FilledTonalIconButton(
+                            onClick = { plusTarget?.let { onVolume(UacVolumeMath.fractionForDb256(it)) } },
+                            enabled = usbVolumeWritable && plusTarget != null && volumeSnapshot != null && plusTarget > volumeSnapshot.currentDb256
+                        ) { Icon(Icons.Default.Add, contentDescription = "Increase DAC volume") }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Text("STEP", color = muted, style = MaterialTheme.typography.labelSmall)
+                        listOf(128 to "0.5", 256 to "1", 512 to "2", 768 to "3").forEach { (step, label) ->
+                            FilterChip(
+                                selected = selectedVolumeStepDb256 == step,
+                                onClick = { selectedVolumeStepDb256 = step },
+                                enabled = usbVolumeWritable,
+                                label = { Text("$label dB") }
+                            )
+                        }
+                    }
+                    if (volumeSnapshot != null) {
+                        Text(
+                            "Range: %.2f to %.2f dB · DAC resolution: %.2f dB".format(
+                                java.util.Locale.ROOT, usbVolumeMinDb, usbVolumeMaxDb, usbVolumeResolutionDb
+                            ),
+                            color = muted, style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     Text(
                         when {
                             usbVolumeWritable && usbDirectActive ->
