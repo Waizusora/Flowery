@@ -23,6 +23,9 @@ private fun safeUsbLogE(tag: String, message: String, error: Throwable) {
 
 private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
 
+/** Assumed floor (-90 dB in 1/256 dB units) used only when GET_RANGE is refused. */
+private const val ASSUMED_UAC_VOLUME_MIN_DB256 = -90 * 256
+
 /**
  * Owns the Android USB connection for the lifetime of a native libusb session.
  *
@@ -33,6 +36,17 @@ private const val UAC_FEATURE_VOLUME_CONTROL = 0x02
  * UAC2 Clock Multiplier numerator and denominator controls must both support
  * GET_CUR. Read-only (1) and host-programmable (2) controls are readable.
  */
+/**
+ * UAC2 bmControls bit-pair semantics: 0b00 absent, 0b01 present and read-only,
+ * 0b11 present and host-programmable. 0b10 is not allowed by the specification;
+ * it is treated as writable here, matching the Linux USB audio driver, which
+ * tests only the high bit of the pair.
+ */
+internal fun isUac2ControlWritable(controls: Int): Boolean = (controls and 0x02) != 0
+
+/** True when a UAC2 bit pair is present (read-only or programmable). */
+internal fun isUac2ControlPresent(controls: Int): Boolean = (controls and 0x03) != 0
+
 internal fun isValidUac2ClockMultiplierControls(controls: Int): Boolean {
     val numeratorControl = controls and 0x03
     val denominatorControl = (controls shr 2) and 0x03
@@ -151,7 +165,57 @@ internal class UsbLibusbSession internal constructor(
             .let { if (it and 0x8000 != 0) it - 0x10000 else it }
     }
 
+    /**
+     * Channels whose GET_RANGE request has already been refused by the device in this
+     * session. The negative result is cached so that periodic volume polling does not
+     * repeat a request that is known to STALL.
+     */
+    private val volumeRangeRefusedChannels = mutableSetOf<Int>()
+    private val volumeProbeLogged = mutableSetOf<Int>()
+
+    /**
+     * Resolves the volume range for [channel].
+     *
+     * GET_RANGE is authoritative. Some DAC firmware advertises a programmable
+     * Feature Unit volume control but STALLs GET_RANGE while still honouring
+     * GET_CUR/SET_CUR. For that case only, an attenuation-only range is assumed:
+     * the maximum is the greater of 0 dB and the current value, so the host never
+     * boosts above unity gain, and the minimum is [ASSUMED_UAC_VOLUME_MIN_DB256].
+     * Every write remains verified with GET_CUR and rolled back on mismatch, so a
+     * wrong assumption surfaces as a failed command rather than an unverified change.
+     */
     private fun readVolumeRange(control: UacVolumeControl, channel: Int): UacVolumeRange? {
+        if (channel !in volumeRangeRefusedChannels) {
+            val advertised = readAdvertisedVolumeRange(control, channel)
+            if (advertised != null) return advertised
+            if (control.protocol == 0x00) return null
+            volumeRangeRefusedChannels += channel
+        }
+        if (volumeProbeLogged.add(channel)) probeVolumeControl(control, channel)
+        val current = readVolumeValue(control, channel, 0x81) ?: return null
+        val maximum = maxOf(current, 0)
+        safeUsbLogI(
+            "FloweryUsbNative",
+            "USB_VOLUME_RANGE_ASSUMED unit=${control.unitId} channel=$channel currentDb256=$current " +
+                "minimumDb256=${minOf(ASSUMED_UAC_VOLUME_MIN_DB256, current)} maximumDb256=$maximum reason=GET_RANGE-refused"
+        )
+        return UacVolumeRange(minOf(ASSUMED_UAC_VOLUME_MIN_DB256, current), maximum, 0)
+    }
+
+    /**
+     * One-shot, read-only diagnostic: records how the device answers GET_RANGE with
+     * alternative request lengths. No SET_CUR is issued.
+     */
+    private fun probeVolumeControl(control: UacVolumeControl, channel: Int) {
+        val index = (control.unitId shl 8) or control.controlInterface
+        val value = (UAC_FEATURE_VOLUME_CONTROL shl 8) or channel
+        for (length in intArrayOf(2, 14, 26)) {
+            volumeControlTransfer("PROBE_GET_RANGE_len${length}_ch$channel", 0xA1, 0x82, value, index, ByteArray(length), length)
+        }
+        volumeControlTransfer("PROBE_GET_CUR_ch$channel", 0xA1, 0x81, value, index, ByteArray(2), 2)
+    }
+
+    private fun readAdvertisedVolumeRange(control: UacVolumeControl, channel: Int): UacVolumeRange? {
         if (control.protocol == 0x00) {
             val minimum = readVolumeValue(control, channel, 0x82) ?: return null
             val maximum = readVolumeValue(control, channel, 0x83) ?: return null
@@ -457,22 +521,17 @@ internal class UsbLibusbSession internal constructor(
                     if (oldSourceRate !in 1..Int.MAX_VALUE.toLong()) {
                         failures += "source returned an invalid current rate"; continue
                     }
-                    // bmControls frequency field (bits 1:0):
-                    //   0b10 = host-programmable; SET_CUR is mandatory when GET_CUR differs,
-                    //         and a failed write or verification rejects the clock path.
-                    //   0b11 = reserved by the specification, but emitted by some DACs whose
-                    //         clock does accept SET_CUR. When GET_CUR differs from the required
-                    //         rate, a best-effort SET_CUR followed by GET_CUR verification is
-                    //         attempted; if the device refuses it, negotiation continues so
-                    //         that fixed-clock devices are not regressed.
-                    //   0b00 / 0b01 = not host-writable. Many class-compliant DACs leave
+                    // bmControls frequency field (bits 1:0), per UAC2 bit-pair semantics:
+                    //   0b11 = present and host-programmable; SET_CUR is mandatory when
+                    //         GET_CUR differs, and a failed write or verification rejects
+                    //         the clock path. (0b10 is not allowed by the specification and
+                    //         is treated identically, matching the Linux USB audio driver.)
+                    //   0b00 / 0b01 = absent or read-only. Many class-compliant DACs leave
                     //         Clock Source GET_CUR at a nominal or previously negotiated rate
                     //         and select the active rate via the AudioStreaming alternate
                     //         setting. GET_RANGE (checked above) is the capability gate; do not
                     //         reject a read-only source solely because GET_CUR does not match.
-                    val sourceFrequencyControl = path.sourceControls and 0x03
-                    val sourceHostProgrammable = sourceFrequencyControl == 2
-                    val sourceBestEffortWrite = sourceFrequencyControl == 3
+                    val sourceHostProgrammable = isUac2ControlWritable(path.sourceControls)
                     var sourceActiveRate = oldSourceRate
 
                     data class SelectorChange(val index: Int, val oldPin: Int, val newPin: Int)
@@ -481,7 +540,7 @@ internal class UsbLibusbSession internal constructor(
                         if (selector.entityId !in 1..255 || selector.inputSources.isEmpty() ||
                             selector.inputSources.any { it !in 1..255 } ||
                             selector.selectedPin !in 1..selector.inputSources.size ||
-                            (selector.controls and 0x03) !in 1..2) {
+                            !isUac2ControlPresent(selector.controls)) {
                             failures += "invalid selector descriptor controls"; valid = false; break
                         }
                         val selectorIndex = (selector.entityId shl 8) or controlInterfaceNumber
@@ -494,7 +553,7 @@ internal class UsbLibusbSession internal constructor(
                             failures += "selector returned an invalid pin"; valid = false; break
                         }
                         if (oldPin != selector.selectedPin) {
-                            if ((selector.controls and 0x03) != 2) {
+                            if (!isUac2ControlWritable(selector.controls)) {
                                 failures += "selector is read-only"; valid = false; break
                             }
                             selectorChanges += SelectorChange(selectorIndex, oldPin, selector.selectedPin)
@@ -550,26 +609,18 @@ internal class UsbLibusbSession internal constructor(
                                 mutationFailure = "clock selector SET_CUR/verification failed"; break
                             }
                         }
-                        if (mutationFailure == null && oldSourceRate != sourceRate &&
-                            (sourceHostProgrammable || sourceBestEffortWrite)) {
-                            // A mandatory write is tracked for rollback before it is issued. A
-                            // best-effort write is tracked only once the device has confirmed it,
-                            // so that a refused request never triggers a failing restore.
-                            if (sourceHostProgrammable) sourceWriteAttempted = true
+                        if (mutationFailure == null && sourceHostProgrammable && oldSourceRate != sourceRate) {
+                            sourceWriteAttempted = true
                             val rate = sourceRate.toInt()
                             val payload = byteArrayOf(rate.toByte(), (rate ushr 8).toByte(),
                                 (rate ushr 16).toByte(), (rate ushr 24).toByte())
                             val written = controlTransfer.transfer(0x21, 0x01, 0x0100, sourceIndex, payload, 4, 1_000)
                             val verify = ByteArray(4)
                             val read = controlTransfer.transfer(0xA1, 0x01, 0x0100, sourceIndex, verify, 4, 1_000)
-                            val confirmed = written == 4 && read == 4 && readU32(verify, 0) == sourceRate
-                            if (confirmed) {
-                                sourceWriteAttempted = true
-                                sourceActiveRate = sourceRate
-                            } else if (sourceHostProgrammable) {
+                            if (written != 4 || read != 4 || readU32(verify, 0) != sourceRate) {
                                 mutationFailure = "clock source SET_CUR/verification failed"
                             } else {
-                                safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_SET_CUR_UNCONFIRMED sourceEntity=${path.sourceEntityId} requiredSourceHz=$sourceRate currentSourceHz=$oldSourceRate controls=${path.sourceControls} setCurResult=$written getCurResult=$read; continuing without a clock change")
+                                sourceActiveRate = sourceRate
                             }
                         }
     
@@ -587,7 +638,7 @@ internal class UsbLibusbSession internal constructor(
                         failures += mutationFailure
                         continue
                     }
-                    safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=${path.sourceEntityId} requestedOutputHz=$sampleRate sourceRequiredHz=$sourceRate sourceCurrentHz=$oldSourceRate sourceActiveHz=$sourceActiveRate sourceWritable=$sourceHostProgrammable sourceBestEffortWrite=$sourceBestEffortWrite selectors=${path.selectors.size} multipliers=${path.multipliers.size}")
+                    safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=${path.sourceEntityId} requestedOutputHz=$sampleRate sourceRequiredHz=$sourceRate sourceCurrentHz=$oldSourceRate sourceActiveHz=$sourceActiveRate sourceWritable=$sourceHostProgrammable selectors=${path.selectors.size} multipliers=${path.multipliers.size}")
                     pendingClockRollback = { restoreState() }
                     return Result.success(Unit)
                 }
@@ -602,7 +653,7 @@ internal class UsbLibusbSession internal constructor(
                 if (selectorClockSources.isEmpty() ||
                     selectorClockSources.size != selectorSourceControls.size ||
                     selectorClockSources.any { it !in 1..255 } ||
-                    (clockSelectorControls and 0x03) !in 1..2) {
+                    !isUac2ControlPresent(clockSelectorControls)) {
                     return Result.failure(IllegalStateException("UAC2 Clock Selector descriptor has invalid inputs or controls"))
                 }
                 val selectorIndex = (clockSelectorEntityId shl 8) or controlInterfaceNumber
@@ -627,7 +678,7 @@ internal class UsbLibusbSession internal constructor(
                         ?: return Result.failure(IllegalArgumentException("No input of UAC2 Clock Selector $clockSelectorEntityId supports $sampleRate Hz"))
                 }
                 if (chosenIndex != activePin - 1) {
-                    if ((clockSelectorControls and 0x03) != 0x02) {
+                    if (!isUac2ControlWritable(clockSelectorControls)) {
                         return Result.failure(IllegalStateException("UAC2 Clock Selector is read-only and its active clock does not support $sampleRate Hz"))
                     }
                     val requestedPin = byteArrayOf((chosenIndex + 1).toByte())
@@ -700,7 +751,7 @@ internal class UsbLibusbSession internal constructor(
                 safeUsbLogI("FloweryUsbNative", "UAC2_CLOCK_READY controlInterface=$controlInterfaceNumber sourceEntity=$selectedClockSource requestedOutputHz=$sampleRate requiredSourceHz=$sourceSampleRate sourceCurrentHz=$currentRate sourceWritable=false")
                 return Result.success(Unit)
             }
-            if ((selectedClockControls and 0x03) != 0x02) {
+            if (!isUac2ControlWritable(selectedClockControls)) {
                 return Result.failure(IllegalStateException("UAC2 Clock Source is read-only at $currentRate Hz; requested $sourceSampleRate Hz"))
             }
 

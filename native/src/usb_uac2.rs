@@ -84,11 +84,11 @@ impl AudioControlInterface {
 
         if let Some(&controls) = self.clock_sources.get(&entity_id) {
             // Preserve every two-bit frequency-control encoding from the descriptor.
-            // Kotlin treats 0b10 as host-programmable (SET_CUR is mandatory when
-            // GET_CUR differs) and the reserved 0b11 encoding as best-effort
-            // (SET_CUR is attempted and verified, and a refusal is tolerated).
-            // 0b00 and 0b01 are read-only: GET_RANGE is the capability gate and
-            // no SET_CUR is sent.
+            // UAC2 bit-pair semantics: 0b11 is present and host-programmable (the
+            // Kotlin side issues and verifies SET_CUR when GET_CUR differs; 0b10 is
+            // not allowed by the specification and is treated identically), 0b01 is
+            // read-only and 0b00 is absent. For the latter two, GET_RANGE is the
+            // capability gate and no SET_CUR is sent.
             output.push(Uac2ClockPath {
                 source_entity_id: entity_id,
                 source_controls: controls,
@@ -316,9 +316,9 @@ mod tests {
     }
 
     #[test]
-    fn preserves_reserved_clock_frequency_control_as_non_writable_candidate() {
+    fn preserves_host_programmable_clock_frequency_control_encoding() {
         let mut d = descriptor_prefix();
-        // Preserve bmControls=0b11 for conservative read-only validation in Kotlin.
+        // bmControls=0b11 (present and host-programmable) must reach Kotlin unchanged.
         d[14] = 0x03;
         append_playback_terminal(&mut d, 7);
         let info = parse_playback_clock_info(&d).unwrap();

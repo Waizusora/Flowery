@@ -141,10 +141,10 @@ class UsbLibusbSessionTest {
     }
 
     @Test
-    fun programsClockWhenReservedFrequencyControlEncodingMismatchesRequestedRate() {
-        // Frequency control 0b11 is reserved by UAC2 but is emitted by DACs whose clock
-        // accepts SET_CUR. A mismatching GET_CUR must be corrected and verified;
-        // otherwise the DAC plays at its stale rate and the audio is pitch-shifted.
+    fun programsClockWhenFrequencyControlIsHostProgrammable() {
+        // bmControls bit pair 0b11 is "present and host-programmable" in UAC2. A
+        // mismatching GET_CUR must be corrected and verified; otherwise the DAC plays
+        // at its stale rate and the audio is pitch-shifted.
         val fake = FakeUsbControl()
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
@@ -169,9 +169,7 @@ class UsbLibusbSessionTest {
     }
 
     @Test
-    fun continuesWhenReservedFrequencyControlEncodingRefusesSetCur() {
-        // A fixed-clock device that merely mislabels its control must keep working:
-        // a refused best-effort SET_CUR is not fatal and leaves no rollback pending.
+    fun rejectsClockPathWhenHostProgrammableSourceRefusesSetCur() {
         val fake = FakeUsbControl().apply { failNextSourceWrite = true }
         val session = UsbLibusbSession(null, 1L, fake)
         val path = Uac2ClockPath(
@@ -190,8 +188,7 @@ class UsbLibusbSessionTest {
             clockPaths = listOf(path)
         )
 
-        assertTrue(result.isSuccess)
-        assertTrue(fake.writes.isEmpty())
+        assertTrue(result.isFailure)
         assertEquals(44_100, fake.sourceRate)
     }
 
