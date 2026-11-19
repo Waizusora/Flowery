@@ -137,6 +137,8 @@ class MainActivity : ComponentActivity() {
     private var infoTag by mutableStateOf<AudioTag?>(null)
     private var editingTag by mutableStateOf<AudioTag?>(null)
     private var volume by mutableStateOf(1f)
+    private var nextVolumeCommandId = 0L
+    private var pendingVolumeCommandId: Long? = null
     private var playbackPositionMs by mutableStateOf(0L)
     private var playbackDurationMs by mutableStateOf(0L)
     private var playbackOutputSampleRateHz by mutableStateOf(0)
@@ -170,16 +172,22 @@ class MainActivity : ComponentActivity() {
                 repeatMode = intent.getIntExtra(PlaybackService.EXTRA_REPEAT_MODE, 0).coerceIn(0, 2)
             }
             if (intent.hasExtra(PlaybackService.EXTRA_VOLUME)) {
-                val previousVolume = volume
                 val reportedVolume = intent.getFloatExtra(PlaybackService.EXTRA_VOLUME, volume).coerceIn(0f, 1f)
-                if (kotlin.math.abs(previousVolume - reportedVolume) >= 0.001f) {
-                    Log.i(
-                        "FloweryDiagnostics",
-                        "VOLUME_UI_SOURCE source=playback_broadcast previous=$previousVolume reported=$reportedVolume " +
-                            "status=${reportedStatus ?: "none"}"
-                    )
+                val isVolumeAck = intent.getBooleanExtra(PlaybackService.EXTRA_VOLUME_COMMAND_COMPLETE, false)
+                val acknowledgedId = intent.getLongExtra(PlaybackService.EXTRA_VOLUME_COMMAND_ID, -1L)
+                if (isVolumeAck) {
+                    if (pendingVolumeCommandId == acknowledgedId) {
+                        pendingVolumeCommandId = null
+                        volume = reportedVolume
+                        Log.i("FloweryDiagnostics", "VOLUME_UI_SOURCE source=command_ack id=$acknowledgedId actual=$reportedVolume")
+                    } else {
+                        Log.i("FloweryDiagnostics", "VOLUME_UI_SOURCE source=stale_command_ack id=$acknowledgedId pending=$pendingVolumeCommandId")
+                    }
+                } else if (pendingVolumeCommandId == null) {
+                    volume = reportedVolume
+                } else {
+                    Log.d("FloweryDiagnostics", "VOLUME_UI_SOURCE source=periodic_broadcast_ignored pending=$pendingVolumeCommandId reported=$reportedVolume")
                 }
-                volume = reportedVolume
             }
             playbackPositionMs = intent.getLongExtra(PlaybackService.EXTRA_POSITION, playbackPositionMs)
             val reportedDuration = intent.getLongExtra(PlaybackService.EXTRA_DURATION, 0L)
@@ -303,14 +311,17 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                 onVolume = {
-                    val previousVolume = volume
+                    val requested = it.coerceIn(0f, 1f)
+                    val commandId = ++nextVolumeCommandId
+                    pendingVolumeCommandId = commandId
                     Log.i(
                         "FloweryDiagnostics",
-                        "VOLUME_UI_SOURCE source=slider_on_value_change previous=$previousVolume requested=$it"
+                        "VOLUME_UI_SOURCE source=slider_commit id=$commandId requested=$requested"
                     )
-                    volume = it
+                    volume = requested
                     sendPlaybackCommand(PlaybackService.ACTION_VOLUME) {
-                        putExtra(PlaybackService.EXTRA_VALUE, it)
+                        putExtra(PlaybackService.EXTRA_VALUE, requested)
+                        putExtra(PlaybackService.EXTRA_VOLUME_COMMAND_ID, commandId)
                     }
                 },
                 onPrevious = { sendPlaybackCommand(PlaybackService.ACTION_PREVIOUS) },
