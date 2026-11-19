@@ -25,7 +25,8 @@ internal object UacVolumeMath {
     fun stepTarget(snapshot: UacVolumeSnapshot, direction: Int, stepDb256: Int): Int {
         require(direction == -1 || direction == 1)
         require(stepDb256 > 0)
-        val desired = (snapshot.currentDb256.toLong() + direction.toLong() * stepDb256)
+        val effectiveStep = maxOf(stepDb256, snapshot.resolutionDb256.coerceAtLeast(0))
+        val desired = (snapshot.currentDb256.toLong() + direction.toLong() * effectiveStep)
             .coerceIn(snapshot.minimumDb256.toLong(), snapshot.maximumDb256.toLong()).toInt()
         return quantizeNearest(desired, snapshot.minimumDb256, snapshot.maximumDb256, snapshot.resolutionDb256)
     }
