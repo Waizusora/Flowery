@@ -176,7 +176,7 @@ class UsbAudioVolumeControlTest {
 
     @Test fun dbStepIsClampedAndQuantizedToAdvertisedResolution() {
         val snapshot = UacVolumeSnapshot(-10 * 256, -50 * 256, 0, 128, true, 1)
-        assertEquals(-8 * 256, UacVolumeMath.stepTarget(snapshot, 1, 256))
+        assertEquals(-9 * 256, UacVolumeMath.stepTarget(snapshot, 1, 256))
         assertEquals(-12 * 256, UacVolumeMath.stepTarget(snapshot, -1, 512))
         val atMaximum = snapshot.copy(currentDb256 = 0)
         assertEquals(0, UacVolumeMath.stepTarget(atMaximum, 1, 128))
