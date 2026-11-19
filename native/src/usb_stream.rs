@@ -645,8 +645,6 @@ fn run_worker(
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
             thread::sleep(Duration::from_millis(1)); continue;
         }
-        let pending_now = slots.iter().filter(|slot| slot.submitted).count();
-        pending_min = pending_min.min(pending_now);
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
         let event_started_at = Instant::now();
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
@@ -740,6 +738,8 @@ fn run_worker(
                 played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
             }
         }
+        let pending_now = slots.iter().filter(|slot| slot.submitted).count();
+        pending_min = pending_min.min(pending_now);
         if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
             log_usb_diagnostic(&format!(
                 "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} zeroPaddedFrames={} eventLoopMaxUs={}",
