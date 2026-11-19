@@ -103,6 +103,13 @@ analog output.
   master mute. Comparing it with the post-start requests distinguishes
   interference from active streaming from a device that does not answer Feature
   Unit requests at all. No `SET_CUR` is sent by either probe.
+- A read-only sweep (`UAC2_SWEEP`, implemented in `UsbFeatureUnitProbe`) issues
+  `GET_CUR` for entity IDs 1..10 (volume channel 1 and Clock Source sampling
+  frequency) and for the Feature Unit with alternative interface bytes. It runs
+  once per process with the streaming interface idle (`phase=IDLE`) and again
+  after clock negotiation (`phase=PRESTREAM`). Entities of the wrong type are
+  expected to STALL; the pattern of successes shows which entity IDs and
+  addressing the device answers. The sweep never writes.
 - Actual DAC behavior still requires hardware validation.
 
 ## Android routing and volume isolation

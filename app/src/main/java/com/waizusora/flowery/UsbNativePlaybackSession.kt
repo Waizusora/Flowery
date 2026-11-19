@@ -257,6 +257,9 @@ internal class UsbNativePlaybackSession private constructor(
     }
 
     companion object {
+        /** Ensures the idle-phase Feature Unit diagnostic sweep runs once per process. */
+        @Volatile private var idleVolumeProbeDone = false
+
         private fun requestUsbPermission(
             context: Context,
             manager: UsbManager,
@@ -394,6 +397,30 @@ internal class UsbNativePlaybackSession private constructor(
                         "readable=${volumeControl?.readableChannels?.joinToString(separator = ",") ?: "none"} " +
                         "writable=${volumeControl?.writableChannels?.joinToString(separator = ",") ?: "none"}"
                 )
+                if (volumeControl != null && !idleVolumeProbeDone) {
+                    idleVolumeProbeDone = true
+                    // Read-only diagnostic with the streaming interface idle (no alternate
+                    // setting selected and no session open). Runs once per process.
+                    val acInterface = (0 until device.interfaceCount)
+                        .asSequence()
+                        .map(device::getInterface)
+                        .filter { it.id == volumeControl.controlInterface }
+                        .minByOrNull { it.alternateSetting }
+                    if (acInterface != null && probe.claimInterface(acInterface, true)) {
+                        try {
+                            UsbFeatureUnitProbe.run(
+                                "IDLE", volumeControl.controlInterface, volumeControl.unitId,
+                                UsbControlTransfer { requestType, request, value, index, buffer, length, timeoutMs ->
+                                    probe.controlTransfer(requestType, request, value, index, buffer, length, timeoutMs)
+                                }
+                            ) { Log.i("FloweryUsbNative", it) }
+                        } finally {
+                            probe.releaseInterface(acInterface)
+                        }
+                    } else {
+                        Log.w("FloweryUsbNative", "UAC2_SWEEP phase=IDLE skipped: AudioControl interface could not be claimed")
+                    }
+                }
                 val planJson = try {
                     JSONObject(
                         NativeAudio.nativePlanUsbAudioPlayback(

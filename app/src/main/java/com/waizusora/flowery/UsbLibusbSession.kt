@@ -284,6 +284,9 @@ internal class UsbLibusbSession internal constructor(
         }
         volumeControlTransfer("PROBE_${phase}_GET_RANGE_VOL_ch1", 0xA1, 0x82, volumeSelector or 1, index, ByteArray(8), 8)
         volumeControlTransfer("PROBE_${phase}_GET_CUR_MUTE_ch0", 0xA1, 0x81, muteSelector, index, ByteArray(1), 1)
+        UsbFeatureUnitProbe.run(phase, control.controlInterface, control.unitId, controlTransfer) {
+            safeUsbLogI("FloweryUsbNative", it)
+        }
     }
 
     /** Reads descriptor-advertised Feature Unit volume in signed 1/256 dB units. */
