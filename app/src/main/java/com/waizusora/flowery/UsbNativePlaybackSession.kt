@@ -98,7 +98,7 @@ internal class UsbNativePlaybackSession private constructor(
     @Volatile private var volumeWriteVerified = false
 
     @Synchronized
-    fun start(initialPositionMs: Long = 0L): Result<Unit> {
+    fun start(initialPositionMs: Long = 0L, applySafeStartupVolume: Boolean = true): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB playback session is closed"))
         Log.i("FloweryUsbNative", "PLAYBACK_START_BEGIN sampleRate=$sampleRate channels=$channels validBits=$validBits subslotBytes=$subslotBytes dataFormat=$dataFormat endpoint=0x${endpoint.toString(16)} maxPacketSize=$maxPacketSize interval=$interval uac2=${uac2ClockSourceEntity != null} feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackMaxPacketSize")
         val negotiateClock: () -> Result<Unit> = if (uac2ClockSourceEntity != null) {
@@ -136,6 +136,7 @@ internal class UsbNativePlaybackSession private constructor(
         val result = startUsbPlaybackTransaction(
             negotiateClock = negotiateClock,
             startNativePlayback = {
+                prepareFeatureUnitVolume(applySafeStartupVolume)
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
                     sampleRate, channels, validBits, subslotBytes, dataFormat, feedbackEndpoint,
@@ -154,32 +155,51 @@ internal class UsbNativePlaybackSession private constructor(
                     "writable=${uacVolumeControl?.supportsWrite == true} " +
                     "unit=${uacVolumeControl?.unitId ?: -1}"
             )
-            uacVolumeControl?.let { control ->
-                val volume = usb.readUacVolume(control)
-                if (volume.isSuccess) {
-                    val snapshot = volume.getOrThrow()
-                    cachedVolumeSnapshot = snapshot
-                    Log.i(
-                        "FloweryUsbNative",
-                        "USB_VOLUME_READY unit=${control.unitId} protocol=${control.protocol} channel=${snapshot.channel} " +
-                            "currentDb256=${snapshot.currentDb256} minDb256=${snapshot.minimumDb256} " +
-                            "maxDb256=${snapshot.maximumDb256} resolutionDb256=${snapshot.resolutionDb256} " +
-                            "readableChannels=${control.readableChannels.joinToString(separator = ",")} " +
-                            "writableChannels=${control.writableChannels.joinToString(separator = ",")}"
-                    )
-                } else {
-                    Log.w(
-                        "FloweryUsbNative",
-                        "USB_VOLUME_READ_UNAVAILABLE unit=${control.unitId} reason=${volume.exceptionOrNull()?.message}"
-                    )
-                }
-            }
+
         } else {
             Log.e("FloweryUsbNative", "PLAYBACK_START_FAILED sampleRate=$sampleRate endpoint=0x${endpoint.toString(16)}", result.exceptionOrNull())
         }
         return result
     }
 
+    /** Read and, when possible, attenuate the DAC before isochronous playback starts. */
+    private fun prepareFeatureUnitVolume(applySafeStartupVolume: Boolean) {
+        val control = uacVolumeControl ?: return
+        val read = usb.readUacVolume(control)
+        if (read.isFailure) {
+            Log.w("FloweryUsbNative", "USB_VOLUME_READ_UNAVAILABLE unit=${control.unitId} reason=${read.exceptionOrNull()?.message}")
+            return
+        }
+        val snapshot = read.getOrThrow()
+        cachedVolumeSnapshot = snapshot
+        Log.i(
+            "FloweryUsbNative",
+            "USB_VOLUME_READY unit=${control.unitId} protocol=${control.protocol} channel=${snapshot.channel} " +
+                "currentDb256=${snapshot.currentDb256} minDb256=${snapshot.minimumDb256} " +
+                "maxDb256=${snapshot.maximumDb256} resolutionDb256=${snapshot.resolutionDb256} " +
+                "readableChannels=${control.readableChannels.joinToString(separator = ",")} " +
+                "writableChannels=${control.writableChannels.joinToString(separator = ",")}"
+        )
+        if (!applySafeStartupVolume || !control.supportsWrite) return
+        val target = UacVolumeMath.safeStartupTarget(snapshot) ?: run {
+            Log.i("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_ALREADY_SAFE currentDb256=${snapshot.currentDb256}")
+            return
+        }
+        Log.i(
+            "FloweryUsbNative",
+            "USB_VOLUME_SAFE_STARTUP requestedDb256=$target currentDb256=${snapshot.currentDb256} " +
+                "minimumDb256=${snapshot.minimumDb256} maximumDb256=${snapshot.maximumDb256} " +
+                "resolutionDb256=${snapshot.resolutionDb256} beforeStream=true"
+        )
+        val result = usb.setUacVolume(control, UacVolumeMath.fractionForDb256(target))
+        result.onSuccess { updated ->
+            cachedVolumeSnapshot = updated
+            volumeWriteVerified = true
+            Log.i("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_COMPLETE currentDb256=${updated.currentDb256} applied=true beforeStream=true")
+        }.onFailure { error ->
+            Log.e("FloweryUsbNative", "USB_VOLUME_SAFE_STARTUP_FAILED beforeStream=true reason=${error.message}")
+        }
+    }
     /** True only when descriptors expose a readable Feature Unit volume control. */
     fun hasHardwareVolumeControl(): Boolean = uacVolumeControl?.supportsRead == true
 
