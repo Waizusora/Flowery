@@ -50,6 +50,13 @@ const MAX_TRANSFER_RING_SIZE: usize = 32;
 /// remain disabled until that behavior is understood. See `USB_TRANSFER_INVALID_DETAIL`.
 #[cfg(any(target_os = "android", test))]
 const TARGET_RING_BUFFER_US: u64 = 4_000;
+/// Requested nice values for the USB submit and PCM decode threads (Android
+/// `THREAD_PRIORITY_URGENT_AUDIO` is -19). Best effort; see
+/// [`raise_current_thread_priority`].
+#[cfg(target_os = "android")]
+const USB_WORKER_THREAD_NICE: i32 = -19;
+#[cfg(target_os = "android")]
+const PCM_DECODE_THREAD_NICE: i32 = -16;
 #[cfg(any(target_os = "android", test))]
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
