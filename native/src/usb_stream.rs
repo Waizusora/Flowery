@@ -786,6 +786,8 @@ fn run_worker(
     let mut pending_min = usize::MAX;
     let mut active_slots_min = usize::MAX;
     let mut ring_dry_events = 0u64;
+    let mut idle_wait_iterations = 0u64;
+    let mut idle_wait_log_count = 0u32;
     let mut callback_dispatch_max_us = 0u64;
     let mut callback_to_resubmit_max_us = 0u64;
     let mut callback_to_resubmit_total_us = 0u64;
@@ -964,6 +966,18 @@ fn run_worker(
         let feedback_pending = feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
         if !audio_pending && !feedback_pending {
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
+            // No transfer is in flight and the stream has not ended. Record the PCM queue
+            // state so a worker waiting for data that never arrives can be identified.
+            idle_wait_iterations = idle_wait_iterations.saturating_add(1);
+            if idle_wait_log_count < 10 && idle_wait_iterations % 1_000 == 1 {
+                idle_wait_log_count += 1;
+                let (queued_frames, producer_eof, producer_error) = pcm_queue.occupancy();
+                log_usb_diagnostic(&format!(
+                    "USB_STREAM_IDLE_WAIT paused={} queuedFrames={} producerEof={} producerError={} completedTransfers={}",
+                    paused.load(Ordering::Acquire), queued_frames, producer_eof,
+                    producer_error.as_deref().unwrap_or("none"), completed_transfers
+                ));
+            }
             thread::sleep(Duration::from_millis(1)); continue;
         }
         let timeout = libc::timeval { tv_sec: 0, tv_usec: 10_000 };
@@ -1134,6 +1148,11 @@ fn run_worker(
     for slot in slots {
         unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
     }
+    log_usb_diagnostic(&format!(
+        "USB_STREAM_END eof={} stopRequested={} status={} completedTransfers={} playedFrames={}",
+        eof, stop.load(Ordering::Acquire), status.load(Ordering::Acquire),
+        completed_transfers, played_frames.load(Ordering::Acquire)
+    ));
     if status.load(Ordering::Acquire) >= 0 {
         status.store(if stop.load(Ordering::Acquire) { 2 } else { 1 }, Ordering::Release);
     }

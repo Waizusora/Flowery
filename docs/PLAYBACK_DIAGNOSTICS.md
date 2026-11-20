@@ -39,6 +39,10 @@ The direct USB isochronous path logs a `TRANSFER_SUMMARY` record under the tag `
 
 If a completed transfer fails validation, the worker logs `TRANSFER_INVALID` followed by `USB_TRANSFER_INVALID_DETAIL slot=<n> ringSize=<n> completedTransfers=<n> audioFrames=<n> packets(length/actual/status)=<list>`. The list gives, for each of the eight packets, the submitted length, the length the host controller reports as transferred, and the packet status.
 
+When the worker has no transfer in flight and the stream has not ended (for example while waiting for decoded audio), it logs up to ten `USB_STREAM_IDLE_WAIT paused=<bool> queuedFrames=<n> producerEof=<bool> producerError=<text> completedTransfers=<n>` records, at most one per second. A worker that never reaches the end of a track shows this record repeatedly with `producerEof=false` or an empty queue.
+
+When the worker exits it logs `USB_STREAM_END eof=<bool> stopRequested=<bool> status=<n> completedTransfers=<n> playedFrames=<n>`. `eof=true` with `stopRequested=false` is a normal end of track; the player then reports `Playback finished` and the service advances to the next track.
+
 At stream start the worker logs:
 
 - `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. The ring is currently four transfers (about 4 ms). A 32 ms ring was evaluated on one USB 2.0 DAC and failed deterministically at the 34th completed transfer (see `USB_TRANSFER_INVALID_DETAIL`), so deeper rings are disabled until that behavior is understood.
