@@ -41,15 +41,21 @@ const MIN_TRANSFER_RING_SIZE: usize = 4;
 /// Upper bound of isochronous transfers kept in flight.
 #[cfg(any(target_os = "android", test))]
 const MAX_TRANSFER_RING_SIZE: usize = 32;
-/// Target amount of audio, in microseconds, submitted to the host controller ahead
-/// of playback; it determines the transfer ring depth (see [`transfer_ring_size`]).
-///
-/// Kept at 4 ms (four 1 ms transfers). A 32 ms ring was evaluated on a USB 2.0 DAC
-/// (vendor 0x31B2, product 0x0111) and failed deterministically at the 34th completed
-/// transfer with every packet reporting `actual_length != length`, so deeper rings
-/// remain disabled until that behavior is understood. See `USB_TRANSFER_INVALID_DETAIL`.
+/// Buffering target, in microseconds, for streams whose packets all carry the same
+/// number of frames (for example 48 kHz and 96 kHz at 125 us service intervals). These
+/// streams play without audible gaps at four 1 ms transfers on the tested DAC. A
+/// 32 ms ring also streamed correctly at 96 kHz, but the player did not advance to the
+/// next track, so the shallow ring is kept until that is understood.
 #[cfg(any(target_os = "android", test))]
-const TARGET_RING_BUFFER_US: u64 = 4_000;
+const CONSTANT_PACKET_RING_BUFFER_US: u64 = 4_000;
+/// Buffering target for streams whose packets alternate between frame counts (44.1 kHz
+/// and 88.2 kHz). A 4 ms ring ran dry about once every 2.6 s at 44.1 kHz because the
+/// worker thread occasionally stalled for 4 to 8 ms. A 32 ms ring, however, failed on
+/// the same DAC at the 34th completed transfer with every packet reporting
+/// `actual_length != length`. This intermediate depth is an experiment; see
+/// [`transfer_length_mismatch_is_benign`].
+#[cfg(any(target_os = "android", test))]
+const FRACTIONAL_PACKET_RING_BUFFER_US: u64 = 8_000;
 /// Requested nice values for the USB submit and PCM decode threads (Android
 /// `THREAD_PRIORITY_URGENT_AUDIO` is -19). Best effort; see
 /// [`raise_current_thread_priority`].
@@ -170,13 +176,22 @@ impl PcmQueue {
     }
 }
 
-/// Number of isochronous transfers to keep in flight for a stream.
-///
-/// The ring covers [`TARGET_RING_BUFFER_US`] of audio, bounded to
+/// True when every service interval carries a whole number of frames.
+#[cfg(any(target_os = "android", test))]
+fn has_constant_packet_frames(sample_rate: u32, interval_us: u32) -> bool {
+    (u64::from(sample_rate) * u64::from(interval_us)) % 1_000_000 == 0
+}
+
+/// Number of isochronous transfers to keep in flight for a stream, bounded to
 /// [`MIN_TRANSFER_RING_SIZE`]..=[`MAX_TRANSFER_RING_SIZE`].
 #[cfg(any(target_os = "android", test))]
 fn transfer_ring_size(sample_rate: u32, interval_us: u32) -> usize {
-    transfer_ring_size_for(TARGET_RING_BUFFER_US, sample_rate, interval_us)
+    let target_us = if has_constant_packet_frames(sample_rate, interval_us) {
+        CONSTANT_PACKET_RING_BUFFER_US
+    } else {
+        FRACTIONAL_PACKET_RING_BUFFER_US
+    };
+    transfer_ring_size_for(target_us, sample_rate, interval_us)
 }
 
 /// Ring depth for an explicit buffering target. The ring is additionally limited so
@@ -298,6 +313,27 @@ fn transfer_packet_metrics(slot: &TransferSlot) -> (u64, u64, u32, i32) {
             }
         }
         (expected_bytes, actual_bytes, packet_errors, transfer_status)
+    }
+}
+
+/// True when a completed transfer succeeded at transfer and packet level and moved
+/// exactly the submitted number of bytes, yet individual packets report a different
+/// `actual_length` than their submitted `length`. The contiguous byte stream is then
+/// intact and only packet boundaries differ, so audio content is preserved.
+#[cfg(target_os = "android")]
+fn transfer_length_mismatch_is_benign(slot: &TransferSlot) -> bool {
+    unsafe {
+        if (*slot.transfer).status as i32 != 0 { return false; }
+        let descriptors = (*slot.transfer).iso_packet_desc.as_ptr();
+        let mut expected = 0u64;
+        let mut actual = 0u64;
+        for index in 0..PACKETS_PER_TRANSFER {
+            let descriptor = &*descriptors.add(index);
+            if descriptor.status != 0 { return false; }
+            expected = expected.saturating_add(u64::from(descriptor.length));
+            actual = actual.saturating_add(u64::from(descriptor.actual_length));
+        }
+        expected == actual
     }
 }
 
@@ -795,6 +831,7 @@ fn run_worker(
     let mut ring_dry_events = 0u64;
     let mut idle_wait_iterations = 0u64;
     let mut idle_wait_log_count = 0u32;
+    let mut length_mismatch_transfers = 0u64;
     let mut callback_dispatch_max_us = 0u64;
     let mut callback_to_resubmit_max_us = 0u64;
     let mut callback_to_resubmit_total_us = 0u64;
@@ -1074,18 +1111,35 @@ fn run_worker(
                 actual_bytes = actual_bytes.saturating_add(transfer_actual);
                 packet_errors = packet_errors.saturating_add(u64::from(transfer_packet_errors));
                 if let Err(message) = transfer_packets_succeeded(slot) {
-                    log_usb_diagnostic(&format!(
-                        "TRANSFER_INVALID endpoint=0x{:02x} transferStatus={} packetErrors={} expectedBytes={} actualBytes={}",
-                        config.endpoint, transfer_status, transfer_packet_errors,
-                        transfer_expected, transfer_actual
-                    ));
-                    log_usb_diagnostic(&format!(
-                        "USB_TRANSFER_INVALID_DETAIL slot={} ringSize={} completedTransfers={} audioFrames={} packets(length/actual/status)={}",
-                        slot_index, slots_len, completed_transfers, slot.audio_frames,
-                        describe_transfer_packets(slot)
-                    ));
-                    set_error(&error, &status, message);
-                    continue;
+                    // Strict validation applies to the minimum ring. With a deeper ring,
+                    // a length-only mismatch that preserves the byte total is counted and
+                    // logged instead of aborting playback.
+                    let tolerated = slots_len > MIN_TRANSFER_RING_SIZE
+                        && transfer_length_mismatch_is_benign(slot);
+                    if tolerated {
+                        length_mismatch_transfers = length_mismatch_transfers.saturating_add(1);
+                        if length_mismatch_transfers <= 10 {
+                            log_usb_diagnostic(&format!(
+                                "USB_PACKET_LENGTH_MISMATCH_TOLERATED event={} slot={} ringSize={} completedTransfers={} audioFrames={} packets(length/actual/status)={}",
+                                length_mismatch_transfers, slot_index, slots_len,
+                                completed_transfers, slot.audio_frames,
+                                describe_transfer_packets(slot)
+                            ));
+                        }
+                    } else {
+                        log_usb_diagnostic(&format!(
+                            "TRANSFER_INVALID endpoint=0x{:02x} transferStatus={} packetErrors={} expectedBytes={} actualBytes={}",
+                            config.endpoint, transfer_status, transfer_packet_errors,
+                            transfer_expected, transfer_actual
+                        ));
+                        log_usb_diagnostic(&format!(
+                            "USB_TRANSFER_INVALID_DETAIL slot={} ringSize={} completedTransfers={} audioFrames={} packets(length/actual/status)={}",
+                            slot_index, slots_len, completed_transfers, slot.audio_frames,
+                            describe_transfer_packets(slot)
+                        ));
+                        set_error(&error, &status, message);
+                        continue;
+                    }
                 }
                 played_frames.fetch_add(slot.audio_frames, Ordering::AcqRel);
             }
@@ -1097,7 +1151,7 @@ fn run_worker(
             let (decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
                 pcm_starvation_count, pcm_queued_min_frames) = pcm_queue.metrics();
             log_usb_diagnostic(&format!(
-                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} activeSlotsMin={} callbackDispatchMaxUs={} callbackToResubmitAvgUs={} callbackToResubmitMaxUs={} callbackToResubmitCount={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={} ringDryEvents={}",
+                "TRANSFER_SUMMARY endpoint=0x{:02x} sampleRate={} channels={} intervalUs={} maxPacketBytes={} busSpeed={:?} completedTransfers={} completedFrames={} expectedBytes={} actualBytes={} packetErrors={} feedbackSamples={} feedbackRaw={} feedbackRateHz={} playedFrames={} fillCalls={} fillAvgUs={} fillMaxUs={} submitGapMaxUs={} pendingMin={} activeSlotsMin={} callbackDispatchMaxUs={} callbackToResubmitAvgUs={} callbackToResubmitMaxUs={} callbackToResubmitCount={} zeroPaddedFrames={} eventLoopMaxUs={} decoderReadCalls={} decoderReadAvgUs={} decoderReadMaxUs={} pcmQueueWaits={} pcmQueuedMinFrames={} ringDryEvents={} lengthMismatchTransfers={}",
                 config.endpoint, config.sample_rate, config.channels, config.interval_us,
                 config.max_packet_bytes, config.feedback_speed, completed_transfers,
                 completed_frames, expected_bytes, actual_bytes, packet_errors,
@@ -1117,7 +1171,7 @@ fn run_worker(
                 zero_padded_frames,
                 event_loop_max_us,
                 decoder_read_calls, decoder_read_avg_us, decoder_read_max_us,
-                pcm_starvation_count, pcm_queued_min_frames, ring_dry_events
+                pcm_starvation_count, pcm_queued_min_frames, ring_dry_events, length_mismatch_transfers
             ));
             last_diagnostic_at = Instant::now();
         }
@@ -1556,9 +1610,24 @@ mod tests {
     }
 
     #[test]
-    fn default_ring_matches_known_good_depth() {
-        assert_eq!(super::transfer_ring_size(44_100, 125), 4);
+    fn constant_packet_rates_keep_the_shallow_ring() {
+        assert_eq!(super::transfer_ring_size(48_000, 125), 4);
         assert_eq!(super::transfer_ring_size(96_000, 125), 4);
+        assert_eq!(super::transfer_ring_size(192_000, 125), 4);
+    }
+
+    #[test]
+    fn fractional_packet_rates_use_the_smaller_experimental_ring() {
+        assert_eq!(super::transfer_ring_size(44_100, 125), 8);
+        assert_eq!(super::transfer_ring_size(88_200, 125), 8);
+    }
+
+    #[test]
+    fn constant_packet_detection() {
+        assert!(super::has_constant_packet_frames(48_000, 125));
+        assert!(super::has_constant_packet_frames(96_000, 125));
+        assert!(!super::has_constant_packet_frames(44_100, 125));
+        assert!(!super::has_constant_packet_frames(88_200, 125));
     }
 
     #[test]

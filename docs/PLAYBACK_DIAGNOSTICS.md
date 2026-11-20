@@ -43,9 +43,11 @@ When the worker has no transfer in flight and the stream has not ended (for exam
 
 When the worker exits it logs `USB_STREAM_END eof=<bool> stopRequested=<bool> status=<n> completedTransfers=<n> playedFrames=<n>`. `eof=true` with `stopRequested=false` is a normal end of track; the player then reports `Playback finished` and the service advances to the next track.
 
+With a ring deeper than four transfers, a transfer that completed successfully and moved exactly the submitted number of bytes, but whose individual packets report a different `actual_length` than their submitted `length`, is counted and logged instead of aborting playback: `USB_PACKET_LENGTH_MISMATCH_TOLERATED event=<n> slot=<n> ringSize=<n> completedTransfers=<n> audioFrames=<n> packets(length/actual/status)=<list>` (first ten events), and `lengthMismatchTransfers` in `TRANSFER_SUMMARY`. The byte total is preserved, so the audio byte stream is expected to be intact; this assumption is unverified and the counter should be inspected during listening tests. Any transfer-level or packet-level error status, or a byte-total mismatch, still aborts playback.
+
 At stream start the worker logs:
 
-- `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. The ring is currently four transfers (about 4 ms). A 32 ms ring was evaluated on one USB 2.0 DAC and failed deterministically at the 34th completed transfer (see `USB_TRANSFER_INVALID_DETAIL`), so deeper rings are disabled until that behavior is understood.
+- `USB_TRANSFER_RING slots=<n> packetsPerTransfer=<n> bufferedUs=<n>`: the number of transfers kept in flight and the audio duration they cover. Streams whose packets all carry the same number of frames (48 kHz, 96 kHz, 192 kHz at 125 us service intervals) use four transfers (about 4 ms). Streams with alternating packet sizes (44.1 kHz, 88.2 kHz) use eight transfers (about 8 ms) because the four-transfer ring ran dry roughly every 2.6 s at 44.1 kHz. A 32 ms ring failed at 44.1 kHz on one USB 2.0 DAC (see `USB_TRANSFER_INVALID_DETAIL`) and, at 96 kHz, prevented the player from advancing to the next track, so it is not used.
 - `USB_THREAD_PRIORITY thread=<name> requestedNice=<n> result=<n> errno=<n>`: outcome of the best-effort request to raise the scheduling priority of the USB submit and PCM decode threads. `result=0` means the request was accepted; any other value means Android refused it and the thread keeps its default priority.
 
 Capture command:
