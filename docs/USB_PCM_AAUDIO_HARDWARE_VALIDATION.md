@@ -48,6 +48,53 @@ Capture adb logcat -v threadtime filtered to:
 
 For each transition, record device name/type/ID, selected backend, sample rate, bit depth, playback position, USB transfer status, AAudio XRun count, and whether Play was pressed manually.
 
+
+## Extended stress protocol
+
+### USB DAC hot-plug / hot-unplug
+
+Run on a physical Android device with USB host/OTG support and a class-compliant DAC:
+
+1. Perform at least 100 attach/detach cycles while the player is idle, then 100 cycles while paused, then 100 cycles while playing. Keep the same test track and record each cycle number.
+2. During a playing cycle, unplug the DAC at different points: immediately after Play, during steady-state PCM, while seeking, and within the final 2 seconds of a track/CUE segment.
+3. After every unplug, require all submitted isochronous and feedback transfers to receive cancellation callbacks before the USB session and file descriptor are released.
+4. Reconnect the same DAC and verify the session can be opened cleanly. Also repeat with a second DAC to detect stale device/session identity.
+5. Treat a worker join timeout, transfer-drain timeout, panic, or retained-session diagnostic as a failed cycle. Never force-close a session whose transfer ownership is uncertain.
+
+Expected invariants:
+- No use-after-free, native crash, ANR, stuck USB permission state, duplicate transfer worker, or permanently wedged route.
+- A failed transfer drain must retain the native session/connection rather than free callback-owned buffers.
+- Repeated events must settle on the latest eligible route; manual Play remains required after route transitions.
+
+### AAudio teardown race
+
+1. Repeat at least 100 AAudio open/start/pause/stop/close cycles on the built-in speaker.
+2. Repeat while switching between speaker, wired/AUX, and Bluetooth. Include rapid device arrival/removal and seek requests issued immediately before teardown.
+3. Verify the scheduler thread is joined before the AAudio stream and callback-owned output buffer are released.
+4. Verify callbacks stop after stream close, the next stream opens without stale scheduler activity, and no old session can publish a seek after cancellation.
+5. Capture AAudio state, device ID, XRun count, scheduler status, and native errors for each cycle.
+
+A cycle fails on a native crash, callback after close, stale PCM from the previous session, duplicate scheduler, unbounded teardown wait, or an unexpected automatic resume.
+
+### Seek / position accuracy
+
+Use the same lossless test file with known duration and deterministic seek points (0 ms, 1 s, 10 s, midpoint, and the final 2 s). Repeat on USB PCM and each AAudio route.
+
+- After seek completes, the reported playback position must be within one PCM frame of the decoder's actual seek position; UI millisecond display may truncate by less than 1 ms.
+- Confirm the first audible PCM after seek corresponds to the requested decoder position, not buffered pre-seek samples.
+- Seek repeatedly while playing and paused; then unplug the DAC during an in-flight USB seek and switch AAudio routes during an in-flight AAudio seek.
+- Confirm CUE seeks remain clamped to the active segment bounds and never leak samples from adjacent tracks.
+- Record requested milliseconds, decoder-returned milliseconds, sample rate, frame position, and the first post-seek timestamp.
+
+Useful capture command:
+
+```sh
+adb logcat -c
+adb logcat -v threadtime FloweryDiagnostics:I FloweryUsbNative:I AAudio:I '*:S'
+```
+
+These cycle counts are a manual hardware stress plan, not a claim that CI executed physical USB or AAudio devices.
+
 ## CI versus physical validation
 
 - AndroidOutputRouteSelectionTest covers deterministic LIFO selection and route-transition position policy.
