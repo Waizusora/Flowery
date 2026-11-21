@@ -66,17 +66,42 @@ PID_BEFORE=""
 PID_AFTER=""
 PROCESS_EXIT_OBSERVED=0
 NEW_PROCESS_OBSERVED=0
+RECOVERY_OBSERVATION_STATE="not-started"
 CRASH_COMMAND_STATUS="not-run"
+
+capture_post_event_diagnostics() {
+  ((CRASH_PROCESS)) || return 0
+  [[ -n "$PID_BEFORE" ]] || return 0
+
+  if [[ -z "$PID_AFTER" ]]; then
+    PID_AFTER="$("${ADB[@]}" shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' | xargs || true)"
+  fi
+  printf '%s\n' "${PID_AFTER:-not-running}" > "$OUT_DIR/pid-after.txt"
+  "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$OUT_DIR/services-after-process-event.txt" 2>&1 || true
+  "${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-after-process-event.txt" 2>&1 || true
+  "${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-after-process-event.txt" 2>&1 || true
+}
 
 write_recovery_report() {
   local report="$OUT_DIR/process-recovery-report.txt"
+  local exit_observed="$PROCESS_EXIT_OBSERVED"
+  if ((CRASH_PROCESS)) && [[ -n "$PID_BEFORE" ]] && [[ -s "$OUT_DIR/full-logcat.txt" ]]; then
+    for pid in $PID_BEFORE; do
+      if grep -Fq "am_proc_died: [0,$pid,$PACKAGE," "$OUT_DIR/full-logcat.txt"; then
+        exit_observed=1
+        break
+      fi
+    done
+  fi
+
   {
     echo "package=$PACKAGE"
     echo "test_mode=$([[ "$CRASH_PROCESS" -eq 1 ]] && echo injected-am-crash || echo background-diagnostics)"
     echo "pid_before=${PID_BEFORE:-not-recorded}"
     echo "pid_after=${PID_AFTER:-not-recorded}"
-    echo "process_exit_observed=$PROCESS_EXIT_OBSERVED"
+    echo "process_exit_observed=$exit_observed"
     echo "new_process_observed=$NEW_PROCESS_OBSERVED"
+    echo "recovery_observation_state=$RECOVERY_OBSERVATION_STATE"
     echo "am_crash_command_status=$CRASH_COMMAND_STATUS"
     echo
     echo "Recovery markers (if present):"
@@ -93,6 +118,7 @@ cleanup() {
   if ((DOZE_FORCED)); then
     "${ADB[@]}" shell dumpsys deviceidle unforce >/dev/null 2>&1 || true
   fi
+  capture_post_event_diagnostics
   if [[ -n "$LOG_PID" ]]; then
     kill "$LOG_PID" >/dev/null 2>&1 || true
     wait "$LOG_PID" 2>/dev/null || true
@@ -138,6 +164,7 @@ if ((CRASH_PROCESS)); then
   fi
   echo "Injecting an app crash into Flowery PID(s): $PID_BEFORE"
   echo "This is an injected crash, not a normal Android low-memory process kill."
+  RECOVERY_OBSERVATION_STATE="running"
   "${ADB[@]}" shell am crash "$PACKAGE" > "$OUT_DIR/am-crash.txt" 2>&1 || CRASH_COMMAND_STATUS=$?
   if [[ "$CRASH_COMMAND_STATUS" == "not-run" ]]; then CRASH_COMMAND_STATUS=0; fi
 
@@ -152,9 +179,8 @@ if ((CRASH_PROCESS)); then
       break
     fi
   done
-  printf '%s\n' "${PID_AFTER:-not-running}" > "$OUT_DIR/pid-after.txt"
-  "${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-after-process-event.txt" 2>&1 || true
-  "${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-after-process-event.txt" 2>&1 || true
+  RECOVERY_OBSERVATION_STATE="complete"
+  capture_post_event_diagnostics
 fi
 
 if ((RUN_DOZE)); then
