@@ -49,4 +49,18 @@ class CallInterruptionPolicyTest {
         assertTrue(policy.blocksPlayback(callAudioModeActive = true))
         assertFalse(policy.blocksPlayback(callAudioModeActive = false))
     }
+    @Test
+    fun restoredCallInterruptionRemainsLatchedUntilCallModeEnds() {
+        val policy = CallInterruptionPolicy()
+        policy.restoreInterrupted(true)
+
+        assertTrue(policy.blocksPlayback(callAudioModeActive = true))
+        assertEquals(
+            CallInterruptionPolicy.Transition.CALL_ENDED,
+            policy.update(callAudioModeActive = false)
+        )
+        assertFalse(policy.isInterrupted)
+        // Clearing the latch only permits a future explicit Play command; it does not play.
+    }
+
 }
