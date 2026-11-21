@@ -130,7 +130,7 @@ class PlaybackService : Service() {
     private var lastAudioDiagnosticMs = 0L
     @Volatile private var outputRouteRestartPending = false
     private var lastOutputRouteTarget = AndroidOutputTarget.SPEAKER
-    private val outputRouteCheck = Runnable {
+    private val outputRouteCheck: Runnable = Runnable {
         val current = outputDeviceSnapshot()
         if (outputRouteRestartPending) {
             if (current != lastOutputDeviceSnapshot) {
