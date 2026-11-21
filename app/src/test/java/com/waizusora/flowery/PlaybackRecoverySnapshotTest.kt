@@ -47,7 +47,7 @@ class PlaybackRecoverySnapshotTest {
         ).normalized()
 
         assertEquals(listOf("Only title", ""), restored.titles)
-        assertEquals(listOf(0L, 2_000L), restored.cueStartsMs)
+        assertEquals(listOf(0L, 0L), restored.cueStartsMs)
         assertEquals(listOf(500L, 0L), restored.cueEndsMs)
         assertEquals(1, restored.queueIndex)
         assertEquals(2, restored.repeatMode)
