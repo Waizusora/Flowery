@@ -84,7 +84,7 @@ struct Output {
     // Raw interleaved integer PCM bytes. The decoder's sample codes are never
     // normalized through floating point on the Android-managed output path.
     consumer: UnsafeCell<Consumer<u8>>, capacity:u64, channels:usize, format:i32, rate:i32,
-    bytes_per_sample:usize, queued_bytes:AtomicU64,
+    bytes_per_sample:usize,
     played:AtomicU64, volume:AtomicU32,
     active:AtomicBool, eof:AtomicBool, underruns:AtomicU64, error:AtomicI32,
 }
@@ -166,8 +166,8 @@ pub(crate) fn output_queue_budget() -> Option<(usize, usize, usize)> {
     let producer = engine.producer.as_ref()?;
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample)?;
     if bytes_per_frame == 0 { return None; }
-    let queued = output.queued_bytes.load(Ordering::Acquire) as usize / bytes_per_frame;
     let free = producer.slots() / bytes_per_frame;
+    let queued = (output.capacity as usize).saturating_sub(free);
     let target = crate::playback_policy::target_queue_frames(
         output.rate,
         output.capacity.min(i32::MAX as u64) as i32,
@@ -185,7 +185,6 @@ pub(crate) fn write_output_pcm_bytes(samples: &[u8]) -> Result<usize, i32> {
     }
     let producer = engine.producer.as_mut().ok_or(INVALID_STATE)?;
     let (written, _) = producer.push_partial_slice(samples);
-    output.queued_bytes.fetch_add(written.len() as u64, Ordering::Release);
     Ok(written.len() / bytes_per_frame)
 }
 
@@ -219,7 +218,6 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     let (popped, _) = consumer.pop_partial_slice(destination);
     let byte_count=popped.len();
     let count=byte_count/bytes_per_frame;
-    o.queued_bytes.fetch_sub(byte_count as u64,Ordering::AcqRel);
     // Integer output keeps its byte-preserving unity-gain path. MP3's
     // decoder-native float PCM uses a separate float gain path.
     let gain=o.gain_q31();
@@ -295,7 +293,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
     if error != 0 { return Err(error); }
     let bytes_per_frame = output.channels * output.bytes_per_sample;
     let buffered = if bytes_per_frame == 0 { 0 } else {
-        output.queued_bytes.load(Ordering::Acquire) / bytes_per_frame as u64
+        (output.capacity as u64).saturating_sub((engine.producer.as_ref()?.slots() / bytes_per_frame) as u64)
     };
     let eof = output.eof.load(Ordering::Acquire);
     let active = output.active.load(Ordering::Acquire);
@@ -480,7 +478,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     let bytes_per_sample=match format{FMT_I16=>2,FMT_FLOAT=>4,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
     let ring_bytes=(cap as usize).saturating_mul(channels as usize).saturating_mul(bytes_per_sample);
     let (producer, consumer)=match crate::pcm_transport::new_pcm_byte_ring(ring_bytes) { Ok(ring)=>ring, Err(_)=>return INVALID_FORMAT };
-    let mut out=Box::new(Output{consumer,capacity:cap,channels:channels as usize,format,rate,bytes_per_sample,queued_bytes:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
+    let mut out=Box::new(Output{consumer,capacity:cap,channels:channels as usize,format,rate,bytes_per_sample,played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
     let sharing=if exclusive==JNI_TRUE{SHARING_EXCLUSIVE}else{SHARING_SHARED};
@@ -543,7 +541,6 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
         let (popped, _) = consumer.pop_partial_slice(&mut discarded);
         if popped.is_empty() { break; }
     }
-    output.queued_bytes.store(0, Ordering::Release);
     output.played.store(position as u64, Ordering::Release);
     output.eof.store(false, Ordering::Release);
     output.active.store(true, Ordering::Release);
@@ -558,7 +555,7 @@ pub(crate) fn signal_stream_eof() {
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetStreamEof(_:JNIEnv,_:JClass){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.eof.store(true,Ordering::Release);}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.queued_bytes.load(Ordering::Acquire)/ ((o.channels * o.bytes_per_sample) as u64).min(i32::MAX as u64) as i32).unwrap_or(0)}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());match (e.output.as_ref(),e.producer.as_ref()){(Some(o),Some(p))=>{let bpf=o.channels*o.bytes_per_sample;if bpf==0{0}else{o.capacity.saturating_sub((p.slots()/bpf) as u64).min(i32::MAX as u64) as i32}},_=>0}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(_:JNIEnv,_:JClass,v:f32){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.volume.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed);}}
 pub(crate) fn pause_output_for_session() -> Option<i32> {
@@ -615,7 +612,7 @@ pub(crate) fn stop_output_for_session() {
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.underruns.load(Ordering::Acquire).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputError(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.error.load(Ordering::Acquire)).unwrap_or(INVALID_STATE)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetLastOutputOpenDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let a=env.new_long_array(11).unwrap();let _=env.set_long_array_region(&a,0,&e.last_open);a.into_raw()}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let mut v=[0i64;39];if let Some(o)=e.output.as_ref(){v[0]=o.underruns.load(Ordering::Acquire) as i64;v[2]=(o.queued_bytes.load(Ordering::Acquire) / (o.channels * o.bytes_per_sample) as u64) as i64;v[3]=o.capacity as i64;v[19]=e.last_open[4];v[23]=o.rate as i64;v[31]=e.last_open[1];v[32]=e.last_open[6];v[33]=e.last_open[0];}if !e.stream.is_null(){unsafe{v[1]=AAudioStream_getXRunCount(e.stream) as i64;v[4]=AAudioStream_getBufferSizeInFrames(e.stream) as i64;v[5]=AAudioStream_getFramesPerBurst(e.stream) as i64;v[6]=AAudioStream_getState(e.stream) as i64;v[7]=AAudioStream_getSampleRate(e.stream) as i64;v[8]=AAudioStream_getDeviceId(e.stream) as i64;v[9]=AAudioStream_getSharingMode(e.stream) as i64;v[10]=AAudioStream_getFormat(e.stream) as i64;v[11]=AAudioStream_getChannelCount(e.stream) as i64;v[12]=AAudioStream_getPerformanceMode(e.stream) as i64;v[26]=AAudioStream_getBufferCapacityInFrames(e.stream) as i64;}}let a=env.new_long_array(39).unwrap();let _=env.set_long_array_region(&a,0,&v);a.into_raw()}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputDiagnostics(env:JNIEnv,_:JClass)->jlongArray{let e=engine().lock().unwrap_or_else(|p|p.into_inner());let mut v=[0i64;39];if let Some(o)=e.output.as_ref(){v[0]=o.underruns.load(Ordering::Acquire) as i64;v[2]=e.producer.as_ref().map(|p|{let bpf=o.channels*o.bytes_per_sample;if bpf==0{0}else{o.capacity.saturating_sub((p.slots()/bpf) as u64) as i64}}).unwrap_or(0);v[3]=o.capacity as i64;v[19]=e.last_open[4];v[23]=o.rate as i64;v[31]=e.last_open[1];v[32]=e.last_open[6];v[33]=e.last_open[0];}if !e.stream.is_null(){unsafe{v[1]=AAudioStream_getXRunCount(e.stream) as i64;v[4]=AAudioStream_getBufferSizeInFrames(e.stream) as i64;v[5]=AAudioStream_getFramesPerBurst(e.stream) as i64;v[6]=AAudioStream_getState(e.stream) as i64;v[7]=AAudioStream_getSampleRate(e.stream) as i64;v[8]=AAudioStream_getDeviceId(e.stream) as i64;v[9]=AAudioStream_getSharingMode(e.stream) as i64;v[10]=AAudioStream_getFormat(e.stream) as i64;v[11]=AAudioStream_getChannelCount(e.stream) as i64;v[12]=AAudioStream_getPerformanceMode(e.stream) as i64;v[26]=AAudioStream_getBufferCapacityInFrames(e.stream) as i64;}}let a=env.new_long_array(39).unwrap();let _=env.set_long_array_region(&a,0,&v);a.into_raw()}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeTuneOutputBuffer(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.stream.is_null()||e.output.is_none(){return INVALID_STATE;}unsafe{let x=AAudioStream_getXRunCount(e.stream);if x<0{return x;}let cap=AAudioStream_getBufferCapacityInFrames(e.stream);let cur=AAudioStream_getBufferSizeInFrames(e.stream);let burst=AAudioStream_getFramesPerBurst(e.stream).max(1);if x>0&&cur>0&&cap>cur{let _=AAudioStream_setBufferSizeInFrames(e.stream,(cur+burst).min(cap));}OK}}
 
 #[cfg(test)]
@@ -633,7 +630,6 @@ mod tests {
             format: FMT_I16,
             rate: 48_000,
             bytes_per_sample: 2,
-            queued_bytes: AtomicU64::new(queued.len() as u64),
             played: AtomicU64::new(0),
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(true),
@@ -655,7 +651,6 @@ mod tests {
         assert_eq!(result, 0);
         assert_eq!(&audio[..12], bytes.as_slice());
         assert_eq!(&audio[12..], &[0; 4]);
-        assert_eq!(output.queued_bytes.load(Ordering::Acquire), 0);
         assert_eq!(output.played.load(Ordering::Acquire), 3);
         assert_eq!(output.underruns.load(Ordering::Acquire), 1);
     }
