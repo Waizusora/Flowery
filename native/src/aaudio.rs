@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicI32, AtomicU32, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, Producer};
 
 #[repr(C)] struct AAudioStream(c_void);
 #[repr(C)] struct AAudioStreamBuilder(c_void);
@@ -479,7 +479,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let bytes_per_sample=match format{FMT_I16=>2,FMT_FLOAT=>4,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
     let ring_bytes=(cap as usize).saturating_mul(channels as usize).saturating_mul(bytes_per_sample);
-    let (producer, consumer)=RingBuffer::<u8>::new(ring_bytes);
+    let (producer, consumer)=match crate::pcm_transport::new_pcm_byte_ring(ring_bytes) { Ok(ring)=>ring, Err(_)=>return INVALID_FORMAT };
     let mut out=Box::new(Output{consumer,capacity:cap,channels:channels as usize,format,rate,bytes_per_sample,queued_bytes:AtomicU64::new(0),played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
@@ -558,7 +558,7 @@ pub(crate) fn signal_stream_eof() {
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetStreamEof(_:JNIEnv,_:JClass){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.eof.store(true,Ordering::Release);}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.queued_bytes.load(Ordering::Acquire).saturating_div((o.channels * o.bytes_per_sample) as u64).min(i32::MAX as u64) as i32).unwrap_or(0)}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());e.output.as_ref().map(|o|o.queued_bytes.load(Ordering::Acquire)/ ((o.channels * o.bytes_per_sample) as u64).min(i32::MAX as u64) as i32).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(_:JNIEnv,_:JClass,v:f32){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.volume.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed);}}
 pub(crate) fn pause_output_for_session() -> Option<i32> {
@@ -621,6 +621,7 @@ pub(crate) fn stop_output_for_session() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rtrb::RingBuffer;
 
     fn test_output(capacity_frames: usize, channels: usize, queued: &[u8]) -> Output {
         let (mut producer, consumer) = RingBuffer::<u8>::new(capacity_frames * channels * 2);
