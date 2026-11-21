@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn data_callback_drains_wrapped_spsc_ring_without_reordering_pcm() {
-        let (mut producer, consumer) = RingBuffer::<u8>::new(8);
+        let (mut producer, mut consumer) = RingBuffer::<u8>::new(8);
         producer.push_entire_slice(&[1, 2, 3, 4, 5, 6]).unwrap();
         let mut discarded = [0; 4];
         consumer.pop_entire_slice(&mut discarded).unwrap();
