@@ -3,7 +3,7 @@
 //! Transfer callbacks only publish completion state. The owning worker performs
 //! packet validation, PCM production, resubmission, cancellation, and teardown.
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use std::{
     cell::UnsafeCell,
     collections::{HashMap, HashSet},
@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 use rtrb::{Consumer, Producer};
 
 #[cfg(target_os = "android")]
@@ -83,7 +83,7 @@ const PCM_QUEUE_CAPACITY_FRAMES: usize = 16_384;
 #[cfg(target_os = "android")]
 const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 struct PcmQueue {
     producer: UnsafeCell<Producer<u8>>,
     consumer: UnsafeCell<Consumer<u8>>,
@@ -101,10 +101,10 @@ struct PcmQueue {
 // SAFETY: PcmQueue is used with exactly one decoder producer and one USB
 // submit-worker consumer. Each endpoint is accessed mutably only by its
 // designated thread; all cross-thread state is communicated through atomics.
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 unsafe impl Sync for PcmQueue {}
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 impl PcmQueue {
     fn new(frame_bytes: usize) -> Result<Self, String> {
         if frame_bytes == 0 { return Err("PCM queue frame size is zero".into()); }
@@ -1676,5 +1676,76 @@ mod tests {
     fn ring_never_drops_below_minimum_or_divides_by_zero() {
         assert!(super::transfer_ring_size(44_100, 0) >= super::MIN_TRANSFER_RING_SIZE);
         assert!(super::transfer_ring_size(u32::MAX, 125) >= super::MIN_TRANSFER_RING_SIZE);
+    }
+}
+
+#[cfg(test)]
+mod pcm_queue_tests {
+    use super::PcmQueue;
+    use std::sync::Arc;
+
+    #[test]
+    fn pcm_queue_enforces_frame_alignment_and_drains_eof() {
+        let queue = PcmQueue::new(4).unwrap();
+        assert!(queue.push(&[1, 2, 3]).is_err());
+        queue.push(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        assert_eq!(queue.occupancy().0, 2);
+        assert_eq!(queue.take_frames(1, false).unwrap(), [1, 2, 3, 4]);
+        assert_eq!(queue.occupancy().0, 1);
+        queue.finish(None);
+        assert_eq!(queue.take_frames(8, true).unwrap(), [5, 6, 7, 8]);
+        assert!(queue.is_drained_eof());
+    }
+
+    #[test]
+    fn pcm_queue_reports_bounded_capacity_without_partial_publication() {
+        let queue = PcmQueue::new(1).unwrap();
+        let full = vec![0x5a; super::PCM_QUEUE_CAPACITY_FRAMES];
+        queue.push(&full).unwrap();
+        assert!(queue.push(&[0x6b]).is_err());
+        assert_eq!(queue.occupancy().0, super::PCM_QUEUE_CAPACITY_FRAMES);
+        assert_eq!(queue.take_frames(1, false).unwrap(), [0x5a]);
+        assert_eq!(queue.occupancy().0, super::PCM_QUEUE_CAPACITY_FRAMES - 1);
+    }
+
+    #[test]
+    fn pcm_queue_spsc_endpoints_transfer_ordered_frames_across_threads() {
+        let queue = Arc::new(PcmQueue::new(4).unwrap());
+        let expected: Vec<u8> = (0..(32 * 256 * 4)).map(|value| (value % 251) as u8).collect();
+        let producer_queue = Arc::clone(&queue);
+        let producer_data = expected.clone();
+        let producer = std::thread::spawn(move || {
+            for chunk in producer_data.chunks(256 * 4) {
+                producer_queue.push(chunk).unwrap();
+            }
+            producer_queue.finish(None);
+        });
+
+        let mut received = Vec::with_capacity(expected.len());
+        loop {
+            let (_, eof, _) = queue.occupancy();
+            if let Some(chunk) = queue.take_frames(256, eof) {
+                received.extend_from_slice(&chunk);
+            } else {
+                std::thread::yield_now();
+            }
+            if eof && queue.is_drained_eof() {
+                break;
+            }
+        }
+        producer.join().unwrap();
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn pcm_queue_preserves_terminal_decoder_error() {
+        let queue = PcmQueue::new(2).unwrap();
+        queue.push(&[1, 2]).unwrap();
+        queue.finish(Some("decoder failure".into()));
+        let (_, eof, error) = queue.occupancy();
+        assert!(eof);
+        assert_eq!(error.as_deref(), Some("decoder failure"));
+        assert_eq!(queue.take_frames(1, true).unwrap(), [1, 2]);
+        assert!(queue.is_drained_eof());
     }
 }
