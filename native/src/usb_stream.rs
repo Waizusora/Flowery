@@ -1712,7 +1712,7 @@ mod pcm_queue_tests {
     #[test]
     fn pcm_queue_spsc_endpoints_transfer_ordered_frames_across_threads() {
         let queue = Arc::new(PcmQueue::new(4).unwrap());
-        let expected: Vec<u8> = (0..(32 * 256 * 4)).map(|value| (value % 251) as u8).collect();
+        let expected: Vec<u8> = (0..(64 * 512 * 4)).map(|value| (value % 251) as u8).collect();
         let producer_queue = Arc::clone(&queue);
         let producer_data = expected.clone();
         let producer = std::thread::spawn(move || {
@@ -1736,6 +1736,17 @@ mod pcm_queue_tests {
         }
         producer.join().unwrap();
         assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn pcm_queue_rejects_writes_after_eof_without_corrupting_queued_frames() {
+        let queue = PcmQueue::new(2).unwrap();
+        queue.push(&[1, 2, 3, 4]).unwrap();
+        queue.finish(None);
+        assert!(queue.push(&[5, 6]).is_err());
+        assert_eq!(queue.occupancy().0, 2);
+        assert_eq!(queue.take_frames(2, true).unwrap(), [1, 2, 3, 4]);
+        assert!(queue.is_drained_eof());
     }
 
     #[test]
