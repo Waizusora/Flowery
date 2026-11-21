@@ -210,7 +210,7 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     if data.is_null() || audio.is_null() || frames<=0{return 0;}
     // AAudio serializes data callbacks for a stream; the callback is the sole
     // consumer of this SPSC endpoint.
-    let o=&mut *(data as *mut Output);
+    let o=&*(data as *const Output);
     let requested=frames as usize;
     let bytes_per_frame=o.channels*o.bytes_per_sample;
     let requested_bytes=requested*bytes_per_frame;
