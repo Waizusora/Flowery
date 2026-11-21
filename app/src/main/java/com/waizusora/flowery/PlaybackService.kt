@@ -132,6 +132,12 @@ class PlaybackService : Service() {
     private var lastOutputRouteTarget = AndroidOutputTarget.SPEAKER
     private val outputRouteCheck = Runnable {
         val current = outputDeviceSnapshot()
+        if (outputRouteRestartPending) {
+            if (current != lastOutputDeviceSnapshot) {
+                mainHandler.postDelayed(outputRouteCheck, 350L)
+            }
+            return@Runnable
+        }
         if (current != lastOutputDeviceSnapshot) {
             lastOutputDeviceSnapshot = current
             val routeResolver = AndroidOutputRouteResolver(this)
@@ -265,7 +271,9 @@ class PlaybackService : Service() {
         player = PlaybackCoordinator(this) { message ->
             if (message.startsWith("Playing") || message.startsWith("Paused") ||
                 message.startsWith("Playback error") || message == "Playback finished") {
+                val wasSwitchingOutput = outputRouteRestartPending
                 outputRouteRestartPending = false
+                if (wasSwitchingOutput) mainHandler.postDelayed(outputRouteCheck, 100L)
             }
             publishState(message)
             if (message == "Playback finished") {
