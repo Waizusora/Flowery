@@ -2,7 +2,6 @@ use jni::objects::{JClass, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 use serde::{Deserialize, Serialize};
-use yaml_serde;
 use std::time::Duration;
 
 const LRCLIB_AGENT: &str = "Flowery/0.1.0 (https://github.com/Waizusora/Flowery)";
