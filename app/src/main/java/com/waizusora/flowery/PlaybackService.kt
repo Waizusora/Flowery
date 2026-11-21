@@ -129,23 +129,44 @@ class PlaybackService : Service() {
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
     private var lastAudioDiagnosticMs = 0L
     @Volatile private var outputRouteRestartPending = false
+    private var lastOutputRouteTarget = AndroidOutputTarget.SPEAKER
     private val outputRouteCheck = Runnable {
         val current = outputDeviceSnapshot()
         if (current != lastOutputDeviceSnapshot) {
             lastOutputDeviceSnapshot = current
-            val wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING
+            val nextTarget = AndroidOutputRouteResolver(this).detectCurrent()
+            val previousTarget = lastOutputRouteTarget
+            lastOutputRouteTarget = nextTarget
+            val wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING ||
+                playbackState == PlaybackStateCompat.STATE_CONNECTING
             val wasPaused = playbackState == PlaybackStateCompat.STATE_PAUSED
             val uriText = queue.getOrNull(queueIndex)
             if (!outputRouteRestartPending && (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
                 outputRouteRestartPending = true
-                val resumePositionMs = player.positionMs()
+                val previousPositionMs = player.positionMs()
                 val segmentStartMs = queueCueStarts.getOrNull(queueIndex) ?: 0L
                 val segmentEndMs = queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L }
-                Log.i("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN wasPlaying=$wasPlaying positionMs=$resumePositionMs segmentStartMs=$segmentStartMs segmentEndMs=${segmentEndMs ?: -1L}")
-                publishState("Switching audio output…")
+                // USB attach always starts from the track's beginning. AAudio-to-AAudio
+                // changes (and USB removal back to AAudio) preserve the elapsed position.
+                val restartPositionMs = if (nextTarget == AndroidOutputTarget.USB) 0L
+                    else previousPositionMs
+                Log.i(
+                    "FloweryDiagnostics",
+                    "OUTPUT_ROUTE_REOPEN from=$previousTarget to=$nextTarget wasPlaying=$wasPlaying " +
+                        "previousPositionMs=$previousPositionMs restartPositionMs=$restartPositionMs " +
+                        "manualResumeRequired=true segmentStartMs=$segmentStartMs segmentEndMs=${segmentEndMs ?: -1L}"
+                )
+                playbackState = PlaybackStateCompat.STATE_PAUSED
+                publishSessionState(restartPositionMs)
+                publishState(if (nextTarget == AndroidOutputTarget.USB)
+                    "USB DAC detected · paused at track start · press Play"
+                else "Audio output changed · paused · press Play")
                 io.execute {
                     runCatching {
-                        player.reopenOutputRoute(Uri.parse(uriText), segmentStartMs, segmentEndMs, resumePositionMs, startPaused = wasPaused)
+                        player.reopenOutputRoute(
+                            Uri.parse(uriText), segmentStartMs, segmentEndMs,
+                            restartPositionMs, startPaused = true
+                        )
                     }.onFailure { error ->
                         outputRouteRestartPending = false
                         Log.e("FloweryDiagnostics", "OUTPUT_ROUTE_REOPEN_FAILURE", error)
@@ -159,10 +180,14 @@ class PlaybackService : Service() {
     }
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
+            AndroidOutputDeviceOrder.onAdded(addedDevices.map {
+                OutputDeviceCandidate(it.id, it.type, it.productName?.toString())
+            })
             scheduleOutputRouteCheck()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
+            AndroidOutputDeviceOrder.onRemoved(removedDevices.map { it.id })
             scheduleOutputRouteCheck()
         }
     }
@@ -256,6 +281,7 @@ class PlaybackService : Service() {
         mainHandler.post(progressUpdates)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
         lastOutputDeviceSnapshot = outputDeviceSnapshot()
+        lastOutputRouteTarget = AndroidOutputRouteResolver(this).detectCurrent()
         audioManager.registerAudioDeviceCallback(outputDeviceCallback, mainHandler)
     }
 
@@ -574,7 +600,10 @@ class PlaybackService : Service() {
             AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
             AudioDeviceInfo.TYPE_HDMI,
             AudioDeviceInfo.TYPE_HDMI_ARC,
-            AudioDeviceInfo.TYPE_HDMI_EARC
+            AudioDeviceInfo.TYPE_HDMI_EARC,
+            AudioDeviceInfo.TYPE_USB_DEVICE,
+            AudioDeviceInfo.TYPE_USB_HEADSET,
+            AudioDeviceInfo.TYPE_USB_ACCESSORY
         ) + if (Build.VERSION.SDK_INT >= 31) setOf(
             AudioDeviceInfo.TYPE_BLE_HEADSET,
             AudioDeviceInfo.TYPE_BLE_SPEAKER
