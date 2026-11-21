@@ -110,3 +110,29 @@ Record whether the OEM permits a media foreground service to continue. If an OEM
 - Memory pressure does not corrupt the persisted snapshot.
 - A failed/invalid snapshot is ignored safely; the service must not start an arbitrary URI or auto-play.
 - No test modifies battery-optimization settings.
+
+
+## ADB diagnostic harness
+
+Use the repository helper to collect reproducible device metadata, service state,
+memory-trim observations, and Flowery diagnostic logs:
+
+```sh
+chmod +x scripts/validate_android_background_playback.sh
+# Capture baseline and memory-pressure signals
+scripts/validate_android_background_playback.sh --trim
+# On a dedicated test device, also force Doze for 15 minutes
+scripts/validate_android_background_playback.sh --trim --doze --duration 900
+```
+
+Set `ANDROID_SERIAL` or pass `--serial` when more than one device is connected.
+Start playback manually before running the harness. It writes device model,
+Android version, standby bucket, device-idle state, service dumps, and
+`FloweryDiagnostics` logcat output into a timestamped output directory.
+
+The helper deliberately does not force-stop or kill Flowery, change standby
+buckets, request battery-optimization exemptions, or modify battery settings.
+Do not interpret a successful script exit as proof that audio remained audible:
+correlate the captured logs and service state with a human-observed playback
+result. Process-death recovery still requires a separate controlled test on a
+dedicated emulator/device; do not use Settings' Force stop.
