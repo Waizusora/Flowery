@@ -17,20 +17,28 @@
 | `native/src/usb_feedback.rs` | Explicit feedback packet decoding, clock tracking, outlier rejection, and frame scheduling |
 | `native/src/usb_stream.rs` | Asynchronous libusb isochronous OUT worker, transfer ring, pause/seek/stop, cancellation, and teardown |
 | `native/src/usb_libusb.rs` | Android USB file-descriptor wrapping and native interface ownership through libusb |
-| `native/src/aaudio.rs` | Android AAudio output backend, including requested-device selection, sharing-mode verification, and fail-closed exclusive mode |
+| `native/src/aaudio.rs` | Android AAudio output backend, including the Balanced performance-mode request, requested-device selection, sharing-mode verification, and fail-closed exclusive mode |
 | `native/src/playback_session.rs` | Playback lifecycle, seek coordination, and worker ownership |
 
 ## Data flow
 
 Android-managed output:
 
-`SAF descriptor → Symphonia → source-rate PCM conversion → bounded PCM ring → AAudio → Android audio system`
+`SAF descriptor → Symphonia → source-rate PCM conversion → bounded rtrb SPSC PCM ring → AAudio → Android audio system`
 
 Direct USB output:
 
-`SAF descriptor → Symphonia → typed source PCM chunks → USB Type I subslot packing → isochronous OUT transfer ring → USB DAC`
+`SAF descriptor → Symphonia → typed source PCM chunks → bounded rtrb SPSC PCM ring → USB Type I subslot packing → isochronous OUT transfer ring → USB DAC`
 
 Flowery validates source rate, channel count, source precision, and data format against the selected USB alternate. It does not intentionally resample the direct USB stream. The direct path is not advertised as bit-perfect without end-to-end validation of decoder behavior, source representation, USB transport, and DAC output.
+
+## PCM transport ownership
+
+The AAudio and direct USB routes each own an independent `rtrb` SPSC PCM ring. The decoder-side worker is the sole producer and the output callback or USB submit worker is the sole consumer. The routes do not share one ring: simultaneous fan-out requires a separate ring for each consumer. PCM capacity and transfer operations are byte-oriented internally but are validated and accounted in complete interleaved frames. EOF and decoder errors are sideband state and do not consume PCM slots.
+
+The AAudio callback reads directly from its consumer endpoint without acquiring the engine mutex or allocating a temporary PCM buffer. Its producer endpoint is owned by the AAudio engine. The USB queue wraps separate producer and consumer endpoints so the decoder worker and isochronous submit worker do not contend on one queue-state mutex. The libusb transfer ring, packet scheduler, explicit-feedback transfer, packet validation, and bounded cancellation/drain rules are unchanged by the PCM transport migration.
+
+AAudio requests `AAUDIO_PERFORMANCE_MODE_NONE` (Balanced) as its only performance mode. The requested performance mode is independent of AAudio sharing mode; Exclusive and Shared remain separate route compatibility choices. Android may negotiate the final stream configuration, so diagnostics must be used to inspect the actual stream.
 
 ## Android media-session controls
 
