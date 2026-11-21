@@ -98,7 +98,7 @@ if ((RUN_TRIM)); then
 fi
 
 if ((CRASH_PROCESS)); then
-  PID_BEFORE="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\\r')"
+  PID_BEFORE="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\r')"
   if [[ -z "$PID_BEFORE" ]]; then
     echo "Flowery is not running. Start playback and retry --crash-process." >&2
     exit 1
@@ -108,12 +108,12 @@ if ((CRASH_PROCESS)); then
   for ((elapsed=0; elapsed<RESTART_WAIT; elapsed+=2)); do
     sleep 2
     "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$OUT_DIR/services-after-process-death.txt" 2>&1 || true
-    PID_AFTER="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\\r')"
+    PID_AFTER="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\r')"
     if [[ -n "$PID_AFTER" && "$PID_AFTER" != "$PID_BEFORE" ]]; then
       break
     fi
   done
-  printf '%s\\n' "${PID_AFTER:-not-running}" > "$OUT_DIR/pid-after.txt"
+  printf '%s\n' "${PID_AFTER:-not-running}" > "$OUT_DIR/pid-after.txt"
   "${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-after-process-death.txt" 2>&1 || true
   "${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-after-process-death.txt" 2>&1 || true
 fi
