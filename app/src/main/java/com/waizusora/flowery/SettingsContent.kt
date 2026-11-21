@@ -434,14 +434,26 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             SettingCard("Update", "Open GitHub releases in browser", color, muted, Icons.Default.SystemUpdate, update)
         }
         SettingsPage.OPEN_SOURCE -> {
-            Text("Direct dependencies · versions and declared licenses", color = muted)
-            Detail("Symphonia", "0.5.4 · audio demuxing and decoding · MPL-2.0", color, muted)
-            Detail("Lofty", "0.25.5 · audio metadata and tag editing · MIT OR Apache-2.0", color, muted)
+            Text("Production dependencies bundled or used by Flowery · build and test tooling excluded",
+                color = muted)
+            Text("RUST / NATIVE RUNTIME", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Detail("Symphonia", "0.6.1 · audio demuxing and decoding · MPL-2.0", color, muted)
+            Detail("Symphonia Opus", "0.1.1 · pure-Rust Opus decoder · MPL-2.0", color, muted)
+            Detail("Lofty", "0.25.5 · audio metadata and tag reading/writing · MIT OR Apache-2.0", color, muted)
             Detail("jni", "0.21 · Rust/JVM native interface · MIT OR Apache-2.0", color, muted)
-            Detail("serde / serde_json", "1.x · serialization and JSON · MIT OR Apache-2.0", color, muted)
-            Detail("base64", "0.22 · Base64 encoding · MIT OR Apache-2.0", color, muted)
-            Detail("libc", "0.2 · native platform bindings · MIT OR Apache-2.0", color, muted)
-            Detail("Jetpack Compose", "Compose BOM 2024.12.01 · UI and Material 3 · Apache-2.0", color, muted)
+            Detail("serde / serde_json", "1.x · data serialization and JSON · MIT OR Apache-2.0", color, muted)
+            Detail("yaml-serde", "0.10 · Serde-compatible YAML parsing for lyrics · MIT OR Apache-2.0", color, muted)
+            Detail("base64", "0.22 · embedded artwork encoding · MIT OR Apache-2.0", color, muted)
+            Detail("libc", "0.2 · Android native system bindings · MIT OR Apache-2.0", color, muted)
+            Detail("rtrb", "0.3.6 · bounded single-producer/single-consumer PCM transport · MIT OR Apache-2.0", color, muted)
+            Detail("libusb1-sys", "0.7 · USB bindings · MIT; vendored libusb library · LGPL-2.1-or-later", color, muted)
+            Detail("ureq", "2.12 · HTTPS client for lyrics lookup · MIT OR Apache-2.0", color, muted)
+            Detail("url", "2.x · URL parsing and form encoding · MIT OR Apache-2.0", color, muted)
+            HorizontalDivider(color = muted.copy(alpha = .25f))
+            Text("ANDROID APPLICATION RUNTIME", color = color, fontWeight = FontWeight.SemiBold,
+                style = MaterialTheme.typography.titleSmall)
+            Detail("Jetpack Compose", "Compose BOM 2024.12.01 · Compose UI, Material 3 and extended icons · Apache-2.0", color, muted)
             Detail("Activity Compose", "androidx.activity:activity-compose 1.9.3 · Apache-2.0", color, muted)
             Detail("Lifecycle", "lifecycle-runtime-ktx and lifecycle-viewmodel-compose 2.8.7 · Apache-2.0", color, muted)
             Detail("Room", "room-runtime and room-ktx 2.6.1 · Apache-2.0", color, muted)
@@ -449,7 +461,10 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             Detail("AndroidX Core", "core-ktx 1.15.0 · Apache-2.0", color, muted)
             Detail("Android media", "androidx.media:media 1.7.0 · Apache-2.0", color, muted)
             Detail("Document provider", "androidx.documentfile:documentfile 1.0.1 · Apache-2.0", color, muted)
-            Detail("AAudio", "Android NDK platform API · Android platform component", color, muted)
+            Detail("Noto Sans", "Variable font bundled by Flowery · SIL Open Font License 1.1 · OFL-1.1", color, muted)
+            Detail("AAudio", "Android NDK platform API · Android platform component, not a bundled library", color, muted)
+            Text("Only direct production dependencies are listed here. Transitive dependency notices are supplied by their respective distributions. The vendored libusb component has separate LGPL-2.1-or-later obligations; see the project's third-party notices.",
+                color = muted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsPage.TRANSLATOR -> Text("Translator credits will be listed when localization work begins.", color = muted)
         SettingsPage.CONTRIBUTORS -> Text("Contributor credits will be listed when contributions are recorded and confirmed.", color = muted)
