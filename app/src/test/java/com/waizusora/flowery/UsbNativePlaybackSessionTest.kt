@@ -162,4 +162,15 @@ class UsbNativePlaybackSessionTest {
         assertTrue(result.isFailure)
         assertFalse(rollbackCalled)
     }
+
+    @Test
+    fun convertsUsbPlayedFramesToMillisecondsWithoutOverflowOrDrift() {
+        assertEquals(0L, usbFramesToMilliseconds(-1L, 48_000))
+        assertEquals(0L, usbFramesToMilliseconds(1L, 0))
+        assertEquals(0L, usbFramesToMilliseconds(1L, 44_100))
+        assertEquals(1_000L, usbFramesToMilliseconds(44_100L, 44_100))
+        assertEquals(1_000L, usbFramesToMilliseconds(44_101L, 44_100))
+        assertEquals(1_000L, usbFramesToMilliseconds(48_000L, 48_000))
+        assertEquals(Long.MAX_VALUE, usbFramesToMilliseconds(Long.MAX_VALUE, 1))
+    }
 }
