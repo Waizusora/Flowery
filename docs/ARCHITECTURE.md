@@ -12,6 +12,7 @@
 | `native/src/lib.rs` | JNI entry points and native module registration |
 | `native/src/streaming.rs` | Incremental Symphonia decode and source-rate PCM frame production |
 | `native/src/pcm_format.rs` | Generic signed-integer PCM format and quantization contract |
+| `native/src/pcm_transport.rs` | Shared bounded SPSC PCM byte-ring construction for independent backend producer/consumer endpoints |
 | `native/src/usb_audio.rs` | Vendor-independent UAC1/UAC2 configuration descriptor parsing and playback alternate discovery |
 | `native/src/usb_isochronous.rs` | Full/high-speed isochronous PCM packet scheduling and transfer lifecycle validation helpers |
 | `native/src/usb_feedback.rs` | Explicit feedback packet decoding, clock tracking, outlier rejection, and frame scheduling |
@@ -34,7 +35,7 @@ Flowery validates source rate, channel count, source precision, and data format 
 
 ## PCM transport ownership
 
-The AAudio and direct USB routes each own an independent `rtrb` SPSC PCM ring. The decoder-side worker is the sole producer and the output callback or USB submit worker is the sole consumer. The routes do not share one ring: simultaneous fan-out requires a separate ring for each consumer. PCM capacity and transfer operations are byte-oriented internally but are validated and accounted in complete interleaved frames. EOF and decoder errors are sideband state and do not consume PCM slots.
+The AAudio and direct USB routes each own an independent `rtrb` SPSC PCM ring, constructed through the shared `pcm_transport` module. The decoder-side worker is the sole producer and the output callback or USB submit worker is the sole consumer. The routes do not share one ring: simultaneous fan-out requires a separate ring for each consumer. PCM capacity and transfer operations are byte-oriented internally but are validated and accounted in complete interleaved frames. EOF and decoder errors are sideband state and do not consume PCM slots.
 
 The AAudio callback reads directly from its consumer endpoint without acquiring the engine mutex or allocating a temporary PCM buffer. Its producer endpoint is owned by the AAudio engine. The USB queue wraps separate producer and consumer endpoints so the decoder worker and isochronous submit worker do not contend on one queue-state mutex. The libusb transfer ring, packet scheduler, explicit-feedback transfer, packet validation, and bounded cancellation/drain rules are unchanged by the PCM transport migration.
 
