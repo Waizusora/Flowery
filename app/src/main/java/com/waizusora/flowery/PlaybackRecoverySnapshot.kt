@@ -28,14 +28,16 @@ internal data class PlaybackRecoverySnapshot(
 ) {
     fun normalized(): PlaybackRecoverySnapshot {
         val size = queue.size
+        val normalizedCueStarts = cueStartsMs.take(size).map { it.coerceAtLeast(0L) }
+            .let { it + List(size - it.size) { 0L } }
+        val normalizedCueEnds = cueEndsMs.take(size).mapIndexed { index, end ->
+            end.coerceAtLeast(0L).takeIf { it == 0L || it > normalizedCueStarts[index] } ?: 0L
+        }.let { it + List(size - it.size) { 0L } }
         return copy(
             titles = titles.take(size).let { it + List(size - it.size) { "" } },
             artists = artists.take(size).let { it + List(size - it.size) { "" } },
-            cueStartsMs = cueStartsMs.take(size).map { it.coerceAtLeast(0L) }
-                .let { it + List(size - it.size) { 0L } },
-            cueEndsMs = cueEndsMs.take(size).mapIndexed { index, end ->
-                end.coerceAtLeast(0L).takeIf { it == 0L || it > cueStartsMs.getOrElse(index) { 0L }.coerceAtLeast(0L) } ?: 0L
-            }.let { it + List(size - it.size) { 0L } },
+            cueStartsMs = normalizedCueStarts,
+            cueEndsMs = normalizedCueEnds,
             cuePlaylists = cuePlaylists.take(size).let { it + List(size - it.size) { "" } },
             playlistNames = playlistNames.take(size).let { it + List(size - it.size) { "" } },
             playlistOrders = playlistOrders.take(size).let { it + List(size - it.size) { -1 } },
