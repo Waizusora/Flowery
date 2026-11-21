@@ -80,6 +80,13 @@ android {
 tasks.named("preBuild").configure { dependsOn(downloadNotoSans) }
 
 dependencies {
+    // Keep Kotlin stdlib platform artifacts aligned with the Kotlin 2.0.21 compiler.
+    // Older transitive metadata (for example coroutines 1.7.x) may request 1.8.20.
+    constraints {
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.0.21")
+        implementation("org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.0.21")
+    }
+
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.compose.ui:ui")
