@@ -34,7 +34,7 @@ The direct USB isochronous path logs a `TRANSFER_SUMMARY` record under the tag `
 - `packetErrors`, `expectedBytes`, `actualBytes`: bus-level transfer integrity. Non-zero `packetErrors` or a byte mismatch indicates the device or host controller rejected or truncated packets.
 - `ringDryEvents`: number of times no isochronous transfer was submitted while audio should have been flowing, which is an audible gap. A non-zero value means the worker thread was not scheduled in time to keep the transfer ring filled. Each of the first twenty events (and every hundredth afterwards) is also logged as `USB_RING_DRY`, with the time since the last submission.
 - `submitGapMaxUs`, `eventLoopMaxUs`, `callbackToResubmitMaxUs`: worst-case scheduling latencies since the stream started. They should stay well below the buffered duration reported by `USB_TRANSFER_RING`.
-- `pcmQueuedMinFrames`, `pcmQueueWaits`, `zeroPaddedFrames`: health of the decoder-to-submitter PCM queue. A low `pcmQueuedMinFrames` or non-zero `zeroPaddedFrames` points at the decoder rather than at scheduling.
+- `pcmQueuedMinFrames`, `pcmQueueWaits`, `zeroPaddedFrames`: health of the decoder-to-submitter `rtrb` SPSC PCM queue. A low `pcmQueuedMinFrames` or non-zero `zeroPaddedFrames` points at the decoder rather than at scheduling. The producer and consumer use independent queue endpoints; EOF and decoder errors are reported separately from PCM data.
 - `activeSlotsMin`, `pendingMin`: minimum number of submitted transfers observed.
 
 If a completed transfer fails validation, the worker logs `TRANSFER_INVALID` followed by `USB_TRANSFER_INVALID_DETAIL slot=<n> ringSize=<n> completedTransfers=<n> audioFrames=<n> packets(length/actual/status)=<list>`. The list gives, for each of the eight packets, the submitted length, the length the host controller reports as transferred, and the packet status.
@@ -57,3 +57,7 @@ adb logcat -c
 # reproduce the stutter and note the wall-clock time
 adb logcat -d -v threadtime -s FloweryUsbNative FloweryDiagnostics
 ```
+
+## AAudio performance mode
+
+AAudio requests `AAUDIO_PERFORMANCE_MODE_NONE` (Balanced) for every Android-managed output stream. Flowery does not expose Low Latency, Power Saving, or Adaptive performance profiles. The stream's actual performance mode is available in the native output diagnostics (`AAudioStream_getPerformanceMode`); Android may negotiate a mode different from the request. Sharing mode (Exclusive or Shared) is a separate property and must not be interpreted as a performance profile.
