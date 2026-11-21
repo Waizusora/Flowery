@@ -97,6 +97,11 @@ class PlaybackService : Service() {
     private var hasAudioFocus = false
     private val callInterruptionPolicy = CallInterruptionPolicy()
     private var playbackWakeLock: PowerManager.WakeLock? = null
+    private val recoveryPreferences by lazy { getSharedPreferences("playback_recovery", MODE_PRIVATE) }
+    @Volatile private var recoverySessionAvailable = false
+    @Volatile private var recoveryNeedsPrepare = false
+    @Volatile private var recoveryPositionMs = 0L
+    private var lastRecoveryPersistMs = 0L
     private val io = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
     private val queueTitles = mutableListOf<String>()
@@ -221,6 +226,10 @@ class PlaybackService : Service() {
             if (::player.isInitialized) {
                 refreshCallInterruptionState()
                 val nowMs = android.os.SystemClock.elapsedRealtime()
+                if (nowMs - lastRecoveryPersistMs >= 2_000L) {
+                    lastRecoveryPersistMs = nowMs
+                    persistPlaybackSnapshot()
+                }
                 // Refresh Feature Unit detection a few times per minute so Settings
                 // reflects DAC attach/detach without requiring USB Direct playback.
                 if (nowMs - lastStandaloneVolumeProbeMs >= 5_000L) {
@@ -301,6 +310,7 @@ class PlaybackService : Service() {
             })
             isActive = true
         }
+        restorePlaybackSnapshot()
         publishSessionState()
         mainHandler.post(progressUpdates)
         registerReceiver(noisyReceiver, IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY))
@@ -310,6 +320,13 @@ class PlaybackService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null && recoverySessionAvailable) {
+            // START_STICKY process recreation is always a paused recovery, never auto-play.
+            startForeground(NOTIFICATION_ID, buildNotification())
+            publishState("Playback session restored · press Play to continue")
+            Log.i("FloweryDiagnostics", "RECOVERY_SERVICE_RESTART queueSize=${queue.size} index=$queueIndex positionMs=$recoveryPositionMs autoPlay=false")
+            return START_STICKY
+        }
         when (intent?.action) {
             ACTION_PLAY -> {
                 val uris = intent.getStringArrayListExtra(EXTRA_QUEUE)
@@ -331,13 +348,20 @@ class PlaybackService : Service() {
                     queuePlaylistOrders.clear()
                     queuePlaylistOrders.addAll(intent.getIntegerArrayListExtra(EXTRA_PLAYLIST_ORDERS).orEmpty())
                     queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(queue.indices)
+                    recoveryPositionMs = 0L
+                    recoveryNeedsPrepare = false
+                    recoverySessionAvailable = true
                 } else {
                     val uri = intent.getStringExtra(EXTRA_URI)
                     if (uri != null && uri !in queue) queue.add(uri)
                     queueIndex = queue.indexOf(uri).coerceAtLeast(0)
                 }
+                recoverySessionAvailable = queue.isNotEmpty()
+                recoveryNeedsPrepare = false
+                recoveryPositionMs = 0L
                 Log.i("FloweryDiagnostics", "QUEUE_LOAD source=ACTION_PLAY size=${queue.size} index=$queueIndex repeat=$repeatMode shuffle=$shuffle")
                 startForeground(NOTIFICATION_ID, buildNotification())
+                persistPlaybackSnapshot()
                 playCurrent()
             }
             ACTION_QUEUE -> {
@@ -355,8 +379,15 @@ class PlaybackService : Service() {
                 queuePlaylistOrders.clear()
                 queuePlaylistOrders.addAll(intent.getIntegerArrayListExtra(EXTRA_PLAYLIST_ORDERS).orEmpty())
                 queueIndex = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(0, (queue.size - 1).coerceAtLeast(0))
+                recoverySessionAvailable = queue.isNotEmpty()
+                recoveryNeedsPrepare = false
+                recoveryPositionMs = 0L
                 Log.i("FloweryDiagnostics", "QUEUE_LOAD source=ACTION_QUEUE size=${queue.size} index=$queueIndex repeat=$repeatMode shuffle=$shuffle")
-                if (queue.isNotEmpty()) playCurrent()
+                if (queue.isNotEmpty()) {
+                    startForeground(NOTIFICATION_ID, buildNotification())
+                    persistPlaybackSnapshot()
+                    playCurrent()
+                }
             }
             ACTION_PAUSE -> pausePlayback()
             ACTION_RESUME -> resumePlayback()
@@ -394,7 +425,11 @@ class PlaybackService : Service() {
             }
             ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
             ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
-            ACTION_SEEK -> player.seekTo(intent.getLongExtra(EXTRA_POSITION, 0L))
+            ACTION_SEEK -> {
+                recoveryPositionMs = intent.getLongExtra(EXTRA_POSITION, 0L).coerceAtLeast(0L)
+                player.seekTo(recoveryPositionMs)
+                persistPlaybackSnapshot()
+            }
 
             ACTION_UPDATE_METADATA -> {
                 currentTitle = intent.getStringExtra(EXTRA_TITLE)?.takeIf { it.isNotBlank() } ?: currentTitle
@@ -408,7 +443,8 @@ class PlaybackService : Service() {
                 publishState("Metadata updated")
             }
         }
-        return START_NOT_STICKY
+        persistPlaybackSnapshot()
+        return if (recoverySessionAvailable && queue.isNotEmpty()) START_STICKY else START_NOT_STICKY
     }
 
     private fun requestFocus(): Boolean {
@@ -474,6 +510,7 @@ class PlaybackService : Service() {
         when (callInterruptionPolicy.update(isCallAudioMode())) {
             CallInterruptionPolicy.Transition.CALL_STARTED -> {
                 Log.w("FloweryDiagnostics", "CALL_INTERRUPTION_STARTED state=$playbackState")
+                persistPlaybackSnapshot()
                 if (playbackState == PlaybackStateCompat.STATE_PLAYING ||
                     playbackState == PlaybackStateCompat.STATE_CONNECTING) {
                     // Serialize pause behind any in-flight engine start on the I/O executor.
@@ -495,6 +532,7 @@ class PlaybackService : Service() {
             }
             CallInterruptionPolicy.Transition.CALL_ENDED -> {
                 Log.i("FloweryDiagnostics", "CALL_INTERRUPTION_ENDED manual_play_required=true")
+                persistPlaybackSnapshot()
                 publishState("Call ended · press Play to resume")
             }
             CallInterruptionPolicy.Transition.NONE -> Unit
@@ -506,7 +544,7 @@ class PlaybackService : Service() {
         return callInterruptionPolicy.blocksPlayback(isCallAudioMode())
     }
 
-    private fun playCurrent() {
+    private fun playCurrent(initialPositionMs: Long = 0L) {
         if (isPlaybackBlockedByCall()) {
             publishState("Playback paused during call · press Play after call")
             return
@@ -520,6 +558,10 @@ class PlaybackService : Service() {
         val uri = Uri.parse(uriText)
         val segmentStartMs = queueCueStarts.getOrNull(selectedIndex) ?: 0L
         val segmentEndMs = queueCueEnds.getOrNull(selectedIndex)?.takeIf { it > 0L }
+        recoverySessionAvailable = true
+        recoveryNeedsPrepare = false
+        recoveryPositionMs = initialPositionMs.coerceAtLeast(0L)
+        persistPlaybackSnapshot()
         val virtualEntry = !queueCuePlaylists.getOrNull(selectedIndex).isNullOrBlank() ||
             !queuePlaylistNames.getOrNull(selectedIndex).isNullOrBlank()
         val fallbackTitle = queueTitles.getOrNull(selectedIndex)
@@ -594,7 +636,7 @@ class PlaybackService : Service() {
                             return@execute
                         }
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
-                        player.play(uri, segmentStartMs, segmentEndMs)
+                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs)
                         if (requestGeneration != playRequestGeneration) return@execute
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
                         playbackState = PlaybackStateCompat.STATE_CONNECTING
@@ -666,6 +708,7 @@ class PlaybackService : Service() {
     }
 
     private fun pausePlayback() {
+        recoveryPositionMs = runCatching { player.positionMs() }.getOrDefault(recoveryPositionMs).coerceAtLeast(0L)
         if (!player.pause()) {
             publishState("Pause request was rejected")
             return
@@ -673,6 +716,7 @@ class PlaybackService : Service() {
         playbackState = PlaybackStateCompat.STATE_PAUSED
         publishSessionState()
         publishState("Paused")
+        persistPlaybackSnapshot()
     }
 
     private fun resumePlayback() {
@@ -681,11 +725,17 @@ class PlaybackService : Service() {
             publishState("Call active · playback paused; press Play after call")
             return
         }
-        if (playbackState == PlaybackStateCompat.STATE_STOPPED) playCurrent()
+        if (recoveryNeedsPrepare) {
+            val position = recoveryPositionMs
+            Log.i("FloweryDiagnostics", "RECOVERY_MANUAL_PLAY index=$queueIndex positionMs=$position callInterrupted=${callInterruptionPolicy.isInterrupted}")
+            playCurrent(initialPositionMs = position)
+        } else if (playbackState == PlaybackStateCompat.STATE_STOPPED) playCurrent()
         else {
             if (requestFocus() && player.resume()) {
                 playbackState = PlaybackStateCompat.STATE_PLAYING
+                recoveryNeedsPrepare = false
                 publishSessionState()
+                persistPlaybackSnapshot()
             } else {
                 publishState("Resume request was rejected")
             }
@@ -702,6 +752,10 @@ class PlaybackService : Service() {
         focusRequest = null
         focusListener = null
         playbackState = PlaybackStateCompat.STATE_STOPPED
+        recoverySessionAvailable = false
+        recoveryNeedsPrepare = false
+        recoveryPositionMs = 0L
+        PlaybackRecoverySnapshot.clear(recoveryPreferences)
         publishSessionState()
         publishState("Stopped")
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -763,6 +817,58 @@ class PlaybackService : Service() {
                 playCurrent()
             }
         }
+    }
+
+    private fun restorePlaybackSnapshot() {
+        val snapshot = PlaybackRecoverySnapshot.load(recoveryPreferences) ?: return
+        queue.clear(); queue.addAll(snapshot.queue)
+        queueTitles.clear(); queueTitles.addAll(snapshot.titles)
+        queueArtists.clear(); queueArtists.addAll(snapshot.artists)
+        queueCueStarts.clear(); queueCueStarts.addAll(snapshot.cueStartsMs)
+        queueCueEnds.clear(); queueCueEnds.addAll(snapshot.cueEndsMs)
+        queueCuePlaylists.clear(); queueCuePlaylists.addAll(snapshot.cuePlaylists)
+        queuePlaylistNames.clear(); queuePlaylistNames.addAll(snapshot.playlistNames)
+        queuePlaylistOrders.clear(); queuePlaylistOrders.addAll(snapshot.playlistOrders)
+        queueIndex = snapshot.queueIndex
+        repeatMode = snapshot.repeatMode
+        shuffle = snapshot.shuffleEnabled
+        currentTitle = snapshot.currentTitle
+        currentArtist = snapshot.currentArtist
+        recoveryPositionMs = snapshot.positionMs
+        recoverySessionAvailable = queue.isNotEmpty()
+        recoveryNeedsPrepare = recoverySessionAvailable
+        callInterruptionPolicy.restoreInterrupted(snapshot.callInterrupted)
+        // A process restart never resumes audio automatically, even if it was playing before death.
+        playbackState = if (recoverySessionAvailable) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_STOPPED
+        Log.i("FloweryDiagnostics", "RECOVERY_SNAPSHOT_RESTORED queueSize=${queue.size} index=$queueIndex positionMs=$recoveryPositionMs wasPlaying=${snapshot.wasPlaying} callInterrupted=${snapshot.callInterrupted} autoPlay=false")
+        publishTrackMetadata(0L)
+    }
+
+    private fun persistPlaybackSnapshot() {
+        if (!recoverySessionAvailable || queue.isEmpty()) return
+        if (!recoveryNeedsPrepare && playbackState != PlaybackStateCompat.STATE_STOPPED) {
+            val observedPosition = runCatching { player.positionMs() }.getOrDefault(recoveryPositionMs)
+            if (observedPosition >= 0L) recoveryPositionMs = observedPosition
+        }
+        val snapshot = PlaybackRecoverySnapshot(
+            queue = queue.toList(),
+            titles = queueTitles.toList(),
+            artists = queueArtists.toList(),
+            cueStartsMs = queueCueStarts.toList(),
+            cueEndsMs = queueCueEnds.toList(),
+            cuePlaylists = queueCuePlaylists.toList(),
+            playlistNames = queuePlaylistNames.toList(),
+            playlistOrders = queuePlaylistOrders.toList(),
+            queueIndex = queueIndex,
+            repeatMode = repeatMode,
+            shuffleEnabled = shuffle,
+            positionMs = recoveryPositionMs,
+            wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING || playbackState == PlaybackStateCompat.STATE_CONNECTING,
+            callInterrupted = callInterruptionPolicy.isInterrupted,
+            currentTitle = currentTitle,
+            currentArtist = currentArtist,
+        )
+        PlaybackRecoverySnapshot.save(recoveryPreferences, snapshot)
     }
 
     private fun syncPlaybackWakeLock() {
@@ -874,6 +980,7 @@ class PlaybackService : Service() {
 
     override fun onDestroy() {
         Log.w("FloweryDiagnostics", "SERVICE_DESTROY index=$queueIndex queueSize=${queue.size} playbackState=$playbackState")
+        persistPlaybackSnapshot()
         player.close { queueState.close() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
