@@ -467,7 +467,6 @@ class MainActivity : ComponentActivity() {
         unregisterReceiver(playbackReceiver)
         unregisterReceiver(usbPermissionReceiver)
         usbPermissionRequests.clear()
-        usbPermissionDeniedDevices.clear()
         super.onStop()
     }
 
