@@ -68,6 +68,24 @@ internal fun startUsbPlaybackTransaction(
     return started
 }
 
+internal fun usbFramesToMilliseconds(frames: Long, sampleRate: Int): Long {
+    if (frames <= 0L || sampleRate <= 0) return 0L
+    val rate = sampleRate.toLong()
+    val wholeSeconds = frames / rate
+    val remainderFrames = frames % rate
+    val wholeMilliseconds = if (wholeSeconds > Long.MAX_VALUE / 1_000L) {
+        return Long.MAX_VALUE
+    } else {
+        wholeSeconds * 1_000L
+    }
+    val fractionalMilliseconds = remainderFrames * 1_000L / rate
+    return if (wholeMilliseconds > Long.MAX_VALUE - fractionalMilliseconds) {
+        Long.MAX_VALUE
+    } else {
+        wholeMilliseconds + fractionalMilliseconds
+    }
+}
+
 internal class UsbNativePlaybackSession private constructor(
     private val usb: UsbLibusbSession,
     private val decoderHandle: Long,
@@ -263,7 +281,7 @@ internal class UsbNativePlaybackSession private constructor(
         if (closed || sampleRate <= 0) return 0L
         return runCatching {
             val status = JSONObject(usb.playbackStatus())
-            status.optLong("positionFrames", 0L).coerceAtLeast(0L) * 1_000L / sampleRate
+            usbFramesToMilliseconds(status.optLong("positionFrames", 0L), sampleRate)
         }.getOrDefault(0L)
     }
 
