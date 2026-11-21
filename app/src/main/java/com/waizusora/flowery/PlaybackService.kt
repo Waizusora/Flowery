@@ -856,7 +856,8 @@ class PlaybackService : Service() {
 
     private fun persistPlaybackSnapshot() {
         if (!recoverySessionAvailable || queue.isEmpty()) return
-        if (!recoveryNeedsPrepare && (playbackState == PlaybackStateCompat.STATE_PLAYING || playbackState == PlaybackStateCompat.STATE_PAUSED)) {
+        if (!recoveryNeedsPrepare && !outputRouteRestartPending &&
+            (playbackState == PlaybackStateCompat.STATE_PLAYING || playbackState == PlaybackStateCompat.STATE_PAUSED)) {
             val observedPosition = runCatching { player.positionMs() }.getOrDefault(recoveryPositionMs)
             if (observedPosition >= 0L) recoveryPositionMs = observedPosition
         }
