@@ -123,7 +123,7 @@ fn parse_lyrics_file(content: &str) -> Result<Vec<ParsedLine>, yaml_serde::Error
     if lines.is_empty() {
         lines = document.plain.unwrap_or_default().lines().map(|line| ParsedLine {
             time_ms: 0,
-            text: line.trim_end_matches('\\r').to_owned(),
+            text: line.trim_end_matches('\r').to_owned(),
             words: Vec::new(),
         }).collect();
     } else {
@@ -185,13 +185,13 @@ lines:
 
     #[test]
     fn yaml_serde_preserves_plain_lyrics_fallback_and_clamps_negative_time() {
-        let input = "plain: |\\n  First line\\n  Second line\\n";
+        let input = "plain: |\n  First line\n  Second line\n";
         let lines = parse_lyrics_file(input).unwrap();
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].text, "First line");
         assert_eq!(lines[1].text, "Second line");
 
-        let timed = parse_lyrics_file("lines:\\n  - text: negative\\n    start_ms: -50\\n").unwrap();
+        let timed = parse_lyrics_file("lines:\n  - text: negative\n    start_ms: -50\n").unwrap();
         assert_eq!(timed[0].time_ms, 0);
     }
 }
