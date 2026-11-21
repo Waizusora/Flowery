@@ -601,4 +601,53 @@ mod tests {
         assert_eq!(SessionPhase::Cancelled as i32, 6);
         assert_eq!(SessionPhase::Failed as i32, 7);
     }
+
+    #[test]
+    fn concurrent_seek_publication_is_serialized_with_session_cancellation() {
+        use std::sync::Barrier;
+        use std::thread;
+
+        let gate = Arc::new(Mutex::new(()));
+        let epoch = Arc::new(AtomicU64::new(0));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let barrier = Arc::new(Barrier::new(9));
+        let mut workers = Vec::new();
+
+        for _ in 0..8 {
+            let gate = Arc::clone(&gate);
+            let epoch = Arc::clone(&epoch);
+            let cancelled = Arc::clone(&cancelled);
+            let barrier = Arc::clone(&barrier);
+            workers.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..256 {
+                    let _guard = gate.lock().unwrap();
+                    if advance_epoch(&epoch, &cancelled).is_none() {
+                        break;
+                    }
+                    thread::yield_now();
+                }
+            }));
+        }
+
+        let cancel_gate = Arc::clone(&gate);
+        let cancel_flag = Arc::clone(&cancelled);
+        let cancel_barrier = Arc::clone(&barrier);
+        let canceller = thread::spawn(move || {
+            cancel_barrier.wait();
+            let _guard = cancel_gate.lock().unwrap();
+            cancel_flag.store(true, Ordering::Release);
+        });
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        canceller.join().unwrap();
+
+        let final_epoch = epoch.load(Ordering::Acquire);
+        assert!(final_epoch > 0);
+        assert!(cancelled.load(Ordering::Acquire));
+        assert_eq!(advance_epoch(&epoch, &cancelled), None);
+        assert_eq!(epoch.load(Ordering::Acquire), final_epoch);
+    }
 }
