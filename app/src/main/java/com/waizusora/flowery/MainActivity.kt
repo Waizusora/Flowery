@@ -1,6 +1,9 @@
 package com.waizusora.flowery
 
 import android.app.ActivityManager
+import android.app.PendingIntent
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.content.Intent
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -96,6 +99,78 @@ import org.json.JSONArray
 import java.util.concurrent.Executors
 
 class MainActivity : ComponentActivity() {
+    private val usbPermissionAction = "com.waizusora.flowery.USB_PERMISSION"
+    private val usbPermissionRequests = mutableSetOf<String>()
+    private val usbPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent ?: return
+            when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    Log.i("FloweryUsbPermission", "USB_DEVICE_ATTACHED")
+                    requestUsbPermissionForConnectedAudioDevice()
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val detached = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    detached?.deviceName?.let(usbPermissionRequests::remove)
+                    Log.i("FloweryUsbPermission", "USB_DEVICE_DETACHED device=${detached?.deviceName}")
+                }
+                usbPermissionAction -> {
+                    val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
+                    val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
+                    val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+                    val actualGrant = device != null && manager.hasPermission(device)
+                    device?.deviceName?.let(usbPermissionRequests::remove)
+                    Log.i(
+                        "FloweryUsbPermission",
+                        "USB_PERMISSION_RESULT device=${device?.deviceName} grantedExtra=$granted hasPermission=$actualGrant"
+                    )
+                    status = when {
+                        actualGrant -> "USB DAC permission granted · ready for USB playback"
+                        device != null -> "USB DAC permission denied · approve the Android permission dialog to use USB audio"
+                        else -> "USB permission response did not include a device"
+                    }
+                }
+            }
+        }
+    }
+    private fun requestUsbPermissionForConnectedAudioDevice() {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val device = manager.deviceList.values.firstOrNull { candidate ->
+            (0 until candidate.interfaceCount).any { index ->
+                val audioInterface = candidate.getInterface(index)
+                audioInterface.interfaceClass == 1 && audioInterface.interfaceSubclass == 2 &&
+                    (0 until audioInterface.endpointCount).any { endpointIndex ->
+                        val endpoint = audioInterface.getEndpoint(endpointIndex)
+                        endpoint.type == 1 && endpoint.direction == 0
+                    }
+            }
+        } ?: run {
+            Log.d("FloweryUsbPermission", "USB_AUDIO_DEVICE_NOT_FOUND")
+            return
+        }
+        if (manager.hasPermission(device)) {
+            Log.i("FloweryUsbPermission", "USB_PERMISSION_ALREADY_GRANTED device=${device.deviceName}")
+            return
+        }
+        if (!usbPermissionRequests.add(device.deviceName)) return
+
+        val permissionIntent = PendingIntent.getBroadcast(
+            this,
+            device.deviceId,
+            Intent(usbPermissionAction).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        Log.i(
+            "FloweryUsbPermission",
+            "USB_PERMISSION_REQUEST device=${device.deviceName} vendorId=${device.vendorId} productId=${device.productId}"
+        )
+        runCatching { manager.requestPermission(device, permissionIntent) }
+            .onFailure { error ->
+                usbPermissionRequests.remove(device.deviceName)
+                Log.e("FloweryUsbPermission", "USB_PERMISSION_REQUEST_FAILED device=${device.deviceName}", error)
+                status = "Unable to request USB DAC permission: ${error.message}"
+            }
+    }
     private fun logPreviousProcessExitReasons() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             Log.i("FloweryDiagnostics", "PROCESS_START api=${Build.VERSION.SDK_INT}; historical exit reasons require API 30+")
@@ -362,10 +437,25 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         androidx.core.content.ContextCompat.registerReceiver(this, playbackReceiver, IntentFilter(PlaybackService.BROADCAST_STATE), androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        val usbFilter = IntentFilter(usbPermissionAction).apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        androidx.core.content.ContextCompat.registerReceiver(
+            this, usbPermissionReceiver, usbFilter,
+            androidx.core.content.ContextCompat.RECEIVER_EXPORTED
+        )
+    }
+
+    override fun onResume() {
+        super.onResume()
+        requestUsbPermissionForConnectedAudioDevice()
     }
 
     override fun onStop() {
         unregisterReceiver(playbackReceiver)
+        unregisterReceiver(usbPermissionReceiver)
+        usbPermissionRequests.clear()
         super.onStop()
     }
 
