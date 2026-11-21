@@ -620,16 +620,24 @@ mod tests {
     use super::*;
     use rtrb::RingBuffer;
 
-    fn test_output(capacity_frames: usize, channels: usize, queued: &[u8]) -> Output {
-        let (mut producer, consumer) = RingBuffer::<u8>::new(capacity_frames * channels * 2);
+    fn test_output_format(
+        capacity_frames: usize,
+        channels: usize,
+        format: i32,
+        bytes_per_sample: usize,
+        queued: &[u8],
+    ) -> Output {
+        let (mut producer, consumer) = RingBuffer::<u8>::new(
+            capacity_frames * channels * bytes_per_sample,
+        );
         producer.push_entire_slice(queued).unwrap();
         Output {
             consumer: UnsafeCell::new(consumer),
             capacity: capacity_frames as u64,
             channels,
-            format: FMT_I16,
+            format,
             rate: 48_000,
-            bytes_per_sample: 2,
+            bytes_per_sample,
             played: AtomicU64::new(0),
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(true),
@@ -637,6 +645,10 @@ mod tests {
             underruns: AtomicU64::new(0),
             error: AtomicI32::new(0),
         }
+    }
+
+    fn test_output(capacity_frames: usize, channels: usize, queued: &[u8]) -> Output {
+        test_output_format(capacity_frames, channels, FMT_I16, 2, queued)
     }
 
     #[test]
@@ -686,5 +698,120 @@ mod tests {
         let actual = [i16::from_le_bytes([audio[0], audio[1]]), i16::from_le_bytes([audio[2], audio[3]])];
         assert_eq!(actual, [500, -500]);
         assert_eq!(output.played.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn data_callback_preserves_pcm24_and_pcm32_bytes_and_zero_fills_tail() {
+        let cases: [(i32, usize, Vec<u8>); 2] = [
+            (FMT_I24, 3, vec![0xff, 0xff, 0x7f, 0x00, 0x00, 0x80]),
+            (FMT_I32, 4, i32::MAX.to_le_bytes().into_iter()
+                .chain(i32::MIN.to_le_bytes()).collect()),
+        ];
+        for (format, bytes_per_sample, source) in cases {
+            let capacity_bytes = 2 * bytes_per_sample;
+            let (mut producer, mut consumer) = RingBuffer::<u8>::new(capacity_bytes);
+            producer.push_entire_slice(&vec![0; bytes_per_sample]).unwrap();
+            let mut discarded = vec![0; bytes_per_sample];
+            consumer.pop_entire_slice(&mut discarded).unwrap();
+            producer.push_entire_slice(&source).unwrap();
+            let mut output = Output {
+                consumer: UnsafeCell::new(consumer),
+                capacity: 2,
+                channels: 1,
+                format,
+                rate: 48_000,
+                bytes_per_sample,
+                played: AtomicU64::new(0),
+                volume: AtomicU32::new(1.0_f32.to_bits()),
+                active: AtomicBool::new(true),
+                eof: AtomicBool::new(false),
+                underruns: AtomicU64::new(0),
+                error: AtomicI32::new(0),
+            };
+            let mut audio = vec![0x55; 3 * bytes_per_sample];
+            let result = unsafe {
+                data_callback(
+                    ptr::null_mut(),
+                    (&mut output as *mut Output).cast(),
+                    audio.as_mut_ptr().cast(),
+                    3,
+                )
+            };
+            let mut expected = source;
+            expected.extend(vec![0; bytes_per_sample]);
+            assert_eq!(result, 0, "format {format}");
+            assert_eq!(audio, expected, "format {format}");
+            assert_eq!(output.played.load(Ordering::Acquire), 2);
+            assert_eq!(output.underruns.load(Ordering::Acquire), 1);
+        }
+    }
+
+    #[test]
+    fn data_callback_applies_float_gain_and_zero_fills_underrun() {
+        let source = [0.5_f32, -0.25_f32].iter()
+            .flat_map(|sample| sample.to_le_bytes()).collect::<Vec<_>>();
+        let mut output = test_output_format(4, 1, FMT_FLOAT, 4, &source);
+        output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+        let mut audio = [0x55_u8; 12];
+        let result = unsafe {
+            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(),
+                audio.as_mut_ptr().cast(), 3)
+        };
+        let samples: Vec<f32> = audio.chunks_exact(4)
+            .map(|bytes| f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            .collect();
+        assert_eq!(result, 0);
+        assert_eq!(samples, [0.25, -0.125, 0.0]);
+        assert_eq!(output.played.load(Ordering::Acquire), 2);
+        assert_eq!(output.underruns.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn data_callback_applies_integer_gain_for_pcm16_pcm24_and_pcm32() {
+        let cases: [(i32, usize, Vec<u8>, Vec<u8>); 3] = [
+            (
+                FMT_I16, 2,
+                [-2_i16, 2_i16].iter().flat_map(|v| v.to_le_bytes()).collect(),
+                [-1_i16, 1_i16].iter().flat_map(|v| v.to_le_bytes()).collect(),
+            ),
+            (
+                FMT_I24, 3,
+                vec![0xfe, 0xff, 0xff, 0x02, 0x00, 0x00],
+                vec![0xff, 0xff, 0xff, 0x01, 0x00, 0x00],
+            ),
+            (
+                FMT_I32, 4,
+                [-2_i32, 2_i32].iter().flat_map(|v| v.to_le_bytes()).collect(),
+                [-1_i32, 1_i32].iter().flat_map(|v| v.to_le_bytes()).collect(),
+            ),
+        ];
+        for (format, bytes_per_sample, source, expected) in cases {
+            let mut output = test_output_format(2, 1, format, bytes_per_sample, &source);
+            output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+            let mut audio = vec![0; source.len()];
+            let result = unsafe {
+                data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(),
+                    audio.as_mut_ptr().cast(), 2)
+            };
+            assert_eq!(result, 0, "format {format}");
+            assert_eq!(audio, expected, "format {format}");
+            assert_eq!(output.played.load(Ordering::Acquire), 2);
+        }
+    }
+
+    #[test]
+    fn data_callback_silences_output_and_stops_on_invalid_gain_format() {
+        let source = [1, 2, 3, 4];
+        let mut output = test_output_format(2, 1, 99, 2, &source);
+        output.volume.store(0.5_f32.to_bits(), Ordering::Relaxed);
+        let mut audio = [0x55_u8; 4];
+        let result = unsafe {
+            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(),
+                audio.as_mut_ptr().cast(), 2)
+        };
+        assert_eq!(result, 1);
+        assert_eq!(audio, [0; 4]);
+        assert_eq!(output.error.load(Ordering::Acquire), INVALID_FORMAT);
+        assert!(!output.active.load(Ordering::Acquire));
     }
 }
