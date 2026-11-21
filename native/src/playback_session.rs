@@ -610,6 +610,9 @@ mod tests {
         let gate = Arc::new(Mutex::new(()));
         let epoch = Arc::new(AtomicU64::new(0));
         let cancelled = Arc::new(AtomicBool::new(false));
+        // Establish a successful publication before racing the workers against cancellation.
+        // Without this seed, the canceller may legally acquire the gate first and leave epoch at zero.
+        assert_eq!(advance_epoch(&epoch, &cancelled), Some(1));
         let barrier = Arc::new(Barrier::new(9));
         let mut workers = Vec::new();
 
