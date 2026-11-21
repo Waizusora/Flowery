@@ -1,27 +1,42 @@
 # Third-Party Notices
 
-This file identifies the direct third-party dependencies used by Flowery. Transitive dependency versions and notices are resolved by Cargo and Gradle during the build.
+This notice lists direct production dependencies used by the Flowery Android application and its native Rust runtime. Build plugins, test-only dependencies, and transitive dependencies are excluded from this direct-dependency inventory. Transitive notices must be retained from their upstream distributions.
 
-## Rust dependencies
+## Rust native runtime
 
-| Dependency | Version declaration | License |
-| --- | --- | --- |
-| Symphonia | 0.5.4 | MPL-2.0 |
-| Lofty | 0.25.5 | MIT OR Apache-2.0 |
-| jni | 0.21 | MIT OR Apache-2.0 |
-| serde | 1.x | MIT OR Apache-2.0 |
-| serde_json | 1.x | MIT OR Apache-2.0 |
-| base64 | 0.22 | MIT OR Apache-2.0 |
-| libc | 0.2 | MIT OR Apache-2.0 |
-| libusb1-sys | 0.7 (vendored libusb) | MIT (bindings); LGPL-2.1-or-later (libusb) |
+| Dependency | Version declaration | Application use | License |
+| --- | --- | --- | --- |
+| Symphonia | 0.6.1 | Audio demuxing and decoding | MPL-2.0 |
+| symphonia-opus | 0.1.1 | Pure-Rust Opus decoding | MPL-2.0 |
+| Lofty | 0.25.5 | Audio metadata and tag reading/writing | MIT OR Apache-2.0 |
+| jni | 0.21 | Rust/JVM native interface | MIT OR Apache-2.0 |
+| serde | 1.x | Data serialization | MIT OR Apache-2.0 |
+| serde_json | 1.x | JSON serialization | MIT OR Apache-2.0 |
+| yaml_serde | 0.10 | Serde-compatible YAML parsing for lyrics | MIT OR Apache-2.0 |
+| base64 | 0.22 | Embedded artwork encoding | MIT OR Apache-2.0 |
+| libc | 0.2 | Android native system bindings | MIT OR Apache-2.0 |
+| rtrb | 0.3.6 | Bounded SPSC PCM transport | MIT OR Apache-2.0 |
+| libusb1-sys | 0.7 | Rust USB bindings | MIT |
+| libusb (vendored) | bundled by libusb1-sys | USB host transport implementation | LGPL-2.1-or-later |
+| ureq | 2.12 | HTTPS client for lyrics lookup | MIT OR Apache-2.0 |
+| url | 2.x | URL parsing and form encoding | MIT OR Apache-2.0 |
 
-## Android dependencies
+## Android application runtime
 
-The Android application uses AndroidX and Jetpack Compose libraries, including Activity Compose, Compose UI and Material 3, Lifecycle, Room, DataStore, Core KTX, Media, and DocumentFile. These libraries are distributed under the Apache License 2.0. Android platform APIs, including AAudio from the Android NDK, are platform components.
+| Dependency | Version declaration | Application use | License |
+| --- | --- | --- | --- |
+| Jetpack Compose UI | Compose BOM 2024.12.01 | Compose UI, Material 3, and extended icons | Apache-2.0 |
+| Activity Compose | 1.9.3 | Android activity integration | Apache-2.0 |
+| Lifecycle | 2.8.7 | Lifecycle runtime and ViewModel integration | Apache-2.0 |
+| DocumentFile | 1.0.1 | Document provider access | Apache-2.0 |
+| Room | 2.6.1 | Local database runtime | Apache-2.0 |
+| DataStore Preferences | 1.1.1 | Application preferences | Apache-2.0 |
+| AndroidX Core KTX | 1.15.0 | Android platform compatibility utilities | Apache-2.0 |
+| AndroidX Media | 1.7.0 | Media session and media integration | Apache-2.0 |
 
 ## Noto Sans
 
-Flowery uses the Noto Sans variable font for its application typography. The Android build downloads the unmodified font from the Google Fonts repository at the immutable revision pinned in `app/build.gradle.kts`.
+Flowery bundles the Noto Sans variable font for application typography. The Android build downloads the unmodified font from the Google Fonts repository at the immutable revision pinned in `app/build.gradle.kts`.
 
 - Font: Noto Sans variable (width and weight axes), `NotoSans[wdth,wght].ttf`
 - Copyright: Copyright 2022 The Noto Project Authors
@@ -29,8 +44,12 @@ Flowery uses the Noto Sans variable font for its application typography. The And
 - License text: [LICENSES/NotoSans-OFL.txt](LICENSES/NotoSans-OFL.txt)
 - Upstream source: https://github.com/google/fonts/tree/86aced91de05cd4f96a06838124cca45be337b2b/ofl/notosans
 
-The bundled font covers its supported Latin, Greek, and Cyrillic glyphs. Other scripts use Android's platform font fallback; the Noto collection is modular and no single Noto Sans file covers every Unicode script.
+The bundled font covers its supported Latin, Greek, and Cyrillic glyphs. Other scripts use Android's platform font fallback.
 
-## libusb
+## Android platform APIs
 
-Flowery builds the libusb C library through the vendored `libusb1-sys` dependency for Android targets. The Rust bindings are MIT-licensed; the linked libusb library is LGPL-2.1-or-later. Distribution must include the applicable LGPL license text and corresponding source, and must satisfy the LGPL requirements for the application's static native linkage. Review the final packaging and relinking provisions before publishing APKs.
+AAudio is provided by the Android NDK and is an Android platform API. It is not bundled as a third-party application library.
+
+## libusb distribution requirements
+
+Flowery builds the libusb C library through the vendored `libusb1-sys` dependency for Android targets. The Rust bindings are MIT-licensed; the linked libusb library is LGPL-2.1-or-later. APK distribution must include the applicable LGPL license text and corresponding source and satisfy the LGPL requirements for the application's static native linkage, including applicable relinking provisions. Verify the final packaging and source-availability process before publishing APKs.
