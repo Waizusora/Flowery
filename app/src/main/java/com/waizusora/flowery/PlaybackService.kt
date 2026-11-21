@@ -134,7 +134,9 @@ class PlaybackService : Service() {
         val current = outputDeviceSnapshot()
         if (current != lastOutputDeviceSnapshot) {
             lastOutputDeviceSnapshot = current
-            val nextTarget = AndroidOutputRouteResolver(this).detectCurrent()
+            val routeResolver = AndroidOutputRouteResolver(this)
+            val nextTarget = routeResolver.detectCurrent()
+            val selectedRoute = routeResolver.resolve(nextTarget)
             val previousTarget = lastOutputRouteTarget
             lastOutputRouteTarget = nextTarget
             val wasPlaying = playbackState == PlaybackStateCompat.STATE_PLAYING ||
@@ -152,7 +154,9 @@ class PlaybackService : Service() {
                 val restartPositionMs = transition.positionMs
                 Log.i(
                     "FloweryDiagnostics",
-                    "OUTPUT_ROUTE_REOPEN from=$previousTarget to=$nextTarget wasPlaying=$wasPlaying " +
+                    "OUTPUT_ROUTE_REOPEN from=$previousTarget to=$nextTarget " +
+                        "deviceId=${selectedRoute.deviceId} deviceType=${selectedRoute.deviceType ?: -1} " +
+                        "deviceName=${selectedRoute.deviceName ?: "unknown"} wasPlaying=$wasPlaying " +
                         "previousPositionMs=$previousPositionMs restartPositionMs=$restartPositionMs " +
                         "manualResumeRequired=true segmentStartMs=$segmentStartMs segmentEndMs=${segmentEndMs ?: -1L}"
                 )
@@ -183,11 +187,15 @@ class PlaybackService : Service() {
             AndroidOutputDeviceOrder.onAdded(addedDevices.map {
                 OutputDeviceCandidate(it.id, it.type, it.productName?.toString())
             })
+            Log.i("FloweryDiagnostics", "OUTPUT_DEVICE_ADDED " +
+                addedDevices.joinToString { "${it.id}:${it.type}:${it.productName}" })
             scheduleOutputRouteCheck()
         }
 
         override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>) {
             AndroidOutputDeviceOrder.onRemoved(removedDevices.map { it.id })
+            Log.i("FloweryDiagnostics", "OUTPUT_DEVICE_REMOVED " +
+                removedDevices.joinToString { "${it.id}:${it.type}:${it.productName}" })
             scheduleOutputRouteCheck()
         }
     }
