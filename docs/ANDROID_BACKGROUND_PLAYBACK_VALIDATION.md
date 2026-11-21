@@ -89,6 +89,48 @@ Expected diagnostic markers:
 - `CALL_INTERRUPTION_STARTED`
 - `CALL_INTERRUPTION_ENDED manual_play_required=true`
 
+
+
+## Process-death and MediaSession test (emulator or physical device)
+
+The ADB harness can capture the service, MediaSession, notification, PID, and
+Flowery diagnostic log before and after a deliberate app-process crash:
+
+```sh
+# Start Flowery, load a queue (preferably a multi-track CUE sheet), press Play,
+# wait at least 5 seconds, then run this on a dedicated test device:
+scripts/validate_android_background_playback.sh --crash-process --restart-wait 45
+```
+
+This option uses `adb shell am crash`, not Android Settings' Force stop. It
+deliberately crashes the app and can display Android's app-crash UI. Save other
+work first. A crash-induced restart is a useful first check of sticky-service
+recreation, but it is not identical to a low-memory-killer event; record the
+result rather than assuming Android restarted the service.
+
+Inspect these output files:
+
+- `pid-before.txt` and `pid-after.txt`: process identity before/after.
+- `services-after-process-death.txt`: whether PlaybackService was recreated.
+- `media-session-before.txt` and `media-session-after-process-death.txt`: SystemUI media-session state.
+- `notifications-before.txt` and `notifications-after-process-death.txt`: media notification presence and actions.
+- `flowery-logcat.txt`: `SERVICE_CREATE`, `RECOVERY_SNAPSHOT_RESTORED`,
+  `RECOVERY_SERVICE_RESTART`, and `RECOVERY_MANUAL_PLAY` markers.
+
+After Android recreates the service, verify the notification is visible and
+reports the restored track as paused. Do not press Play until you have confirmed
+that audio did not resume by itself. Then press Play from Flowery or the media
+notification and compare queue index, CUE segment, and restored position with
+the pre-crash observation. Repeat with a real phone/app-call interruption:
+call mode must block Play while active, and playback must remain paused after
+the call ends until the user presses Play.
+
+A process restart is considered successful only when the new process/service
+and MediaSession are visible and the manual Play command resumes the intended
+queue item/position. A changed PID alone is not sufficient evidence. If the
+service is not recreated within the wait window, preserve all diagnostics and
+report the device/Android version; do not use Force Stop as a substitute.
+
 ## OEM battery restrictions
 
 Battery optimization is intentionally not changed by Flowery. On each target OEM, test both the default setting and any user-selected restricted/background-limited mode through Android Settings:
