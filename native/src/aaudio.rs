@@ -293,7 +293,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
     if error != 0 { return Err(error); }
     let bytes_per_frame = output.channels * output.bytes_per_sample;
     let buffered = if bytes_per_frame == 0 { 0 } else {
-        (output.capacity as u64).saturating_sub((engine.producer.as_ref()?.slots() / bytes_per_frame) as u64)
+        (output.capacity as u64).saturating_sub((e.producer.as_ref().ok_or(INVALID_STATE)?.slots() / bytes_per_frame) as u64)
     };
     let eof = output.eof.load(Ordering::Acquire);
     let active = output.active.load(Ordering::Acquire);
@@ -478,7 +478,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
     let bytes_per_sample=match format{FMT_I16=>2,FMT_FLOAT=>4,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
     let ring_bytes=(cap as usize).saturating_mul(channels as usize).saturating_mul(bytes_per_sample);
     let (producer, consumer)=match crate::pcm_transport::new_pcm_byte_ring(ring_bytes) { Ok(ring)=>ring, Err(_)=>return INVALID_FORMAT };
-    let mut out=Box::new(Output{consumer,capacity:cap,channels:channels as usize,format,rate,bytes_per_sample,played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
+    let mut out=Box::new(Output{consumer:UnsafeCell::new(consumer),capacity:cap,channels:channels as usize,format,rate,bytes_per_sample,played:AtomicU64::new(0),volume:AtomicU32::new(volume.clamp(0.0,1.0).to_bits()),active:AtomicBool::new(false),eof:AtomicBool::new(false),underruns:AtomicU64::new(0),error:AtomicI32::new(0)});
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());unsafe{e.stop();}
     let sharing=if exclusive==JNI_TRUE{SHARING_EXCLUSIVE}else{SHARING_SHARED};
