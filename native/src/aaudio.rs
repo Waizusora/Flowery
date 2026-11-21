@@ -1,6 +1,7 @@
 use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_TRUE};
 use jni::JNIEnv;
+use std::cell::UnsafeCell;
 use std::ffi::c_void;
 use std::ptr;
 use crate::pcm_format::PcmFormat;
@@ -82,7 +83,7 @@ const STATE_PAUSING:i32=5; const STATE_PAUSED:i32=6; const STATE_STOPPED:i32=10;
 struct Output {
     // Raw interleaved integer PCM bytes. The decoder's sample codes are never
     // normalized through floating point on the Android-managed output path.
-    consumer: Consumer<u8>, capacity:u64, channels:usize, format:i32, rate:i32,
+    consumer: UnsafeCell<Consumer<u8>>, capacity:u64, channels:usize, format:i32, rate:i32,
     bytes_per_sample:usize, queued_bytes:AtomicU64,
     played:AtomicU64, volume:AtomicU32,
     active:AtomicBool, eof:AtomicBool, underruns:AtomicU64, error:AtomicI32,
@@ -214,7 +215,8 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
     let bytes_per_frame=o.channels*o.bytes_per_sample;
     let requested_bytes=requested*bytes_per_frame;
     let destination=std::slice::from_raw_parts_mut(audio as *mut u8,requested_bytes);
-    let (popped, _) = o.consumer.pop_partial_slice(destination);
+    let consumer = &mut *o.consumer.get();
+    let (popped, _) = consumer.pop_partial_slice(destination);
     let byte_count=popped.len();
     let count=byte_count/bytes_per_frame;
     o.queued_bytes.fetch_sub(byte_count as u64,Ordering::AcqRel);
@@ -245,7 +247,7 @@ unsafe extern "C" fn data_callback(_: *mut AAudioStream, data:*mut c_void, audio
         if !o.eof.load(Ordering::Acquire){o.underruns.fetch_add(1,Ordering::Relaxed);}
     }
     o.played.fetch_add(count as u64,Ordering::Relaxed);
-    if remaining>0 && o.eof.load(Ordering::Acquire) && o.consumer.slots()==0 {
+    if remaining>0 && o.eof.load(Ordering::Acquire) && consumer.slots()==0 {
         o.active.store(false,Ordering::Release);
         1
     }else{0}
@@ -534,10 +536,11 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
             return INVALID_STATE;
         }
     }
-    let output = e.output.as_mut().unwrap();
+    let output = e.output.as_ref().unwrap();
+    let consumer = &mut *output.consumer.get();
     let mut discarded = [0u8; 4096];
-    while !output.consumer.is_empty() {
-        let (popped, _) = output.consumer.pop_partial_slice(&mut discarded);
+    while !consumer.is_empty() {
+        let (popped, _) = consumer.pop_partial_slice(&mut discarded);
         if popped.is_empty() { break; }
     }
     output.queued_bytes.store(0, Ordering::Release);
@@ -623,7 +626,7 @@ mod tests {
         let (mut producer, consumer) = RingBuffer::<u8>::new(capacity_frames * channels * 2);
         producer.push_entire_slice(queued).unwrap();
         Output {
-            consumer,
+            consumer: UnsafeCell::new(consumer),
             capacity: capacity_frames as u64,
             channels,
             format: FMT_I16,
