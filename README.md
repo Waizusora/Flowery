@@ -11,7 +11,7 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 - USB Audio Class discovery through Android USB Host, including VID/PID, Audio Control/Streaming interfaces, and isochronous endpoint direction.
 - Native full/high-speed USB isochronous PCM packet scheduling primitives.
 - Experimental Android libusb file-descriptor bridge for claiming a descriptor-selected AudioStreaming interface.
-- Native USB PCM chunk packing from the Symphonia decoder and UAC explicit-feedback packet decoding; asynchronous transfer submission is not yet enabled.
+- Native USB PCM chunk packing, asynchronous libusb isochronous OUT transfer submission, transfer completion/cancellation handling, and UAC explicit-feedback packet decoding; physical DAC playback validation remains device-dependent.
 - AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities, with the Balanced (`AAUDIO_PERFORMANCE_MODE_NONE`) performance mode.
 - Native Rust streaming decode, source-format preservation, bounded `rtrb` SPSC PCM transport for AAudio and USB Direct, and playback-session scheduling.
 - Metadata reading/editing, timestamped sidecar LRC lyrics, and LRCLIB search/download for plain, synchronized, and word-synchronized lyrics.
