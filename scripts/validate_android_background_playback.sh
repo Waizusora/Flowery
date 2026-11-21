@@ -36,6 +36,8 @@ while (($#)); do
     --serial) SERIAL="${2:?missing serial}"; shift 2 ;;
     --doze) RUN_DOZE=1; shift ;;
     --trim) RUN_TRIM=1; shift ;;
+    --crash-process) CRASH_PROCESS=1; shift ;;
+    --restart-wait) RESTART_WAIT="${2:?missing restart wait}"; shift 2 ;;
     --duration) DURATION="${2:?missing duration}"; shift 2 ;;
     --out) OUT_DIR="${2:?missing output directory}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -43,8 +45,8 @@ while (($#)); do
   esac
 done
 
-if ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]]; then
-  echo "Duration must be a positive integer." >&2
+if ! [[ "$DURATION" =~ ^[1-9][0-9]*$ ]] || ! [[ "$RESTART_WAIT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "Duration and restart wait must be positive integers." >&2
   exit 2
 fi
 
@@ -76,6 +78,9 @@ trap cleanup EXIT INT TERM
 "${ADB[@]}" shell dumpsys deviceidle > "$OUT_DIR/deviceidle-before.txt"
 "${ADB[@]}" shell am get-standby-bucket "$PACKAGE" > "$OUT_DIR/standby-bucket.txt" 2>&1 || true
 "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$OUT_DIR/services-before.txt" 2>&1 || true
+"${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-before.txt" 2>&1 || true
+"${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-before.txt" 2>&1 || true
+"${ADB[@]}" shell pidof "$PACKAGE" > "$OUT_DIR/pid-before.txt" 2>&1 || true
 
 "${ADB[@]}" logcat -c
 "${ADB[@]}" logcat -v threadtime -s FloweryDiagnostics:I FloweryDiagnostics:W FloweryDiagnostics:E '*:S' > "$OUT_DIR/flowery-logcat.txt" &
@@ -126,6 +131,8 @@ fi
 
 "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$OUT_DIR/services-after.txt" 2>&1 || true
 "${ADB[@]}" shell dumpsys deviceidle > "$OUT_DIR/deviceidle-after.txt"
+"${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-after.txt" 2>&1 || true
+"${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-after.txt" 2>&1 || true
 echo "Diagnostics are being captured in: $OUT_DIR"
 echo "Stop this script with Ctrl+C after the playback observation window; logcat will be finalized."
 while kill -0 "$LOG_PID" 2>/dev/null; do sleep 1; done
