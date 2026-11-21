@@ -101,6 +101,7 @@ import java.util.concurrent.Executors
 class MainActivity : ComponentActivity() {
     private val usbPermissionAction = "com.waizusora.flowery.USB_PERMISSION"
     private val usbPermissionRequests = mutableSetOf<String>()
+    private val usbPermissionDeniedDevices = mutableSetOf<String>()
     private val usbPermissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             intent ?: return
@@ -111,7 +112,10 @@ class MainActivity : ComponentActivity() {
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
                     val detached = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
-                    detached?.deviceName?.let(usbPermissionRequests::remove)
+                    detached?.deviceName?.let {
+                        usbPermissionRequests.remove(it)
+                        usbPermissionDeniedDevices.remove(it)
+                    }
                     Log.i("FloweryUsbPermission", "USB_DEVICE_DETACHED device=${detached?.deviceName}")
                 }
                 usbPermissionAction -> {
@@ -119,7 +123,10 @@ class MainActivity : ComponentActivity() {
                     val granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)
                     val manager = getSystemService(Context.USB_SERVICE) as UsbManager
                     val actualGrant = device != null && manager.hasPermission(device)
-                    device?.deviceName?.let(usbPermissionRequests::remove)
+                    device?.deviceName?.let { deviceName ->
+                        usbPermissionRequests.remove(deviceName)
+                        if (!actualGrant) usbPermissionDeniedDevices.add(deviceName)
+                    }
                     Log.i(
                         "FloweryUsbPermission",
                         "USB_PERMISSION_RESULT device=${device?.deviceName} grantedExtra=$granted hasPermission=$actualGrant"
@@ -146,6 +153,10 @@ class MainActivity : ComponentActivity() {
             }
         } ?: run {
             Log.d("FloweryUsbPermission", "USB_AUDIO_DEVICE_NOT_FOUND")
+            return
+        }
+        if (device.deviceName in usbPermissionDeniedDevices) {
+            Log.i("FloweryUsbPermission", "USB_PERMISSION_DENIAL_SUPPRESSED_UNTIL_DETACH device=${device.deviceName}")
             return
         }
         if (manager.hasPermission(device)) {
@@ -456,6 +467,7 @@ class MainActivity : ComponentActivity() {
         unregisterReceiver(playbackReceiver)
         unregisterReceiver(usbPermissionReceiver)
         usbPermissionRequests.clear()
+        usbPermissionDeniedDevices.clear()
         super.onStop()
     }
 
