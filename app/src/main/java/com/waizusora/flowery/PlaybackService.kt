@@ -21,6 +21,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -94,7 +95,8 @@ class PlaybackService : Service() {
     private var focusRequest: AudioFocusRequest? = null
     private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var hasAudioFocus = false
-    private var resumeAfterFocus = false
+    private val callInterruptionPolicy = CallInterruptionPolicy()
+    private var playbackWakeLock: PowerManager.WakeLock? = null
     private val io = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
     private val queueTitles = mutableListOf<String>()
@@ -217,6 +219,7 @@ class PlaybackService : Service() {
     private val progressUpdates = object : Runnable {
         override fun run() {
             if (::player.isInitialized) {
+                refreshCallInterruptionState()
                 val nowMs = android.os.SystemClock.elapsedRealtime()
                 // Refresh Feature Unit detection a few times per minute so Settings
                 // reflects DAC attach/detach without requiring USB Direct playback.
@@ -270,6 +273,9 @@ class PlaybackService : Service() {
         super.onCreate()
         Log.i("FloweryDiagnostics", "SERVICE_CREATE pid=${android.os.Process.myPid()}")
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
+        playbackWakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:Playback")
+            .apply { setReferenceCounted(false) }
         player = PlaybackCoordinator(this) { message ->
             if (message.startsWith("Playing") || message.startsWith("Paused") ||
                 message.startsWith("Playback error")) {
@@ -421,28 +427,16 @@ class PlaybackService : Service() {
                 AudioManager.AUDIOFOCUS_LOSS,
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
                 AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                    // Ordinary app audio must not interrupt Flowery. A call is identified
-                    // separately through the communication/ringtone audio mode.
+                    // Ordinary app audio must not interrupt Flowery. Call interruptions
+                    // are detected independently through AudioManager's call modes.
                     hasAudioFocus = false
-                    if (isCallAudioMode()) {
-                        scheduleCallModeCheck()
-                    }
+                    mainHandler.post { scheduleCallModeCheck() }
                 }
                 AudioManager.AUDIOFOCUS_GAIN -> {
+                    // Focus recovery is never user intent. In particular, a completed
+                    // phone/VoIP call must leave playback paused until an explicit Play.
                     hasAudioFocus = true
-                    mainHandler.postDelayed({
-                        if (resumeAfterFocus && !isCallAudioMode()) {
-                            if (player.resume()) {
-                                resumeAfterFocus = false
-                                player.setDucked(false)
-                                playbackState = PlaybackStateCompat.STATE_PLAYING
-                                publishSessionState()
-                                publishState("Playing · call ended")
-                            } else {
-                                publishState("Resume request was rejected")
-                            }
-                        }
-                    }, 400L)
+                    mainHandler.post { refreshCallInterruptionState() }
                 }
             }
         }
@@ -472,21 +466,51 @@ class PlaybackService : Service() {
     }
 
     private fun scheduleCallModeCheck() {
-        mainHandler.postDelayed({
-            if (isCallAudioMode() && playbackState == PlaybackStateCompat.STATE_PLAYING) {
-                if (player.pause()) {
-                    resumeAfterFocus = true
-                    playbackState = PlaybackStateCompat.STATE_PAUSED
-                    publishSessionState()
-                    publishState("Paused · phone or app call")
+        mainHandler.postDelayed({ refreshCallInterruptionState() }, 250L)
+    }
+
+    /** Polls call mode while the service is alive and never resumes on call end. */
+    private fun refreshCallInterruptionState() {
+        when (callInterruptionPolicy.update(isCallAudioMode())) {
+            CallInterruptionPolicy.Transition.CALL_STARTED -> {
+                Log.w("FloweryDiagnostics", "CALL_INTERRUPTION_STARTED state=$playbackState")
+                if (playbackState == PlaybackStateCompat.STATE_PLAYING ||
+                    playbackState == PlaybackStateCompat.STATE_CONNECTING) {
+                    // Serialize pause behind any in-flight engine start on the I/O executor.
+                    io.execute {
+                        val paused = runCatching { player.pause() }.getOrDefault(false)
+                        mainHandler.post {
+                            if (callInterruptionPolicy.isInterrupted) {
+                                playbackState = PlaybackStateCompat.STATE_PAUSED
+                                publishSessionState()
+                                publishState(if (paused)
+                                    "Paused · phone or app call · press Play after call"
+                                else "Call active · playback start blocked")
+                            }
+                        }
+                    }
                 } else {
-                    publishState("Pause request was rejected")
+                    publishState("Call active · playback remains paused")
                 }
             }
-        }, 500L)
+            CallInterruptionPolicy.Transition.CALL_ENDED -> {
+                Log.i("FloweryDiagnostics", "CALL_INTERRUPTION_ENDED manual_play_required=true")
+                publishState("Call ended · press Play to resume")
+            }
+            CallInterruptionPolicy.Transition.NONE -> Unit
+        }
+    }
+
+    private fun isPlaybackBlockedByCall(): Boolean {
+        refreshCallInterruptionState()
+        return callInterruptionPolicy.blocksPlayback(isCallAudioMode())
     }
 
     private fun playCurrent() {
+        if (isPlaybackBlockedByCall()) {
+            publishState("Playback paused during call · press Play after call")
+            return
+        }
         val selectedIndex = queueIndex
         val uriText = queue.getOrNull(selectedIndex) ?: run {
             Log.e("FloweryDiagnostics", "PLAY_CURRENT_ABORT queueSize=${queue.size} index=$selectedIndex; selected item is missing")
@@ -565,6 +589,10 @@ class PlaybackService : Service() {
                 io.execute {
                     if (requestGeneration != playRequestGeneration) return@execute
                     try {
+                        if (callInterruptionPolicy.isInterrupted) {
+                            Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_blocked reason=call_interruption index=$selectedIndex")
+                            return@execute
+                        }
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
                         player.play(uri, segmentStartMs, segmentEndMs)
                         if (requestGeneration != playRequestGeneration) return@execute
@@ -638,7 +666,6 @@ class PlaybackService : Service() {
     }
 
     private fun pausePlayback() {
-        resumeAfterFocus = false
         if (!player.pause()) {
             publishState("Pause request was rejected")
             return
@@ -650,7 +677,10 @@ class PlaybackService : Service() {
 
     private fun resumePlayback() {
         if (queue.isEmpty()) return
-        resumeAfterFocus = false
+        if (isPlaybackBlockedByCall()) {
+            publishState("Call active · playback paused; press Play after call")
+            return
+        }
         if (playbackState == PlaybackStateCompat.STATE_STOPPED) playCurrent()
         else {
             if (requestFocus() && player.resume()) {
@@ -666,7 +696,6 @@ class PlaybackService : Service() {
         playRequestGeneration++
         Log.w("FloweryDiagnostics", "STOP_PLAYBACK index=$queueIndex queueSize=${queue.size} repeat=$repeatMode shuffle=$shuffle")
         player.stop()
-        resumeAfterFocus = false
         hasAudioFocus = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
@@ -688,7 +717,6 @@ class PlaybackService : Service() {
         playRequestGeneration++
         Log.i("FloweryDiagnostics", "QUEUE_FINISHED index=$queueIndex queueSize=${queue.size}; service_retained=true")
         player.stop()
-        resumeAfterFocus = false
         hasAudioFocus = false
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
@@ -737,15 +765,34 @@ class PlaybackService : Service() {
         }
     }
 
+    private fun syncPlaybackWakeLock() {
+        val lock = playbackWakeLock ?: return
+        val shouldHold = playbackState == PlaybackStateCompat.STATE_PLAYING
+        runCatching {
+            if (shouldHold && !lock.isHeld) {
+                lock.acquire()
+                Log.d("FloweryDiagnostics", "PLAYBACK_WAKE_LOCK acquired")
+            } else if (!shouldHold && lock.isHeld) {
+                lock.release()
+                Log.d("FloweryDiagnostics", "PLAYBACK_WAKE_LOCK released state=$playbackState")
+            }
+        }.onFailure { Log.w("FloweryDiagnostics", "PLAYBACK_WAKE_LOCK update failed", it) }
+    }
+
     private fun publishState(message: String) {
+        val effectiveMessage = if (message.startsWith("Playing") && callInterruptionPolicy.isInterrupted) {
+            io.execute { runCatching { player.pause() } }
+            "Paused · phone or app call · press Play after call"
+        } else message
         playbackState = when {
-            message.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
-            message.startsWith("Paused") -> PlaybackStateCompat.STATE_PAUSED
-            message == "Stopped" || message.startsWith("Playback finished") ||
-                message.startsWith("Playback error:") -> PlaybackStateCompat.STATE_STOPPED
+            effectiveMessage.startsWith("Playing") -> PlaybackStateCompat.STATE_PLAYING
+            effectiveMessage.startsWith("Paused") -> PlaybackStateCompat.STATE_PAUSED
+            effectiveMessage == "Stopped" || effectiveMessage.startsWith("Playback finished") ||
+                effectiveMessage.startsWith("Playback error:") -> PlaybackStateCompat.STATE_STOPPED
             else -> playbackState
         }
-        val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, message)
+        syncPlaybackWakeLock()
+        val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, effectiveMessage)
             .putExtra(EXTRA_POSITION, player.positionMs())
             .putExtra(EXTRA_DURATION, player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs)
             .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
@@ -769,6 +816,7 @@ class PlaybackService : Service() {
     }
 
     private fun publishSessionState(positionMs: Long = player.positionMs()) {
+        syncPlaybackWakeLock()
         if (!::session.isInitialized) return
         val actions = PlaybackStateCompat.ACTION_PLAY or PlaybackStateCompat.ACTION_PAUSE or
             PlaybackStateCompat.ACTION_PLAY_PAUSE or
@@ -838,6 +886,8 @@ class PlaybackService : Service() {
         session.isActive = false
         session.release()
         io.shutdownNow()
+        playbackWakeLock?.let { lock -> if (lock.isHeld) runCatching { lock.release() } }
+        playbackWakeLock = null
         super.onDestroy()
     }
 
