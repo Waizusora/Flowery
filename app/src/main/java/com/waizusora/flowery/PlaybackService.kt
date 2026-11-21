@@ -100,6 +100,7 @@ class PlaybackService : Service() {
     private val recoveryPreferences by lazy { getSharedPreferences("playback_recovery", MODE_PRIVATE) }
     @Volatile private var recoverySessionAvailable = false
     @Volatile private var recoveryNeedsPrepare = false
+    @Volatile private var enginePositionAvailable = false
     @Volatile private var recoveryPositionMs = 0L
     private var lastRecoveryPersistMs = 0L
     private val io = Executors.newSingleThreadExecutor()
@@ -289,6 +290,9 @@ class PlaybackService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:Playback")
             .apply { setReferenceCounted(false) }
         player = PlaybackCoordinator(this) { message ->
+            if (message.startsWith("Playing") || message.startsWith("Paused")) {
+                enginePositionAvailable = true
+            }
             if (message.startsWith("Playing") || message.startsWith("Paused") ||
                 message.startsWith("Playback error")) {
                 val wasSwitchingOutput = outputRouteRestartPending
@@ -567,6 +571,7 @@ class PlaybackService : Service() {
         val segmentEndMs = queueCueEnds.getOrNull(selectedIndex)?.takeIf { it > 0L }
         recoverySessionAvailable = true
         recoveryNeedsPrepare = false
+        enginePositionAvailable = false
         recoveryPositionMs = initialPositionMs.coerceAtLeast(0L)
         playbackState = PlaybackStateCompat.STATE_CONNECTING
         persistPlaybackSnapshot()
@@ -760,6 +765,7 @@ class PlaybackService : Service() {
         focusRequest = null
         focusListener = null
         playbackState = PlaybackStateCompat.STATE_STOPPED
+        enginePositionAvailable = false
         recoverySessionAvailable = false
         recoveryNeedsPrepare = false
         recoveryPositionMs = 0L
@@ -785,6 +791,7 @@ class PlaybackService : Service() {
         focusRequest = null
         focusListener = null
         playbackState = PlaybackStateCompat.STATE_STOPPED
+        enginePositionAvailable = false
         recoverySessionAvailable = false
         recoveryNeedsPrepare = false
         PlaybackRecoverySnapshot.clear(recoveryPreferences)
@@ -846,6 +853,7 @@ class PlaybackService : Service() {
         currentTitle = snapshot.currentTitle
         currentArtist = snapshot.currentArtist
         recoveryPositionMs = snapshot.positionMs
+        enginePositionAvailable = false
         recoverySessionAvailable = queue.isNotEmpty()
         recoveryNeedsPrepare = recoverySessionAvailable
         callInterruptionPolicy.restoreInterrupted(snapshot.callInterrupted)
@@ -857,7 +865,7 @@ class PlaybackService : Service() {
 
     private fun persistPlaybackSnapshot() {
         if (!recoverySessionAvailable || queue.isEmpty()) return
-        if (!recoveryNeedsPrepare && !outputRouteRestartPending &&
+        if (enginePositionAvailable && !recoveryNeedsPrepare && !outputRouteRestartPending &&
             (playbackState == PlaybackStateCompat.STATE_PLAYING || playbackState == PlaybackStateCompat.STATE_PAUSED)) {
             val observedPosition = runCatching { player.positionMs() }.getOrDefault(recoveryPositionMs)
             if (observedPosition >= 0L) recoveryPositionMs = observedPosition
