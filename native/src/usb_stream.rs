@@ -5,6 +5,7 @@
 
 #[cfg(target_os = "android")]
 use std::{
+    cell::UnsafeCell,
     collections::{HashMap, HashSet},
     ffi::CString,
     mem::ManuallyDrop,
