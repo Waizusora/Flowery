@@ -673,14 +673,14 @@ mod tests {
         let bytes = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect::<Vec<_>>();
         let mut output = test_output(4, 2, &bytes);
         output.eof.store(true, Ordering::Relaxed);
-        let mut audio = [0u8; 16];
+        let mut audio = [0u8; 8];
         let result = unsafe {
             data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(), audio.as_mut_ptr().cast(), 2)
         };
         assert_eq!(result, 1);
         assert!(!output.active.load(Ordering::Acquire));
         assert_eq!(output.played.load(Ordering::Acquire), 1);
-        assert_eq!(&audio[8..], &[0; 8]);
+        assert_eq!(&audio[4..], &[0; 4]);
         assert_eq!(output.underruns.load(Ordering::Acquire), 0);
     }
 
