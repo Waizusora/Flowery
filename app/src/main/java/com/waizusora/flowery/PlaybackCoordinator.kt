@@ -54,9 +54,14 @@ internal class PlaybackCoordinator(
     ) { State.FAILED }
 
     @Synchronized
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null) {
+    fun play(
+        uri: Uri,
+        segmentStartMs: Long = 0L,
+        segmentEndMs: Long? = null,
+        initialPositionMs: Long = 0L,
+    ) {
         transition(EVENT_PREPARE)
-        engine.play(uri, segmentStartMs, segmentEndMs)
+        engine.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs)
     }
 
     @Synchronized
