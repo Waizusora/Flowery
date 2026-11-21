@@ -76,6 +76,10 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
+      - name: Compile Android native test targets
+        working-directory: native
+        run: cargo ndk --platform 26 -t arm64-v8a -t x86_64 check --tests
+
       - name: Run Android unit tests
         run: gradle --no-daemon testDebugUnitTest
 
