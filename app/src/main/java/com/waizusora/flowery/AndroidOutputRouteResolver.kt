@@ -155,3 +155,17 @@ internal object AndroidOutputRouteSelection {
                         it.type == AudioDeviceInfo.TYPE_BLE_SPEAKER))
         }
 }
+
+
+internal data class OutputRouteTransition(
+    val positionMs: Long,
+    val startPaused: Boolean,
+)
+
+internal object OutputRouteTransitionPolicy {
+    fun forTarget(target: AndroidOutputTarget, currentPositionMs: Long): OutputRouteTransition =
+        OutputRouteTransition(
+            positionMs = if (target == AndroidOutputTarget.USB) 0L else currentPositionMs.coerceAtLeast(0L),
+            startPaused = true,
+        )
+}
