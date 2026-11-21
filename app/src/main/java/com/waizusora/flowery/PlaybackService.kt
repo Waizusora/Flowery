@@ -148,8 +148,8 @@ class PlaybackService : Service() {
                 val segmentEndMs = queueCueEnds.getOrNull(queueIndex)?.takeIf { it > 0L }
                 // USB attach always starts from the track's beginning. AAudio-to-AAudio
                 // changes (and USB removal back to AAudio) preserve the elapsed position.
-                val restartPositionMs = if (nextTarget == AndroidOutputTarget.USB) 0L
-                    else previousPositionMs
+                val transition = OutputRouteTransitionPolicy.forTarget(nextTarget, previousPositionMs)
+                val restartPositionMs = transition.positionMs
                 Log.i(
                     "FloweryDiagnostics",
                     "OUTPUT_ROUTE_REOPEN from=$previousTarget to=$nextTarget wasPlaying=$wasPlaying " +
@@ -165,7 +165,7 @@ class PlaybackService : Service() {
                     runCatching {
                         player.reopenOutputRoute(
                             Uri.parse(uriText), segmentStartMs, segmentEndMs,
-                            restartPositionMs, startPaused = true
+                            restartPositionMs, startPaused = transition.startPaused
                         )
                     }.onFailure { error ->
                         outputRouteRestartPending = false
