@@ -156,7 +156,8 @@ class PlaybackService : Service() {
                 playbackState == PlaybackStateCompat.STATE_CONNECTING
             val wasPaused = playbackState == PlaybackStateCompat.STATE_PAUSED
             val uriText = queue.getOrNull(queueIndex)
-            if (!outputRouteRestartPending && (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
+            if (!outputRouteRestartPending && !recoveryNeedsPrepare &&
+                (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
                 outputRouteRestartPending = true
                 val previousPositionMs = player.positionMs()
                 val segmentStartMs = queueCueStarts.getOrNull(queueIndex) ?: 0L
