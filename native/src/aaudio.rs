@@ -668,6 +668,39 @@ mod tests {
     }
 
     #[test]
+    fn data_callback_drains_wrapped_spsc_ring_without_reordering_pcm() {
+        let (mut producer, consumer) = RingBuffer::<u8>::new(8);
+        producer.push_entire_slice(&[1, 2, 3, 4, 5, 6]).unwrap();
+        let mut discarded = [0; 4];
+        consumer.pop_entire_slice(&mut discarded).unwrap();
+        producer.push_entire_slice(&[7, 8, 9, 10]).unwrap();
+
+        let mut output = Output {
+            consumer: UnsafeCell::new(consumer),
+            capacity: 4,
+            channels: 1,
+            format: FMT_I16,
+            rate: 48_000,
+            bytes_per_sample: 2,
+            played: AtomicU64::new(0),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            active: AtomicBool::new(true),
+            eof: AtomicBool::new(false),
+            underruns: AtomicU64::new(0),
+            error: AtomicI32::new(0),
+        };
+        let mut audio = [0; 6];
+        let result = unsafe {
+            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(),
+                audio.as_mut_ptr().cast(), 3)
+        };
+        assert_eq!(result, 0);
+        assert_eq!(audio, [5, 6, 7, 8, 9, 10]);
+        assert_eq!(output.played.load(Ordering::Acquire), 3);
+        assert_eq!(output.underruns.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
     fn data_callback_stops_after_eof_and_ring_drain() {
         let samples = [100_i16, -100];
         let bytes = samples.iter().flat_map(|sample| sample.to_le_bytes()).collect::<Vec<_>>();
