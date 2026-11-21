@@ -262,8 +262,8 @@ fn start_pcm_producer(
             while !stop.load(Ordering::Acquire) {
                 if producer_queue.eof.load(Ordering::Acquire) { break; }
                 if producer_queue.error.lock().unwrap_or_else(|error| error.into_inner()).is_some() { break; }
-                let free_frames = producer_queue.producer.lock()
-                    .unwrap_or_else(|error| error.into_inner()).slots()
+                // This decoder worker is the sole producer endpoint owner.
+                let free_frames = unsafe { (&*producer_queue.producer.get()).slots() }
                     / producer_queue.frame_bytes;
                 if free_frames == 0 {
                     thread::sleep(Duration::from_millis(1));
