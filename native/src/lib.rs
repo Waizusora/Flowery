@@ -9,7 +9,6 @@ mod playback_session;
 mod playlists;
 mod pcm_format;
 mod pcm_transport;
-mod flac_id3v2;
 mod playback_policy;
 mod usb_audio;
 mod usb_uac2;
