@@ -16,7 +16,7 @@ mod usb_isochronous;
 mod usb_feedback;
 #[cfg(target_os = "android")]
 mod usb_libusb;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod usb_stream;
 #[cfg(target_os = "android")]
 mod aaudio;
