@@ -99,7 +99,7 @@ internal object AndroidOutputDeviceOrder {
 
 internal object AndroidOutputRouteSelection {
     private fun isExternalOutput(candidate: OutputDeviceCandidate): Boolean =
-        candidate.type != AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+        isUsb(candidate) || isAux(candidate) || isBluetooth(candidate)
 
     fun detectCurrent(candidates: List<OutputDeviceCandidate>): AndroidOutputTarget {
         val newest = candidates.firstOrNull(::isExternalOutput)
