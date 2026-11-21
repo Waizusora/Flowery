@@ -99,8 +99,9 @@ struct PcmQueue {
 }
 
 // SAFETY: PcmQueue is used with exactly one decoder producer and one USB
-// submit-worker consumer. Each endpoint is accessed mutably only by its
-// designated thread; all cross-thread state is communicated through atomics.
+// submit-worker consumer. Each SPSC endpoint is accessed mutably only by its
+// designated thread. Occupancy and EOF are communicated through atomics; the
+// optional decoder error is shared separately through its Mutex.
 #[cfg(any(target_os = "android", test))]
 unsafe impl Sync for PcmQueue {}
 
