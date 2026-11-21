@@ -537,7 +537,7 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
         }
     }
     let output = e.output.as_ref().unwrap();
-    let consumer = &mut *output.consumer.get();
+    let consumer = unsafe { &mut *output.consumer.get() };
     let mut discarded = [0u8; 4096];
     while !consumer.is_empty() {
         let (popped, _) = consumer.pop_partial_slice(&mut discarded);
