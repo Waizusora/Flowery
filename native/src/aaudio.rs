@@ -291,9 +291,10 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
     let output = e.output.as_ref().ok_or(INVALID_STATE)?;
     let error = output.error.load(Ordering::Acquire);
     if error != 0 { return Err(error); }
-    let read = output.read.load(Ordering::Acquire);
-    let write = output.write.load(Ordering::Acquire);
-    let buffered = write.saturating_sub(read);
+    let bytes_per_frame = output.channels * output.bytes_per_sample;
+    let buffered = if bytes_per_frame == 0 { 0 } else {
+        output.queued_bytes.load(Ordering::Acquire) / bytes_per_frame as u64
+    };
     let eof = output.eof.load(Ordering::Acquire);
     let active = output.active.load(Ordering::Acquire);
     unsafe {
