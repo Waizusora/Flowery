@@ -146,10 +146,15 @@ impl PcmQueue {
         if self.eof.load(Ordering::Acquire) {
             return Err("PCM producer attempted to write after terminal state".into());
         }
+        let frames = (bytes.len() / self.frame_bytes) as u64;
+        // Publish occupancy before publishing ring slots so the consumer
+        // cannot decrement an as-yet-unaccounted frame.
+        self.queued_frames.fetch_add(frames, Ordering::AcqRel);
         let producer = unsafe { &mut *self.producer.get() };
-        producer.push_entire_slice(bytes)
-            .map_err(|_| "PCM producer exceeded the bounded queue capacity".to_string())?;
-        self.queued_frames.fetch_add((bytes.len() / self.frame_bytes) as u64, Ordering::Release);
+        if producer.push_entire_slice(bytes).is_err() {
+            self.queued_frames.fetch_sub(frames, Ordering::AcqRel);
+            return Err("PCM producer exceeded the bounded queue capacity".into());
+        }
         Ok(())
     }
 
