@@ -513,7 +513,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 /// Pauses the native stream and atomically discards buffered samples for a seek.
 pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
     if position < 0 { return INVALID_STATE; }
-    let e = engine().lock().unwrap_or_else(|p| p.into_inner());
+    let mut e = engine().lock().unwrap_or_else(|p| p.into_inner());
     if e.output.is_none() || e.stream.is_null() { return INVALID_STATE; }
     unsafe {
         let mut state = AAudioStream_getState(e.stream);
@@ -534,7 +534,7 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
             return INVALID_STATE;
         }
     }
-    let output = e.output.as_ref().unwrap();
+    let output = e.output.as_mut().unwrap();
     let mut discarded = [0u8; 4096];
     while !output.consumer.is_empty() {
         let (popped, _) = output.consumer.pop_partial_slice(&mut discarded);
@@ -646,7 +646,7 @@ mod tests {
         let mut output = test_output(4, 2, &bytes);
         let mut audio = [0u8; 16];
         let result = unsafe {
-            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(), audio.as_mut_ptr().cast(), 2)
+            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(), audio.as_mut_ptr().cast(), 4)
         };
         assert_eq!(result, 0);
         assert_eq!(&audio[..12], bytes.as_slice());
