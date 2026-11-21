@@ -168,9 +168,11 @@ class PlaybackService : Service() {
                 )
                 playbackState = PlaybackStateCompat.STATE_PAUSED
                 publishSessionState(restartPositionMs)
+                val outputLabel = selectedRoute.deviceName?.takeIf { it.isNotBlank() }
+                    ?: nextTarget.displayName
                 publishState(if (nextTarget == AndroidOutputTarget.USB)
-                    "USB DAC detected · paused at track start · press Play"
-                else "Audio output changed · paused · press Play")
+                    "USB DAC detected: $outputLabel · paused at track start · press Play"
+                else "Output changed to $outputLabel · paused · press Play")
                 io.execute {
                     runCatching {
                         player.reopenOutputRoute(
