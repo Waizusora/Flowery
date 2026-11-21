@@ -165,6 +165,8 @@ class PlaybackService : Service() {
                 // changes (and USB removal back to AAudio) preserve the elapsed position.
                 val transition = OutputRouteTransitionPolicy.forTarget(nextTarget, previousPositionMs)
                 val restartPositionMs = transition.positionMs
+                recoveryPositionMs = restartPositionMs
+                persistPlaybackSnapshot()
                 Log.i(
                     "FloweryDiagnostics",
                     "OUTPUT_ROUTE_REOPEN from=$previousTarget to=$nextTarget " +
@@ -306,7 +308,11 @@ class PlaybackService : Service() {
                 override fun onPause() = pausePlayback()
                 override fun onSkipToNext() = skipNext()
                 override fun onSkipToPrevious() = skipPrevious()
-                override fun onSeekTo(position: Long) = player.seekTo(position)
+                override fun onSeekTo(position: Long) {
+                    recoveryPositionMs = position.coerceAtLeast(0L)
+                    player.seekTo(recoveryPositionMs)
+                    persistPlaybackSnapshot()
+                }
             })
             isActive = true
         }
@@ -561,6 +567,7 @@ class PlaybackService : Service() {
         recoverySessionAvailable = true
         recoveryNeedsPrepare = false
         recoveryPositionMs = initialPositionMs.coerceAtLeast(0L)
+        playbackState = PlaybackStateCompat.STATE_CONNECTING
         persistPlaybackSnapshot()
         val virtualEntry = !queueCuePlaylists.getOrNull(selectedIndex).isNullOrBlank() ||
             !queuePlaylistNames.getOrNull(selectedIndex).isNullOrBlank()
@@ -777,6 +784,9 @@ class PlaybackService : Service() {
         focusRequest = null
         focusListener = null
         playbackState = PlaybackStateCompat.STATE_STOPPED
+        recoverySessionAvailable = false
+        recoveryNeedsPrepare = false
+        PlaybackRecoverySnapshot.clear(recoveryPreferences)
         publishState("Playback finished · end of queue")
     }
 
@@ -846,7 +856,7 @@ class PlaybackService : Service() {
 
     private fun persistPlaybackSnapshot() {
         if (!recoverySessionAvailable || queue.isEmpty()) return
-        if (!recoveryNeedsPrepare && playbackState != PlaybackStateCompat.STATE_STOPPED) {
+        if (!recoveryNeedsPrepare && (playbackState == PlaybackStateCompat.STATE_PLAYING || playbackState == PlaybackStateCompat.STATE_PAUSED)) {
             val observedPosition = runCatching { player.positionMs() }.getOrDefault(recoveryPositionMs)
             if (observedPosition >= 0L) recoveryPositionMs = observedPosition
         }
@@ -898,6 +908,9 @@ class PlaybackService : Service() {
             else -> playbackState
         }
         syncPlaybackWakeLock()
+        if (effectiveMessage.startsWith("Playing") || effectiveMessage.startsWith("Paused")) {
+            persistPlaybackSnapshot()
+        }
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, effectiveMessage)
             .putExtra(EXTRA_POSITION, player.positionMs())
             .putExtra(EXTRA_DURATION, player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs)
@@ -975,6 +988,7 @@ class PlaybackService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         Log.w("FloweryDiagnostics", "SERVICE_TASK_REMOVED index=$queueIndex queueSize=${queue.size} playbackState=$playbackState")
+        persistPlaybackSnapshot()
         super.onTaskRemoved(rootIntent)
     }
 
