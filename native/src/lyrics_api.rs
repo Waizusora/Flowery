@@ -110,18 +110,8 @@ struct ParsedLine {
     words: Vec<ParsedWord>,
 }
 
-#[no_mangle]
-pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLyricsFile(
-    mut env: JNIEnv, _class: JClass, content: JString,
-) -> jstring {
-    let content: String = match env.get_string(&content) {
-        Ok(value) => value.into(),
-        Err(error) => return throw_error(&mut env, error.to_string()),
-    };
-    let document: LyricsFile = match yaml_serde::from_str(&content) {
-        Ok(value) => value,
-        Err(error) => return throw_error(&mut env, format!("Invalid LRCLIB Lyricsfile YAML: {error}")),
-    };
+fn parse_lyrics_file(content: &str) -> Result<Vec<ParsedLine>, yaml_serde::Error> {
+    let document: LyricsFile = yaml_serde::from_str(content)?;
     let mut lines = document.lines.unwrap_or_default().into_iter().map(|line| ParsedLine {
         time_ms: line.start_ms.max(0),
         text: line.text,
@@ -133,7 +123,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLyricsF
     if lines.is_empty() {
         lines = document.plain.unwrap_or_default().lines().map(|line| ParsedLine {
             time_ms: 0,
-            text: line.trim_end_matches('\r').to_owned(),
+            text: line.trim_end_matches('\\r').to_owned(),
             words: Vec::new(),
         }).collect();
     } else {
@@ -142,6 +132,21 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLyricsF
             line.words.sort_by_key(|word| word.time_ms);
         }
     }
+    Ok(lines)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLyricsFile(
+    mut env: JNIEnv, _class: JClass, content: JString,
+) -> jstring {
+    let content: String = match env.get_string(&content) {
+        Ok(value) => value.into(),
+        Err(error) => return throw_error(&mut env, error.to_string()),
+    };
+    let lines = match parse_lyrics_file(&content) {
+        Ok(value) => value,
+        Err(error) => return throw_error(&mut env, format!("Invalid LRCLIB Lyricsfile YAML: {error}")),
+    };
     let encoded = match serde_json::to_string(&lines) {
         Ok(value) => value,
         Err(error) => return throw_error(&mut env, error.to_string()),
@@ -149,5 +154,44 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeParseLyricsF
     match env.new_string(encoded) {
         Ok(value) => value.into_raw(),
         Err(error) => throw_error(&mut env, error.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_lyrics_file;
+
+    #[test]
+    fn yaml_serde_parses_timed_lyrics_and_sorts_lines_and_words() {
+        let input = r#"
+lines:
+  - text: second
+    start_ms: 2000
+    words:
+      - text: later
+        start_ms: 2500
+      - text: earlier
+        start_ms: 2100
+  - text: first
+    start_ms: 1000
+"#;
+        let lines = parse_lyrics_file(input).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "first");
+        assert_eq!(lines[1].text, "second");
+        assert_eq!(lines[1].words[0].text, "earlier");
+        assert_eq!(lines[1].words[1].text, "later");
+    }
+
+    #[test]
+    fn yaml_serde_preserves_plain_lyrics_fallback_and_clamps_negative_time() {
+        let input = "plain: |\\n  First line\\n  Second line\\n";
+        let lines = parse_lyrics_file(input).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text, "First line");
+        assert_eq!(lines[1].text, "Second line");
+
+        let timed = parse_lyrics_file("lines:\\n  - text: negative\\n    start_ms: -50\\n").unwrap();
+        assert_eq!(timed[0].time_ms, 0);
     }
 }
