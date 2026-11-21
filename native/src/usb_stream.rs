@@ -84,8 +84,9 @@ const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
 
 #[cfg(target_os = "android")]
 struct PcmQueue {
-    producer: Mutex<Producer<u8>>,
-    consumer: Mutex<Consumer<u8>>,
+    producer: UnsafeCell<Producer<u8>>,
+    consumer: UnsafeCell<Consumer<u8>>,
+    queued_frames: AtomicU64,
     eof: AtomicBool,
     error: Mutex<Option<String>>,
     frame_bytes: usize,
@@ -96,6 +97,12 @@ struct PcmQueue {
     queued_min_frames: AtomicU64,
 }
 
+// SAFETY: PcmQueue is used with exactly one decoder producer and one USB
+// submit-worker consumer. Each endpoint is accessed mutably only by its
+// designated thread; all cross-thread state is communicated through atomics.
+#[cfg(target_os = "android")]
+unsafe impl Sync for PcmQueue {}
+
 #[cfg(target_os = "android")]
 impl PcmQueue {
     fn new(frame_bytes: usize) -> Result<Self, String> {
@@ -104,8 +111,9 @@ impl PcmQueue {
             .ok_or("PCM queue capacity overflow")?;
         let (producer, consumer) = crate::pcm_transport::new_pcm_byte_ring(capacity_bytes)?;
         Ok(Self {
-            producer: Mutex::new(producer),
-            consumer: Mutex::new(consumer),
+            producer: UnsafeCell::new(producer),
+            consumer: UnsafeCell::new(consumer),
+            queued_frames: AtomicU64::new(0),
             eof: AtomicBool::new(false),
             error: Mutex::new(None),
             frame_bytes,
@@ -118,10 +126,9 @@ impl PcmQueue {
     }
 
     fn occupancy(&self) -> (usize, bool, Option<String>) {
-        let queued_bytes = self.consumer.lock()
-            .unwrap_or_else(|error| error.into_inner()).slots();
+        let queued_frames = self.queued_frames.load(Ordering::Acquire) as usize;
         let error = self.error.lock().unwrap_or_else(|poison| poison.into_inner()).clone();
-        (queued_bytes / self.frame_bytes, self.eof.load(Ordering::Acquire), error)
+        (queued_frames, self.eof.load(Ordering::Acquire), error)
     }
 
     fn record_occupancy(&self, frames: usize) {
@@ -139,9 +146,11 @@ impl PcmQueue {
         if self.eof.load(Ordering::Acquire) {
             return Err("PCM producer attempted to write after terminal state".into());
         }
-        self.producer.lock().unwrap_or_else(|error| error.into_inner())
-            .push_entire_slice(bytes)
-            .map_err(|_| "PCM producer exceeded the bounded queue capacity".to_string())
+        let producer = unsafe { &mut *self.producer.get() };
+        producer.push_entire_slice(bytes)
+            .map_err(|_| "PCM producer exceeded the bounded queue capacity".to_string())?;
+        self.queued_frames.fetch_add((bytes.len() / self.frame_bytes) as u64, Ordering::Release);
+        Ok(())
     }
 
     fn finish(&self, error: Option<String>) {
@@ -152,21 +161,25 @@ impl PcmQueue {
     }
 
     fn take_frames(&self, requested: usize, allow_partial: bool) -> Option<Vec<u8>> {
-        let mut consumer = self.consumer.lock().unwrap_or_else(|error| error.into_inner());
+        let consumer = unsafe { &mut *self.consumer.get() };
         let available_bytes = consumer.slots();
         let available_frames = available_bytes / self.frame_bytes;
         if available_frames < requested && !allow_partial { return None; }
         let frames = available_frames.min(requested);
         let byte_count = frames.checked_mul(self.frame_bytes)?;
         let mut bytes = vec![0; byte_count];
-        let (popped, _) = consumer.pop_partial_slice(&mut bytes);
-        bytes.truncate(popped.len());
+        let popped_len = {
+            let (popped, _) = consumer.pop_partial_slice(&mut bytes);
+            popped.len()
+        };
+        bytes.truncate(popped_len);
+        self.queued_frames.fetch_sub((popped_len / self.frame_bytes) as u64, Ordering::AcqRel);
         Some(bytes)
     }
 
     fn is_drained_eof(&self) -> bool {
         self.eof.load(Ordering::Acquire)
-            && self.consumer.lock().unwrap_or_else(|error| error.into_inner()).slots() == 0
+            && self.queued_frames.load(Ordering::Acquire) == 0
     }
 
     fn metrics(&self) -> (u64, u64, u64, u64, u64) {
