@@ -27,10 +27,7 @@ This notice lists direct production dependencies used by the Flowery Android app
 | --- | --- | --- | --- |
 | Jetpack Compose UI | Compose BOM 2024.12.01 | Compose UI, Material 3, and extended icons | Apache-2.0 |
 | Activity Compose | 1.9.3 | Android activity integration | Apache-2.0 |
-| Lifecycle | 2.8.7 | Lifecycle runtime and ViewModel integration | Apache-2.0 |
 | DocumentFile | 1.0.1 | Document provider access | Apache-2.0 |
-| Room | 2.6.1 | Local database runtime | Apache-2.0 |
-| DataStore Preferences | 1.1.1 | Application preferences | Apache-2.0 |
 | AndroidX Core KTX | 1.15.0 | Android platform compatibility utilities | Apache-2.0 |
 | AndroidX Media | 1.7.0 | Media session and media integration | Apache-2.0 |
 
