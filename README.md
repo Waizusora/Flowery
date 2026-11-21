@@ -12,8 +12,8 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 - Native full/high-speed USB isochronous PCM packet scheduling primitives.
 - Experimental Android libusb file-descriptor bridge for claiming a descriptor-selected AudioStreaming interface.
 - Native USB PCM chunk packing from the Symphonia decoder and UAC explicit-feedback packet decoding; asynchronous transfer submission is not yet enabled.
-- AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities.
-- Native Rust streaming decode, source-format preservation, bounded buffering, and playback-session scheduling.
+- AAudio output using signed integer PCM, selected from the decoded source bit depth and Android API capabilities, with the Balanced (`AAUDIO_PERFORMANCE_MODE_NONE`) performance mode.
+- Native Rust streaming decode, source-format preservation, bounded `rtrb` SPSC PCM transport for AAudio and USB Direct, and playback-session scheduling.
 - Metadata reading/editing, timestamped sidecar LRC lyrics, and LRCLIB search/download for plain, synchronized, and word-synchronized lyrics.
 - Persistent last-selected track metadata restoration across application restarts.
 - Queue, seek, shuffle, repeat, and Android media-session controls. Media metadata is published when track details or duration change; periodic playback updates are limited to session position/state to avoid unnecessary SystemUI refreshes.
@@ -36,9 +36,15 @@ Flowery is an music player for local audio libraries. It uses Kotlin and Jetpack
 
 ## Audio pipeline
 
-`SAF document → Symphonia decode → source-rate PCM conversion → bounded Rust PCM ring → AAudio → Android audio routing`
+`SAF document → Symphonia decode → source-rate PCM conversion → bounded `rtrb` SPSC PCM ring → AAudio → Android audio routing`
 
 Flowery reads each file's sample rate and bit depth from its decoded stream metadata, then configures its AAudio stream at the source sample rate. Android may resample or otherwise convert the stream downstream according to the active device and system audio policy. The AAudio output boundary uses signed integer PCM
+
+## PCM transport
+
+The AAudio and direct USB routes use independent bounded `rtrb` single-producer/single-consumer (SPSC) PCM rings. Each route has one decoder-side producer and one backend-side consumer; a single SPSC ring is never shared by two consumers. The AAudio callback consumes its ring without taking the engine mutex. The USB decoder producer and USB transfer worker use separate SPSC endpoints, while the existing libusb isochronous transfer ring, packet scheduler, explicit-feedback handling, and cancellation lifecycle remain independent. Queue capacity and all writes are measured in complete interleaved PCM frames; end-of-stream and producer errors are communicated separately from PCM bytes.
+
+AAudio requests only `AAUDIO_PERFORMANCE_MODE_NONE` (Balanced). The actual performance mode is exposed through the existing output diagnostics and remains subject to Android's stream negotiation. Exclusive/Shared sharing mode is a separate setting from performance mode.
 
 ## USB audio discovery and exclusive output
 
