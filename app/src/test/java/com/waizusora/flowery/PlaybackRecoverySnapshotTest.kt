@@ -40,13 +40,15 @@ class PlaybackRecoverySnapshotTest {
         val restored = sample().copy(
             titles = listOf("Only title"),
             cueStartsMs = listOf(-5L),
+            cueEndsMs = listOf(500L, 1_000L),
             queueIndex = 99,
             repeatMode = 9,
             positionMs = -10L,
         ).normalized()
 
         assertEquals(listOf("Only title", ""), restored.titles)
-        assertEquals(listOf(0L, 0L), restored.cueStartsMs)
+        assertEquals(listOf(0L, 2_000L), restored.cueStartsMs)
+        assertEquals(listOf(500L, 0L), restored.cueEndsMs)
         assertEquals(1, restored.queueIndex)
         assertEquals(2, restored.repeatMode)
         assertEquals(0L, restored.positionMs)
