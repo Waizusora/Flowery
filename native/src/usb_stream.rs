@@ -18,7 +18,7 @@ use std::{
 };
 
 #[cfg(target_os = "android")]
-use rtrb::{Consumer, Producer, RingBuffer};
+use rtrb::{Consumer, Producer};
 
 #[cfg(target_os = "android")]
 use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
@@ -102,7 +102,7 @@ impl PcmQueue {
         if frame_bytes == 0 { return Err("PCM queue frame size is zero".into()); }
         let capacity_bytes = frame_bytes.checked_mul(PCM_QUEUE_CAPACITY_FRAMES)
             .ok_or("PCM queue capacity overflow")?;
-        let (producer, consumer) = RingBuffer::<u8>::new(capacity_bytes);
+        let (producer, consumer) = crate::pcm_transport::new_pcm_byte_ring(capacity_bytes)?;
         Ok(Self {
             producer: Mutex::new(producer),
             consumer: Mutex::new(consumer),
