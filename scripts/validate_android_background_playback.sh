@@ -5,6 +5,8 @@ PACKAGE="com.waizusora.flowery"
 SERIAL="${ANDROID_SERIAL:-}"
 RUN_DOZE=0
 RUN_TRIM=0
+CRASH_PROCESS=0
+RESTART_WAIT=30
 DURATION=900
 OUT_DIR="${PWD}/flowery-background-validation-$(date +%Y%m%d-%H%M%S)"
 
@@ -16,13 +18,16 @@ Options:
   --serial SERIAL   Select an ADB device (default: ANDROID_SERIAL / sole device)
   --doze            Force device-idle while capturing diagnostics
   --trim            Send RUNNING_LOW and RUNNING_CRITICAL trim-memory signals
+  --crash-process   Crash the app process to test sticky-service recreation (destructive)
+  --restart-wait SEC Seconds to observe service recreation (default: 30)
   --duration SEC    Doze duration in seconds (default: 900)
   --out DIR         Output directory
   -h, --help        Show this help
 
-The script does not force-stop Flowery, kill its process, change app standby
-buckets, request battery-optimization exemptions, or modify battery settings.
-Start playback manually before running it. Use a dedicated test device.
+The --crash-process option deliberately crashes Flowery and is destructive.
+Use it only on a dedicated test device after saving other work. It does not use
+Force Stop. The script never changes standby buckets, requests battery exemptions,
+or modifies battery settings. Start playback manually before running it.
 EOF
 }
 
@@ -85,6 +90,27 @@ if ((RUN_TRIM)); then
   "${ADB[@]}" shell am send-trim-memory "$PACKAGE" RUNNING_CRITICAL
   sleep 3
   "${ADB[@]}" shell dumpsys activity processes > "$OUT_DIR/processes-running-critical.txt"
+fi
+
+if ((CRASH_PROCESS)); then
+  PID_BEFORE="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\\r')"
+  if [[ -z "$PID_BEFORE" ]]; then
+    echo "Flowery is not running. Start playback and retry --crash-process." >&2
+    exit 1
+  fi
+  echo "Crashing Flowery process PID $PID_BEFORE to exercise sticky service recreation..."
+  "${ADB[@]}" shell am crash "$PACKAGE"
+  for ((elapsed=0; elapsed<RESTART_WAIT; elapsed+=2)); do
+    sleep 2
+    "${ADB[@]}" shell dumpsys activity services "$PACKAGE" > "$OUT_DIR/services-after-process-death.txt" 2>&1 || true
+    PID_AFTER="$("${ADB[@]}" shell pidof "$PACKAGE" | tr -d '\\r')"
+    if [[ -n "$PID_AFTER" && "$PID_AFTER" != "$PID_BEFORE" ]]; then
+      break
+    fi
+  done
+  printf '%s\\n' "${PID_AFTER:-not-running}" > "$OUT_DIR/pid-after.txt"
+  "${ADB[@]}" shell dumpsys media_session > "$OUT_DIR/media-session-after-process-death.txt" 2>&1 || true
+  "${ADB[@]}" shell dumpsys notification --noredact > "$OUT_DIR/notifications-after-process-death.txt" 2>&1 || true
 fi
 
 if ((RUN_DOZE)); then
