@@ -1717,7 +1717,12 @@ mod pcm_queue_tests {
         let producer_data = expected.clone();
         let producer = std::thread::spawn(move || {
             for chunk in producer_data.chunks(256 * 4) {
-                producer_queue.push(chunk).unwrap();
+                loop {
+                    if producer_queue.push(chunk).is_ok() {
+                        break;
+                    }
+                    std::thread::yield_now();
+                }
             }
             producer_queue.finish(None);
         });
