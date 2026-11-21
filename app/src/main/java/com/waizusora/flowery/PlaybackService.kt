@@ -270,7 +270,7 @@ class PlaybackService : Service() {
         audioManager = getSystemService(AUDIO_SERVICE) as AudioManager
         player = PlaybackCoordinator(this) { message ->
             if (message.startsWith("Playing") || message.startsWith("Paused") ||
-                message.startsWith("Playback error") || message == "Playback finished") {
+                message.startsWith("Playback error")) {
                 val wasSwitchingOutput = outputRouteRestartPending
                 outputRouteRestartPending = false
                 if (wasSwitchingOutput) mainHandler.postDelayed(outputRouteCheck, 100L)
