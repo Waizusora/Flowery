@@ -5,7 +5,7 @@
 
 #[cfg(target_os = "android")]
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet},
     ffi::CString,
     mem::ManuallyDrop,
     os::raw::c_char,
@@ -16,6 +16,9 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+
+#[cfg(target_os = "android")]
+use rtrb::{Consumer, Producer, RingBuffer};
 
 #[cfg(target_os = "android")]
 use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
@@ -80,15 +83,11 @@ const PCM_QUEUE_CAPACITY_FRAMES: usize = 16_384;
 const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
 
 #[cfg(target_os = "android")]
-struct PcmQueueState {
-    bytes: VecDeque<u8>,
-    eof: bool,
-    error: Option<String>,
-}
-
-#[cfg(target_os = "android")]
 struct PcmQueue {
-    state: Mutex<PcmQueueState>,
+    producer: Mutex<Producer<u8>>,
+    consumer: Mutex<Consumer<u8>>,
+    eof: AtomicBool,
+    error: Mutex<Option<String>>,
     frame_bytes: usize,
     capacity_bytes: usize,
     decoder_read_calls: AtomicU64,
@@ -104,11 +103,14 @@ impl PcmQueue {
         if frame_bytes == 0 { return Err("PCM queue frame size is zero".into()); }
         let capacity_bytes = frame_bytes.checked_mul(PCM_QUEUE_CAPACITY_FRAMES)
             .ok_or("PCM queue capacity overflow")?;
+        let (producer, consumer) = RingBuffer::<u8>::new(capacity_bytes);
         Ok(Self {
-            state: Mutex::new(PcmQueueState {
-                bytes: VecDeque::with_capacity(capacity_bytes), eof: false, error: None,
-            }),
-            frame_bytes, capacity_bytes,
+            producer: Mutex::new(producer),
+            consumer: Mutex::new(consumer),
+            eof: AtomicBool::new(false),
+            error: Mutex::new(None),
+            frame_bytes,
+            capacity_bytes,
             decoder_read_calls: AtomicU64::new(0),
             decoder_read_total_us: AtomicU64::new(0),
             decoder_read_max_us: AtomicU64::new(0),
@@ -118,8 +120,10 @@ impl PcmQueue {
     }
 
     fn occupancy(&self) -> (usize, bool, Option<String>) {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        (state.bytes.len() / self.frame_bytes, state.eof, state.error.clone())
+        let queued_bytes = self.consumer.lock()
+            .unwrap_or_else(|error| error.into_inner()).slots();
+        let error = self.error.lock().unwrap_or_else(|poison| poison.into_inner()).clone();
+        (queued_bytes / self.frame_bytes, self.eof.load(Ordering::Acquire), error)
     }
 
     fn record_occupancy(&self, frames: usize) {
@@ -134,35 +138,37 @@ impl PcmQueue {
         if bytes.len() % self.frame_bytes != 0 {
             return Err("Decoder produced PCM that is not aligned to complete frames".into());
         }
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if state.eof || state.error.is_some() {
+        if self.eof.load(Ordering::Acquire) {
             return Err("PCM producer attempted to write after terminal state".into());
         }
-        if state.bytes.len().saturating_add(bytes.len()) > self.capacity_bytes {
-            return Err("PCM producer exceeded the bounded queue capacity".into());
-        }
-        state.bytes.extend(bytes.iter().copied());
-        Ok(())
+        self.producer.lock().unwrap_or_else(|error| error.into_inner())
+            .push_entire_slice(bytes)
+            .map_err(|_| "PCM producer exceeded the bounded queue capacity".to_string())
     }
 
     fn finish(&self, error: Option<String>) {
-        let mut state = self.state.lock().unwrap_or_else(|poison| poison.into_inner());
-        if let Some(message) = error { state.error = Some(message); }
-        state.eof = true;
+        if let Some(message) = error {
+            *self.error.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(message);
+        }
+        self.eof.store(true, Ordering::Release);
     }
 
     fn take_frames(&self, requested: usize, allow_partial: bool) -> Option<Vec<u8>> {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let available = state.bytes.len() / self.frame_bytes;
-        if available < requested && !allow_partial { return None; }
-        let frames = available.min(requested);
-        let bytes = frames.checked_mul(self.frame_bytes)?;
-        Some(state.bytes.drain(..bytes).collect())
+        let mut consumer = self.consumer.lock().unwrap_or_else(|error| error.into_inner());
+        let available_bytes = consumer.slots();
+        let available_frames = available_bytes / self.frame_bytes;
+        if available_frames < requested && !allow_partial { return None; }
+        let frames = available_frames.min(requested);
+        let byte_count = frames.checked_mul(self.frame_bytes)?;
+        let mut bytes = vec![0; byte_count];
+        let (popped, _) = consumer.pop_partial_slice(&mut bytes);
+        bytes.truncate(popped.len());
+        Some(bytes)
     }
 
     fn is_drained_eof(&self) -> bool {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.eof && state.bytes.is_empty()
+        self.eof.load(Ordering::Acquire)
+            && self.consumer.lock().unwrap_or_else(|error| error.into_inner()).slots() == 0
     }
 
     fn metrics(&self) -> (u64, u64, u64, u64, u64) {
@@ -237,13 +243,11 @@ fn start_pcm_producer(
         .spawn(move || {
             raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
             while !stop.load(Ordering::Acquire) {
-                let free_frames = {
-                    let state = producer_queue.state.lock()
-                        .unwrap_or_else(|error| error.into_inner());
-                    if state.eof || state.error.is_some() { break; }
-                    producer_queue.capacity_bytes.saturating_sub(state.bytes.len())
-                        / producer_queue.frame_bytes
-                };
+                if producer_queue.eof.load(Ordering::Acquire) { break; }
+                if producer_queue.error.lock().unwrap_or_else(|error| error.into_inner()).is_some() { break; }
+                let free_frames = producer_queue.producer.lock()
+                    .unwrap_or_else(|error| error.into_inner()).slots()
+                    / producer_queue.frame_bytes;
                 if free_frames == 0 {
                     thread::sleep(Duration::from_millis(1));
                     continue;
