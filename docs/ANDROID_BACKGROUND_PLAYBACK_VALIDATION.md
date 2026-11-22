@@ -104,18 +104,21 @@ scripts/validate_android_background_playback.sh --crash-process --restart-wait 4
 
 This option uses `adb shell am crash`, not Android Settings' Force stop. It
 deliberately crashes the app and can display Android's app-crash UI. Save other
-work first. A crash-induced restart is a useful first check of sticky-service
-recreation, but it is not identical to a low-memory-killer event; record the
-result rather than assuming Android restarted the service.
+work first. An injected crash is diagnostic only. Android/MIUI may explicitly stop the
+foreground service as part of handling the crash, so this test cannot establish
+ordinary low-memory process-death recovery or prove that `START_STICKY` is
+broken. Interpret `process-recovery-report.txt` together with the ActivityManager
+markers and `recovery_observation_state`; an interrupted observation is not a
+completed recovery test.
 
 Inspect these output files:
 
-- `pid-before.txt` and `pid-after.txt`: process identity before/after.
-- `services-after-process-death.txt`: whether PlaybackService was recreated.
-- `media-session-before.txt` and `media-session-after-process-death.txt`: SystemUI media-session state.
-- `notifications-before.txt` and `notifications-after-process-death.txt`: media notification presence and actions.
-- `flowery-logcat.txt`: `SERVICE_CREATE`, `RECOVERY_SNAPSHOT_RESTORED`,
-  `RECOVERY_SERVICE_RESTART`, and `RECOVERY_MANUAL_PLAY` markers.
+- `pid-before.txt` and `pid-after.txt`: process identity before/after (`not-running` means no PID was found at capture time).
+- `services-after-process-event.txt`: whether PlaybackService was recreated.
+- `media-session-before.txt` and `media-session-after-process-event.txt`: SystemUI media-session state.
+- `notifications-before.txt` and `notifications-after-process-event.txt`: media notification presence and actions.
+- `full-logcat.txt`: complete captured logcat, including `SERVICE_CREATE`, `RECOVERY_SNAPSHOT_RESTORED`, `RECOVERY_SERVICE_RESTART`, `RECOVERY_MANUAL_PLAY`, and ActivityManager process/service lifecycle markers.
+- `process-recovery-report.txt`: test mode, before/after PID, observed process exit, new-process observation, and whether the observation window completed.
 
 After Android recreates the service, verify the notification is visible and
 reports the restored track as paused. Do not press Play until you have confirmed
