@@ -1,0 +1,148 @@
+name: Android Doze Emulator
+
+on:
+  push:
+    branches: [try]
+  pull_request:
+    branches: [try]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flowery-doze-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  doze-emulator:
+    name: Build and verify Android Doze transitions
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "8.9"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
+
+      - name: Install Android SDK and NDK packages
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          for attempt in 1 2 3; do
+            if sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "Android SDK package installation failed; retrying ($attempt/3)."
+              sleep 15
+            fi
+          done
+          exit 1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Generate native dependency lockfile
+        working-directory: native
+        run: cargo generate-lockfile
+
+      - name: Run native unit tests
+        working-directory: native
+        run: cargo test --locked
+
+      - name: Verify Kotlin and native JNI declarations
+        run: python3 scripts/check_jni_contract.py
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Compile Android native test targets
+        working-directory: native
+        run: cargo ndk --platform 26 -t arm64-v8a -t x86_64 check --tests
+
+      - name: Build Android native libraries
+        working-directory: native
+        run: cargo ndk --platform 26 -t arm64-v8a -t x86_64 -o ../app/src/main/jniLibs build --release
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Run Doze checks on Android Emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: |
+            set -euo pipefail
+            mkdir -p build/doze-report
+            REPORT="$GITHUB_WORKSPACE/build/doze-report"
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+
+            adb install -r "$APK" | tee "$REPORT/install.txt"
+            adb shell am start -n com.waizusora.flowery/.MainActivity | tee "$REPORT/launch.txt"
+
+            for attempt in $(seq 1 30); do
+              if adb shell pidof com.waizusora.flowery | tr -d '\r' | grep -q '[0-9]'; then
+                break
+              fi
+              sleep 2
+            done
+            APP_PID="$(adb shell pidof com.waizusora.flowery | tr -d '\r' | xargs)"
+            test -n "$APP_PID"
+            printf 'app_pid_before=%s\n' "$APP_PID" | tee "$REPORT/process.txt"
+
+            adb shell input keyevent 3
+
+            echo "Entering forced Light Doze"
+            adb shell dumpsys deviceidle force-idle light | tee "$REPORT/light-force.txt"
+            sleep 5
+            adb shell dumpsys deviceidle | tee "$REPORT/light-state.txt"
+            grep -Eq 'mLightState=(IDLE|IDLE_MAINTENANCE)' "$REPORT/light-state.txt"
+
+            echo "Exiting forced Light Doze"
+            adb shell dumpsys deviceidle unforce | tee "$REPORT/light-unforce.txt"
+
+            echo "Entering forced Deep Doze"
+            adb shell dumpsys deviceidle force-idle deep | tee "$REPORT/deep-force.txt"
+            sleep 5
+            adb shell dumpsys deviceidle | tee "$REPORT/deep-state.txt"
+            grep -Eq 'mState=IDLE([[:space:]]|$)' "$REPORT/deep-state.txt"
+
+            adb shell pidof com.waizusora.flowery | tr -d '\r' | xargs | tee "$REPORT/process-during-deep-doze.txt"
+
+            echo "Exiting forced Deep Doze"
+            adb shell dumpsys deviceidle unforce | tee "$REPORT/deep-unforce.txt"
+            sleep 2
+            adb shell dumpsys deviceidle | tee "$REPORT/active-state.txt"
+            grep -q 'mForceIdle=false' "$REPORT/active-state.txt"
+
+            echo "Doze transition checks passed. Playback continuity is not asserted by this workflow."
+
+      - name: Upload Doze diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flowery-doze-emulator-report
+          path: build/doze-report/
+          if-no-files-found: warn
