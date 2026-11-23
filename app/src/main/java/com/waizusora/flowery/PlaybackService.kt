@@ -838,28 +838,32 @@ class PlaybackService : Service() {
     }
 
     private fun restorePlaybackSnapshot() {
-        val snapshot = PlaybackRecoverySnapshot.load(recoveryPreferences) ?: return
-        queue.clear(); queue.addAll(snapshot.queue)
-        queueTitles.clear(); queueTitles.addAll(snapshot.titles)
-        queueArtists.clear(); queueArtists.addAll(snapshot.artists)
-        queueCueStarts.clear(); queueCueStarts.addAll(snapshot.cueStartsMs)
-        queueCueEnds.clear(); queueCueEnds.addAll(snapshot.cueEndsMs)
-        queueCuePlaylists.clear(); queueCuePlaylists.addAll(snapshot.cuePlaylists)
-        queuePlaylistNames.clear(); queuePlaylistNames.addAll(snapshot.playlistNames)
-        queuePlaylistOrders.clear(); queuePlaylistOrders.addAll(snapshot.playlistOrders)
-        queueIndex = snapshot.queueIndex
-        repeatMode = snapshot.repeatMode
-        shuffle = snapshot.shuffleEnabled
-        currentTitle = snapshot.currentTitle
-        currentArtist = snapshot.currentArtist
-        recoveryPositionMs = snapshot.positionMs
+        val snapshot = PlaybackRecoverySnapshot.load(recoveryPreferences)
+        val plan = PlaybackRecoveryPolicy.from(snapshot)
+        val restored = snapshot ?: return
+        if (!plan.sessionAvailable) return
+        queue.clear(); queue.addAll(restored.queue)
+        queueTitles.clear(); queueTitles.addAll(restored.titles)
+        queueArtists.clear(); queueArtists.addAll(restored.artists)
+        queueCueStarts.clear(); queueCueStarts.addAll(restored.cueStartsMs)
+        queueCueEnds.clear(); queueCueEnds.addAll(restored.cueEndsMs)
+        queueCuePlaylists.clear(); queueCuePlaylists.addAll(restored.cuePlaylists)
+        queuePlaylistNames.clear(); queuePlaylistNames.addAll(restored.playlistNames)
+        queuePlaylistOrders.clear(); queuePlaylistOrders.addAll(restored.playlistOrders)
+        queueIndex = restored.queueIndex
+        repeatMode = restored.repeatMode
+        shuffle = restored.shuffleEnabled
+        currentTitle = restored.currentTitle
+        currentArtist = restored.currentArtist
+        recoveryPositionMs = plan.positionMs
         enginePositionAvailable = false
-        recoverySessionAvailable = queue.isNotEmpty()
-        recoveryNeedsPrepare = recoverySessionAvailable
-        callInterruptionPolicy.restoreInterrupted(snapshot.callInterrupted)
+        recoverySessionAvailable = plan.sessionAvailable
+        recoveryNeedsPrepare = plan.requiresPrepareOnPlay
+        callInterruptionPolicy.restoreInterrupted(restored.callInterrupted)
         // A process restart never resumes audio automatically, even if it was playing before death.
-        playbackState = if (recoverySessionAvailable) PlaybackStateCompat.STATE_PAUSED else PlaybackStateCompat.STATE_STOPPED
-        Log.i("FloweryDiagnostics", "RECOVERY_SNAPSHOT_RESTORED queueSize=${queue.size} index=$queueIndex positionMs=$recoveryPositionMs wasPlaying=${snapshot.wasPlaying} callInterrupted=${snapshot.callInterrupted} autoPlay=false")
+        playbackState = if (plan.sessionAvailable && !plan.autoPlay) PlaybackStateCompat.STATE_PAUSED
+            else PlaybackStateCompat.STATE_STOPPED
+        Log.i("FloweryDiagnostics", "RECOVERY_SNAPSHOT_RESTORED queueSize=${queue.size} index=$queueIndex positionMs=$recoveryPositionMs wasPlaying=${restored.wasPlaying} callInterrupted=${restored.callInterrupted} autoPlay=${plan.autoPlay}")
         publishTrackMetadata(0L)
     }
 

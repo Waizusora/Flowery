@@ -61,11 +61,24 @@ class PlaybackRecoverySnapshotTest {
     }
 
     @Test
-    fun previouslyPlayingSessionIsRecordedButRecoveryMustRemainPaused() {
+    fun previouslyPlayingSessionRequiresExplicitPlayAndPreservesPosition() {
         val restored = PlaybackRecoverySnapshot.fromJson(sample().toJson())
+        assertNotNull(restored)
         assertTrue(restored!!.wasPlaying)
-        assertTrue(restored.callInterrupted)
-        // The service recovery contract intentionally never treats wasPlaying as auto-play permission.
-        assertFalse(restored.positionMs < 0L)
+
+        val plan = PlaybackRecoveryPolicy.from(restored)
+        assertTrue(plan.sessionAvailable)
+        assertTrue(plan.requiresPrepareOnPlay)
+        assertEquals(5_500L, plan.positionMs)
+        assertFalse(plan.autoPlay)
+    }
+
+    @Test
+    fun missingSnapshotDoesNotCreateARecoverySession() {
+        val plan = PlaybackRecoveryPolicy.from(null)
+        assertFalse(plan.sessionAvailable)
+        assertFalse(plan.requiresPrepareOnPlay)
+        assertEquals(0L, plan.positionMs)
+        assertFalse(plan.autoPlay)
     }
 }
