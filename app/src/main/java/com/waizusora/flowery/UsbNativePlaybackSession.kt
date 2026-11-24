@@ -318,7 +318,14 @@ internal class UsbNativePlaybackSession private constructor(
         put("clockRateVerified", clockNegotiationCompleted && uac2ClockSourceEntity != null)
         put("uac1RateReadbackAvailable", false)
         put("feedbackEndpointConfigured", feedbackEndpointConfigured)
-        put("feedbackRateTelemetryAvailable", false)
+        put("feedbackRateTelemetryAvailable", optDouble("feedbackRateHz", Double.NaN).isFinite())
+        put("feedbackObservedRateHz", optDouble("feedbackRateHz", Double.NaN).takeIf { it.isFinite() } ?: JSONObject.NULL)
+        put("feedbackLastObservedRateHz", optDouble("feedbackLastRateHz", Double.NaN).takeIf { it.isFinite() } ?: JSONObject.NULL)
+        put("feedbackAgeMs", optLong("feedbackAgeMs", -1L).takeIf { it >= 0L } ?: JSONObject.NULL)
+        put("feedbackSampleCount", optLong("feedbackSampleCount", 0L))
+        put("feedbackRejectedSamples", optLong("feedbackRejectedSamples", 0L))
+        put("feedbackStale", optBoolean("feedbackStale", true))
+        put("feedbackRateIsClockObservation", true)
         put("bitPerfectCandidate", bitPerfectCandidate)
     }
 
