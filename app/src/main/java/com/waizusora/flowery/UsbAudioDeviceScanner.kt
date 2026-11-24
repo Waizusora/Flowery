@@ -7,6 +7,7 @@ import android.hardware.usb.UsbDeviceConnection
 import android.hardware.usb.UsbManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.util.Log
 
 internal data class UsbAudioEndpoint(
     val address: Int,
@@ -137,9 +138,11 @@ internal class UsbAudioDeviceScanner(context: Context) {
         val connection = usbManager.openDevice(device)
             ?: return """{"ok":false,"error":"Android could not open the USB device"}"""
         return try {
-            NativeAudio.nativePlanUsbOutputCompatibility(
+            val report = NativeAudio.nativePlanUsbOutputCompatibility(
                 connection.rawDescriptors, sampleRate, channels, validBits, sourceDataFormat
             )
+            Log.i("FloweryDiagnostics", "DAC_COMPATIBILITY_PLAN device=$deviceName sourceRateHz=$sampleRate channels=$channels validBits=$validBits sourceDataFormat=$sourceDataFormat report=$report")
+            report
         } catch (error: Exception) {
             """{"ok":false,"error":${org.json.JSONObject.quote(error.message ?: "Compatibility planning failed")}}"""
         } finally {
