@@ -448,6 +448,26 @@ pub(super) fn read_usb_pcm_chunk(
     Ok(output)
 }
 
+/// Decode source frames and convert them through the persistent negotiated USB
+/// output pipeline. None marks decoder EOF; the caller must flush the pipeline.
+#[cfg(target_os = "android")]
+pub(super) fn read_usb_output_chunk(
+    handle: jlong,
+    max_source_frames: usize,
+    pipeline: &mut crate::pcm_format::UsbPcmOutputPipeline,
+) -> Result<Option<Vec<u8>>, String> {
+    if max_source_frames == 0 || max_source_frames > 16_384 {
+        return Err("USB source chunk frame count must be between 1 and 16384".into());
+    }
+    let decoder = decoder_ref(handle).ok_or("Unknown stream decoder handle")?;
+    let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+    let samples = decoder.read_usb_frames(max_source_frames)?;
+    if matches!(samples, crate::pcm_format::UsbPcmSamples::Empty) {
+        return Ok(None);
+    }
+    pipeline.process(&samples).map(Some).map_err(str::to_string)
+}
+
 
 #[cfg(target_os = "android")]
 struct StreamPumpWorker {
