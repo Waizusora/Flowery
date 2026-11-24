@@ -260,7 +260,11 @@ fun FloweryNavigation(
                 Destination.WELCOME -> WelcomeDestination(
                     foreground = foreground,
                     muted = muted,
-                    musicFolderGranted = folders.isNotEmpty(),
+                    musicFolderGranted = folders.any { folder ->
+                        context.contentResolver.persistedUriPermissions.any { permission ->
+                            permission.uri.toString() == folder.uri && permission.isReadPermission
+                        }
+                    },
                     notificationsGranted = notificationsGranted,
                     batteryOptimizationGranted = batteryOptimizationGranted,
                     onAddMusicFolder = onAddFolder,
