@@ -986,7 +986,7 @@ private fun FloweryApp(
                         Icon(
                             Icons.Default.Shuffle,
                             contentDescription = if (shuffleEnabled) "Shuffle on" else "Shuffle off",
-                            tint = if (shuffleEnabled) Color(0xFF1E90FF) else Color.White,
+                            tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else Color.White,
                             modifier = Modifier.size(25.dp)
                         )
                     }
