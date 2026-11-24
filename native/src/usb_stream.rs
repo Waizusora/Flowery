@@ -1466,8 +1466,14 @@ pub(super) fn start(
     }
     if !(1..=32).contains(&valid_bits) || !(1..=4).contains(&subslot_bytes)
         || u16::from(subslot_bytes) * 8 < u16::from(valid_bits)
-        || !(1..=3).contains(&data_format) {
-        return Err("Invalid USB PCM subslot or data format".into());
+        || !matches!(
+            (data_format, valid_bits, subslot_bytes),
+            (1, 16 | 20 | 24 | 32, 2..=4)
+                | (2, 8, 1)
+                | (3, 32, 4)
+        )
+    {
+        return Err("Invalid USB PCM subslot, precision, or data format combination".into());
     }
 
     // Serialize session lookup with close: once close acquires this gate,
