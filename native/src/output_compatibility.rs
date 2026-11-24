@@ -246,8 +246,14 @@ fn plan_from_usb_formats(
     let requires_bit_depth_reduction = output_bits < source.valid_bits;
     let requires_bit_depth_expansion = output_bits > source.valid_bits;
     let requires_sample_format_conversion = match source.sample_format {
-        SourceSampleFormat::Integer => output_format != UsbAudioDataFormat::Pcm
-            && output_format != UsbAudioDataFormat::Pcm8,
+        SourceSampleFormat::Integer => {
+            let native_format = if source.valid_bits == 8 {
+                UsbAudioDataFormat::Pcm8
+            } else {
+                UsbAudioDataFormat::Pcm
+            };
+            output_format != native_format
+        }
         SourceSampleFormat::Float32 => output_format != UsbAudioDataFormat::IeeeFloat,
     };
     let exact_native_tuple = !requires_resampling
