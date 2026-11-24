@@ -42,7 +42,10 @@ impl SincResampler {
         if taps < 16 || taps % 2 != 0 || phases < 64 {
             return Err("Windowed-sinc quality requires an even tap count >= 16 and >= 64 phases");
         }
-        let cutoff = 0.5 * (f64::from(output_rate) / f64::from(input_rate)).min(1.0) * 0.94;
+        // The sinc kernel uses the 2*fc normalized cutoff convention. At 2:1
+        // downsampling, output Nyquist is 0.5 cycles/input-sample, so this
+        // normalized cutoff is output_rate/input_rate (with a transition margin).
+        let cutoff = (f64::from(output_rate) / f64::from(input_rate)).min(1.0) * 0.94;
         let half = (taps / 2) as f64;
         let mut phase_table = Vec::with_capacity(phases + 1);
         for phase in 0..=phases {
