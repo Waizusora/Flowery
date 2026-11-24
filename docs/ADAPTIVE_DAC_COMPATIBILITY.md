@@ -58,8 +58,11 @@ The planner is the first stage, not the complete adaptive playback path. The
 following work remains required before using its selected tuple to start
 playback:
 
-- Add a stateful high-quality polyphase windowed-sinc resampler and verify
-  anti-aliasing, passband, stopband, latency, and CPU cost.
+- Integrate the new stateful 64-tap windowed-sinc resampler into USB PCM
+  production. Its pure-Rust core now retains history across chunks, uses a
+  downsampling-aware low-pass cutoff, and flushes its filter tail at EOF; it is
+  not yet called by the live USB producer. Add frequency-response, alias
+  rejection, latency, CPU, seek-reset, and hardware playback validation.
 - Add a precision-aware integer/float converter with saturation, correct
   alignment, and TPDF dithering only when reducing bit depth.
 - Apply the same output plan to USB PCM production, UAC clock negotiation,
