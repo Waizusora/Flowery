@@ -246,50 +246,136 @@ fn raise_current_thread_priority(label: &str, nice: i32) {
 }
 
 #[cfg(target_os = "android")]
+fn push_pcm_bytes_with_backpressure(
+    queue: &PcmQueue,
+    bytes: &[u8],
+    stop: &AtomicBool,
+) -> Result<bool, String> {
+    if bytes.len() % queue.frame_bytes != 0 {
+        return Err("Converted USB PCM is not aligned to complete output frames".into());
+    }
+    let total_frames = bytes.len() / queue.frame_bytes;
+    let mut offset_frames = 0usize;
+    while offset_frames < total_frames {
+        if stop.load(Ordering::Acquire) { return Ok(false); }
+        let free_frames = unsafe { (&*queue.producer.get()).slots() } / queue.frame_bytes;
+        if free_frames == 0 {
+            thread::sleep(Duration::from_millis(1));
+            continue;
+        }
+        let frames = free_frames.min(PCM_PRODUCER_CHUNK_FRAMES)
+            .min(total_frames - offset_frames);
+        let start = offset_frames * queue.frame_bytes;
+        let end = start + frames * queue.frame_bytes;
+        queue.push(&bytes[start..end])?;
+        offset_frames += frames;
+    }
+    Ok(true)
+}
+
+#[cfg(target_os = "android")]
 fn start_pcm_producer(
     decoder_handle: i64,
     config: StreamConfig,
     stop: Arc<AtomicBool>,
 ) -> Result<(Arc<PcmQueue>, JoinHandle<()>), String> {
+    let decoder = crate::streaming::decoder_ref(decoder_handle)
+        .ok_or("Unknown stream decoder handle")?;
+    let (source_rate, source_channels, source_bits, source_data_format) = {
+        let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        decoder.prime_output_format()?;
+        decoder.playback_metadata()
+    };
+    if source_channels != usize::from(config.channels) {
+        return Err(format!(
+            "USB output has {} channels but decoded source has {source_channels}",
+            config.channels
+        ));
+    }
+    let output_format = crate::pcm_format::PcmFormat {
+        sample_rate: config.sample_rate,
+        channels: u16::from(config.channels),
+        valid_bits: config.valid_bits,
+        subslot_bytes: config.subslot_bytes,
+        little_endian: true,
+    };
+    let pipeline = crate::pcm_format::UsbPcmOutputPipeline::new(
+        u32::try_from(source_rate).map_err(|_| "Source sample rate exceeds USB conversion range")?,
+        source_bits,
+        source_data_format,
+        output_format,
+        config.data_format,
+        (decoder_handle as u64) ^ u64::from(source_rate as u32).rotate_left(17),
+    ).map_err(str::to_string)?;
+    log_usb_diagnostic(&format!(
+        "USB_PCM_PIPELINE sourceRate={source_rate} sourceChannels={source_channels} sourceBits={source_bits} sourceFormat={source_data_format} outputRate={} outputChannels={} outputBits={} outputSubslot={} outputFormat={} resampling={} passthrough={}",
+        config.sample_rate, config.channels, config.valid_bits, config.subslot_bytes,
+        config.data_format, pipeline.is_resampling(), pipeline.is_passthrough()
+    ));
+
     let frame_bytes = usize::from(config.channels)
         .checked_mul(usize::from(config.subslot_bytes))
         .ok_or("PCM producer frame size overflow")?;
     let queue = Arc::new(PcmQueue::new(frame_bytes)?);
     let producer_queue = Arc::clone(&queue);
+    let producer_stop = Arc::clone(&stop);
     let worker = thread::Builder::new()
         .name("flowery-usb-pcm-decode".into())
         .spawn(move || {
             raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
-            while !stop.load(Ordering::Acquire) {
+            let mut pipeline = pipeline;
+            while !producer_stop.load(Ordering::Acquire) {
                 if producer_queue.eof.load(Ordering::Acquire) { break; }
                 if producer_queue.error.lock().unwrap_or_else(|error| error.into_inner()).is_some() { break; }
-                // This decoder worker is the sole producer endpoint owner.
+
+                // Leave headroom for the resampler's delayed filter tail and for
+                // the output/input rate ratio. The queue is measured in DAC frames.
                 let free_frames = unsafe { (&*producer_queue.producer.get()).slots() }
                     / producer_queue.frame_bytes;
-                if free_frames == 0 {
+                let usable_output_frames = free_frames.saturating_sub(128);
+                if usable_output_frames == 0 {
                     thread::sleep(Duration::from_millis(1));
                     continue;
                 }
-                let request_frames = free_frames.min(PCM_PRODUCER_CHUNK_FRAMES);
+                let input_budget = ((usable_output_frames as u128)
+                    .saturating_mul(u128::from(source_rate as u32))
+                    / u128::from(config.sample_rate))
+                    .max(1)
+                    .min(PCM_PRODUCER_CHUNK_FRAMES as u128) as usize;
+
                 let started = Instant::now();
-                let decoded = crate::streaming::read_usb_pcm_chunk(
-                    decoder_handle, request_frames, config.valid_bits,
-                    config.subslot_bytes, config.data_format,
+                let decoded = crate::streaming::read_usb_output_chunk(
+                    decoder_handle, input_budget, &mut pipeline,
                 );
                 let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
                 producer_queue.decoder_read_calls.fetch_add(1, Ordering::Relaxed);
                 producer_queue.decoder_read_total_us.fetch_add(elapsed, Ordering::Relaxed);
                 producer_queue.decoder_read_max_us.fetch_max(elapsed, Ordering::Relaxed);
+
                 match decoded {
-                    Ok(bytes) if bytes.is_empty() => {
-                        producer_queue.finish(None);
-                        break;
-                    }
-                    Ok(bytes) => {
-                        if let Err(message) = producer_queue.push(&bytes) {
-                            producer_queue.finish(Some(message));
-                            break;
+                    Ok(Some(bytes)) if bytes.is_empty() => continue,
+                    Ok(Some(bytes)) => {
+                        match push_pcm_bytes_with_backpressure(&producer_queue, &bytes, &producer_stop) {
+                            Ok(true) => {}
+                            Ok(false) => break,
+                            Err(message) => {
+                                producer_queue.finish(Some(message));
+                                break;
+                            }
                         }
+                    }
+                    Ok(None) => {
+                        match pipeline.finish() {
+                            Ok(tail) => match push_pcm_bytes_with_backpressure(
+                                &producer_queue, &tail, &producer_stop,
+                            ) {
+                                Ok(true) => producer_queue.finish(None),
+                                Ok(false) => {}
+                                Err(message) => producer_queue.finish(Some(message)),
+                            },
+                            Err(message) => producer_queue.finish(Some(message.to_string())),
+                        }
+                        break;
                     }
                     Err(message) => {
                         producer_queue.finish(Some(message));
@@ -1413,23 +1499,22 @@ pub(super) fn start(
     let decoder = crate::streaming::decoder_ref(decoder_handle)
         .ok_or("Unknown stream decoder handle")?;
     {
-        let decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
-        let (rate, decoder_channels, source_bits, source_data_format) = decoder.playback_metadata();
-        if rate != sample_rate as usize || decoder_channels != channels as usize {
+        let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+        decoder.prime_output_format()?;
+        let (source_rate, decoder_channels, source_bits, source_data_format) = decoder.playback_metadata();
+        if decoder_channels != channels as usize {
             return Err(format!(
-                "USB plan is {sample_rate} Hz/{channels} channel(s), decoder is {rate} Hz/{decoder_channels} channel(s)"
+                "USB output is {channels} channel(s), decoder is {decoder_channels} channel(s)"
             ));
         }
-        if source_data_format != data_format {
-            return Err(format!(
-                "USB descriptor data format code {data_format} does not match decoder format code {source_data_format}"
-            ));
+        if source_rate == 0 || source_rate > u32::MAX as usize
+            || !(8..=32).contains(&source_bits) || !(1..=3).contains(&source_data_format)
+        {
+            return Err("Decoded source PCM tuple is not supported by the adaptive USB pipeline".into());
         }
-        if source_bits != valid_bits {
-            return Err(format!(
-                "USB descriptor bit resolution {valid_bits} does not match decoder source precision {source_bits}"
-            ));
-        }
+        log_usb_diagnostic(&format!(
+            "USB_SOURCE_TUPLE sourceRate={source_rate} channels={decoder_channels} sourceBits={source_bits} sourceFormat={source_data_format} outputRate={sample_rate} outputBits={valid_bits} outputFormat={data_format}"
+        ));
     }
     if feedback_endpoint != 0
         && (feedback_endpoint & 0x80 == 0 || feedback_endpoint & 0x0f == 0)
