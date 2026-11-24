@@ -15,11 +15,11 @@ internal data class PlaybackRecoveryPlan(
 
 internal object PlaybackRecoveryPolicy {
     fun from(snapshot: PlaybackRecoverySnapshot?): PlaybackRecoveryPlan {
-        val available = snapshot?.queue?.isNotEmpty() == true
+        val recoverableSnapshot = snapshot?.takeIf { it.queue.isNotEmpty() }
         return PlaybackRecoveryPlan(
-            sessionAvailable = available,
-            requiresPrepareOnPlay = available,
-            positionMs = if (available) snapshot!!.positionMs.coerceAtLeast(0L) else 0L,
+            sessionAvailable = recoverableSnapshot != null,
+            requiresPrepareOnPlay = recoverableSnapshot != null,
+            positionMs = recoverableSnapshot?.positionMs?.coerceAtLeast(0L) ?: 0L,
             autoPlay = false,
         )
     }

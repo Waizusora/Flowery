@@ -74,6 +74,36 @@ class PlaybackRecoverySnapshotTest {
     }
 
     @Test
+    fun previouslyPausedSessionAlsoRequiresExplicitPlay() {
+        val pausedSnapshot = sample().copy(wasPlaying = false, callInterrupted = false)
+        val plan = PlaybackRecoveryPolicy.from(pausedSnapshot)
+
+        assertTrue(plan.sessionAvailable)
+        assertTrue(plan.requiresPrepareOnPlay)
+        assertEquals(pausedSnapshot.positionMs, plan.positionMs)
+        assertFalse(plan.autoPlay)
+    }
+
+    @Test
+    fun emptyQueueSnapshotDoesNotCreateARecoverySession() {
+        val plan = PlaybackRecoveryPolicy.from(sample().copy(queue = emptyList()))
+
+        assertFalse(plan.sessionAvailable)
+        assertFalse(plan.requiresPrepareOnPlay)
+        assertEquals(0L, plan.positionMs)
+        assertFalse(plan.autoPlay)
+    }
+
+    @Test
+    fun negativeRecoveryPositionIsClampedToZero() {
+        val plan = PlaybackRecoveryPolicy.from(sample().copy(positionMs = -500L))
+
+        assertTrue(plan.sessionAvailable)
+        assertEquals(0L, plan.positionMs)
+        assertFalse(plan.autoPlay)
+    }
+
+    @Test
     fun missingSnapshotDoesNotCreateARecoverySession() {
         val plan = PlaybackRecoveryPolicy.from(null)
         assertFalse(plan.sessionAvailable)
