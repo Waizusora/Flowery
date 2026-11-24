@@ -183,7 +183,7 @@ mod tests {
         let mut resampler = SincResampler::new(96_000, 48_000, 1).unwrap();
         let mut output = resampler.process(&vec![0.25; 96_000]).unwrap();
         output.extend(resampler.finish().unwrap());
-        assert!(output.len() / 2 >= 47_900);
+        assert!(output.len() >= 47_900);
         assert!((rms(&output[128..output.len() - 128]) - 0.25).abs() < 1.0e-3);
     }
 
