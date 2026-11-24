@@ -268,10 +268,10 @@ pub(super) fn decoded_output_format(
             if matches!(declared_bits, 16 | 20 | 24 | 32) { declared_bits } else { 32 },
             1,
         )),
-        // Lossy codecs commonly decode to normalized F32. USB DACs generally
-        // advertise integer PCM, so expose a 24-bit integer USB output format
-        // and quantize only at the USB boundary.
-        UsbPcmSamples::F32(_) => Ok((24, 1)),
+        // Report the decoder's actual representation, not a hypothetical USB
+        // output encoding. The compatibility planner may later select integer PCM
+        // and request a deliberate F32-to-integer conversion.
+        UsbPcmSamples::F32(_) => Ok((32, 3)),
         UsbPcmSamples::F64(_) => Ok((64, 4)),
         UsbPcmSamples::Empty => Err("Decoder has not produced a PCM sample buffer"),
     }
@@ -587,7 +587,7 @@ mod tests {
     #[test]
     fn decoded_output_format_uses_actual_sample_representation_not_container_hints() {
         assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((24, 1)));
-        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((24, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((32, 3)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S16(vec![1]), 0), Ok((16, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S24(vec![1]), 0), Ok((24, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S32(vec![1]), 24), Ok((24, 1)));
