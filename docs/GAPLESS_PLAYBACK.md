@@ -53,6 +53,19 @@ The native `GaplessBoundary` contract distinguishes decoder EOF from queue EOF:
 
 The state machine is deliberately pure and unit-tested. It defines coordination semantics but is not yet wired into the Android player or native output workers.
 
+
+## Prepared decoder ownership foundation
+
+The Android layer now has a `PreparedPlaybackSlot` ownership primitive for a
+single prefetched decoder/session resource bundle. It is generation- and URI-keyed,
+transfers ownership exactly once, closes replaced or stale resources, and can be
+invalidated on seek/skip/route changes. Unit tests cover stale publication,
+generation replacement, one-shot transfer, mismatched keys, and cleanup.
+
+This is an ownership primitive only: it is not yet called by `PlaybackService`
+or `FloweryPlayer`, and it does not yet create decoders or keep an output alive.
+Runtime prefetch and producer handoff remain unimplemented.
+
 ## Current scope
 
 The native transition planner and generation-safe queue-boundary contract are implemented and unit-tested. Gapless playback is **not yet enabled** in the player. Runtime integration, decoder prefetch, persistent output ownership, and hardware validation remain subsequent steps.
