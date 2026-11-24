@@ -442,21 +442,67 @@ internal class UsbNativePlaybackSession private constructor(
                         "readable=${volumeControl?.readableChannels?.joinToString(separator = ",") ?: "none"} " +
                         "writable=${volumeControl?.writableChannels?.joinToString(separator = ",") ?: "none"}"
                 )
-                val planJson = try {
+                val compatibilityJson = try {
                     JSONObject(
-                        NativeAudio.nativePlanUsbAudioPlayback(
+                        NativeAudio.nativePlanUsbOutputCompatibility(
                             rawDescriptors, sampleRate, channels, sourceBits, sourceDataFormat
                         )
                     )
                 } catch (error: Throwable) {
-                    Log.e("FloweryUsbNative", "USB_PROBE_PLAN_EXCEPTION device=${device.deviceName}", error)
+                    Log.e("FloweryUsbNative", "USB_COMPATIBILITY_PLAN_EXCEPTION device=${device.deviceName}", error)
                     probe.close()
-                    Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=planner-exception")
+                    Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=compatibility-planner-exception")
+                    lastError = error
+                    continue
+                }
+                if (!compatibilityJson.optBoolean("ok")) {
+                    probe.close()
+                    lastError = IllegalStateException(
+                        compatibilityJson.optString("error", "No compatible DAC output tuple")
+                    )
+                    Log.w("FloweryUsbNative", "USB_COMPATIBILITY_REJECTED device=${device.deviceName} error=${lastError?.message}")
+                    continue
+                }
+                val outputRate = compatibilityJson.optInt("output_sample_rate", -1)
+                val outputBits = compatibilityJson.optInt("output_valid_bits", -1)
+                val outputSubslot = compatibilityJson.optInt("output_subslot_bytes", -1)
+                val outputFormatName = compatibilityJson.optString("output_data_format", "")
+                val outputDataFormat = when (outputFormatName) {
+                    "pcm" -> 1
+                    "pcm8" -> 2
+                    "ieee_float" -> 3
+                    else -> 0
+                }
+                if (outputRate <= 0 || outputBits !in 8..32 ||
+                    outputSubslot !in 1..4 || outputDataFormat !in 1..3
+                ) {
+                    probe.close()
+                    lastError = IllegalStateException("Native compatibility planner returned an invalid output tuple")
+                    continue
+                }
+                Log.i(
+                    "FloweryUsbNative",
+                    "DAC_COMPATIBILITY sourceRate=$sampleRate sourceBits=$sourceBits sourceFormat=$sourceDataFormat " +
+                        "outputRate=$outputRate outputBits=$outputBits outputSubslot=$outputSubslot " +
+                        "outputFormat=$outputFormatName resampling=${compatibilityJson.optBoolean("requires_resampling")} " +
+                        "bitDepthConversion=${compatibilityJson.optBoolean("requires_bit_depth_conversion")} " +
+                        "bitPerfect=${compatibilityJson.optString("bit_perfect")}"
+                )
+                val planJson = try {
+                    JSONObject(
+                        NativeAudio.nativePlanUsbAudioPlayback(
+                            rawDescriptors, outputRate, channels, outputBits, outputDataFormat
+                        )
+                    )
+                } catch (error: Throwable) {
+                    Log.e("FloweryUsbNative", "USB_TRANSPORT_PLAN_EXCEPTION device=${device.deviceName}", error)
+                    probe.close()
+                    Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=transport-planner-exception")
                     lastError = error
                     continue
                 }
                 probe.close()
-                Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=descriptor-planning-complete")
+                Log.i("FloweryUsbNative", "USB_PROBE_CONNECTION_CLOSED device=${device.deviceName} reason=adaptive-descriptor-planning-complete")
 
                 if (!planJson.optBoolean("ok")) {
                     Log.w("FloweryUsbNative", "USB_PLAN_REJECTED device=${device.deviceName} error=${planJson.optString("error", "unknown")}")
@@ -476,7 +522,7 @@ internal class UsbNativePlaybackSession private constructor(
                 val subslot = plan.optInt("subslot_bytes", -1)
                 val bits = plan.optInt("bit_resolution", -1)
                 val planDataFormat = plan.optString("data_format", "")
-                val expectedDataFormat = when (sourceDataFormat) {
+                val expectedDataFormat = when (outputDataFormat) {
                     1 -> "pcm"
                     2 -> "pcm8"
                     3 -> "ieee_float"
@@ -563,7 +609,7 @@ internal class UsbNativePlaybackSession private constructor(
                 Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval synchronizationType=$synchronizationType synchronization=$synchronizationName sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
-                    subslot !in 1..4 || bits != sourceBits ||
+                    subslot !in 1..4 || bits != outputBits || subslot != outputSubslot ||
                     planDataFormat != expectedDataFormat ||
                     (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
                     invalidUac2ClockPlan
@@ -584,8 +630,8 @@ internal class UsbNativePlaybackSession private constructor(
                 Log.i("FloweryUsbNative", "USB_NATIVE_SESSION_READY device=${device.deviceName} busSpeed=${native.busSpeed()} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} requestedRate=$sampleRate")
                 return Result.success(
                     UsbNativePlaybackSession(
-                        native, decoderHandle, sampleRate, endpoint, packet,
-                        interval, channels, bits, subslot, sourceDataFormat, feedbackEndpoint, feedbackPacket,
+                        native, decoderHandle, outputRate, endpoint, packet,
+                        interval, channels, bits, subslot, outputDataFormat, feedbackEndpoint, feedbackPacket,
                         if (isUac2) clockControlInterface else null,
                         if (isUac2) clockSourceEntity else null,
                         if (isUac2) clockControls else null,
