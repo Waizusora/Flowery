@@ -504,8 +504,18 @@ class MainActivity : ComponentActivity() {
         runCatching {
             contentResolver.takePersistableUriPermission(
                 uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
             )
+        }.onFailure { error ->
+            Log.w("FloweryDiagnostics", "SAF_PERSIST_READ_GRANT_FAILURE uri=$uri", error)
+        }
+        val persistedGrants = contentResolver.persistedUriPermissions.map {
+            SafReadGrant(it.uri.toString(), it.isReadPermission)
+        }
+        if (!SafPermissionPolicy.hasReadGrant(uri.toString(), persistedGrants)) {
+            Log.e("FloweryDiagnostics", "SAF_FOLDER_REJECTED_NO_PERSISTED_READ_GRANT uri=$uri")
+            status = "Folder access could not be retained · select the folder again"
+            return
         }
         if (folders.none { it.uri == uri.toString() }) {
             getSharedPreferences("flowery_preferences", MODE_PRIVATE).edit()
@@ -520,10 +530,12 @@ class MainActivity : ComponentActivity() {
     private fun removeFolder(folder: LibraryFolder) {
         folders.remove(folder)
         runCatching {
-            contentResolver.releasePersistableUriPermission(
-                Uri.parse(folder.uri),
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
+            val uri = Uri.parse(folder.uri)
+            val grant = contentResolver.persistedUriPermissions.firstOrNull { it.uri == uri }
+            var flags = 0
+            if (grant?.isReadPermission == true) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            if (grant?.isWritePermission == true) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            if (flags != 0) contentResolver.releasePersistableUriPermission(uri, flags)
         }
         persistFolders()
         tracks.removeAll { it.folder == folder.name || it.folder.startsWith("${folder.name}/") }

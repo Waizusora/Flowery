@@ -17,7 +17,18 @@ class LibraryScanner(private val context: Context) {
     fun scan(roots: List<LibraryFolder>): List<AudioTrackItem> {
         val snapshot = JSONArray()
         roots.filter { it.enabled }.forEach { root ->
-            val document = DocumentFile.fromTreeUri(context, Uri.parse(root.uri)) ?: return@forEach
+            val rootUri = Uri.parse(root.uri)
+            val hasReadGrant = context.contentResolver.persistedUriPermissions.any {
+                it.uri == rootUri && it.isReadPermission
+            }
+            if (!hasReadGrant) {
+                throw SecurityException("Missing persisted read access for folder ${root.name}; select the folder again")
+            }
+            val document = DocumentFile.fromTreeUri(context, rootUri)
+                ?: throw IllegalStateException("Unable to open selected folder: ${root.name}")
+            if (!document.exists() || !document.canRead()) {
+                throw SecurityException("Selected folder is no longer readable: ${root.name}")
+            }
             val entries = JSONArray()
             collect(document, "", entries)
             snapshot.put(JSONObject().put("name", root.name).put("entries", entries))
