@@ -48,9 +48,11 @@ stream not bit-perfect relative to the decoded PCM. Lossy source formats must
 also not be described as bit-perfect copies of an original uncompressed master;
 the relevant comparison is the decoded PCM at Flowery's output boundary.
 
-AAudio is not declared bit-perfect by this USB-specific planner. Android's
-AudioFlinger, Audio HAL, route DSP, and downstream device processing remain
-outside Flowery's control.
+Bit-perfect is a USB Direct-only feature and diagnostic. AAudio does not
+participate in bit-perfect evaluation: it uses Android-managed output, and
+Info Audio reports its actual stream characteristics without displaying a
+bit-perfect status. Android's AudioFlinger, Audio HAL, route DSP, and downstream
+device processing remain outside Flowery's control.
 
 ## Required follow-up before enabling adaptive playback
 
