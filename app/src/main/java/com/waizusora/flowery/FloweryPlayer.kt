@@ -576,6 +576,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     fun outputBitDepthConversionRequired(): Boolean = outputBitDepthConversionRequired
     fun outputSampleFormatConversionRequired(): Boolean = outputSampleFormatConversionRequired
     fun outputBitPerfectCandidate(): Boolean = outputBitPerfectCandidate
+    fun usbPlaybackStatusJson(): String = if (usbRouteActive) {
+        runCatching { usbPlaybackSession?.status()?.toString().orEmpty() }.getOrDefault("")
+    } else ""
     fun outputBackendLabel(): String = when {
         !outputReady -> "—"
         usbRouteActive -> "USB Direct"
