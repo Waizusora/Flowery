@@ -8,7 +8,8 @@ use serde::Serialize;
 
 use crate::usb_audio::{parse_configuration_descriptors, UsbAudioDataFormat, UsbAudioFormat};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SourceSampleFormat {
     Integer,
     Float32,
@@ -232,9 +233,7 @@ pub fn plan_usb_output_compatibility(
     let exact_native_tuple = !requires_resampling
         && !requires_bit_depth_conversion
         && !requires_sample_format_conversion
-        && format.channels == Some(source.channels)
-        && source.sample_format == SourceSampleFormat::Integer
-            .then_some(SourceSampleFormat::Integer).unwrap_or(source.sample_format);
+        && format.channels == Some(source.channels);
 
     let mut warnings = parsed.warnings;
     if requires_resampling {
