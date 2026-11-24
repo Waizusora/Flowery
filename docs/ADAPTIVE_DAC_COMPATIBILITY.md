@@ -77,18 +77,12 @@ Remaining work before considering adaptive playback production-ready:
 - Validate 24/96-to-24/48, 24/96-to-16/48, 16/44.1-to-24/48, and lossy
   Float32-to-integer paths on physical DACs, including UAC1/UAC2 clock and
   feedback behavior.
-- Publish source, decoded PCM, planned output, and actual negotiated output as
-  separate fields in Info Audio and playback diagnostics.
+- Expose the actual negotiated USB clock and feedback state separately from
+  the selected output tuple, including readback confidence for UAC1/UAC2.
+- Define and test the independent AAudio compatibility policy using the
+  actual opened AAudio stream format and sample rate; do not infer the
+  negotiated format from the requested format.
 - Promote bit-perfect from candidate to verified only after all Flowery-side
   processing and transport invariants are checked. Hardware/analog output
   cannot be certified by software telemetry alone.
-- Define an independent AAudio compatibility policy using the actual opened
-  AAudio stream format and sample rate; do not infer the negotiated format from
-  the requested format.
-- Publish source, decoded PCM, planned output, and actual output as separate
-  fields in Info Audio and playback diagnostics.
-- Promote bit-perfect from candidate to verified only after all Flowery-side
-  processing and transport invariants are checked. Hardware/analog output
-  cannot be certified by software telemetry alone.
-
 No CI, log, or text-output files are created by this feature.
