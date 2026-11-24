@@ -408,6 +408,12 @@ class MainActivity : ComponentActivity() {
                 onRequestNotificationPermission = {
                     if (android.os.Build.VERSION.SDK_INT >= 33) notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
                 },
+                onRequestBatteryOptimization = {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:$packageName")))
+                    }
+                },
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
                 onScan = ::scanLibrary,
