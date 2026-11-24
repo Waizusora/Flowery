@@ -106,6 +106,7 @@ internal class PlaybackCoordinator(
     fun outputBitDepthConversionRequired(): Boolean = engine.outputBitDepthConversionRequired()
     fun outputSampleFormatConversionRequired(): Boolean = engine.outputSampleFormatConversionRequired()
     fun outputBitPerfectCandidate(): Boolean = engine.outputBitPerfectCandidate()
+    fun usbPlaybackStatusJson(): String = engine.usbPlaybackStatusJson()
     fun outputBackendLabel(): String = engine.outputBackendLabel()
     fun usbVolumeControlDetected(): Boolean = engine.usbVolumeControlDetected()
     fun usbVolumeControlWritable(): Boolean = engine.usbVolumeControlWritable()
