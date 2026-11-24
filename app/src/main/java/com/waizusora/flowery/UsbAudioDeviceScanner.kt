@@ -118,6 +118,35 @@ internal class UsbAudioDeviceScanner(context: Context) {
         }
     }
 
+    /**
+     * Computes the best descriptor-advertised output tuple for decoded source PCM.
+     * Planning is read-only: it does not claim an interface or change the DAC clock.
+     */
+    fun planNativeCompatibility(
+        deviceName: String,
+        sampleRate: Int,
+        channels: Int,
+        validBits: Int,
+        sourceDataFormat: Int
+    ): String {
+        val device = usbManager.deviceList[deviceName]
+            ?: return """{"ok":false,"error":"USB device is no longer connected"}"""
+        if (!usbManager.hasPermission(device)) {
+            return """{"ok":false,"error":"USB permission is required before planning playback"}"""
+        }
+        val connection = usbManager.openDevice(device)
+            ?: return """{"ok":false,"error":"Android could not open the USB device"}"""
+        return try {
+            NativeAudio.nativePlanUsbOutputCompatibility(
+                connection.rawDescriptors, sampleRate, channels, validBits, sourceDataFormat
+            )
+        } catch (error: Exception) {
+            """{"ok":false,"error":${org.json.JSONObject.quote(error.message ?: "Compatibility planning failed")}}"""
+        } finally {
+            connection.close()
+        }
+    }
+
     fun scan(): UsbAudioScanResult {
         val usbDevices = usbManager.deviceList.values
             .mapNotNull(::inspectDevice)
