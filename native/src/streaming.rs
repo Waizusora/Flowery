@@ -359,8 +359,13 @@ impl StreamDecoder {
             little_endian: true,
         }.validate().map_err(str::to_string)?;
         let mut bytes = Vec::with_capacity(samples.len() * usize::from(format.subslot_bytes));
-        crate::pcm_format::encode_usb_pcm(&samples, format, &mut bytes)
-            .map_err(str::to_string)?;
+        if is_float_pcm {
+            crate::pcm_format::encode_usb_float_pcm(&samples, format, &mut bytes)
+                .map_err(str::to_string)?;
+        } else {
+            crate::pcm_format::encode_usb_pcm(&samples, format, &mut bytes)
+                .map_err(str::to_string)?;
+        }
         Ok(bytes)
     }
 
