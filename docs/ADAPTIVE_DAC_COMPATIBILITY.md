@@ -56,23 +56,32 @@ device processing remain outside Flowery's control.
 
 ## Required follow-up before enabling adaptive playback
 
-The planner is the first stage, not the complete adaptive playback path. The
-following work remains required before using its selected tuple to start
-playback:
+Adaptive tuple selection is now connected to the USB Direct startup path. The
+compatibility planner selects the DAC tuple first; the transport planner then
+resolves the exact interface, alternate, endpoint, packet schedule, feedback,
+and UAC2 clock topology for that tuple. The selected output rate is passed to
+UAC1/UAC2 clock negotiation, USB packet scheduling, playback-frame accounting,
+and seek restart.
 
-- Integrate the new stateful 64-tap windowed-sinc resampler into USB PCM
-  production. Its pure-Rust core now retains history across chunks, uses a
-  downsampling-aware low-pass cutoff, and flushes its filter tail at EOF; it is
-  not yet called by the live USB producer. Add frequency-response, alias
-  rejection, latency, CPU, seek-reset, and hardware playback validation.
-- A precision-aware PCM conversion core is now present in `pcm_format.rs`:
-  normalized conversion for typed integer/float decoder samples, saturation,
-  UAC subslot left-alignment, unsigned PCM8 packing, and deterministic TPDF
-  quantization. Unit coverage includes precision expansion without invented
-  source resolution and dither statistics. It is not yet connected to the live
-  USB producer; integration and end-to-end validation remain required.
-- Apply the same output plan to USB PCM production, UAC clock negotiation,
-  packet sizing, playback position accounting, and seek behavior.
+The live USB PCM producer now owns a persistent output pipeline. Exact native
+tuples bypass conversion and preserve the typed integer path. Mismatched tuples
+are converted through normalized high-precision samples; rate changes use the
+stateful 64-tap windowed-sinc resampler, bit-depth reduction uses TPDF dither,
+and the resampler tail is flushed at EOF. A new pipeline is created after seek,
+resetting filter history and dither state.
+
+Remaining work before considering adaptive playback production-ready:
+
+- Add frequency-response, alias-rejection, latency, CPU, seek-reset, and
+  chunk-boundary integration tests across the live producer boundary.
+- Validate 24/96-to-24/48, 24/96-to-16/48, 16/44.1-to-24/48, and lossy
+  Float32-to-integer paths on physical DACs, including UAC1/UAC2 clock and
+  feedback behavior.
+- Publish source, decoded PCM, planned output, and actual negotiated output as
+  separate fields in Info Audio and playback diagnostics.
+- Promote bit-perfect from candidate to verified only after all Flowery-side
+  processing and transport invariants are checked. Hardware/analog output
+  cannot be certified by software telemetry alone.
 - Define an independent AAudio compatibility policy using the actual opened
   AAudio stream format and sample rate; do not infer the negotiated format from
   the requested format.
