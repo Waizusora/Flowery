@@ -65,8 +65,12 @@ playback:
   downsampling-aware low-pass cutoff, and flushes its filter tail at EOF; it is
   not yet called by the live USB producer. Add frequency-response, alias
   rejection, latency, CPU, seek-reset, and hardware playback validation.
-- Add a precision-aware integer/float converter with saturation, correct
-  alignment, and TPDF dithering only when reducing bit depth.
+- A precision-aware PCM conversion core is now present in `pcm_format.rs`:
+  normalized conversion for typed integer/float decoder samples, saturation,
+  UAC subslot left-alignment, unsigned PCM8 packing, and deterministic TPDF
+  quantization. Unit coverage includes precision expansion without invented
+  source resolution and dither statistics. It is not yet connected to the live
+  USB producer; integration and end-to-end validation remain required.
 - Apply the same output plan to USB PCM production, UAC clock negotiation,
   packet sizing, playback position accounting, and seek behavior.
 - Define an independent AAudio compatibility policy using the actual opened
