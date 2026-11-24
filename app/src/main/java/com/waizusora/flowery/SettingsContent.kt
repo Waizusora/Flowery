@@ -50,6 +50,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     outputBitDepthConversionRequired: Boolean,
     outputSampleFormatConversionRequired: Boolean,
     outputBitPerfectCandidate: Boolean,
+    usbPlaybackStatusJson: String,
     volume: Float,
     onVolume: (Float) -> Unit,
     usbVolumeDetected: Boolean,
@@ -297,6 +298,27 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 usbDirect -> if (outputSampleFormatConversionRequired) "Yes" else "No"
                 else -> "Android-managed · not exposed"
             }
+            val usbStatus = remember(usbPlaybackStatusJson) {
+                runCatching { org.json.JSONObject(usbPlaybackStatusJson) }.getOrNull()
+            }
+            fun usbBoolean(key: String): Boolean? = usbStatus?.takeIf { it.has(key) && !it.isNull(key) }?.optBoolean(key)
+            fun usbNumber(key: String): Double? = usbStatus?.takeIf { it.has(key) && !it.isNull(key) }?.optDouble(key)?.takeIf { it.isFinite() }
+            val clockMode = usbStatus?.optString("clockNegotiationMode").orEmpty()
+            val clockCompleted = usbBoolean("clockNegotiationCompleted") == true
+            val clockVerified = usbBoolean("clockRateVerified") == true
+            val clockLabel = when {
+                !clockCompleted -> "Negotiation incomplete"
+                clockVerified -> "UAC2 · GET_CUR / SET_CUR verified"
+                clockMode == "UAC1_SET_CUR_UNVERIFIED" -> "UAC1 · SET_CUR, readback unavailable"
+                else -> "Negotiated · verification unavailable"
+            }
+            val feedbackConfigured = usbBoolean("feedbackEndpointConfigured") == true
+            val feedbackStale = usbBoolean("feedbackStale") != false
+            val feedbackEstimate = usbNumber("feedbackEstimatedRateHz")
+            val feedbackObserved = usbNumber("feedbackLastObservedRateHz")
+            val feedbackAge = usbNumber("feedbackAgeMs")
+            val feedbackCount = usbNumber("feedbackSampleCount")?.toLong()
+            val feedbackRejected = usbNumber("feedbackRejectedSamples")?.toLong()
             Text(
                 if (active) "PLAYBACK ACTIVE" else "NO ACTIVE PLAYBACK",
                 color = if (active) MaterialTheme.colorScheme.primary else muted,
@@ -332,9 +354,23 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 AudioInfoRow("Output bit depth", outputBitDepth.takeIf { active && it > 0 }?.let { "$it-bit" } ?: "—", color, muted)
                 AudioInfoRow("Output format", outputPcmFormat.takeIf { active && it.isNotBlank() } ?: "—", color, muted)
                 if (usbDirect) {
-                    AudioInfoRow("USB Audio Class", "—", color, muted)
-                    AudioInfoRow("Clock / feedback", "—", color, muted)
-                    AudioInfoRow("Transfer type", "—", color, muted)
+                    AudioInfoRow("USB Audio Class", when {
+                        clockMode.startsWith("UAC2") -> "UAC2"
+                        clockMode.startsWith("UAC1") -> "UAC1"
+                        else -> "—"
+                    }, color, muted)
+                    AudioInfoRow("Clock negotiation", clockLabel, color, muted)
+                    AudioInfoRow("Feedback endpoint", if (feedbackConfigured) "Configured" else "Not configured", color, muted)
+                    AudioInfoRow("Feedback estimate", feedbackEstimate?.let { "%.3f Hz".format(java.util.Locale.ROOT, it) } ?: "No sample", color, muted)
+                    AudioInfoRow("Last feedback observation", feedbackObserved?.let { "%.3f Hz".format(java.util.Locale.ROOT, it) } ?: "—", color, muted)
+                    AudioInfoRow("Feedback telemetry", when {
+                        !feedbackConfigured -> "Unavailable · no endpoint"
+                        feedbackCount == null || feedbackCount == 0L -> "Waiting for samples"
+                        feedbackStale -> "Stale · " + (feedbackAge?.toLong() ?: 0L) + " ms old"
+                        else -> "Fresh · " + (feedbackAge?.toLong() ?: 0L) + " ms old"
+                    }, color, muted)
+                    AudioInfoRow("Feedback samples", "${feedbackCount ?: 0} accepted · ${feedbackRejected ?: 0} rejected", color, muted)
+                    AudioInfoRow("Transfer type", "— · not exposed", color, muted)
                     AudioInfoRow(
                         "Bit-perfect",
                         if (outputBitPerfectCandidate) "Candidate · not verified" else "Not bit-perfect",
@@ -344,7 +380,7 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             }
             Text(
                 if (usbDirect) {
-                    "Values marked — are not exposed by USB Direct telemetry. Bit-perfect is assessed only for USB Direct and is not claimed without end-to-end verification."
+                    "Feedback observations describe the USB feedback endpoint, not the negotiated clock or analog output rate. UAC2 clock verification uses GET_CUR / SET_CUR; UAC1 SET_CUR has no readback here. Transfer type is not exposed. Bit-perfect is only a candidate until end-to-end verification."
                 } else {
                     "Values marked — are not exposed by the active AAudio telemetry. AAudio uses Android-managed audio output; bit-perfect assessment is not part of this route."
                 },
