@@ -230,6 +230,13 @@ class MainActivity : ComponentActivity() {
     private var playbackOutputSampleRateHz by mutableStateOf(0)
     private var playbackOutputBitDepth by mutableStateOf(0)
     private var playbackOutputBackend by mutableStateOf("—")
+    private var playbackDecodedSampleRateHz by mutableStateOf(0)
+    private var playbackDecodedPcmFormat by mutableStateOf("—")
+    private var playbackOutputPcmFormat by mutableStateOf("—")
+    private var playbackOutputResampling by mutableStateOf(false)
+    private var playbackOutputBitDepthConversion by mutableStateOf(false)
+    private var playbackOutputSampleFormatConversion by mutableStateOf(false)
+    private var playbackOutputBitPerfectCandidate by mutableStateOf(false)
     private var usbVolumeDetected by mutableStateOf(false)
     private var usbVolumeWritable by mutableStateOf(false)
     private var usbVolumeVerified by mutableStateOf(false)
@@ -284,6 +291,13 @@ class MainActivity : ComponentActivity() {
             playbackOutputSampleRateHz = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_SAMPLE_RATE, playbackOutputSampleRateHz)
             playbackOutputBitDepth = intent.getIntExtra(PlaybackService.EXTRA_OUTPUT_BIT_DEPTH, playbackOutputBitDepth)
             playbackOutputBackend = intent.getStringExtra(PlaybackService.EXTRA_OUTPUT_BACKEND) ?: playbackOutputBackend
+            playbackDecodedSampleRateHz = intent.getIntExtra(PlaybackService.EXTRA_DECODED_SAMPLE_RATE, playbackDecodedSampleRateHz)
+            playbackDecodedPcmFormat = intent.getStringExtra(PlaybackService.EXTRA_DECODED_PCM_FORMAT) ?: playbackDecodedPcmFormat
+            playbackOutputPcmFormat = intent.getStringExtra(PlaybackService.EXTRA_OUTPUT_PCM_FORMAT) ?: playbackOutputPcmFormat
+            playbackOutputResampling = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_RESAMPLING, playbackOutputResampling)
+            playbackOutputBitDepthConversion = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_BIT_DEPTH_CONVERSION, playbackOutputBitDepthConversion)
+            playbackOutputSampleFormatConversion = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_SAMPLE_FORMAT_CONVERSION, playbackOutputSampleFormatConversion)
+            playbackOutputBitPerfectCandidate = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_BIT_PERFECT_CANDIDATE, playbackOutputBitPerfectCandidate)
             if (intent.hasExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED)) {
                 usbVolumeDetected = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED, false)
                 usbVolumeWritable = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_WRITABLE, false)
@@ -375,6 +389,13 @@ class MainActivity : ComponentActivity() {
                 outputSampleRateHz = playbackOutputSampleRateHz,
                 outputBitDepth = playbackOutputBitDepth,
                 outputBackend = playbackOutputBackend,
+                decodedSampleRateHz = playbackDecodedSampleRateHz,
+                decodedPcmFormat = playbackDecodedPcmFormat,
+                outputPcmFormat = playbackOutputPcmFormat,
+                outputResamplingRequired = playbackOutputResampling,
+                outputBitDepthConversionRequired = playbackOutputBitDepthConversion,
+                outputSampleFormatConversionRequired = playbackOutputSampleFormatConversion,
+                outputBitPerfectCandidate = playbackOutputBitPerfectCandidate,
                 volume = volume,
                 usbVolumeDetected = usbVolumeDetected,
                 usbVolumeWritable = usbVolumeWritable,
