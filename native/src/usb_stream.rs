@@ -575,7 +575,8 @@ struct StreamConfig {
 #[cfg(target_os = "android")]
 #[derive(Default)]
 struct FeedbackTelemetry {
-    rate_millihz: AtomicU64,
+    estimated_rate_millihz: AtomicU64,
+    observed_rate_millihz: AtomicU64,
     last_sample_at_us: AtomicU64,
     sample_count: AtomicU64,
     rejected_samples: AtomicU64,
@@ -583,8 +584,9 @@ struct FeedbackTelemetry {
 
 #[cfg(target_os = "android")]
 impl FeedbackTelemetry {
-    fn record_accepted(&self, rate_hz: f64) {
-        self.rate_millihz.store((rate_hz * 1_000.0).round() as u64, Ordering::Release);
+    fn record_accepted(&self, observed_hz: f64, estimated_hz: f64) {
+        self.observed_rate_millihz.store((observed_hz * 1_000.0).round() as u64, Ordering::Release);
+        self.estimated_rate_millihz.store((estimated_hz * 1_000.0).round() as u64, Ordering::Release);
         self.last_sample_at_us.store(callback_clock_us(), Ordering::Release);
         self.sample_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -595,13 +597,14 @@ impl FeedbackTelemetry {
 
     fn snapshot(&self) -> (Option<f64>, Option<f64>, Option<u64>, u64, u64, bool) {
         const FEEDBACK_STALE_AFTER_US: u64 = 500_000;
-        let last_rate = self.rate_millihz.load(Ordering::Acquire);
+        let estimated_rate = self.estimated_rate_millihz.load(Ordering::Acquire);
+        let observed_rate = self.observed_rate_millihz.load(Ordering::Acquire);
         let last_at = self.last_sample_at_us.load(Ordering::Acquire);
         let age_us = (last_at != 0).then(|| callback_clock_us().saturating_sub(last_at));
         let fresh = age_us.is_some_and(|age| age <= FEEDBACK_STALE_AFTER_US);
         (
-            if fresh && last_rate > 0 { Some(last_rate as f64 / 1_000.0) } else { None },
-            if last_rate > 0 { Some(last_rate as f64 / 1_000.0) } else { None },
+            if fresh && estimated_rate > 0 { Some(estimated_rate as f64 / 1_000.0) } else { None },
+            if observed_rate > 0 { Some(observed_rate as f64 / 1_000.0) } else { None },
             age_us.map(|age| age / 1_000),
             self.sample_count.load(Ordering::Relaxed),
             self.rejected_samples.load(Ordering::Relaxed),
@@ -1220,7 +1223,7 @@ fn run_worker(
                                         Ok(Some(estimate)) => {
                                             feedback_rate_hz = Some(estimate);
                                             last_feedback_at = Some(Instant::now());
-                                            feedback_telemetry.record_accepted(estimate);
+                                            feedback_telemetry.record_accepted(measured, estimate);
                                             feedback_outlier_guard.record_accepted();
                                         }
                                         Ok(None) => {
