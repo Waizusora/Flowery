@@ -54,6 +54,35 @@ class PlaybackRecoverySnapshotTest {
         assertEquals(0L, restored.positionMs)
     }
 
+
+    @Test
+    fun normalizationAlignsAllQueueMetadataArraysToTheQueueLength() {
+        val restored = sample().copy(
+            titles = listOf("First", "Second", "Discarded"),
+            artists = listOf("Only artist"),
+            cueStartsMs = listOf(-10L, 2_000L),
+            cueEndsMs = listOf(500L, 1_000L, 9_000L),
+            cuePlaylists = listOf("Disc A"),
+            playlistNames = listOf("Album A", "Album B", "Discarded album"),
+            playlistOrders = listOf(4, 5, 6),
+        ).normalized()
+
+        assertEquals(listOf("First", "Second"), restored.titles)
+        assertEquals(listOf("Only artist", ""), restored.artists)
+        assertEquals(listOf(0L, 2_000L), restored.cueStartsMs)
+        assertEquals(listOf(500L, 0L), restored.cueEndsMs)
+        assertEquals(listOf("Disc A", ""), restored.cuePlaylists)
+        assertEquals(listOf("Album A", "Album B"), restored.playlistNames)
+        assertEquals(listOf(4, 5), restored.playlistOrders)
+        assertEquals(restored.queue.size, restored.titles.size)
+        assertEquals(restored.queue.size, restored.artists.size)
+        assertEquals(restored.queue.size, restored.cueStartsMs.size)
+        assertEquals(restored.queue.size, restored.cueEndsMs.size)
+        assertEquals(restored.queue.size, restored.cuePlaylists.size)
+        assertEquals(restored.queue.size, restored.playlistNames.size)
+        assertEquals(restored.queue.size, restored.playlistOrders.size)
+    }
+
     @Test
     fun rejectsUnknownVersionAndEmptyQueue() {
         assertNull(PlaybackRecoverySnapshot.fromJson(JSONObject(sample().toJson()).put("version", 99).toString()))
