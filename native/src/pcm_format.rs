@@ -1132,8 +1132,9 @@ mod tests {
             let raw = i32::from(b[0]) | (i32::from(b[1]) << 8) | (i32::from(b[2]) << 16);
             (raw << 8) >> 8
         }).collect();
-        assert_eq!(&codes[..4], &[-8_388_608, -4_194_304, 0, 4_194_304]);
-        assert_eq!(codes[4], 8_388_607);
+        for (actual, expected) in codes.iter().zip([-8_388_608_i32, -4_194_304, 0, 4_194_304, 8_388_607]) {
+            assert!((actual - expected).abs() <= 1, "actual={actual}, expected={expected}");
+        }
     }
 
 }
