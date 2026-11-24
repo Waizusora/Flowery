@@ -239,6 +239,7 @@ class MainActivity : ComponentActivity() {
     private var playbackOutputBitDepthConversion by mutableStateOf(false)
     private var playbackOutputSampleFormatConversion by mutableStateOf(false)
     private var playbackOutputBitPerfectCandidate by mutableStateOf(false)
+    private var playbackUsbStatusJson by mutableStateOf("")
     private var usbVolumeDetected by mutableStateOf(false)
     private var usbVolumeWritable by mutableStateOf(false)
     private var usbVolumeVerified by mutableStateOf(false)
@@ -300,6 +301,7 @@ class MainActivity : ComponentActivity() {
             playbackOutputBitDepthConversion = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_BIT_DEPTH_CONVERSION, playbackOutputBitDepthConversion)
             playbackOutputSampleFormatConversion = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_SAMPLE_FORMAT_CONVERSION, playbackOutputSampleFormatConversion)
             playbackOutputBitPerfectCandidate = intent.getBooleanExtra(PlaybackService.EXTRA_OUTPUT_BIT_PERFECT_CANDIDATE, playbackOutputBitPerfectCandidate)
+            playbackUsbStatusJson = intent.getStringExtra(PlaybackService.EXTRA_USB_PLAYBACK_STATUS) ?: playbackUsbStatusJson
             if (intent.hasExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED)) {
                 usbVolumeDetected = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_DETECTED, false)
                 usbVolumeWritable = intent.getBooleanExtra(PlaybackService.EXTRA_USB_VOLUME_WRITABLE, false)
@@ -398,6 +400,7 @@ class MainActivity : ComponentActivity() {
                 outputBitDepthConversionRequired = playbackOutputBitDepthConversion,
                 outputSampleFormatConversionRequired = playbackOutputSampleFormatConversion,
                 outputBitPerfectCandidate = playbackOutputBitPerfectCandidate,
+                usbPlaybackStatusJson = playbackUsbStatusJson,
                 volume = volume,
                 usbVolumeDetected = usbVolumeDetected,
                 usbVolumeWritable = usbVolumeWritable,
