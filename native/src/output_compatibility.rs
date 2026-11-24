@@ -374,6 +374,20 @@ mod tests {
     }
 
     #[test]
+    fn avoids_precision_reduction_even_when_that_requires_resampling() {
+        let source = SourcePcm { sample_rate: 96_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
+        let plan = plan_from_usb_formats(
+            &[format(96_000, 16, 2), format(48_000, 24, 3)],
+            Vec::new(),
+            source,
+        );
+        assert_eq!(plan.output_sample_rate, Some(48_000));
+        assert_eq!(plan.output_valid_bits, Some(24));
+        assert!(plan.requires_resampling);
+        assert!(!plan.requires_bit_depth_reduction);
+    }
+
+    #[test]
     fn source_rate_is_preferred_when_the_dac_advertises_it() {
         let source = SourcePcm { sample_rate: 48_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
         let plan = plan_from_usb_formats(&[format(44_100, 24, 3), format(48_000, 24, 3)], Vec::new(), source);
