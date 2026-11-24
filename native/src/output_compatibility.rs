@@ -333,7 +333,7 @@ mod tests {
     }
 
     #[test]
-    fn 24_bit_source_on_16_bit_48khz_dac_requires_resampling_and_dithered_reduction() {
+    fn twenty_four_bit_source_on_sixteen_bit_48khz_dac_requires_resampling_and_dithered_reduction() {
         let source = SourcePcm { sample_rate: 96_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
         let plan = plan_from_usb_formats(&[format(48_000, 16, 2)], Vec::new(), source);
         assert!(plan.ok);
