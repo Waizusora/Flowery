@@ -11,6 +11,7 @@ mod pcm_format;
 mod pcm_transport;
 mod playback_policy;
 mod usb_audio;
+mod output_compatibility;
 mod usb_uac2;
 mod usb_isochronous;
 mod usb_feedback;
@@ -295,6 +296,47 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbAudio
             std::ptr::null_mut()
         }
     }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlanUsbOutputCompatibility(
+    mut env: JNIEnv,
+    _class: JClass,
+    descriptors: JByteArray,
+    sample_rate: jint,
+    channels: jint,
+    valid_bits: jint,
+    source_data_format: jint,
+) -> jstring {
+    let bytes = match jbytes(&mut env, &descriptors) {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalArgumentException", error);
+            return std::ptr::null_mut();
+        }
+    };
+    let result = if sample_rate <= 0 || !(1..=8).contains(&channels)
+        || !(1..=32).contains(&valid_bits) || !(1..=3).contains(&source_data_format)
+    {
+        serde_json::json!({"ok": false, "error": "Invalid source PCM parameters"})
+    } else {
+        let source_format = match crate::output_compatibility::SourceSampleFormat::from_uac_code(source_data_format as u8) {
+            Ok(value) => value,
+            Err(error) => return write_text_to_java(&mut env, &serde_json::json!({"ok": false, "error": error}).to_string()),
+        };
+        let source = crate::output_compatibility::SourcePcm {
+            sample_rate: sample_rate as u32,
+            channels: channels as u8,
+            valid_bits: valid_bits as u8,
+            sample_format: source_format,
+        };
+        let plan = crate::output_compatibility::plan_usb_output_compatibility(&bytes, source);
+        match serde_json::to_value(plan) {
+            Ok(value) => value,
+            Err(error) => serde_json::json!({"ok": false, "error": format!("Unable to serialize output compatibility plan: {error}")}),
+        }
+    };
+    write_text_to_java(&mut env, &result.to_string())
 }
 
 #[no_mangle]
