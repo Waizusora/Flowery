@@ -163,3 +163,190 @@ mod tests {
         );
     }
 }
+
+
+/// Queue-boundary lifecycle. A decoder reaching EOF is not the same as the
+/// playback queue reaching EOF: the output owner must remain alive while the
+/// next track is prepared.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BoundaryPhase {
+    Playing { generation: u64 },
+    AwaitingNext { generation: u64 },
+    Finished { generation: u64 },
+    Cancelled { generation: u64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BoundaryEvent {
+    TrackEof { generation: u64 },
+    NextTrackReady {
+        generation: u64,
+        current: PcmSignature,
+        next: PcmSignature,
+    },
+    QueueEof { generation: u64 },
+    Cancel { generation: u64 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BoundaryAction {
+    /// Keep the existing output open and attach the next decoder producer.
+    AttachNextTrack,
+    /// The next track requires a route/format transition before it can play.
+    ReconfigureOutput(TransitionKind),
+    /// The queue, not merely the current decoder, has ended.
+    FinishQueue,
+    /// Event belongs to an old playback generation or is invalid for this phase.
+    Ignore,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct GaplessBoundary {
+    phase: BoundaryPhase,
+}
+
+impl GaplessBoundary {
+    pub(crate) fn new(generation: u64) -> Self {
+        Self { phase: BoundaryPhase::Playing { generation } }
+    }
+
+    pub(crate) fn phase(&self) -> BoundaryPhase {
+        self.phase
+    }
+
+    pub(crate) fn apply(&mut self, event: BoundaryEvent) -> BoundaryAction {
+        let event_generation = match event {
+            BoundaryEvent::TrackEof { generation }
+            | BoundaryEvent::QueueEof { generation }
+            | BoundaryEvent::Cancel { generation }
+            | BoundaryEvent::NextTrackReady { generation, .. } => generation,
+        };
+        let current_generation = match self.phase {
+            BoundaryPhase::Playing { generation }
+            | BoundaryPhase::AwaitingNext { generation }
+            | BoundaryPhase::Finished { generation }
+            | BoundaryPhase::Cancelled { generation } => generation,
+        };
+        if event_generation != current_generation {
+            return BoundaryAction::Ignore;
+        }
+
+        match (self.phase, event) {
+            (BoundaryPhase::Playing { generation }, BoundaryEvent::TrackEof { .. }) => {
+                self.phase = BoundaryPhase::AwaitingNext { generation };
+                BoundaryAction::Ignore
+            }
+            (
+                BoundaryPhase::AwaitingNext { generation },
+                BoundaryEvent::NextTrackReady { current, next, .. },
+            ) => {
+                let plan = plan_transition(current, next);
+                self.phase = BoundaryPhase::Playing { generation };
+                if plan.sample_continuous {
+                    BoundaryAction::AttachNextTrack
+                } else {
+                    BoundaryAction::ReconfigureOutput(plan.kind)
+                }
+            }
+            (
+                BoundaryPhase::AwaitingNext { generation },
+                BoundaryEvent::QueueEof { .. },
+            ) => {
+                self.phase = BoundaryPhase::Finished { generation };
+                BoundaryAction::FinishQueue
+            }
+            (
+                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation },
+                BoundaryEvent::Cancel { .. },
+            ) => {
+                self.phase = BoundaryPhase::Cancelled { generation };
+                BoundaryAction::Ignore
+            }
+            _ => BoundaryAction::Ignore,
+        }
+    }
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+
+    fn pcm(rate: u32) -> PcmSignature {
+        PcmSignature {
+            route: OutputRoute::UsbDirect,
+            sample_rate_hz: rate,
+            channels: 2,
+            valid_bits: 24,
+            sample_format: 1,
+        }
+    }
+
+    #[test]
+    fn track_eof_keeps_queue_and_output_alive_until_next_track_is_ready() {
+        let mut boundary = GaplessBoundary::new(7);
+        assert_eq!(
+            boundary.apply(BoundaryEvent::TrackEof { generation: 7 }),
+            BoundaryAction::Ignore
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::AwaitingNext { generation: 7 });
+        assert_eq!(
+            boundary.apply(BoundaryEvent::NextTrackReady {
+                generation: 7,
+                current: pcm(96_000),
+                next: pcm(96_000),
+            }),
+            BoundaryAction::AttachNextTrack
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Playing { generation: 7 });
+    }
+
+    #[test]
+    fn different_usb_rate_requests_clock_reconfiguration_not_false_gapless() {
+        let mut boundary = GaplessBoundary::new(3);
+        boundary.apply(BoundaryEvent::TrackEof { generation: 3 });
+        assert_eq!(
+            boundary.apply(BoundaryEvent::NextTrackReady {
+                generation: 3,
+                current: pcm(44_100),
+                next: pcm(96_000),
+            }),
+            BoundaryAction::ReconfigureOutput(TransitionKind::RenegotiateUsbClock)
+        );
+    }
+
+    #[test]
+    fn only_queue_eof_finishes_playback() {
+        let mut boundary = GaplessBoundary::new(11);
+        boundary.apply(BoundaryEvent::TrackEof { generation: 11 });
+        assert_eq!(
+            boundary.apply(BoundaryEvent::QueueEof { generation: 11 }),
+            BoundaryAction::FinishQueue
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Finished { generation: 11 });
+    }
+
+    #[test]
+    fn stale_generation_cannot_advance_or_finish_current_playback() {
+        let mut boundary = GaplessBoundary::new(12);
+        assert_eq!(
+            boundary.apply(BoundaryEvent::TrackEof { generation: 11 }),
+            BoundaryAction::Ignore
+        );
+        assert_eq!(
+            boundary.apply(BoundaryEvent::QueueEof { generation: 11 }),
+            BoundaryAction::Ignore
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Playing { generation: 12 });
+    }
+
+    #[test]
+    fn cancellation_invalidates_later_boundary_events() {
+        let mut boundary = GaplessBoundary::new(5);
+        boundary.apply(BoundaryEvent::Cancel { generation: 5 });
+        assert_eq!(boundary.phase(), BoundaryPhase::Cancelled { generation: 5 });
+        assert_eq!(
+            boundary.apply(BoundaryEvent::TrackEof { generation: 5 }),
+            BoundaryAction::Ignore
+        );
+    }
+}
