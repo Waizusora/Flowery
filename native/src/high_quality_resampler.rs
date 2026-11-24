@@ -110,8 +110,9 @@ impl SincResampler {
         Ok(self.produce(false))
     }
 
-    /// Mark EOF and emit the remaining output timeline, zero-padding only the
-    /// filter's right-hand support. The returned samples must be drained once.
+    /// Mark EOF and emit the remaining output timeline. Filter support beyond
+    /// either stream boundary is extended with the nearest edge sample to avoid
+    /// artificial fades on constant signals. The returned tail is drained once.
     pub fn finish(&mut self) -> Result<Vec<f64>, &'static str> {
         if self.finished {
             return Ok(Vec::new());
@@ -141,14 +142,19 @@ impl SincResampler {
                 let mut value = 0.0;
                 for tap in 0..self.taps {
                     let frame = first + tap as i64;
-                    let sample = if frame < 0 || frame >= self.total_input_frames as i64 {
+                    let bounded_frame = if frame < 0 {
+                        0
+                    } else if frame >= self.total_input_frames as i64 {
+                        self.total_input_frames.saturating_sub(1) as i64
+                    } else {
+                        frame
+                    };
+                    let local = bounded_frame - self.base_frame;
+                    let sample = if local < 0 {
                         0.0
                     } else {
-                        let local = frame - self.base_frame;
-                        if local < 0 { 0.0 } else {
-                            let index = local as usize * self.channels + channel;
-                            self.input.get(index).copied().unwrap_or(0.0)
-                        }
+                        let index = local as usize * self.channels + channel;
+                        self.input.get(index).copied().unwrap_or(0.0)
                     };
                     let a = self.phase_table[phase_index][tap];
                     let b = self.phase_table[phase_index + 1][tap];
