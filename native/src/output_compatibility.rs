@@ -124,6 +124,12 @@ fn candidate_rates(format: &UsbAudioFormat, source_rate: u32) -> Vec<u32> {
     let mut rates = format.sample_rates.clone();
     if let Some((min, max)) = format.continuous_rate_range {
         rates.extend([min, max, source_rate.clamp(min, max)]);
+    } else if format.protocol == 0x20 && rates.is_empty() {
+        // UAC2 AudioStreaming descriptors do not carry sample-rate lists.
+        // The authoritative range belongs to the Clock Source entity and is
+        // queried later during USB clock negotiation. Keep the source rate as
+        // a provisional candidate; start() must still verify it with GET_RANGE.
+        rates.push(source_rate);
     }
     rates.sort_unstable();
     rates.dedup();
@@ -389,6 +395,24 @@ mod tests {
         assert_eq!(plan.output_valid_bits, Some(24));
         assert!(plan.requires_resampling);
         assert!(!plan.requires_bit_depth_reduction);
+    }
+
+    #[test]
+    fn uac2_without_as_sample_rate_list_uses_provisional_source_rate() {
+        let mut uac2 = format(48_000, 24, 3);
+        uac2.protocol = 0x20;
+        uac2.sample_rates.clear();
+        let source = SourcePcm {
+            sample_rate: 96_000,
+            channels: 2,
+            valid_bits: 24,
+            sample_format: SourceSampleFormat::Integer,
+        };
+        let plan = plan_from_usb_formats(&[uac2], Vec::new(), source);
+        assert!(plan.ok);
+        assert_eq!(plan.output_sample_rate, Some(96_000));
+        assert!(!plan.requires_resampling);
+        assert_eq!(plan.bit_perfect, BitPerfectAssessment::Candidate);
     }
 
     #[test]
