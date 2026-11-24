@@ -196,6 +196,8 @@ pub(crate) enum BoundaryAction {
     ReconfigureOutput(TransitionKind),
     /// The queue, not merely the current decoder, has ended.
     FinishQueue,
+    /// A prefetched track has an invalid decoded PCM contract.
+    InvalidNextTrack,
     /// Event belongs to an old playback generation or is invalid for this phase.
     Ignore,
 }
@@ -240,6 +242,10 @@ impl GaplessBoundary {
                 BoundaryPhase::AwaitingNext { generation },
                 BoundaryEvent::NextTrackReady { current, next, .. },
             ) => {
+                if current.validate().is_err() || next.validate().is_err() {
+                    self.phase = BoundaryPhase::Cancelled { generation };
+                    return BoundaryAction::InvalidNextTrack;
+                }
                 let plan = plan_transition(current, next);
                 self.phase = BoundaryPhase::Playing { generation };
                 if plan.sample_continuous {
@@ -249,7 +255,7 @@ impl GaplessBoundary {
                 }
             }
             (
-                BoundaryPhase::AwaitingNext { generation },
+                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation },
                 BoundaryEvent::QueueEof { .. },
             ) => {
                 self.phase = BoundaryPhase::Finished { generation };
@@ -323,6 +329,32 @@ mod boundary_tests {
             BoundaryAction::FinishQueue
         );
         assert_eq!(boundary.phase(), BoundaryPhase::Finished { generation: 11 });
+    }
+
+    #[test]
+    fn queue_eof_can_finish_without_an_intermediate_track_eof_notification() {
+        let mut boundary = GaplessBoundary::new(14);
+        assert_eq!(
+            boundary.apply(BoundaryEvent::QueueEof { generation: 14 }),
+            BoundaryAction::FinishQueue
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Finished { generation: 14 });
+    }
+
+    #[test]
+    fn invalid_prefetched_pcm_signature_cancels_the_boundary() {
+        let mut boundary = GaplessBoundary::new(15);
+        boundary.apply(BoundaryEvent::TrackEof { generation: 15 });
+        let invalid = PcmSignature { sample_rate_hz: 0, ..pcm(48_000) };
+        assert_eq!(
+            boundary.apply(BoundaryEvent::NextTrackReady {
+                generation: 15,
+                current: pcm(48_000),
+                next: invalid,
+            }),
+            BoundaryAction::InvalidNextTrack
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Cancelled { generation: 15 });
     }
 
     #[test]
