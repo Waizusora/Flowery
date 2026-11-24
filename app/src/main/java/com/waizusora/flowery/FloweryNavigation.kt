@@ -2,6 +2,13 @@ package com.waizusora.flowery
 
 import android.app.Activity
 import android.content.Context
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.PowerManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import android.graphics.BitmapFactory
 import android.util.Base64
 import android.widget.Toast
@@ -76,13 +83,29 @@ fun FloweryNavigation(
     onShuffle: () -> Unit, onRepeat: () -> Unit, onSeek: (Long) -> Unit,
     onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit,
     audioSourceLabel: String,
-    onRequestNotificationPermission: () -> Unit
+    onRequestNotificationPermission: () -> Unit,
+    onRequestBatteryOptimization: () -> Unit
 ) {
     var destination by remember(context) {
         mutableStateOf(if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
             .getBoolean("welcome_complete", false) || folders.isNotEmpty()) Destination.PLAYER else Destination.WELCOME)
     }
     var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
+    var permissionRefresh by remember { mutableIntStateOf(0) }
+    DisposableEffect(context) {
+        val owner = context as? LifecycleOwner
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) permissionRefresh++
+        }
+        owner?.lifecycle?.addObserver(observer)
+        onDispose { owner?.lifecycle?.removeObserver(observer) }
+    }
+    val permissionRevision = permissionRefresh
+    val notificationsGranted = Build.VERSION.SDK_INT < 33 ||
+        context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    val batteryOptimizationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+        (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
+            .isIgnoringBatteryOptimizations(context.packageName)
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
@@ -161,9 +184,9 @@ fun FloweryNavigation(
     var libraryEncoding by remember { mutableStateOf(prefs.getString("library_text_encoding", "UTF-8") ?: "UTF-8") }
     val systemDark = isSystemInDarkTheme()
     val lightTheme = theme == "Light" || (theme == "System" && !systemDark)
-    val foreground = if (lightTheme) Color(0xFF292629) else Color(0xFFF4F0F0)
-    val muted = if (lightTheme) Color(0xFF746A6E) else Color(0xFFC8B9BF)
-    val background = if (lightTheme) Color(0xFFF7F6F4) else Color(0xFF171719)
+    val foreground = if (lightTheme) Color(0xFF152536) else Color(0xFFE6F4F7)
+    val muted = if (lightTheme) Color(0xFF52697C) else Color(0xFFB0C8D0)
+    val background = if (lightTheme) Color(0xFFF4F9FE) else Color(0xFF101B24)
 
     FloweryTheme(darkTheme = !lightTheme) {
     Scaffold(containerColor = background, bottomBar = {
@@ -237,7 +260,12 @@ fun FloweryNavigation(
                 Destination.WELCOME -> WelcomeDestination(
                     foreground = foreground,
                     muted = muted,
+                    musicFolderGranted = folders.isNotEmpty(),
+                    notificationsGranted = notificationsGranted,
+                    batteryOptimizationGranted = batteryOptimizationGranted,
+                    onAddMusicFolder = onAddFolder,
                     onRequestNotificationPermission = onRequestNotificationPermission,
+                    onRequestBatteryOptimization = onRequestBatteryOptimization,
                     onContinue = {
                         prefs.edit().putBoolean("welcome_complete", true).apply()
                         destination = Destination.PLAYER
