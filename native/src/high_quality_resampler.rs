@@ -42,7 +42,7 @@ impl SincResampler {
         if taps < 16 || taps % 2 != 0 || phases < 64 {
             return Err("Windowed-sinc quality requires an even tap count >= 16 and >= 64 phases");
         }
-        let cutoff = (f64::from(output_rate) / f64::from(input_rate)).min(1.0) * 0.94;
+        let cutoff = 0.5 * (f64::from(output_rate) / f64::from(input_rate)).min(1.0) * 0.94;
         let half = (taps / 2) as f64;
         let mut phase_table = Vec::with_capacity(phases + 1);
         for phase in 0..=phases {
@@ -185,6 +185,20 @@ mod tests {
         output.extend(resampler.finish().unwrap());
         assert!(output.len() >= 47_900);
         assert!((rms(&output[128..output.len() - 128]) - 0.25).abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn downsampling_rejects_tones_above_the_output_nyquist_band() {
+        let input_rate = 96_000.0;
+        let frequency = 30_000.0;
+        let input: Vec<f64> = (0..96_000)
+            .map(|i| (2.0 * std::f64::consts::PI * frequency * i as f64 / input_rate).sin())
+            .collect();
+        let mut resampler = SincResampler::new(96_000, 48_000, 1).unwrap();
+        let mut output = resampler.process(&input).unwrap();
+        output.extend(resampler.finish().unwrap());
+        let measured = rms(&output[256..output.len() - 256]);
+        assert!(measured < 0.01, "aliased tone RMS was {measured}");
     }
 
     #[test]
