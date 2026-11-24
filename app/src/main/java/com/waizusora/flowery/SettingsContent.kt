@@ -315,12 +315,14 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     AudioInfoRow("Clock / feedback", "—", color, muted)
                     AudioInfoRow("Transfer type", "—", color, muted)
                     AudioInfoRow("Bit-perfect", "Not verified", color, muted)
-                } else {
-                    AudioInfoRow("Bit-perfect", "Not applicable", color, muted)
                 }
             }
             Text(
-                "Values marked — are not exposed by the active playback telemetry. Bit-perfect is not claimed without end-to-end verification.",
+                if (usbDirect) {
+                    "Values marked — are not exposed by USB Direct telemetry. Bit-perfect is assessed only for USB Direct and is not claimed without end-to-end verification."
+                } else {
+                    "Values marked — are not exposed by the active AAudio telemetry. AAudio uses Android-managed audio output; bit-perfect assessment is not part of this route."
+                },
                 color = muted, style = MaterialTheme.typography.bodySmall
             )
         }
