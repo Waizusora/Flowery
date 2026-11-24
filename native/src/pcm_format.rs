@@ -418,6 +418,105 @@ fn validate_sample_alignment(
     Ok(())
 }
 
+
+/// Stateful deterministic TPDF generator for integer PCM requantization.
+/// It is used only on conversion paths; native integer passthrough must bypass it.
+#[derive(Clone, Debug)]
+pub(super) struct TpdfDither {
+    state: u64,
+}
+
+impl TpdfDither {
+    pub fn new(seed: u64) -> Self {
+        Self { state: if seed == 0 { 0x9e37_79b9_7f4a_7c15 } else { seed } }
+    }
+
+    fn uniform(&mut self) -> f64 {
+        let mut x = self.state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.state = x;
+        let value = x.wrapping_mul(0x2545_f491_4f6c_dd1d);
+        ((value >> 11) as f64) * (1.0 / ((1_u64 << 53) as f64))
+    }
+
+    fn tpdf_lsb(&mut self) -> f64 {
+        self.uniform() - self.uniform()
+    }
+}
+
+/// Convert the decoder's native typed PCM to normalized f64 samples.
+/// S32 from FLAC/ALAC is left-aligned; S24 is represented as a signed 24-bit code.
+pub(super) fn decoded_samples_to_normalized(
+    samples: &UsbPcmSamples,
+    source_bits: u8,
+) -> Result<Vec<f64>, &'static str> {
+    let values = match samples {
+        UsbPcmSamples::Empty => return Ok(Vec::new()),
+        UsbPcmSamples::U8(values) if source_bits == 8 =>
+            values.iter().map(|value| (f64::from(*value) - 128.0) / 128.0).collect(),
+        UsbPcmSamples::S16(values) if source_bits == 16 =>
+            values.iter().map(|value| f64::from(*value) / 32_768.0).collect(),
+        UsbPcmSamples::S24(values) if source_bits == 24 =>
+            values.iter().map(|value| f64::from(*value) / 8_388_608.0).collect(),
+        UsbPcmSamples::S32(values) if matches!(source_bits, 16 | 20 | 24 | 32) =>
+            values.iter().map(|value| f64::from(*value) / 2_147_483_648.0).collect(),
+        UsbPcmSamples::F32(values) if source_bits == 32 =>
+            values.iter().map(|value| if value.is_finite() { f64::from(*value) } else { 0.0 }).collect(),
+        UsbPcmSamples::F64(values) if source_bits == 64 =>
+            values.iter().map(|value| if value.is_finite() { *value } else { 0.0 }).collect(),
+        _ => return Err("Decoded PCM representation does not match its declared source precision"),
+    };
+    Ok(values)
+}
+
+/// Quantize normalized samples to the descriptor-selected USB Type I PCM tuple.
+/// data_format is 1 for signed integer PCM and 2 for unsigned PCM8.
+/// Exact native integer passthrough must use the existing typed encoder instead.
+pub(super) fn encode_normalized_usb_pcm(
+    samples: &[f64],
+    format: PcmFormat,
+    data_format: u8,
+    apply_dither: bool,
+    dither: &mut TpdfDither,
+    output: &mut Vec<u8>,
+) -> Result<(), &'static str> {
+    let format = format.validate()?;
+    if samples.len() % usize::from(format.channels) != 0 {
+        return Err("Normalized PCM sample count is not channel-frame aligned");
+    }
+    match data_format {
+        1 if matches!(format.valid_bits, 16 | 20 | 24 | 32) => {}
+        2 if format.valid_bits == 8 && format.subslot_bytes == 1 => {}
+        _ => return Err("Unsupported USB integer PCM data format and precision combination"),
+    }
+    output.clear();
+    let bytes = usize::from(format.subslot_bytes);
+    output.reserve(samples.len().saturating_mul(bytes));
+    if data_format == 2 {
+        for value in samples {
+            let mut scaled = (value.clamp(-1.0, 1.0) + 1.0) * 128.0;
+            if apply_dither { scaled += dither.tpdf_lsb(); }
+            output.push(scaled.round().clamp(0.0, 255.0) as u8);
+        }
+        return Ok(());
+    }
+
+    let scale = (1_i64 << (format.valid_bits - 1)) as f64;
+    let minimum = -(1_i64 << (format.valid_bits - 1));
+    let maximum = (1_i64 << (format.valid_bits - 1)) - 1;
+    let left_shift = u32::from(format.subslot_bytes) * 8 - u32::from(format.valid_bits);
+    for value in samples {
+        let mut scaled = value.clamp(-1.0, 1.0) * scale;
+        if apply_dither { scaled += dither.tpdf_lsb(); }
+        let quantized = (scaled.round() as i64).clamp(minimum, maximum);
+        let packed = ((quantized as i128) << left_shift) as u32;
+        output.extend_from_slice(&packed.to_le_bytes()[..bytes]);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{decoded_output_format, encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
@@ -801,6 +900,67 @@ mod tests {
     fn rejects_unaligned_pcm_sample_count() {
         let format = PcmFormat { sample_rate: 48_000, channels: 2, valid_bits: 16, subslot_bytes: 2, little_endian: true };
         assert!(encode_usb_pcm(&UsbPcmSamples::F64(vec![0.0]), format, &mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn normalized_conversion_expands_integer_precision_without_inventing_codes() {
+        let samples = UsbPcmSamples::S16(vec![i16::MIN, -1, 0, 1, i16::MAX]);
+        let normalized = super::decoded_samples_to_normalized(&samples, 16).unwrap();
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true };
+        let mut output = Vec::new();
+        super::encode_normalized_usb_pcm(
+            &normalized, format, 1, false, &mut super::TpdfDither::new(1), &mut output
+        ).unwrap();
+        let decoded: Vec<i32> = output.chunks_exact(3).map(|b| {
+            let raw = i32::from(b[0]) | (i32::from(b[1]) << 8) | (i32::from(b[2]) << 16);
+            (raw << 8) >> 8
+        }).collect();
+        assert_eq!(decoded, vec![-8_388_608, -256, 0, 256, 8_388_352]);
+    }
+
+    #[test]
+    fn normalized_converter_left_aligns_twenty_and_twenty_four_bit_codes() {
+        for (bits, subslot, expected) in [
+            (20_u8, 3_u8, vec![0x00, 0x00, 0x80, 0xf0, 0xff, 0x7f]),
+            (24_u8, 4_u8, vec![0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x7f]),
+        ] {
+            let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: bits, subslot_bytes: subslot, little_endian: true };
+            let mut output = Vec::new();
+            super::encode_normalized_usb_pcm(
+                &[-1.0, 1.0], format, 1, false, &mut super::TpdfDither::new(7), &mut output
+            ).unwrap();
+            assert_eq!(output, expected);
+        }
+    }
+
+    #[test]
+    fn tpdf_dither_is_bounded_and_has_near_zero_mean() {
+        let zeros = vec![0.0_f64; 40_000];
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        let mut output = Vec::new();
+        super::encode_normalized_usb_pcm(
+            &zeros, format, 1, true, &mut super::TpdfDither::new(0x1234_5678), &mut output
+        ).unwrap();
+        let codes: Vec<i16> = output.chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        assert!(codes.iter().all(|code| (-1..=1).contains(code)));
+        let mean = codes.iter().map(|code| f64::from(*code)).sum::<f64>() / codes.len() as f64;
+        assert!(mean.abs() < 0.02, "dither mean was {mean}");
+        assert!(codes.iter().any(|code| *code < 0));
+        assert!(codes.iter().any(|code| *code > 0));
+    }
+
+    #[test]
+    fn normalized_converter_saturates_non_finite_and_clipped_samples_safely() {
+        let samples = [f64::NEG_INFINITY, -2.0, 0.0, 2.0, f64::NAN, f64::INFINITY];
+        let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true };
+        let mut output = Vec::new();
+        super::encode_normalized_usb_pcm(
+            &samples, format, 1, false, &mut super::TpdfDither::new(9), &mut output
+        ).unwrap();
+        let codes: Vec<i16> = output.chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+        assert_eq!(codes, vec![-32768, -32768, 0, 32767, 0, 32767]);
     }
 
 }
