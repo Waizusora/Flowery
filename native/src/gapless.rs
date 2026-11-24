@@ -18,8 +18,8 @@ pub(crate) struct PcmSignature {
     pub sample_rate_hz: u32,
     pub channels: u8,
     pub valid_bits: u8,
-    /// Stable decoded representation identifier: 1 = signed PCM, 2 = PCM8,
-    /// 3 = IEEE float. This is not a request to convert between representations.
+    /// Stable decoded representation identifier: 1 = signed PCM, 2 = unsigned PCM8,
+    /// 3 = IEEE float32, 4 = IEEE float64. This is not a request to convert.
     pub sample_format: u8,
 }
 
@@ -34,7 +34,7 @@ impl PcmSignature {
         if !(1..=32).contains(&self.valid_bits) {
             return Err("valid bit depth must be between 1 and 32");
         }
-        if !matches!(self.sample_format, 1..=3) {
+        if !matches!(self.sample_format, 1..=4) {
             return Err("unsupported decoded PCM sample format");
         }
         Ok(self)
@@ -158,7 +158,7 @@ mod tests {
             Err("channel count must be between 1 and 8")
         );
         assert_eq!(
-            signature(OutputRoute::AAudio, 48_000, 2, 16, 4).validate(),
+            signature(OutputRoute::AAudio, 48_000, 2, 16, 5).validate(),
             Err("unsupported decoded PCM sample format")
         );
     }
