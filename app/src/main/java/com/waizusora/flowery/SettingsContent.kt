@@ -43,6 +43,13 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     outputSampleRateHz: Int,
     outputBitDepth: Int,
     outputBackend: String,
+    decodedSampleRateHz: Int,
+    decodedPcmFormat: String,
+    outputPcmFormat: String,
+    outputResamplingRequired: Boolean,
+    outputBitDepthConversionRequired: Boolean,
+    outputSampleFormatConversionRequired: Boolean,
+    outputBitPerfectCandidate: Boolean,
     volume: Float,
     onVolume: (Float) -> Unit,
     usbVolumeDetected: Boolean,
@@ -274,9 +281,22 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             val channels = currentTag?.channels?.takeIf { it > 0 }?.let {
                 when (it) { 1 -> "Mono"; 2 -> "Stereo"; else -> "$it channels" }
             } ?: "—"
-            val pcmFormat = currentTag?.bitDepth?.takeIf { it > 0 }?.let {
-                when (it) { 16 -> "S16"; 24 -> "S24"; 32 -> "S32"; else -> "$it-bit integer PCM" }
-            } ?: "—"
+            val pcmFormat = decodedPcmFormat.takeIf { active && it.isNotBlank() } ?: "—"
+            val resamplingLabel = when {
+                !active -> "—"
+                usbDirect -> if (outputResamplingRequired) "Yes · Flowery SRC" else "No"
+                else -> "Android-managed · not exposed"
+            }
+            val bitDepthConversionLabel = when {
+                !active -> "—"
+                usbDirect -> if (outputBitDepthConversionRequired) "Yes" else "No"
+                else -> "Android-managed · not exposed"
+            }
+            val sampleFormatConversionLabel = when {
+                !active -> "—"
+                usbDirect -> if (outputSampleFormatConversionRequired) "Yes" else "No"
+                else -> "Android-managed · not exposed"
+            }
             Text(
                 if (active) "PLAYBACK ACTIVE" else "NO ACTIVE PLAYBACK",
                 color = if (active) MaterialTheme.colorScheme.primary else muted,
@@ -298,23 +318,28 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
             }
             AudioInfoSection("DECODER / PCM", color, muted) {
                 AudioInfoRow("Decoder", if (currentTag != null) "Symphonia" else "—", color, muted)
-                AudioInfoRow("PCM format", pcmFormat, color, muted)
-                AudioInfoRow("Resampling", if (currentTag != null) "No · source rate preserved" else "—", color, muted)
+                AudioInfoRow("Decoded sample rate", decodedSampleRateHz.takeIf { active && it > 0 }?.let { "$it Hz" } ?: "—", color, muted)
+                AudioInfoRow("Decoded PCM format", pcmFormat, color, muted)
+                AudioInfoRow("Resampling", resamplingLabel, color, muted)
+                AudioInfoRow("Bit-depth conversion", bitDepthConversionLabel, color, muted)
+                AudioInfoRow("Sample-format conversion", sampleFormatConversionLabel, color, muted)
                 AudioInfoRow("Flowery DSP", if (currentTag != null) "Off" else "—", color, muted)
             }
             AudioInfoSection("OUTPUT", color, muted) {
                 AudioInfoRow("Backend", route, color, muted)
                 AudioInfoRow("Device", if (!active) "—" else if (usbDirect) usbAudioScan.usbDevices.firstOrNull()?.productName ?: detectedOutput.displayName else detectedOutput.displayName, color, muted)
-                AudioInfoRow("Output sample rate", outputSampleRateHz.takeIf { active && it > 0 }?.let { "$it Hz" } ?: "—", color, muted)
+                AudioInfoRow("Selected output sample rate", outputSampleRateHz.takeIf { active && it > 0 }?.let { "$it Hz" } ?: "—", color, muted)
                 AudioInfoRow("Output bit depth", outputBitDepth.takeIf { active && it > 0 }?.let { "$it-bit" } ?: "—", color, muted)
-                AudioInfoRow("Stream format", outputBitDepth.takeIf { active && it > 0 }?.let {
-                    when (it) { 16 -> "S16"; 24 -> "S24"; 32 -> "S32"; else -> "$it-bit PCM" }
-                } ?: "—", color, muted)
+                AudioInfoRow("Output format", outputPcmFormat.takeIf { active && it.isNotBlank() } ?: "—", color, muted)
                 if (usbDirect) {
                     AudioInfoRow("USB Audio Class", "—", color, muted)
                     AudioInfoRow("Clock / feedback", "—", color, muted)
                     AudioInfoRow("Transfer type", "—", color, muted)
-                    AudioInfoRow("Bit-perfect", "Not verified", color, muted)
+                    AudioInfoRow(
+                        "Bit-perfect",
+                        if (outputBitPerfectCandidate) "Candidate · not verified" else "Not bit-perfect",
+                        color, muted
+                    )
                 }
             }
             Text(
