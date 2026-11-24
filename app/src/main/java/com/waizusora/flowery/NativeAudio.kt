@@ -4,6 +4,7 @@ object NativeAudio {
     external fun nativeEngineVersion(): String
     external fun nativeParseUsbAudioDescriptors(descriptors: ByteArray): String
     external fun nativePlanUsbAudioPlayback(descriptors: ByteArray, sampleRate: Int, channels: Int, bitResolution: Int, dataFormat: Int): String
+    external fun nativePlanUsbOutputCompatibility(descriptors: ByteArray, sampleRate: Int, channels: Int, validBits: Int, sourceDataFormat: Int): String
     external fun nativeOpenUsbAudioSession(fileDescriptor: Int, interfaceNumber: Int, alternateSetting: Int): Long
     external fun nativeCloseUsbAudioSession(handle: Long): Int
     external fun nativeGetUsbBusSpeed(handle: Long): Int
