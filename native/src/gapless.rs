@@ -172,6 +172,7 @@ mod tests {
 pub(crate) enum BoundaryPhase {
     Playing { generation: u64 },
     AwaitingNext { generation: u64 },
+    Reconfiguring { generation: u64, kind: TransitionKind },
     Finished { generation: u64 },
     Cancelled { generation: u64 },
 }
@@ -184,6 +185,7 @@ pub(crate) enum BoundaryEvent {
         current: PcmSignature,
         next: PcmSignature,
     },
+    OutputReady { generation: u64 },
     QueueEof { generation: u64 },
     Cancel { generation: u64 },
 }
@@ -219,6 +221,7 @@ impl GaplessBoundary {
     pub(crate) fn apply(&mut self, event: BoundaryEvent) -> BoundaryAction {
         let event_generation = match event {
             BoundaryEvent::TrackEof { generation }
+            | BoundaryEvent::OutputReady { generation }
             | BoundaryEvent::QueueEof { generation }
             | BoundaryEvent::Cancel { generation }
             | BoundaryEvent::NextTrackReady { generation, .. } => generation,
@@ -226,6 +229,7 @@ impl GaplessBoundary {
         let current_generation = match self.phase {
             BoundaryPhase::Playing { generation }
             | BoundaryPhase::AwaitingNext { generation }
+            | BoundaryPhase::Reconfiguring { generation, .. }
             | BoundaryPhase::Finished { generation }
             | BoundaryPhase::Cancelled { generation } => generation,
         };
@@ -247,22 +251,30 @@ impl GaplessBoundary {
                     return BoundaryAction::InvalidNextTrack;
                 }
                 let plan = plan_transition(current, next);
-                self.phase = BoundaryPhase::Playing { generation };
                 if plan.sample_continuous {
+                    self.phase = BoundaryPhase::Playing { generation };
                     BoundaryAction::AttachNextTrack
                 } else {
+                    self.phase = BoundaryPhase::Reconfiguring { generation, kind: plan.kind };
                     BoundaryAction::ReconfigureOutput(plan.kind)
                 }
             }
             (
-                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation },
+                BoundaryPhase::Reconfiguring { generation, .. },
+                BoundaryEvent::OutputReady { .. },
+            ) => {
+                self.phase = BoundaryPhase::Playing { generation };
+                BoundaryAction::AttachNextTrack
+            }
+            (
+                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation } | BoundaryPhase::Reconfiguring { generation, .. },
                 BoundaryEvent::QueueEof { .. },
             ) => {
                 self.phase = BoundaryPhase::Finished { generation };
                 BoundaryAction::FinishQueue
             }
             (
-                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation },
+                BoundaryPhase::Playing { generation } | BoundaryPhase::AwaitingNext { generation } | BoundaryPhase::Reconfiguring { generation, .. },
                 BoundaryEvent::Cancel { .. },
             ) => {
                 self.phase = BoundaryPhase::Cancelled { generation };
@@ -318,6 +330,32 @@ mod boundary_tests {
             }),
             BoundaryAction::ReconfigureOutput(TransitionKind::RenegotiateUsbClock)
         );
+    }
+
+    #[test]
+    fn output_is_not_marked_playing_until_reconfiguration_completes() {
+        let mut boundary = GaplessBoundary::new(18);
+        boundary.apply(BoundaryEvent::TrackEof { generation: 18 });
+        assert_eq!(
+            boundary.apply(BoundaryEvent::NextTrackReady {
+                generation: 18,
+                current: pcm(44_100),
+                next: pcm(96_000),
+            }),
+            BoundaryAction::ReconfigureOutput(TransitionKind::RenegotiateUsbClock)
+        );
+        assert_eq!(
+            boundary.phase(),
+            BoundaryPhase::Reconfiguring {
+                generation: 18,
+                kind: TransitionKind::RenegotiateUsbClock,
+            }
+        );
+        assert_eq!(
+            boundary.apply(BoundaryEvent::OutputReady { generation: 18 }),
+            BoundaryAction::AttachNextTrack
+        );
+        assert_eq!(boundary.phase(), BoundaryPhase::Playing { generation: 18 });
     }
 
     #[test]
