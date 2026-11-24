@@ -6,6 +6,7 @@ mod catalog;
 mod queue;
 mod playback_controller;
 mod playback_session;
+mod gapless;
 mod playlists;
 mod pcm_format;
 mod pcm_transport;
