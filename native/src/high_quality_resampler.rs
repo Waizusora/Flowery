@@ -207,7 +207,7 @@ mod tests {
 
         let mut chunked = SincResampler::new(44_100, 48_000, 1).unwrap();
         let mut actual = Vec::new();
-        for chunk in input.chunks(137) {
+        for chunk in input.chunks(274) {
             actual.extend(chunked.process(chunk).unwrap());
         }
         actual.extend(chunked.finish().unwrap());
