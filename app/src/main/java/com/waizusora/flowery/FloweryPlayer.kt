@@ -21,6 +21,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val dacHardwareVolume = UsbDacHardwareVolume(context)
     private val sourceResolver = AudioSourceResolver(context)
 
+    private fun pcmFormatLabel(bits: Int, dataFormat: Int): String = when (dataFormat) {
+        1 -> "Signed PCM $bits-bit"
+        2 -> "Unsigned PCM8"
+        3 -> "IEEE Float32"
+        else -> if (bits > 0) "$bits-bit PCM" else "—"
+    }
+
     private val stopped = AtomicBoolean(false)
     private val pauseRequested = AtomicBoolean(false)
     private val outputLifecycleLock = Any()
@@ -30,6 +37,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var outputDucked = false
     @Volatile private var outputSampleRate = 0
     @Volatile private var outputBitDepth = 0
+    @Volatile private var decodedSampleRate = 0
+    @Volatile private var decodedPcmFormat = "—"
+    @Volatile private var outputPcmFormat = "—"
+    @Volatile private var outputResamplingRequired = false
+    @Volatile private var outputBitDepthConversionRequired = false
+    @Volatile private var outputSampleFormatConversionRequired = false
+    @Volatile private var outputBitPerfectCandidate = false
     @Volatile private var outputDurationMs = 0L
     @Volatile private var decoderHandle = 0L
     @Volatile private var nativeSessionHandle = 0L
@@ -156,6 +170,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val channels = preparedSession[3].toInt()
                 val sourceBits = preparedSession[4].toInt()
                 val sourceDataFormat = preparedSession[5].toInt()
+                decodedSampleRate = sourceRate
+                decodedPcmFormat = pcmFormatLabel(sourceBits, sourceDataFormat)
                 check(sessionHandle != 0L) { "The native playback session could not be created" }
                 check(sourceRate > 0 && channels in 1..8) {
                     "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels."
@@ -198,8 +214,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { queued ->
                         directUsb.seek(segmentStartMs + queued.coerceAtLeast(0L)).getOrThrow()
                     }
-                    outputSampleRate = sourceRate
-                    outputBitDepth = sourceBits
+                    outputSampleRate = directUsb.outputSampleRateHz
+                    outputBitDepth = directUsb.outputBitDepth
+                    outputPcmFormat = directUsb.outputFormatLabel
+                    outputResamplingRequired = directUsb.resamplingRequired
+                    outputBitDepthConversionRequired = directUsb.bitDepthConversionRequired
+                    outputSampleFormatConversionRequired = directUsb.sampleFormatConversionRequired
+                    outputBitPerfectCandidate = directUsb.isBitPerfectCandidate
                     val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                     val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                     outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
@@ -299,12 +320,33 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 outputSampleRate = sourceRate
                 outputBitDepth = sourceBits
+                outputPcmFormat = decodedPcmFormat
+                outputResamplingRequired = false
+                outputBitDepthConversionRequired = false
+                outputSampleFormatConversionRequired = false
+                outputBitPerfectCandidate = false
                 val sourceDurationMs = NativeAudio.nativeGetStreamDurationMs(handle)
                 val segmentLengthMs = segmentEndMs?.let { (it - segmentStartMs).coerceAtLeast(0L) }
                 outputDurationMs = segmentLengthMs ?: (sourceDurationMs - segmentStartMs).coerceAtLeast(0L)
 
                 val routeName = outputRoute.target.name
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
+                outputSampleRate = outputInfo.getOrNull(7)?.toInt()?.takeIf { it > 0 } ?: sourceRate
+                val actualFormat = outputInfo.getOrNull(10)?.toInt() ?: -1
+                outputBitDepth = when (actualFormat) {
+                    1 -> 16
+                    2 -> 32
+                    3 -> 24
+                    4 -> 32
+                    else -> sourceBits
+                }
+                outputPcmFormat = when (actualFormat) {
+                    1 -> "Signed PCM16"
+                    2 -> "IEEE Float32"
+                    3 -> "Packed signed PCM24"
+                    4 -> "Signed PCM32"
+                    else -> decodedPcmFormat
+                }
                 val sharingName = when (outputInfo.getOrNull(9)?.toInt()) {
                     0 -> "EXCLUSIVE"
                     1 -> "SHARED"
@@ -503,12 +545,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (usbRouteActive) {
             val status = runCatching { usbPlaybackSession?.status()?.toString() ?: "unavailable" }
                 .getOrElse { "error=${it.message}" }
-            return "backend=USB_DIRECT sourceRateHz=$outputSampleRate bitDepth=$outputBitDepth status=$status"
+            return "backend=USB_DIRECT decodedRateHz=$decodedSampleRate decodedPcm=$decodedPcmFormat outputRateHz=$outputSampleRate outputPcm=$outputPcmFormat resampling=$outputResamplingRequired bitDepthConversion=$outputBitDepthConversionRequired sampleFormatConversion=$outputSampleFormatConversionRequired bitPerfectCandidate=$outputBitPerfectCandidate status=$status"
         }
         val d = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull()
             ?: return "backend=AAudio diagnostics=unavailable"
         if (d.size <= 26) return "backend=AAudio diagnosticsSize=${d.size}"
-        return "backend=AAudio sourceRateHz=$outputSampleRate bitDepth=$outputBitDepth " +
+        return "backend=AAudio decodedRateHz=$decodedSampleRate decodedPcm=$decodedPcmFormat outputRateHz=$outputSampleRate outputPcm=$outputPcmFormat " +
             "callbackUnderruns=${d[0]} xrunCount=${d[1]} queuedFrames=${d[2]} ringCapacityFrames=${d[3]} " +
             "bufferSizeFrames=${d[4]} framesPerBurst=${d[5]} streamState=${d[6]} " +
             "actualRateHz=${d[7]} deviceId=${d[8]} sharingMode=${d[9]} format=${d[10]} " +
@@ -527,6 +569,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
 
     fun outputSampleRateHz(): Int = outputSampleRate
     fun outputBitDepth(): Int = outputBitDepth
+    fun decodedSampleRateHz(): Int = decodedSampleRate
+    fun decodedPcmFormatLabel(): String = decodedPcmFormat
+    fun outputPcmFormatLabel(): String = outputPcmFormat
+    fun outputResamplingRequired(): Boolean = outputResamplingRequired
+    fun outputBitDepthConversionRequired(): Boolean = outputBitDepthConversionRequired
+    fun outputSampleFormatConversionRequired(): Boolean = outputSampleFormatConversionRequired
+    fun outputBitPerfectCandidate(): Boolean = outputBitPerfectCandidate
     fun outputBackendLabel(): String = when {
         !outputReady -> "—"
         usbRouteActive -> "USB Direct"
@@ -631,6 +680,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         outputDurationMs = 0L
         outputSampleRate = 0
         outputBitDepth = 0
+        decodedSampleRate = 0
+        decodedPcmFormat = "—"
+        outputPcmFormat = "—"
+        outputResamplingRequired = false
+        outputBitDepthConversionRequired = false
+        outputSampleFormatConversionRequired = false
+        outputBitPerfectCandidate = false
         pendingSeekMs.set(-1L)
         usbRouteActive = false
         activeSegmentStartMs = 0L
