@@ -16,16 +16,18 @@ The planner is exposed to Android through
 
 ## Selection policy
 
-1. Preserve the decoded source sample rate whenever the DAC advertises it.
-2. Require an exact channel-count match; channel mapping is not silently
+1. Require an exact channel-count match; channel mapping is not silently
    invented by the planner.
-3. Prefer the decoder's native PCM representation and valid bit depth when the
-   DAC advertises that exact tuple.
-4. If the DAC only advertises another integer depth, report the required
-   bit-depth conversion. Reducing precision requires TPDF dithering.
-5. If the DAC does not advertise the source rate, select the closest advertised
-   rate and mark high-quality resampling as required.
-6. Preserve the decoder's typed PCM queue. The planner describes output work;
+2. Avoid bit-depth reduction whenever a higher-precision compatible alternate
+   exists, even when that requires sample-rate conversion.
+3. Among candidates with equivalent precision loss, preserve the source sample
+   rate whenever the DAC advertises it.
+4. Prefer the decoder's native sample representation and exact valid bit depth.
+5. If no exact sample rate exists, select the closest advertised rate and mark
+   high-quality resampling as required.
+6. Reducing integer precision requires TPDF dithering; expansion must preserve
+   sample values and must not claim additional source resolution.
+7. Preserve the decoder's typed PCM queue. The planner describes output work;
    it does not convert the decoder's samples.
 
 For example, a 24-bit/96 kHz stereo source planned against a DAC that advertises
