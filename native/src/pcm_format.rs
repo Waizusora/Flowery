@@ -572,7 +572,6 @@ impl UsbPcmOutputPipeline {
             )?)
         };
         let apply_dither = output_data_format != 3
-            && output_data_format != 2
             && output_format.valid_bits < source_bits;
         Ok(Self {
             source_rate, source_bits, source_data_format, output_format,
