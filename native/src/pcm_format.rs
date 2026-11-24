@@ -517,6 +517,126 @@ pub(super) fn encode_normalized_usb_pcm(
     Ok(())
 }
 
+
+/// Stateful conversion boundary for a negotiated USB DAC tuple.
+/// Exact source/output tuple matches retain the typed integer fast path.
+pub(super) struct UsbPcmOutputPipeline {
+    source_rate: u32,
+    source_bits: u8,
+    source_data_format: u8,
+    output_format: PcmFormat,
+    output_data_format: u8,
+    passthrough: bool,
+    resampler: Option<crate::high_quality_resampler::SincResampler>,
+    dither: TpdfDither,
+    apply_dither: bool,
+    finished: bool,
+}
+
+impl UsbPcmOutputPipeline {
+    pub fn new(
+        source_rate: u32,
+        source_bits: u8,
+        source_data_format: u8,
+        output_format: PcmFormat,
+        output_data_format: u8,
+        dither_seed: u64,
+    ) -> Result<Self, &'static str> {
+        let output_format = output_format.validate()?;
+        if source_rate == 0 || !matches!(source_bits, 8 | 16 | 20 | 24 | 32 | 64) {
+            return Err("Unsupported source PCM rate or precision");
+        }
+        if !matches!(source_data_format, 1 | 2 | 3 | 4) {
+            return Err("Unsupported source PCM data format");
+        }
+        if (source_data_format == 2 && source_bits != 8)
+            || (source_data_format == 3 && source_bits != 32)
+            || (source_data_format == 4 && source_bits != 64)
+        {
+            return Err("Source PCM precision does not match its sample representation");
+        }
+        match output_data_format {
+            1 if matches!(output_format.valid_bits, 16 | 20 | 24 | 32) => {}
+            2 if output_format.valid_bits == 8 && output_format.subslot_bytes == 1 => {}
+            3 if output_format.valid_bits == 32 && output_format.subslot_bytes == 4 => {}
+            _ => return Err("Unsupported negotiated USB output representation"),
+        }
+        let passthrough = source_rate == output_format.sample_rate
+            && source_bits == output_format.valid_bits
+            && source_data_format == output_data_format;
+        let resampler = if source_rate == output_format.sample_rate {
+            None
+        } else {
+            Some(crate::high_quality_resampler::SincResampler::new(
+                source_rate, output_format.sample_rate, usize::from(output_format.channels),
+            )?)
+        };
+        let apply_dither = output_data_format != 3
+            && output_data_format != 2
+            && output_format.valid_bits < source_bits;
+        Ok(Self {
+            source_rate, source_bits, source_data_format, output_format,
+            output_data_format, passthrough, resampler,
+            dither: TpdfDither::new(dither_seed),
+            apply_dither, finished: false,
+        })
+    }
+
+    pub fn source_rate(&self) -> u32 { self.source_rate }
+    pub fn output_rate(&self) -> u32 { self.output_format.sample_rate }
+    pub fn is_resampling(&self) -> bool { self.resampler.is_some() }
+    pub fn is_passthrough(&self) -> bool { self.passthrough }
+
+    pub fn process(&mut self, samples: &UsbPcmSamples) -> Result<Vec<u8>, &'static str> {
+        if self.finished {
+            return Err("USB PCM output pipeline has already reached EOF");
+        }
+        if matches!(samples, UsbPcmSamples::Empty) {
+            return Ok(Vec::new());
+        }
+        if self.passthrough {
+            let mut output = Vec::new();
+            encode_usb_pcm_for_data_format(
+                samples, self.output_format, self.output_data_format, &mut output,
+            )?;
+            return Ok(output);
+        }
+
+        let normalized = decoded_samples_to_normalized(samples, self.source_bits)?;
+        let processed = match self.resampler.as_mut() {
+            Some(resampler) => resampler.process(&normalized)?,
+            None => normalized,
+        };
+        self.encode_processed(&processed)
+    }
+
+    pub fn finish(&mut self) -> Result<Vec<u8>, &'static str> {
+        if self.finished { return Ok(Vec::new()); }
+        self.finished = true;
+        let Some(resampler) = self.resampler.as_mut() else {
+            return Ok(Vec::new());
+        };
+        let tail = resampler.finish()?;
+        self.encode_processed(&tail)
+    }
+
+    fn encode_processed(&mut self, samples: &[f64]) -> Result<Vec<u8>, &'static str> {
+        let mut output = Vec::new();
+        if self.output_data_format == 3 {
+            let floats = UsbPcmSamples::F32(samples.iter().map(|value| *value as f32).collect());
+            encode_usb_float_pcm(&floats, self.output_format, &mut output)?;
+        } else {
+            encode_normalized_usb_pcm(
+                samples, self.output_format, self.output_data_format,
+                self.apply_dither, &mut self.dither, &mut output,
+            )?;
+        }
+        Ok(output)
+    }
+
+    pub fn source_data_format(&self) -> u8 { self.source_data_format }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{decoded_output_format, encode_usb_float_pcm, encode_usb_pcm, encode_usb_pcm_for_data_format, PcmFormat, UsbPcmSamples};
@@ -961,6 +1081,59 @@ mod tests {
         let codes: Vec<i16> = output.chunks_exact(2)
             .map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
         assert_eq!(codes, vec![-32768, -32768, 0, 32767, 0, 32767]);
+    }
+
+    #[test]
+    fn output_pipeline_keeps_exact_integer_tuple_on_byte_preserving_fast_path() {
+        let source = UsbPcmSamples::S16(vec![i16::MIN, -1, 0, 1, i16::MAX]);
+        let mut pipeline = super::UsbPcmOutputPipeline::new(
+            48_000, 16, 1,
+            PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true },
+            1, 42,
+        ).unwrap();
+        assert!(pipeline.is_passthrough());
+        assert!(!pipeline.is_resampling());
+        let output = pipeline.process(&source).unwrap();
+        let expected: Vec<u8> = [i16::MIN, -1, 0, 1, i16::MAX]
+            .iter().flat_map(|value| value.to_le_bytes()).collect();
+        assert_eq!(output, expected);
+        assert!(pipeline.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn output_pipeline_resamples_and_flushes_the_final_output_frames() {
+        let source = UsbPcmSamples::S16(vec![0; 96_000]);
+        let mut pipeline = super::UsbPcmOutputPipeline::new(
+            96_000, 16, 1,
+            PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 16, subslot_bytes: 2, little_endian: true },
+            1, 42,
+        ).unwrap();
+        assert!(!pipeline.is_passthrough());
+        assert!(pipeline.is_resampling());
+        let mut output = pipeline.process(&source).unwrap();
+        output.extend(pipeline.finish().unwrap());
+        assert!(output.len() >= 47_900 * 2);
+        assert!(output.len() <= 48_000 * 2);
+        assert!(pipeline.finish().unwrap().is_empty());
+    }
+
+    #[test]
+    fn output_pipeline_converts_lossy_float32_to_dithered_integer_pcm() {
+        let source = UsbPcmSamples::F32(vec![-1.0, -0.5, 0.0, 0.5, 1.0]);
+        let mut pipeline = super::UsbPcmOutputPipeline::new(
+            48_000, 32, 3,
+            PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true },
+            1, 123,
+        ).unwrap();
+        assert!(!pipeline.is_passthrough());
+        let output = pipeline.process(&source).unwrap();
+        assert_eq!(output.len(), 15);
+        let codes: Vec<i32> = output.chunks_exact(3).map(|b| {
+            let raw = i32::from(b[0]) | (i32::from(b[1]) << 8) | (i32::from(b[2]) << 16);
+            (raw << 8) >> 8
+        }).collect();
+        assert_eq!(&codes[..4], &[-8_388_608, -4_194_304, 0, 4_194_304]);
+        assert_eq!(codes[4], 8_388_607);
     }
 
 }
