@@ -922,7 +922,7 @@ mod tests {
     fn normalized_converter_left_aligns_twenty_and_twenty_four_bit_codes() {
         for (bits, subslot, expected) in [
             (20_u8, 3_u8, vec![0x00, 0x00, 0x80, 0xf0, 0xff, 0x7f]),
-            (24_u8, 4_u8, vec![0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, 0x7f]),
+            (24_u8, 4_u8, vec![0x00, 0x00, 0x00, 0x80, 0x00, 0xff, 0xff, 0x7f]),
         ] {
             let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: bits, subslot_bytes: subslot, little_endian: true };
             let mut output = Vec::new();
