@@ -194,14 +194,23 @@ pub fn plan_usb_output_compatibility(
     descriptors: &[u8],
     source: SourcePcm,
 ) -> OutputCompatibilityPlan {
+    let parsed = parse_configuration_descriptors(descriptors);
+    plan_from_usb_formats(&parsed.formats, parsed.warnings, source)
+}
+
+/// Pure planner entry point used by descriptor parsing and deterministic tests.
+fn plan_from_usb_formats(
+    formats: &[UsbAudioFormat],
+    parser_warnings: Vec<String>,
+    source: SourcePcm,
+) -> OutputCompatibilityPlan {
     let source = match source.validate() {
         Ok(source) => source,
         Err(error) => return OutputCompatibilityPlan::failure(source, error),
     };
-    let parsed = parse_configuration_descriptors(descriptors);
     let mut choices = Vec::new();
 
-    for format in &parsed.formats {
+    for format in formats {
         if format.channels != Some(source.channels) {
             continue;
         }
@@ -219,7 +228,7 @@ pub fn plan_usb_output_compatibility(
             source,
             "No USB playback alternate supports the source channel count and a compatible PCM encoding",
         );
-        failure.warnings = parsed.warnings;
+        failure.warnings = parser_warnings;
         return failure;
     };
 
@@ -235,7 +244,7 @@ pub fn plan_usb_output_compatibility(
         && !requires_sample_format_conversion
         && format.channels == Some(source.channels);
 
-    let mut warnings = parsed.warnings;
+    let mut warnings = parser_warnings;
     if requires_resampling {
         warnings.push("High-quality sample-rate conversion is required before USB packing".into());
     }
@@ -303,25 +312,59 @@ mod tests {
     }
 
     #[test]
-    fn exact_native_integer_tuple_is_only_a_bit_perfect_candidate() {
+    fn exact_native_24_48_tuple_is_a_candidate_not_a_hardware_claim() {
         let source = SourcePcm { sample_rate: 48_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
-        let parsed = vec![format(48_000, 24, 3)];
-        let selected = parsed.iter().find(|f| f.channels == Some(source.channels)).unwrap();
-        assert!(!supports_rate(selected, 44_100));
-        assert_eq!(selected.bit_resolution, Some(24));
-        assert_eq!(plan_score(source, 48_000, 24, UsbAudioDataFormat::Pcm).0, 0);
+        let plan = plan_from_usb_formats(&[format(48_000, 24, 3)], Vec::new(), source);
+        assert!(plan.ok);
+        assert!(!plan.requires_resampling);
+        assert!(!plan.requires_bit_depth_conversion);
+        assert_eq!(plan.bit_perfect, BitPerfectAssessment::Candidate);
     }
 
     #[test]
-    fn rate_mismatch_is_explicitly_marked_for_resampling() {
+    fn 24_96_source_on_24_48_dac_requires_resampling_only() {
         let source = SourcePcm { sample_rate: 96_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
-        assert_eq!(rate_distance(48_000, source.sample_rate), 48_000);
+        let plan = plan_from_usb_formats(&[format(48_000, 24, 3)], Vec::new(), source);
+        assert!(plan.ok);
+        assert_eq!(plan.output_sample_rate, Some(48_000));
+        assert!(plan.requires_resampling);
+        assert!(!plan.requires_bit_depth_conversion);
+        assert_eq!(plan.bit_perfect, BitPerfectAssessment::NotBitPerfect);
     }
 
     #[test]
-    fn float_source_prefers_integer_pcm_when_float_is_not_advertised() {
+    fn 24_bit_source_on_16_bit_48khz_dac_requires_resampling_and_dithered_reduction() {
+        let source = SourcePcm { sample_rate: 96_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
+        let plan = plan_from_usb_formats(&[format(48_000, 16, 2)], Vec::new(), source);
+        assert!(plan.ok);
+        assert_eq!(plan.output_valid_bits, Some(16));
+        assert!(plan.requires_resampling);
+        assert!(plan.requires_bit_depth_conversion);
+        assert!(plan.warnings.iter().any(|warning| warning.contains("TPDF")));
+    }
+
+    #[test]
+    fn float_lossy_decode_can_target_integer_pcm_without_changing_decoder_output() {
         let source = SourcePcm { sample_rate: 44_100, channels: 2, valid_bits: 32, sample_format: SourceSampleFormat::Float32 };
-        assert_eq!(source.sample_format, SourceSampleFormat::Float32);
-        assert_eq!(plan_score(source, 48_000, 24, UsbAudioDataFormat::Pcm).2, 1);
+        let plan = plan_from_usb_formats(&[format(48_000, 24, 3)], Vec::new(), source);
+        assert!(plan.ok);
+        assert!(plan.requires_resampling);
+        assert!(plan.requires_bit_depth_conversion);
+        assert!(plan.requires_sample_format_conversion);
+    }
+
+    #[test]
+    fn source_rate_is_preferred_when_the_dac_advertises_it() {
+        let source = SourcePcm { sample_rate: 48_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
+        let plan = plan_from_usb_formats(&[format(44_100, 24, 3), format(48_000, 24, 3)], Vec::new(), source);
+        assert_eq!(plan.output_sample_rate, Some(48_000));
+    }
+
+    #[test]
+    fn rejects_invalid_source_tuple() {
+        let source = SourcePcm { sample_rate: 0, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
+        let plan = plan_from_usb_formats(&[], Vec::new(), source);
+        assert!(!plan.ok);
+        assert!(plan.error.is_some());
     }
 }
