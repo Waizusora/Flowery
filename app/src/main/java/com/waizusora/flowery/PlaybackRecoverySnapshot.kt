@@ -99,6 +99,9 @@ internal data class PlaybackRecoverySnapshot(
             ).normalized()
         }.getOrNull()
 
+        fun hasStoredSnapshot(preferences: SharedPreferences): Boolean =
+            preferences.contains(KEY)
+
         fun load(preferences: SharedPreferences): PlaybackRecoverySnapshot? =
             preferences.getString(KEY, null)?.let(::fromJson)
 

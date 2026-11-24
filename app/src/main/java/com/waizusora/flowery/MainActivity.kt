@@ -456,6 +456,12 @@ class MainActivity : ComponentActivity() {
             this, usbPermissionReceiver, usbFilter,
             androidx.core.content.ContextCompat.RECEIVER_EXPORTED
         )
+        if (PlaybackRecoverySnapshot.hasStoredSnapshot(
+                getSharedPreferences("playback_recovery", MODE_PRIVATE)
+            )) {
+            Log.i("FloweryDiagnostics", "RECOVERY_ACTIVITY_REQUEST")
+            sendPlaybackCommand(PlaybackService.ACTION_RESTORE)
+        }
     }
 
     override fun onResume() {
@@ -652,6 +658,7 @@ class MainActivity : ComponentActivity() {
                     contentResolver.openInputStream(lyricUri)?.bufferedReader()?.use { LrcParser.parse(it.readText()) }
                 }.getOrNull()
             }.orEmpty()
+            val durationMs = resolveTrackDurationMs(track, tag)
             runOnUiThread {
                 if (selectedTrack?.uri == track.uri &&
                     selectedTrack?.cueStartMs == track.cueStartMs &&
@@ -660,6 +667,7 @@ class MainActivity : ComponentActivity() {
                     selectedTrack?.playlistOrder == track.playlistOrder) {
                     currentTag = tag
                     lyrics = parsedLyrics
+                    playbackDurationMs = durationMs
                     nowPlayingTitle = tag?.title?.takeIf { it.isNotBlank() }
                         ?: track.title.ifBlank { "Unknown track" }
                     nowPlayingArtist = tag?.artist?.takeIf { it.isNotBlank() } ?: "Unknown artist"

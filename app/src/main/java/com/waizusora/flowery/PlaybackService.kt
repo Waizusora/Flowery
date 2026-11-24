@@ -44,6 +44,7 @@ class PlaybackService : Service() {
         const val ACTION_REPEAT = "com.waizusora.flowery.REPEAT"
         const val ACTION_SEEK = "com.waizusora.flowery.SEEK"
         const val ACTION_UPDATE_METADATA = "com.waizusora.flowery.UPDATE_METADATA"
+        const val ACTION_RESTORE = "com.waizusora.flowery.RESTORE"
         const val EXTRA_URI = "track_uri"
         const val EXTRA_QUEUE = "queue_uris"
         const val EXTRA_TITLES = "queue_titles"
@@ -245,7 +246,7 @@ class PlaybackService : Service() {
                     lastAudioDiagnosticMs = nowMs
                     Log.i("FloweryDiagnostics", "AUDIO_PIPELINE ${player.audioPipelineDiagnostics()}")
                 }
-                val position = player.positionMs()
+                val position = if (recoveryNeedsPrepare) recoveryPositionMs else player.positionMs()
                 val duration = player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs
                 if (::session.isInitialized) {
                     if (duration > 0L && duration != lastPublishedMetadataDuration) {
@@ -339,6 +340,23 @@ class PlaybackService : Service() {
             return START_STICKY
         }
         when (intent?.action) {
+            ACTION_RESTORE -> {
+                if (recoverySessionAvailable && queue.isNotEmpty()) {
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "RECOVERY_ACTIVITY_REQUEST_HANDLED queueSize=${queue.size} index=$queueIndex " +
+                            "positionMs=$recoveryPositionMs requiresPrepare=$recoveryNeedsPrepare"
+                    )
+                    if (playbackState != PlaybackStateCompat.STATE_PLAYING &&
+                        playbackState != PlaybackStateCompat.STATE_CONNECTING) {
+                        startForeground(NOTIFICATION_ID, buildNotification())
+                        publishState("Playback session restored · press Play to continue")
+                    }
+                } else {
+                    Log.i("FloweryDiagnostics", "RECOVERY_ACTIVITY_REQUEST_NO_SESSION")
+                    stopSelf(startId)
+                }
+            }
             ACTION_PLAY -> {
                 val uris = intent.getStringArrayListExtra(EXTRA_QUEUE)
                 if (!uris.isNullOrEmpty()) {
@@ -926,7 +944,7 @@ class PlaybackService : Service() {
             persistPlaybackSnapshot()
         }
         val intent = Intent(BROADCAST_STATE).setPackage(packageName).putExtra(EXTRA_STATUS, effectiveMessage)
-            .putExtra(EXTRA_POSITION, player.positionMs())
+            .putExtra(EXTRA_POSITION, if (recoveryNeedsPrepare) recoveryPositionMs else player.positionMs())
             .putExtra(EXTRA_DURATION, player.durationMs().takeIf { it > 0L } ?: sourceMetadataDurationMs)
             .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
             .putExtra(EXTRA_OUTPUT_BIT_DEPTH, player.outputBitDepth())
