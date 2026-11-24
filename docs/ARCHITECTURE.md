@@ -13,7 +13,7 @@
 | `native/src/streaming.rs` | Incremental Symphonia decode and source-rate PCM frame production |
 | `native/src/pcm_format.rs` | Generic signed-integer PCM format and quantization contract |
 | `native/src/pcm_transport.rs` | Shared bounded SPSC PCM byte-ring construction for independent backend producer/consumer endpoints |
-| `native/src/usb_audio.rs` | Vendor-independent UAC1/UAC2 configuration descriptor parsing and playback alternate discovery |
+| `native/src/usb_audio.rs` | Vendor-independent UAC1/UAC2 configuration descriptor parsing and playback alternate discovery |\n| `native/src/output_compatibility.rs` | Descriptor-driven USB DAC output tuple selection and explicit conversion/bit-perfect assessment |
 | `native/src/usb_isochronous.rs` | Full/high-speed isochronous PCM packet scheduling and transfer lifecycle validation helpers |
 | `native/src/usb_feedback.rs` | Explicit feedback packet decoding, clock tracking, outlier rejection, and frame scheduling |
 | `native/src/usb_stream.rs` | Asynchronous libusb isochronous OUT worker, transfer ring, pause/seek/stop, cancellation, and teardown |
