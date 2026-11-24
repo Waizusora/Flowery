@@ -6,6 +6,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.PowerManager
+import android.hardware.usb.UsbManager
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -84,7 +85,8 @@ fun FloweryNavigation(
     onBatterySettings: () -> Unit, onCheckUpdate: () -> Unit,
     audioSourceLabel: String,
     onRequestNotificationPermission: () -> Unit,
-    onRequestBatteryOptimization: () -> Unit
+    onRequestBatteryOptimization: () -> Unit,
+    onRequestUsbPermission: () -> Unit
 ) {
     var destination by remember(context) {
         mutableStateOf(if (context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE)
@@ -106,6 +108,14 @@ fun FloweryNavigation(
     val batteryOptimizationGranted = Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
         (context.getSystemService(Context.POWER_SERVICE) as PowerManager)
             .isIgnoringBatteryOptimizations(context.packageName)
+    val usbManager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+    val connectedUsbAudioDevice = usbManager.deviceList.values.firstOrNull { device ->
+        (0 until device.interfaceCount).any { index ->
+            val usbInterface = device.getInterface(index)
+            usbInterface.interfaceClass == 1 && usbInterface.interfaceSubclass == 2
+        }
+    }
+    val usbAudioPermissionGranted = connectedUsbAudioDevice?.let(usbManager::hasPermission) == true
     val prefs = remember(context) { context.getSharedPreferences("flowery_preferences", Context.MODE_PRIVATE) }
     var selectedFolder by remember { mutableStateOf<LibraryFolder?>(null) }
     var virtualCueFolder by remember { mutableStateOf(false) }
@@ -270,6 +280,9 @@ fun FloweryNavigation(
                     onAddMusicFolder = onAddFolder,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRequestBatteryOptimization = onRequestBatteryOptimization,
+                    usbAudioConnected = connectedUsbAudioDevice != null,
+                    usbAudioPermissionGranted = usbAudioPermissionGranted,
+                    onRequestUsbPermission = onRequestUsbPermission,
                     onContinue = {
                         prefs.edit().putBoolean("welcome_complete", true).apply()
                         destination = Destination.PLAYER
