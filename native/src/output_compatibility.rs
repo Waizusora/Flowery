@@ -70,6 +70,8 @@ pub struct OutputCompatibilityPlan {
     pub output_data_format: Option<UsbAudioDataFormat>,
     pub requires_resampling: bool,
     pub requires_bit_depth_conversion: bool,
+    pub requires_bit_depth_reduction: bool,
+    pub requires_bit_depth_expansion: bool,
     pub requires_sample_format_conversion: bool,
     pub requires_channel_mapping: bool,
     pub bit_perfect: BitPerfectAssessment,
@@ -96,6 +98,8 @@ impl OutputCompatibilityPlan {
             output_data_format: None,
             requires_resampling: false,
             requires_bit_depth_conversion: false,
+            requires_bit_depth_reduction: false,
+            requires_bit_depth_expansion: false,
             requires_sample_format_conversion: false,
             requires_channel_mapping: false,
             bit_perfect: BitPerfectAssessment::NotApplicable,
@@ -249,7 +253,7 @@ fn plan_from_usb_formats(
         warnings.push("High-quality sample-rate conversion is required before USB packing".into());
     }
     if requires_bit_depth_conversion {
-        warnings.push("Bit-depth conversion is required; apply TPDF dither when reducing precision".into());
+        warnings.push(if requires_bit_depth_reduction {\n            "Bit-depth reduction is required; apply TPDF dither before integer PCM packing".into()\n        } else {\n            "Bit-depth expansion is required; preserve the integer sample value without adding precision".into()\n        });
     }
     if requires_sample_format_conversion {
         warnings.push("Sample-format conversion is required at the output boundary".into());
@@ -340,7 +344,7 @@ mod tests {
         assert_eq!(plan.output_valid_bits, Some(16));
         assert!(plan.requires_resampling);
         assert!(plan.requires_bit_depth_conversion);
-        assert!(plan.warnings.iter().any(|warning| warning.contains("TPDF")));
+        assert!(plan.requires_bit_depth_reduction);\n        assert!(plan.warnings.iter().any(|warning| warning.contains("TPDF")));
     }
 
     #[test]
