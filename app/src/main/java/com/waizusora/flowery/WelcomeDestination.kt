@@ -129,8 +129,9 @@ private fun PermissionStatusRow(
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(title, modifier = Modifier.weight(1f), color = foreground, fontWeight = FontWeight.SemiBold)
-                Text(if (granted) "GRANTED" else "NOT GRANTED",
-                    color = if (granted) MaterialTheme.colorScheme.primary else muted,
+                Text(if (granted) "Granted" else if (title == "Music folder access") "Required" else "Not granted",
+                    color = if (granted) MaterialTheme.colorScheme.primary
+                        else if (title == "Music folder access") MaterialTheme.colorScheme.error else muted,
                     style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
             }
             Text(description, color = muted, style = MaterialTheme.typography.bodySmall)
