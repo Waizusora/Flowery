@@ -705,7 +705,7 @@ mod tests {
 
     #[test]
     fn decoded_output_format_uses_actual_sample_representation_not_container_hints() {
-        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((24, 1)));
+        assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 0), Ok((32, 3)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::F32(vec![0.25]), 16), Ok((32, 3)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S16(vec![1]), 0), Ok((16, 1)));
         assert_eq!(decoded_output_format(&UsbPcmSamples::S24(vec![1]), 0), Ok((24, 1)));
@@ -946,7 +946,7 @@ mod tests {
             -1.0, -0.5, -1.0 / 8_388_608.0, 0.0, 1.0 / 8_388_608.0, 0.5, 1.0,
             f32::NAN, f32::INFINITY,
         ]);
-        assert_eq!(decoded_output_format(&samples, 0).unwrap(), (24, 1));
+        assert_eq!(decoded_output_format(&samples, 0).unwrap(), (32, 3));
         let format = PcmFormat { sample_rate: 48_000, channels: 1, valid_bits: 24, subslot_bytes: 3, little_endian: true };
         let mut output = Vec::new();
         encode_usb_pcm_for_data_format(&samples, format, 1, &mut output).unwrap();
