@@ -573,6 +573,44 @@ struct StreamConfig {
 }
 
 #[cfg(target_os = "android")]
+#[derive(Default)]
+struct FeedbackTelemetry {
+    rate_millihz: AtomicU64,
+    last_sample_at_us: AtomicU64,
+    sample_count: AtomicU64,
+    rejected_samples: AtomicU64,
+}
+
+#[cfg(target_os = "android")]
+impl FeedbackTelemetry {
+    fn record_accepted(&self, rate_hz: f64) {
+        self.rate_millihz.store((rate_hz * 1_000.0).round() as u64, Ordering::Release);
+        self.last_sample_at_us.store(callback_clock_us(), Ordering::Release);
+        self.sample_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_rejected(&self) {
+        self.rejected_samples.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn snapshot(&self) -> (Option<f64>, Option<f64>, Option<u64>, u64, u64, bool) {
+        const FEEDBACK_STALE_AFTER_US: u64 = 500_000;
+        let last_rate = self.rate_millihz.load(Ordering::Acquire);
+        let last_at = self.last_sample_at_us.load(Ordering::Acquire);
+        let age_us = (last_at != 0).then(|| callback_clock_us().saturating_sub(last_at));
+        let fresh = age_us.is_some_and(|age| age <= FEEDBACK_STALE_AFTER_US);
+        (
+            if fresh && last_rate > 0 { Some(last_rate as f64 / 1_000.0) } else { None },
+            if last_rate > 0 { Some(last_rate as f64 / 1_000.0) } else { None },
+            age_us.map(|age| age / 1_000),
+            self.sample_count.load(Ordering::Relaxed),
+            self.rejected_samples.load(Ordering::Relaxed),
+            !fresh,
+        )
+    }
+}
+
+#[cfg(target_os = "android")]
 struct UsbStreamWorker {
     session: i64,
     decoder_handle: i64,
@@ -583,6 +621,7 @@ struct UsbStreamWorker {
     paused: Arc<AtomicBool>,
     pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
+    feedback_telemetry: Arc<FeedbackTelemetry>,
     thread: JoinHandle<()>,
 }
 
@@ -839,6 +878,7 @@ fn run_worker(
     paused: Arc<AtomicBool>,
     pause_drained: Arc<AtomicBool>,
     error: Arc<Mutex<String>>,
+    feedback_telemetry: Arc<FeedbackTelemetry>,
 ) {
     // Initialize the monotonic callback clock before any transfer can complete.
     let _ = CALLBACK_CLOCK_ORIGIN.get_or_init(Instant::now);
@@ -1173,15 +1213,18 @@ fn run_worker(
                                     .map(|byte| format!("{byte:02x}"))
                                     .collect::<String>();
                                 if let Err(message) = crate::usb_feedback::validate_feedback_rate_hz(config.sample_rate, measured) {
+                                    feedback_telemetry.record_rejected();
                                     set_error(&error, &status, message);
                                 } else {
                                     match feedback_tracker.update_checked(measured, 0.02) {
                                         Ok(Some(estimate)) => {
                                             feedback_rate_hz = Some(estimate);
                                             last_feedback_at = Some(Instant::now());
+                                            feedback_telemetry.record_accepted(estimate);
                                             feedback_outlier_guard.record_accepted();
                                         }
                                         Ok(None) => {
+                                            feedback_telemetry.record_rejected();
                                             if feedback_outlier_guard.record_outlier() {
                                                 set_error(&error, &status, "USB feedback clock produced repeated abrupt rate changes".into());
                                             }
@@ -1190,7 +1233,10 @@ fn run_worker(
                                     }
                                 }
                             }
-                            Err(message) => set_error(&error, &status, message),
+                            Err(message) => {
+                                feedback_telemetry.record_rejected();
+                                set_error(&error, &status, message);
+                            }
                         }
                     }
                     if status.load(Ordering::Acquire) >= 0 && !eof {
@@ -1420,6 +1466,8 @@ fn spawn_worker(
     let thread_paused = Arc::clone(&paused);
     let thread_pause_drained = Arc::clone(&pause_drained);
     let thread_error = Arc::clone(&error);
+    let feedback_telemetry = Arc::new(FeedbackTelemetry::default());
+    let thread_feedback_telemetry = Arc::clone(&feedback_telemetry);
     let worker_thread = thread::Builder::new()
         .name("flowery-usb-iso-out".into())
         .spawn(move || {
@@ -1427,6 +1475,7 @@ fn spawn_worker(
             run_worker(
                 session, decoder_handle, config, thread_stop, thread_status,
                 thread_played_frames, thread_paused, thread_pause_drained, thread_error,
+                thread_feedback_telemetry,
             )
         })
         .map_err(|e| e.to_string())?;
@@ -1434,7 +1483,8 @@ fn spawn_worker(
         session_handle,
         UsbStreamWorker {
             session: session_handle, decoder_handle, config,
-            stop, status, played_frames, paused, pause_drained, error, thread: worker_thread,
+            stop, status, played_frames, paused, pause_drained, error,
+            feedback_telemetry, thread: worker_thread,
         },
     );
     Ok(())
@@ -1662,16 +1712,25 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
 }
 
 #[cfg(target_os = "android")]
-pub(super) fn status(session: i64) -> (i32, String, u64, bool) {
+pub(super) fn status(
+    session: i64,
+) -> (i32, String, u64, bool, Option<f64>, Option<f64>, Option<u64>, u64, u64, bool, bool) {
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     match map.get(&session) {
-        Some(worker) => (
-            worker.status.load(Ordering::Acquire),
-            worker.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
-            worker.played_frames.load(Ordering::Acquire),
-            worker.pause_drained.load(Ordering::Acquire),
-        ),
-        None => (-1, "USB stream worker is not running".into(), 0, false),
+        Some(worker) => {
+            let (rate, last_rate, age_ms, samples, rejected, stale) =
+                worker.feedback_telemetry.snapshot();
+            (
+                worker.status.load(Ordering::Acquire),
+                worker.error.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+                worker.played_frames.load(Ordering::Acquire),
+                worker.pause_drained.load(Ordering::Acquire),
+                rate, last_rate, age_ms, samples, rejected, stale,
+                worker.config.feedback_endpoint.is_some(),
+            )
+        }
+        None => (-1, "USB stream worker is not running".into(), 0, false,
+            None, None, None, 0, 0, true, false),
     }
 }
 
