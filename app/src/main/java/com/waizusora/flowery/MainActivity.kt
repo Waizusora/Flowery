@@ -117,6 +117,7 @@ class MainActivity : ComponentActivity() {
                         usbPermissionDeniedDevices.remove(it)
                     }
                     Log.i("FloweryUsbPermission", "USB_DEVICE_DETACHED device=${detached?.deviceName}")
+                    status = "USB DAC disconnected"
                 }
                 usbPermissionAction -> {
                     val device = intent.getParcelableExtra<UsbDevice>(UsbManager.EXTRA_DEVICE)
@@ -161,6 +162,7 @@ class MainActivity : ComponentActivity() {
         }
         if (manager.hasPermission(device)) {
             Log.i("FloweryUsbPermission", "USB_PERMISSION_ALREADY_GRANTED device=${device.deviceName}")
+            status = "USB DAC permission granted · ready for USB playback"
             return
         }
         if (!usbPermissionRequests.add(device.deviceName)) return
