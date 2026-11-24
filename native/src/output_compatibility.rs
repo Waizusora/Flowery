@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn 24_96_source_on_24_48_dac_requires_resampling_only() {
+    fn twenty_four_96_source_on_twenty_four_48_dac_requires_resampling_only() {
         let source = SourcePcm { sample_rate: 96_000, channels: 2, valid_bits: 24, sample_format: SourceSampleFormat::Integer };
         let plan = plan_from_usb_formats(&[format(48_000, 24, 3)], Vec::new(), source);
         assert!(plan.ok);
