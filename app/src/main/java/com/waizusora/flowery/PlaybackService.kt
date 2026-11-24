@@ -79,6 +79,13 @@ class PlaybackService : Service() {
         const val EXTRA_OUTPUT_SAMPLE_RATE = "output_sample_rate_hz"
         const val EXTRA_OUTPUT_BIT_DEPTH = "output_bit_depth"
         const val EXTRA_OUTPUT_BACKEND = "output_backend"
+        const val EXTRA_DECODED_SAMPLE_RATE = "decoded_sample_rate_hz"
+        const val EXTRA_DECODED_PCM_FORMAT = "decoded_pcm_format"
+        const val EXTRA_OUTPUT_PCM_FORMAT = "output_pcm_format"
+        const val EXTRA_OUTPUT_RESAMPLING = "output_resampling_required"
+        const val EXTRA_OUTPUT_BIT_DEPTH_CONVERSION = "output_bit_depth_conversion_required"
+        const val EXTRA_OUTPUT_SAMPLE_FORMAT_CONVERSION = "output_sample_format_conversion_required"
+        const val EXTRA_OUTPUT_BIT_PERFECT_CANDIDATE = "output_bit_perfect_candidate"
         const val EXTRA_USB_VOLUME_DETECTED = "usb_volume_detected"
         const val EXTRA_USB_VOLUME_WRITABLE = "usb_volume_writable"
         const val EXTRA_USB_VOLUME_VERIFIED = "usb_volume_verified"
@@ -260,6 +267,20 @@ class PlaybackService : Service() {
                     .putExtra(EXTRA_OUTPUT_SAMPLE_RATE, player.outputSampleRateHz())
                     .putExtra(EXTRA_OUTPUT_BIT_DEPTH, player.outputBitDepth())
                     .putExtra(EXTRA_OUTPUT_BACKEND, player.outputBackendLabel())
+            .putExtra(EXTRA_DECODED_SAMPLE_RATE, player.decodedSampleRateHz())
+            .putExtra(EXTRA_DECODED_PCM_FORMAT, player.decodedPcmFormatLabel())
+            .putExtra(EXTRA_OUTPUT_PCM_FORMAT, player.outputPcmFormatLabel())
+            .putExtra(EXTRA_OUTPUT_RESAMPLING, player.outputResamplingRequired())
+            .putExtra(EXTRA_OUTPUT_BIT_DEPTH_CONVERSION, player.outputBitDepthConversionRequired())
+            .putExtra(EXTRA_OUTPUT_SAMPLE_FORMAT_CONVERSION, player.outputSampleFormatConversionRequired())
+            .putExtra(EXTRA_OUTPUT_BIT_PERFECT_CANDIDATE, player.outputBitPerfectCandidate())
+                    .putExtra(EXTRA_DECODED_SAMPLE_RATE, player.decodedSampleRateHz())
+                    .putExtra(EXTRA_DECODED_PCM_FORMAT, player.decodedPcmFormatLabel())
+                    .putExtra(EXTRA_OUTPUT_PCM_FORMAT, player.outputPcmFormatLabel())
+                    .putExtra(EXTRA_OUTPUT_RESAMPLING, player.outputResamplingRequired())
+                    .putExtra(EXTRA_OUTPUT_BIT_DEPTH_CONVERSION, player.outputBitDepthConversionRequired())
+                    .putExtra(EXTRA_OUTPUT_SAMPLE_FORMAT_CONVERSION, player.outputSampleFormatConversionRequired())
+                    .putExtra(EXTRA_OUTPUT_BIT_PERFECT_CANDIDATE, player.outputBitPerfectCandidate())
                     .putExtra(EXTRA_USB_VOLUME_DETECTED, player.usbVolumeControlDetected())
                     .putExtra(EXTRA_USB_VOLUME_WRITABLE, player.usbVolumeControlWritable())
                     .putExtra(EXTRA_USB_VOLUME_VERIFIED, player.usbVolumeWriteVerified())
