@@ -142,7 +142,7 @@ fn candidate_depths(format: &UsbAudioFormat, source: SourcePcm) -> Vec<(u8, u8, 
         match data_format {
             UsbAudioDataFormat::Pcm => {
                 if let (Some(bits), Some(subslot)) = (format.bit_resolution, format.subslot_bytes) {
-                    if matches!(bits, 8 | 16 | 20 | 24 | 32)
+                    if matches!(bits, 16 | 20 | 24 | 32)
                         && (1..=4).contains(&subslot)
                         && bits <= subslot.saturating_mul(8)
                     {
@@ -151,11 +151,9 @@ fn candidate_depths(format: &UsbAudioFormat, source: SourcePcm) -> Vec<(u8, u8, 
                 }
             }
             UsbAudioDataFormat::Pcm8 => {
-                if source.sample_format == SourceSampleFormat::Integer {
-                    if let Some(subslot) = format.subslot_bytes {
-                        if subslot == 1 {
-                            candidates.push((8, subslot, data_format));
-                        }
+                if let Some(subslot) = format.subslot_bytes {
+                    if subslot == 1 {
+                        candidates.push((8, subslot, data_format));
                     }
                 }
             }
