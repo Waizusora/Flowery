@@ -41,9 +41,18 @@ The native transition planner classifies two adjacent track formats:
 7. Cancellation, seek, pause, route changes, repeat-one, shuffle, and service
    recovery must invalidate stale prefetch work by generation/epoch.
 
+
+## Queue-boundary state machine
+
+The native `GaplessBoundary` contract distinguishes decoder EOF from queue EOF:
+
+- `TrackEof` moves the current generation to `AwaitingNext`; it must not finish playback or tear down the output.
+- `NextTrackReady` returns either `AttachNextTrack` for an identical PCM signature or `ReconfigureOutput` for a changed route/format contract.
+- `QueueEof` is the only event that finishes the queue.
+- Events from an older playback generation are ignored. Cancellation makes later events for that generation inert.
+
+The state machine is deliberately pure and unit-tested. It defines coordination semantics but is not yet wired into the Android player or native output workers.
+
 ## Current scope
 
-This commit adds and tests the pure native transition contract only. It does not
-yet enable gapless playback in the player. Runtime integration, decoder
-prefetch, persistent output ownership, and hardware validation remain subsequent
-steps.
+The native transition planner and generation-safe queue-boundary contract are implemented and unit-tested. Gapless playback is **not yet enabled** in the player. Runtime integration, decoder prefetch, persistent output ownership, and hardware validation remain subsequent steps.
