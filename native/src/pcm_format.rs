@@ -593,6 +593,9 @@ impl UsbPcmOutputPipeline {
         if matches!(samples, UsbPcmSamples::Empty) {
             return Ok(Vec::new());
         }
+        if samples.data_format_code() != self.source_data_format {
+            return Err("Decoded sample representation does not match the negotiated USB source format");
+        }
         if self.passthrough {
             let mut output = Vec::new();
             encode_usb_pcm_for_data_format(
@@ -1134,6 +1137,73 @@ mod tests {
         for (actual, expected) in codes.iter().zip([-8_388_608_i32, -4_194_304, 0, 4_194_304, 8_388_607]) {
             assert!((actual - expected).abs() <= 1, "actual={actual}, expected={expected}");
         }
+    }
+
+    #[test]
+    fn output_pipeline_resampling_is_invariant_to_source_chunk_boundaries() {
+        let source: Vec<i16> = (0..19_200)
+            .map(|index| (((index as f64) * 0.071).sin() * 30_000.0) as i16)
+            .collect();
+        let format = PcmFormat {
+            sample_rate: 48_000, channels: 1, valid_bits: 16,
+            subslot_bytes: 2, little_endian: true,
+        };
+
+        let mut whole = super::UsbPcmOutputPipeline::new(96_000, 16, 1, format, 1, 77).unwrap();
+        let mut whole_bytes = whole.process(&UsbPcmSamples::S16(source.clone())).unwrap();
+        whole_bytes.extend(whole.finish().unwrap());
+
+        let mut chunked = super::UsbPcmOutputPipeline::new(96_000, 16, 1, format, 1, 77).unwrap();
+        let mut chunked_bytes = Vec::new();
+        for chunk in source.chunks(137) {
+            chunked_bytes.extend(chunked.process(&UsbPcmSamples::S16(chunk.to_vec())).unwrap());
+        }
+        chunked_bytes.extend(chunked.finish().unwrap());
+
+        assert_eq!(chunked_bytes, whole_bytes,
+            "streaming output must not depend on decoder chunk boundaries");
+    }
+
+    #[test]
+    fn output_pipeline_rejects_a_decoder_sample_format_change() {
+        let format = PcmFormat {
+            sample_rate: 48_000, channels: 1, valid_bits: 16,
+            subslot_bytes: 2, little_endian: true,
+        };
+        let mut pipeline = super::UsbPcmOutputPipeline::new(48_000, 16, 1, format, 1, 9).unwrap();
+        assert!(pipeline.process(&UsbPcmSamples::F32(vec![0.0])).is_err());
+    }
+
+    #[test]
+    fn output_pipeline_finish_is_terminal_and_idempotent() {
+        let format = PcmFormat {
+            sample_rate: 48_000, channels: 1, valid_bits: 16,
+            subslot_bytes: 2, little_endian: true,
+        };
+        let mut pipeline = super::UsbPcmOutputPipeline::new(48_000, 16, 1, format, 1, 9).unwrap();
+        assert!(pipeline.process(&UsbPcmSamples::S16(vec![1, 2, 3])).is_ok());
+        assert!(pipeline.finish().is_ok());
+        assert!(pipeline.finish().unwrap().is_empty());
+        assert!(pipeline.process(&UsbPcmSamples::S16(vec![4])).is_err());
+    }
+
+    #[test]
+    fn output_pipeline_recreation_after_seek_resets_resampler_and_dither_state() {
+        let source = UsbPcmSamples::F32((0..4096)
+            .map(|index| ((index as f32) * 0.013).sin() * 0.8)
+            .collect());
+        let format = PcmFormat {
+            sample_rate: 48_000, channels: 1, valid_bits: 16,
+            subslot_bytes: 2, little_endian: true,
+        };
+        let render = || {
+            let mut pipeline = super::UsbPcmOutputPipeline::new(96_000, 32, 3, format, 1, 1234).unwrap();
+            let mut bytes = pipeline.process(&source).unwrap();
+            bytes.extend(pipeline.finish().unwrap());
+            bytes
+        };
+        assert_eq!(render(), render(),
+            "a new post-seek pipeline must start from clean deterministic state");
     }
 
 }
