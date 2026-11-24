@@ -1513,8 +1513,12 @@ pub(super) fn start(
                 "USB output is {channels} channel(s), decoder is {decoder_channels} channel(s)"
             ));
         }
-        if source_rate == 0 || source_rate > u32::MAX as usize
-            || !(8..=32).contains(&source_bits) || !(1..=3).contains(&source_data_format)
+        let source_tuple_supported = matches!(
+            (source_data_format, source_bits),
+            (1, 16 | 20 | 24 | 32) | (2, 8) | (3, 32)
+        );
+        if !(1_000..=768_000).contains(&source_rate)
+            || !source_tuple_supported
         {
             return Err("Decoded source PCM tuple is not supported by the adaptive USB pipeline".into());
         }
