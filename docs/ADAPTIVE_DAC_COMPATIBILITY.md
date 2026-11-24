@@ -54,7 +54,7 @@ Info Audio reports its actual stream characteristics without displaying a
 bit-perfect status. Android's AudioFlinger, Audio HAL, route DSP, and downstream
 device processing remain outside Flowery's control.
 
-## Required follow-up before enabling adaptive playback
+## Validation and follow-up
 
 Adaptive tuple selection is now connected to the USB Direct startup path. The
 compatibility planner selects the DAC tuple first; the transport planner then
