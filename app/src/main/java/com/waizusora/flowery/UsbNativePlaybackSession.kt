@@ -109,8 +109,26 @@ internal class UsbNativePlaybackSession private constructor(
     private val uac2ClockMultiplierEntity: Int?,
     private val uac2ClockMultiplierControls: Int?,
     private val uac2ClockPaths: List<Uac2ClockPath>,
-    private val uacVolumeControl: UacVolumeControl?
+    private val uacVolumeControl: UacVolumeControl?,
+    private val requiresResampling: Boolean,
+    private val requiresBitDepthConversion: Boolean,
+    private val requiresSampleFormatConversion: Boolean,
+    private val bitPerfectCandidate: Boolean
 ) : Closeable {
+    internal val outputSampleRateHz: Int get() = sampleRate
+    internal val outputBitDepth: Int get() = validBits
+    internal val outputFormatLabel: String
+        get() = when (dataFormat) {
+            1 -> "Signed PCM $validBits-bit"
+            2 -> "Unsigned PCM8"
+            3 -> "IEEE Float32"
+            else -> "Unknown PCM"
+        }
+    internal val resamplingRequired: Boolean get() = requiresResampling
+    internal val bitDepthConversionRequired: Boolean get() = requiresBitDepthConversion
+    internal val sampleFormatConversionRequired: Boolean get() = requiresSampleFormatConversion
+    internal val isBitPerfectCandidate: Boolean get() = bitPerfectCandidate
+
     private var closed = false
     @Volatile private var cachedVolumeSnapshot: UacVolumeSnapshot? = null
     @Volatile private var volumeWriteVerified = false
@@ -642,7 +660,11 @@ internal class UsbNativePlaybackSession private constructor(
                         if (isUac2 && clockMultiplierEntity != 0) clockMultiplierEntity else null,
                         if (isUac2) clockMultiplierControls else null,
                         clockPaths,
-                        volumeControl
+                        volumeControl,
+                        compatibilityJson.optBoolean("requires_resampling"),
+                        compatibilityJson.optBoolean("requires_bit_depth_conversion"),
+                        compatibilityJson.optBoolean("requires_sample_format_conversion"),
+                        compatibilityJson.optString("bit_perfect") == "candidate"
                     )
                 )
             }
