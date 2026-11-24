@@ -128,7 +128,11 @@ internal class UsbNativePlaybackSession private constructor(
     internal val bitDepthConversionRequired: Boolean get() = requiresBitDepthConversion
     internal val sampleFormatConversionRequired: Boolean get() = requiresSampleFormatConversion
     internal val isBitPerfectCandidate: Boolean get() = bitPerfectCandidate
+    internal val clockNegotiationMode: String
+        get() = if (uac2ClockSourceEntity != null) "UAC2_GET_CUR_SET_CUR_VERIFIED" else "UAC1_SET_CUR_UNVERIFIED"
+    internal val feedbackEndpointConfigured: Boolean get() = feedbackEndpoint != 0
 
+    private var clockNegotiationCompleted = false
     private var closed = false
     @Volatile private var cachedVolumeSnapshot: UacVolumeSnapshot? = null
     @Volatile private var volumeWriteVerified = false
@@ -177,7 +181,8 @@ internal class UsbNativePlaybackSession private constructor(
             rollbackOnStartFailure = uac2ClockSourceEntity != null
         )
         if (result.isSuccess) {
-            Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
+            clockNegotiationCompleted = true
+            Log.i("FloweryUsbNative", "PLAYBACK_START_SUCCESS sampleRate=$sampleRate clockVerification=$clockNegotiationMode busSpeed=${usb.busSpeed()} status=${usb.playbackStatus()}")
             Log.i(
                 "FloweryUsbNative",
                 "USB_VOLUME_CAPABILITY detected=${uacVolumeControl?.supportsRead == true} " +
@@ -304,7 +309,18 @@ internal class UsbNativePlaybackSession private constructor(
     }
 
     @Synchronized
-    fun status(): JSONObject = JSONObject(usb.playbackStatus())
+    fun status(): JSONObject = JSONObject(usb.playbackStatus()).apply {
+        put("outputSampleRateHz", sampleRate)
+        put("outputValidBits", validBits)
+        put("outputDataFormat", dataFormat)
+        put("clockNegotiationMode", clockNegotiationMode)
+        put("clockNegotiationCompleted", clockNegotiationCompleted)
+        put("clockRateVerified", clockNegotiationCompleted && uac2ClockSourceEntity != null)
+        put("uac1RateReadbackAvailable", false)
+        put("feedbackEndpointConfigured", feedbackEndpointConfigured)
+        put("feedbackRateTelemetryAvailable", false)
+        put("bitPerfectCandidate", bitPerfectCandidate)
+    }
 
     @Synchronized
     fun stopPlayback(): Result<Unit> {
