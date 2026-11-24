@@ -181,15 +181,22 @@ fn plan_score(
     rate: u32,
     bits: u8,
     data_format: UsbAudioDataFormat,
-) -> (u8, u64, u8, u8) {
+) -> (u8, u8, u8, u8, u64) {
+    let precision_reduction = u8::from(bits < source.valid_bits);
     let rate_changed = u8::from(rate != source.sample_rate);
     let sample_format_changed = u8::from(
         (source.sample_format == SourceSampleFormat::Float32)
             != (data_format == UsbAudioDataFormat::IeeeFloat),
     );
     let depth_changed = u8::from(bits != source.valid_bits);
-    // Prefer preserving rate first, then native representation and bit depth.
-    (rate_changed, rate_distance(rate, source.sample_rate), sample_format_changed, depth_changed)
+    // Avoid precision loss first, then preserve source rate and sample representation.
+    (
+        precision_reduction,
+        rate_changed,
+        sample_format_changed,
+        depth_changed,
+        rate_distance(rate, source.sample_rate),
+    )
 }
 
 /// Select the best descriptor-advertised UAC playback tuple for the source.
@@ -238,6 +245,8 @@ fn plan_from_usb_formats(
 
     let requires_resampling = output_rate != source.sample_rate;
     let requires_bit_depth_conversion = output_bits != source.valid_bits;
+    let requires_bit_depth_reduction = output_bits < source.valid_bits;
+    let requires_bit_depth_expansion = output_bits > source.valid_bits;
     let requires_sample_format_conversion = match source.sample_format {
         SourceSampleFormat::Integer => output_format != UsbAudioDataFormat::Pcm
             && output_format != UsbAudioDataFormat::Pcm8,
@@ -253,7 +262,11 @@ fn plan_from_usb_formats(
         warnings.push("High-quality sample-rate conversion is required before USB packing".into());
     }
     if requires_bit_depth_conversion {
-        warnings.push(if requires_bit_depth_reduction {\n            "Bit-depth reduction is required; apply TPDF dither before integer PCM packing".into()\n        } else {\n            "Bit-depth expansion is required; preserve the integer sample value without adding precision".into()\n        });
+        warnings.push(if requires_bit_depth_reduction {
+            "Bit-depth reduction is required; apply TPDF dither before integer PCM packing".into()
+        } else {
+            "Bit-depth expansion is required; preserve the integer sample value without adding precision".into()
+        });
     }
     if requires_sample_format_conversion {
         warnings.push("Sample-format conversion is required at the output boundary".into());
@@ -272,6 +285,8 @@ fn plan_from_usb_formats(
         output_data_format: Some(output_format),
         requires_resampling,
         requires_bit_depth_conversion,
+        requires_bit_depth_reduction,
+        requires_bit_depth_expansion,
         requires_sample_format_conversion,
         requires_channel_mapping: false,
         bit_perfect: if exact_native_tuple { BitPerfectAssessment::Candidate } else { BitPerfectAssessment::NotBitPerfect },
@@ -344,7 +359,8 @@ mod tests {
         assert_eq!(plan.output_valid_bits, Some(16));
         assert!(plan.requires_resampling);
         assert!(plan.requires_bit_depth_conversion);
-        assert!(plan.requires_bit_depth_reduction);\n        assert!(plan.warnings.iter().any(|warning| warning.contains("TPDF")));
+        assert!(plan.requires_bit_depth_reduction);
+        assert!(plan.warnings.iter().any(|warning| warning.contains("TPDF")));
     }
 
     #[test]
