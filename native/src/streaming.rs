@@ -399,6 +399,12 @@ impl StreamDecoder {
             ));
         }
         let mut samples = self.read_usb_frames(requested)?;
+        // EOF is represented by an empty typed buffer. It is not an audio
+        // sample format and must pass through as an empty chunk so the pump
+        // can publish EOF instead of failing when ReplayGain is enabled.
+        if samples.len() == 0 {
+            return Ok(Vec::new());
+        }
         let settings = crate::replay_gain::settings();
         let plan = self.replay_gain_metadata.plan(settings);
         crate::pcm_format::apply_replay_gain(&mut samples, plan.linear_gain)
