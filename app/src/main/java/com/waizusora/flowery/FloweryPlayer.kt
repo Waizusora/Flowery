@@ -20,6 +20,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val volumeController = OutputVolumeController(context)
     private val dacHardwareVolume = UsbDacHardwareVolume(context)
     private val sourceResolver = AudioSourceResolver(context)
+    private val aaudioQueueOutputOwner = AAudioQueueOutputOwner(JniAAudioQueueOutputNative())
 
     private fun pcmFormatLabel(bits: Int, dataFormat: Int): String = when (dataFormat) {
         1 -> "Signed PCM $bits-bit"
@@ -112,9 +113,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * gain)
     }
 
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L, preparedResources: PreparedPlaybackResources? = null) {
+    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L, preparedResources: PreparedPlaybackResources? = null, retainOutputForNextTrack: Boolean = false) {
         val previousWorker = worker
-        stop()
+        stop(preserveRetainedOutput = true)
         stopped.set(false)
         pauseRequested.set(startPaused)
         outputReady = false
@@ -132,6 +133,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var sessionHandle = 0L
             var sessionFailed = false
             var completedNormally = false
+            var outputRetainedForQueue = false
             try {
                 previousWorker?.let { previous ->
                     if (previous !== Thread.currentThread()) {
@@ -294,16 +296,28 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(sourceRate)
-                val opened = NativeAudio.nativeStartStreamOutput(
-                    sourceRate, channels,
-                    softwareVolume,
-                    deviceId,
-                    requireExclusive = true,
-                    failOnShared = selectedTarget == AndroidOutputTarget.USB,
-                    outputFormat = outputFormat,
-                    capacityFrames = outputRingCapacityFrames
+                val requestedOutputSignature = AAudioOutputSignature(
+                    sourceRate, channels, outputFormat, deviceId, AAudioOutputSignature.SHARING_EXCLUSIVE,
                 )
-                if (opened != 0) {
+                var reusedQueueOutput = false
+                if (aaudioQueueOutputOwner.phase() == AAudioQueueOutputOwner.Phase.RETAINED) {
+                    reusedQueueOutput = aaudioQueueOutputOwner.prepareNextTrack(requestedOutputSignature)
+                    if (!reusedQueueOutput) {
+                        Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_REUSE_REJECTED nextRate=$sourceRate nextChannels=$channels nextFormat=$outputFormat deviceId=$deviceId")
+                        aaudioQueueOutputOwner.close()
+                    }
+                } else if (aaudioQueueOutputOwner.phase() != AAudioQueueOutputOwner.Phase.CLOSED) {
+                    aaudioQueueOutputOwner.close()
+                }
+                if (!reusedQueueOutput) {
+                    val opened = NativeAudio.nativeStartStreamOutput(
+                        sourceRate, channels, softwareVolume, deviceId,
+                        requireExclusive = true,
+                        failOnShared = selectedTarget == AndroidOutputTarget.USB,
+                        outputFormat = outputFormat,
+                        capacityFrames = outputRingCapacityFrames,
+                    )
+                    if (opened != 0) {
                     val attempt = NativeAudio.nativeGetLastOutputOpenDiagnostics()
                     val modeName: (Long) -> String = { mode ->
                         when (mode) { 0L -> "EXCLUSIVE"; 1L -> "SHARED"; else -> "UNKNOWN($mode)" }
@@ -335,7 +349,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     } else {
                         "Unable to open the selected Android AAudio output (error $opened)."
                     }
-                    throw IllegalStateException("$reason $device; $details")
+                        throw IllegalStateException("$reason $device; $details")
+                    }
+                } else {
+                    Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_REUSED rate=$sourceRate channels=$channels format=$outputFormat deviceId=$deviceId")
                 }
                 outputSampleRate = sourceRate
                 outputBitDepth = sourceBits
@@ -366,12 +383,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     4 -> "Signed PCM32"
                     else -> decodedPcmFormat
                 }
-                val sharingName = when (outputInfo.getOrNull(9)?.toInt()) {
+                val actualSharingMode = outputInfo.getOrNull(9)?.toInt() ?: -1
+                val sharingName = when (actualSharingMode) {
                     0 -> "EXCLUSIVE"
                     1 -> "SHARED"
                     else -> "unknown sharing mode"
                 }
                 val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
+                val actualOutputSignature = AAudioOutputSignature(
+                    outputSampleRate, channels, actualFormat, actualDeviceId, actualSharingMode,
+                )
+                if (reusedQueueOutput) {
+                    check(aaudioQueueOutputOwner.currentSignature() == actualOutputSignature) {
+                        "The retained AAudio output identity changed before the next producer attached."
+                    }
+                } else {
+                    check(aaudioQueueOutputOwner.adoptOpenedOutput(actualOutputSignature)) {
+                        "Unable to transfer ownership of the newly opened AAudio output."
+                    }
+                }
 
                 // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
@@ -382,6 +412,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     handle, sessionHandle, DECODE_CHUNK_FRAMES, segmentStartMs, segmentEndMs ?: -1L
                 ) == 0) {
                     "Unable to start the Rust-owned segmented AAudio decode scheduler"
+                }
+                if (reusedQueueOutput) {
+                    check(aaudioQueueOutputOwner.confirmProducerAttached()) {
+                        "The persistent AAudio output did not accept the next producer."
+                    }
                 }
                 // Forward a seek requested while the decoder/session was still opening.
                 pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { requested ->
@@ -465,6 +500,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     if (usbPlaybackSession === usb) usbPlaybackSession = null
                 }
                 usbRouteActive = false
+                if (completedNormally && retainOutputForNextTrack && aaudioQueueOutputOwner.phase() == AAudioQueueOutputOwner.Phase.OPEN) {
+                    outputRetainedForQueue = aaudioQueueOutputOwner.retainForNextTrack()
+                    if (outputRetainedForQueue) {
+                        Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_RETAINED generation=$generation")
+                    }
+                }
                 if (sessionHandle != 0L && !stopped.get()) {
                     NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                 }
@@ -485,7 +526,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     sourceDescriptor?.close()
                 }
-                if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
+                if (playbackGeneration.get() == generation && !outputRetainedForQueue) {
+                    if (aaudioQueueOutputOwner.phase() != AAudioQueueOutputOwner.Phase.CLOSED) {
+                        runCatching { aaudioQueueOutputOwner.close() }
+                    } else {
+                        NativeAudio.nativeStopOutput()
+                    }
+                }
                 // Notify the service only after native workers and per-track resources
                 // have been released. Queue advancement must not race session teardown.
                 if (completedNormally && playbackGeneration.get() == generation && !stopped.get()) {
@@ -702,7 +749,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         return activeWorker !== Thread.currentThread()
     }
 
-    fun stop() {
+    fun stop(preserveRetainedOutput: Boolean = false) {
         playbackGeneration.incrementAndGet()
         stopped.set(true)
         pauseRequested.set(false)
@@ -712,7 +759,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         // stop, transfer drain, and session removal sequence. Calling stop first duplicated
         // that teardown and could hold the session monitor while close waited for transfers.
         if (nativeSessionHandle != 0L) NativeAudio.nativePlaybackSessionCommand(nativeSessionHandle, 6)
-        NativeAudio.nativeStopOutput()
+        if (preserveRetainedOutput && aaudioQueueOutputOwner.phase() == AAudioQueueOutputOwner.Phase.RETAINED) {
+            Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_PRESERVED_FOR_NEXT_TRACK")
+        } else if (aaudioQueueOutputOwner.phase() != AAudioQueueOutputOwner.Phase.CLOSED) {
+            aaudioQueueOutputOwner.close()
+        } else {
+            NativeAudio.nativeStopOutput()
+        }
         worker?.interrupt()
         outputDurationMs = 0L
         outputSampleRate = 0
