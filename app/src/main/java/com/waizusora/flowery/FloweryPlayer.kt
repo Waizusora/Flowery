@@ -469,6 +469,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             }
                             Thread.sleep(8)
                         }
+                        4 -> {
+                            Log.i("FloweryDiagnostics", "AAUDIO_TRACK_BOUNDARY_DRAINED generation=$generation")
+                            break
+                        }
                         2 -> {
                             if (stopped.get() || NativeAudio.nativePlaybackSessionIsCancelled(sessionHandle)) break
                             val errorCode = NativeAudio.nativeGetPlaybackSessionError(sessionHandle)
