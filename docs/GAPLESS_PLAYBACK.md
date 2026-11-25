@@ -270,6 +270,10 @@ Native tests now enqueue the next track's PCM before the output callback consume
 
 These tests verify ring preservation and callback ordering when the next PCM is already available. They do not simulate Android decoder startup latency, AAudio scheduling jitter, or a real device callback racing with the next producer. They therefore do not prove that Flowery can always deliver the next PCM before the old tail drains. Device-level continuity remains a required validation gate.
 
+### Remaining-tail time budget
+
+AAudio boundary snapshots now include `queuedDurationMs`, calculated from queued output frames and the actual AAudio stream rate. This is the remaining PCM runway available while service dispatch, decoder startup, and next-producer prebuffering complete. Compare the value at `AAUDIO_EARLY_TRACK_BOUNDARY` with the elapsed time to `AAUDIO_NEXT_PRODUCER_SCHEDULER_STARTED` for the same generation. If the measured handoff latency approaches or exceeds the available tail duration, that transition is at risk of underrun. The duration is telemetry, not a continuity guarantee; device callback scheduling and concurrent consumption still affect the result. Invalid rate or frame values are reported as unknown.
+
 ### Next-track prebuffer barrier
 
 When reusing a retained AAudio output, Flowery now starts the next segmented decode worker and waits up to 350 ms for the ring to reach the configured low-watermark (currently 100 ms of PCM at common rates) before restarting the output scheduler. A short track is considered ready when its decoder has reached EOF and its remaining PCM is already queued, even if it cannot reach the full watermark. An empty completed track reports zero queued frames. A timeout is logged as `AAUDIO_NEXT_PRODUCER_PREBUFFER_TIMEOUT`; playback continues through the existing output path, but that handoff is not counted as prebuffer-ready. A producer failure aborts the handoff.
