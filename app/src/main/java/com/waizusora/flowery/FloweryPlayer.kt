@@ -112,7 +112,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * gain)
     }
 
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L) {
+    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L, preparedResources: PreparedPlaybackResources? = null) {
         val previousWorker = worker
         stop()
         stopped.set(false)
@@ -151,35 +151,52 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         }
                     }
                 }
-                onState("Opening audio stream…")
-                val openedSourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
-                    sourceResolver.resolveExtension(sourceUri)
+                onState(if (preparedResources == null) "Opening audio stream…" else "Starting prefetched audio…")
+                val sourceRate: Int
+                val channels: Int
+                val sourceBits: Int
+                val sourceDataFormat: Int
+                if (preparedResources != null) {
+                    // The prefetch slot transferred exclusive ownership to this worker.
+                    // Its decoder/session and SAF descriptor remain alive until finally.
+                    handle = preparedResources.decoderHandle
+                    sessionHandle = preparedResources.sessionHandle
+                    sourceRate = preparedResources.sourceSampleRateHz
+                    channels = preparedResources.channels
+                    sourceBits = preparedResources.sourceValidBits
+                    sourceDataFormat = preparedResources.sourceDataFormat
+                    check(handle != 0L && sessionHandle != 0L) {
+                        "The prefetched decoder or playback session is no longer valid."
+                    }
+                } else {
+                    val openedSourceDescriptor = PlaybackSourceDescriptor.open(context, uri) { sourceUri ->
+                        sourceResolver.resolveExtension(sourceUri)
+                    }
+                    sourceDescriptor = openedSourceDescriptor
+                    handle = NativeAudio.nativeCreateStreamDecoder(
+                        openedSourceDescriptor.fileDescriptor, openedSourceDescriptor.extension,
+                    )
+                    check(handle != 0L) { "The native decoder could not be created" }
+                    val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
+                    check(preparedSession.size == 6) { "Rust returned an invalid prepared playback session" }
+                    sessionHandle = preparedSession[0]
+                    sourceRate = preparedSession[2].toInt()
+                    channels = preparedSession[3].toInt()
+                    sourceBits = preparedSession[4].toInt()
+                    sourceDataFormat = preparedSession[5].toInt()
+                    check(sessionHandle != 0L) { "The native playback session could not be created" }
+                    check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 1).toInt() == 0) {
+                        "The native playback session could not enter the prepared state"
+                    }
                 }
-                sourceDescriptor = openedSourceDescriptor
-                val extension = openedSourceDescriptor.extension
-
-                handle = NativeAudio.nativeCreateStreamDecoder(openedSourceDescriptor.fileDescriptor, extension)
                 decoderHandle = handle
+                nativeSessionHandle = sessionHandle
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
-                check(handle != 0L) { "The native decoder could not be created" }
                 usbRouteActive = AndroidOutputRouteResolver(context).detectCurrent() == AndroidOutputTarget.USB
-
-                val preparedSession = NativeAudio.nativePreparePlaybackSession(handle)
-                check(preparedSession.size == 6) { "Rust returned an invalid prepared playback session" }
-                sessionHandle = preparedSession[0]
-                val sourceRate = preparedSession[2].toInt()
-                val channels = preparedSession[3].toInt()
-                val sourceBits = preparedSession[4].toInt()
-                val sourceDataFormat = preparedSession[5].toInt()
                 decodedSampleRate = sourceRate
                 decodedPcmFormat = pcmFormatLabel(sourceBits, sourceDataFormat)
-                check(sessionHandle != 0L) { "The native playback session could not be created" }
                 check(sourceRate > 0 && channels in 1..8) {
                     "The decoder returned an unsupported audio format; Flowery accepts 1-8 channels."
-                }
-                nativeSessionHandle = sessionHandle
-                check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 1).toInt() == 0) {
-                    "The native playback session could not enter the prepared state"
                 }
                 check(NativeAudio.nativePlaybackSessionCommand(sessionHandle, 2).toInt() == 0) {
                     "The native playback session could not enter the running state"
@@ -448,17 +465,27 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     if (usbPlaybackSession === usb) usbPlaybackSession = null
                 }
                 usbRouteActive = false
-                if (sessionHandle != 0L) {
-                    if (!stopped.get()) NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
-                    if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
-                    NativeAudio.nativeClosePlaybackSession(sessionHandle)
+                if (sessionHandle != 0L && !stopped.get()) {
+                    NativeAudio.nativePlaybackSessionCommand(sessionHandle, if (sessionFailed) 7 else 5).toInt()
                 }
-                if (handle != 0L) {
+                if (preparedResources != null) {
+                    // PreparedPlaybackResources owns session, decoder and source descriptor
+                    // as one unit; close it once after all native workers have stopped.
+                    if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
                     if (decoderHandle == handle) decoderHandle = 0L
-                    NativeAudio.nativeCloseStreamDecoder(handle)
+                    runCatching { preparedResources.close() }
+                } else {
+                    if (sessionHandle != 0L) {
+                        if (nativeSessionHandle == sessionHandle) nativeSessionHandle = 0L
+                        NativeAudio.nativeClosePlaybackSession(sessionHandle)
+                    }
+                    if (handle != 0L) {
+                        if (decoderHandle == handle) decoderHandle = 0L
+                        NativeAudio.nativeCloseStreamDecoder(handle)
+                    }
+                    sourceDescriptor?.close()
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
-                sourceDescriptor?.close()
                 // Notify the service only after native workers and per-track resources
                 // have been released. Queue advancement must not race session teardown.
                 if (completedNormally && playbackGeneration.get() == generation && !stopped.get()) {
