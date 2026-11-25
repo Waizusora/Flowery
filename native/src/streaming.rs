@@ -398,7 +398,11 @@ impl StreamDecoder {
                 self.source_bits, self.source_data_format
             ));
         }
-        let samples = self.read_usb_frames(requested)?;
+        let mut samples = self.read_usb_frames(requested)?;
+        let settings = crate::replay_gain::settings();
+        let plan = self.replay_gain_metadata.plan(settings);
+        crate::pcm_format::apply_replay_gain(&mut samples, plan.linear_gain)
+            .map_err(str::to_string)?;
         let format = crate::pcm_format::PcmFormat {
             sample_rate: self.source_rate as u32,
             channels: self.channels as u16,
