@@ -1031,6 +1031,57 @@ mod tests {
     }
 
     #[test]
+    fn callback_keeps_short_and_long_prefilled_track_tails_contiguous() {
+        for old_frames in [1usize, 2, 8] {
+            for next_frames in [1usize, 2, 8] {
+                let (mut producer, consumer) = rtrb::RingBuffer::<u8>::new(256);
+                let old_pcm: Vec<u8> = (0..old_frames * 4).map(|value| value as u8).collect();
+                let next_pcm: Vec<u8> = (0..next_frames * 4)
+                    .map(|value| (128 + value) as u8)
+                    .collect();
+                producer.push_entire_slice(&old_pcm).unwrap();
+                let output = Output {
+                    consumer: UnsafeCell::new(consumer), capacity: 32, channels: 2,
+                    format: FMT_I16, rate: 48_000, bytes_per_sample: 2,
+                    played: AtomicU64::new(0), volume: AtomicU32::new(1.0f32.to_bits()),
+                    active: AtomicBool::new(false), eof: AtomicBool::new(true),
+                    track_eof: AtomicBool::new(false),
+                    underruns: AtomicU64::new(0), error: AtomicI32::new(-1),
+                };
+                let mut engine = Engine::new();
+                engine.output = Some(Box::new(output));
+                engine.producer = Some(producer);
+                engine.producer_epoch = 20;
+                engine.last_open[5] = 7;
+                engine.last_open[6] = SHARING_EXCLUSIVE as i64;
+
+                attach_output_producer_for_next_track(
+                    &mut engine, true, 48_000, 2, FMT_I16, 7, SHARING_EXCLUSIVE,
+                ).unwrap();
+                engine.producer.as_mut().unwrap().push_entire_slice(&next_pcm).unwrap();
+
+                let mut expected = old_pcm.clone();
+                expected.extend_from_slice(&next_pcm);
+                let mut actual = vec![0u8; expected.len()];
+                let output_ptr = engine.output.as_deref_mut().unwrap() as *mut Output;
+                let callback_result = unsafe {
+                    data_callback(
+                        ptr::null_mut(),
+                        output_ptr.cast(),
+                        actual.as_mut_ptr().cast(),
+                        (old_frames + next_frames) as i32,
+                    )
+                };
+                assert_eq!(callback_result, 0);
+                assert_eq!(
+                    actual, expected,
+                    "PCM discontinuity for old tail {old_frames} frames and next prebuffer {next_frames} frames"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn same_signature_handoff_rejects_mismatch_without_changing_epoch() {
         let (producer, consumer) = rtrb::RingBuffer::<u8>::new(64);
         let output = Output {
