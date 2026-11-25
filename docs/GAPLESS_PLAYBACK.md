@@ -285,3 +285,13 @@ This barrier runs on the playback dispatch worker, not the Android UI thread. Th
 ### Boundary tail-budget classification
 
 The early-boundary handler now snapshots the queued PCM duration using the actual AAudio output rate and retains that value for the following same-queue generation. Each attach, prebuffer, pump, and scheduler-stage telemetry record compares its monotonic elapsed handoff time against that boundary-time tail budget and reports `tailBudgetStatus=WITHIN_BUDGET`, `EXCEEDED`, or `UNKNOWN`. Equality is classified as within budget; missing/invalid measurements remain unknown rather than being treated as success. This is a diagnostic classifier only: it does not alter the prebuffer watermark or claim that a callback delivered every sample. The scheduler-start comparison is the most useful stage for determining whether producer startup completed before the originally queued tail budget elapsed.
+
+## Diagnosing retained-output reuse rejection
+
+`AAUDIO_QUEUE_OUTPUT_REUSE_REJECTED` now includes a structured `reason`, the retained output signature, and the requested next-track signature. A `SIGNATURE_MISMATCH` reason identifies each differing field (sample rate, channels, PCM format, device ID, or sharing mode). `NATIVE_PRODUCER_ATTACH_FAILED` means the signatures matched but the native producer-epoch attach returned an error or threw.
+
+When reviewing a device log:
+- A same-signature transition should not be rejected. If it is, inspect the field-level mismatch before changing compatibility rules.
+- A different sample rate, channel count, PCM format, device ID, or sharing mode must take the explicit output-reopen path.
+- Reuse success must be followed by attach, prebuffer, pump, and scheduler events. A retained stream alone is not proof of a continuous PCM handoff.
+- Logs captured from an APK built before this diagnostic change will not contain the new `reason` or signature fields; rebuild and install the branch APK before collecting another trace.
