@@ -420,3 +420,133 @@ mod boundary_tests {
         );
     }
 }
+
+
+/// Persistent output lifetime is independent of decoder lifetime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutputLifetimePhase {
+    Closed,
+    Open { generation: u64, signature: PcmSignature, producer_epoch: u64, producer_attached: bool },
+    Reconfiguring { generation: u64, next: PcmSignature },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutputLifetimeEvent {
+    Open { generation: u64, signature: PcmSignature },
+    TrackEof { generation: u64 },
+    AttachProducer { generation: u64, signature: PcmSignature },
+    ReconfigureComplete { generation: u64 },
+    QueueEof { generation: u64 },
+    Cancel { generation: u64 },
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OutputLifetimeAction {
+    OpenOutput, KeepOutputOpen, AttachProducer { producer_epoch: u64 },
+    ReopenOutput, CloseOutput, RejectInvalidPcm, Ignore,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OutputLifetime { phase: OutputLifetimePhase }
+
+impl OutputLifetime {
+    pub(crate) fn new() -> Self { Self { phase: OutputLifetimePhase::Closed } }
+    pub(crate) fn phase(&self) -> OutputLifetimePhase { self.phase }
+
+    pub(crate) fn apply(&mut self, event: OutputLifetimeEvent) -> OutputLifetimeAction {
+        let generation = match event {
+            OutputLifetimeEvent::Open { generation, .. }
+            | OutputLifetimeEvent::TrackEof { generation }
+            | OutputLifetimeEvent::AttachProducer { generation, .. }
+            | OutputLifetimeEvent::ReconfigureComplete { generation }
+            | OutputLifetimeEvent::QueueEof { generation }
+            | OutputLifetimeEvent::Cancel { generation } => generation,
+        };
+        let active = match self.phase {
+            OutputLifetimePhase::Closed => None,
+            OutputLifetimePhase::Open { generation, .. }
+            | OutputLifetimePhase::Reconfiguring { generation, .. } => Some(generation),
+        };
+        if active.is_some_and(|value| value != generation) { return OutputLifetimeAction::Ignore; }
+
+        match (self.phase, event) {
+            (OutputLifetimePhase::Closed, OutputLifetimeEvent::Open { generation, signature }) => {
+                if signature.validate().is_err() { return OutputLifetimeAction::RejectInvalidPcm; }
+                self.phase = OutputLifetimePhase::Open { generation, signature, producer_epoch: 1, producer_attached: true };
+                OutputLifetimeAction::OpenOutput
+            }
+            (OutputLifetimePhase::Open { generation, signature, producer_epoch, producer_attached: true },
+             OutputLifetimeEvent::TrackEof { .. }) => {
+                self.phase = OutputLifetimePhase::Open { generation, signature, producer_epoch, producer_attached: false };
+                OutputLifetimeAction::KeepOutputOpen
+            }
+            (OutputLifetimePhase::Open { generation, signature, producer_epoch, producer_attached: false },
+             OutputLifetimeEvent::AttachProducer { signature: next, .. }) => {
+                if next.validate().is_err() { return OutputLifetimeAction::RejectInvalidPcm; }
+                if signature == next {
+                    let epoch = producer_epoch.saturating_add(1);
+                    self.phase = OutputLifetimePhase::Open { generation, signature, producer_epoch: epoch, producer_attached: true };
+                    OutputLifetimeAction::AttachProducer { producer_epoch: epoch }
+                } else {
+                    self.phase = OutputLifetimePhase::Reconfiguring { generation, next };
+                    OutputLifetimeAction::ReopenOutput
+                }
+            }
+            (OutputLifetimePhase::Reconfiguring { generation, next },
+             OutputLifetimeEvent::ReconfigureComplete { .. }) => {
+                if next.validate().is_err() { self.phase = OutputLifetimePhase::Closed; return OutputLifetimeAction::RejectInvalidPcm; }
+                self.phase = OutputLifetimePhase::Open { generation, signature: next, producer_epoch: 1, producer_attached: true };
+                OutputLifetimeAction::OpenOutput
+            }
+            (OutputLifetimePhase::Open { .. } | OutputLifetimePhase::Reconfiguring { .. },
+             OutputLifetimeEvent::QueueEof { .. } | OutputLifetimeEvent::Cancel { .. }) => {
+                self.phase = OutputLifetimePhase::Closed;
+                OutputLifetimeAction::CloseOutput
+            }
+            _ => OutputLifetimeAction::Ignore,
+        }
+    }
+}
+
+#[cfg(test)]
+mod output_lifetime_tests {
+    use super::*;
+    fn pcm(rate: u32) -> PcmSignature {
+        PcmSignature { route: OutputRoute::UsbDirect, sample_rate_hz: rate, channels: 2, valid_bits: 24, sample_format: 1 }
+    }
+    #[test]
+    fn track_eof_keeps_output_open_and_detaches_producer() {
+        let mut o = OutputLifetime::new();
+        assert_eq!(o.apply(OutputLifetimeEvent::Open { generation: 1, signature: pcm(96_000) }), OutputLifetimeAction::OpenOutput);
+        assert_eq!(o.apply(OutputLifetimeEvent::TrackEof { generation: 1 }), OutputLifetimeAction::KeepOutputOpen);
+        assert!(matches!(o.phase(), OutputLifetimePhase::Open { producer_attached: false, .. }));
+    }
+    #[test]
+    fn same_pcm_attaches_new_producer_without_reopening() {
+        let mut o = OutputLifetime::new();
+        o.apply(OutputLifetimeEvent::Open { generation: 2, signature: pcm(96_000) });
+        o.apply(OutputLifetimeEvent::TrackEof { generation: 2 });
+        assert_eq!(o.apply(OutputLifetimeEvent::AttachProducer { generation: 2, signature: pcm(96_000) }), OutputLifetimeAction::AttachProducer { producer_epoch: 2 });
+    }
+    #[test]
+    fn changed_usb_rate_requires_reconfiguration() {
+        let mut o = OutputLifetime::new();
+        o.apply(OutputLifetimeEvent::Open { generation: 3, signature: pcm(44_100) });
+        o.apply(OutputLifetimeEvent::TrackEof { generation: 3 });
+        assert_eq!(o.apply(OutputLifetimeEvent::AttachProducer { generation: 3, signature: pcm(96_000) }), OutputLifetimeAction::ReopenOutput);
+        assert_eq!(o.apply(OutputLifetimeEvent::ReconfigureComplete { generation: 3 }), OutputLifetimeAction::OpenOutput);
+    }
+    #[test]
+    fn only_queue_eof_or_cancel_closes_output() {
+        let mut o = OutputLifetime::new();
+        o.apply(OutputLifetimeEvent::Open { generation: 4, signature: pcm(48_000) });
+        o.apply(OutputLifetimeEvent::TrackEof { generation: 4 });
+        assert_eq!(o.apply(OutputLifetimeEvent::QueueEof { generation: 4 }), OutputLifetimeAction::CloseOutput);
+        assert_eq!(o.phase(), OutputLifetimePhase::Closed);
+    }
+    #[test]
+    fn stale_generation_cannot_attach_or_close_output() {
+        let mut o = OutputLifetime::new();
+        o.apply(OutputLifetimeEvent::Open { generation: 5, signature: pcm(48_000) });
+        o.apply(OutputLifetimeEvent::TrackEof { generation: 5 });
+        assert_eq!(o.apply(OutputLifetimeEvent::AttachProducer { generation: 4, signature: pcm(48_000) }), OutputLifetimeAction::Ignore);
+        assert_eq!(o.apply(OutputLifetimeEvent::QueueEof { generation: 4 }), OutputLifetimeAction::Ignore);
+    }
+}
