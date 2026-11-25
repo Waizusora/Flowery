@@ -900,7 +900,17 @@ pub(crate) fn stop_output_scheduler_for_session(session_handle: jlong) {
     stop_scheduler_for_session(session_handle);
 }
 
-pub(crate) fn stop_output_for_session() {
+/// Stops one session's scheduler. The shared device is shut down only when no
+/// other live AAudio session can own or be preparing it.
+pub(crate) fn stop_output_for_session(session_handle: jlong) {
+    stop_scheduler_for_session(session_handle);
+    if crate::playback_session::has_other_active_aaudio_session(session_handle) {
+        return;
+    }
+    stop_output_completely();
+}
+
+fn stop_output_completely() {
     OUTPUT_PERSISTENT.store(false, Ordering::Release);
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());
@@ -914,7 +924,7 @@ pub(crate) fn stop_output_for_session() {
     resume_output_for_session().unwrap_or(INVALID_STATE)
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutput(_:JNIEnv,_:JClass){
-    stop_output_for_session();
+    stop_output_completely();
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(_:JNIEnv,_:JClass)->jboolean{if engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.active.load(Ordering::Acquire)).unwrap_or(false){JNI_TRUE}else{0}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.underruns.load(Ordering::Acquire).min(i32::MAX as u64) as i32).unwrap_or(0)}
