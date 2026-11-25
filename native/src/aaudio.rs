@@ -383,7 +383,7 @@ fn stop_output_scheduler() {
     stop_output_scheduler_locked();
 }
 
-fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut bool) -> Result<bool, i32> {
+fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut bool) -> Result<(bool, bool), i32> {
     let e = engine().lock().unwrap_or_else(|p| p.into_inner());
     if e.stream.is_null() { return Err(INVALID_STATE); }
     let output = e.output.as_ref().ok_or(INVALID_STATE)?;
@@ -420,7 +420,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
             }
         }
     }
-    Ok(output_should_complete(eof, track_eof, buffered, active))
+    Ok((output_should_complete(eof, track_eof, buffered, active), track_eof))
 }
 
 #[no_mangle]
@@ -512,20 +512,21 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     }
                 }
                 match output_scheduler_tick(watermark, phase, &mut start_requested) {
-                    Ok(true) => {
-                        if crate::playback_session::transition_session_phase(&worker_session, 4) &&
+                    Ok((complete, track_eof)) => {
+                        // Publish an early queue-boundary notification as soon as the
+                        // decoder reaches EOF while buffered PCM is still draining.
+                        // Status 3 is non-terminal: single-track playback continues
+                        // waiting for status 1, while a queue owner may hand off now.
+                        if track_eof && !complete {
+                            thread_status.store(3, Ordering::Release);
+                        }
+                        if complete &&
+                            crate::playback_session::transition_session_phase(&worker_session, 4) &&
                             crate::playback_session::transition_session_phase(&worker_session, 5) {
-                            // Decoder/session completion is not the owner of the
-                            // device stream lifetime. Leave the opened AAudio stream and
-                            // its ring allocated until the route owner explicitly closes
-                            // them; a future queue-level handoff may refill/restart it.
-                            // The current single-track Kotlin owner still closes it from
-                            // nativeClosePlaybackSession/nativeStopOutput.
                             thread_status.store(1, Ordering::Release);
                             break;
                         }
                     }
-                    Ok(false) => {}
                     Err(error) => {
                         worker_session.error_code.store(if error < 0 { error } else { -error }, Ordering::Release);
                         crate::playback_session::transition_session_phase(&worker_session, 7);
