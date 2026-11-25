@@ -38,6 +38,7 @@ object NativeAudio {
     external fun nativePlaybackQueueSetShuffle(handle: Long, enabled: Boolean): Boolean
     external fun nativePlaybackQueueToggleShuffle(handle: Long): Boolean
     external fun nativePlaybackQueueTransition(handle: Long, size: Int, action: Int): Int
+    external fun nativePlaybackQueuePeekNext(handle: Long, size: Int): Int
     external fun nativeGetPlaybackQueueSnapshot(handle: Long): LongArray
     external fun nativeCreatePlaybackController(): Long
     external fun nativeTransitionPlaybackController(handle: Long, event: Int): Int
