@@ -91,3 +91,9 @@ and returns all handles in the owned bundle. Failure at any preparation step
 releases every resource already acquired. The factory does not start AAudio or
 USB output workers. It is ready for integration with the generation-keyed slot,
 but `FloweryPlayer` still uses its existing single-track open path today.
+
+## Playback prefetch coordinator foundation
+
+Android now has a generation-scoped `PlaybackPrefetchCoordinator<T>` around `PreparedPlaybackSlot<T>`. It schedules one preparation task away from the playback/output thread, accepts results only for the current playback generation and latest prefetch request, and disposes resources produced by superseded or invalidated work. A successful `take(generation, key)` transfers ownership exactly once; closing the coordinator disposes any resource that was never claimed.
+
+Unit tests cover successful ownership transfer, generation invalidation, rejection of stale-generation requests, cleanup on close, and preparation failure. The coordinator is still a foundation: it is not yet connected to `PlaybackService` or `FloweryPlayer`, does not decide the next queue item, and does not hand a prepared decoder to a running output worker. Runtime gapless playback therefore remains disabled.
