@@ -137,7 +137,7 @@ internal fun classifyHandoffTailBudget(boundaryQueuedDurationMs: Long?, handoffE
 
 /** Converts queued output frames into a conservative duration budget. */
 internal fun queuedPcmDurationMs(queuedFrames: Long, sampleRateHz: Int): Long? {
-    if (queuedFrames < 0L || sampleRateHz <= 0) return null
+    if (queuedFrames < 0L || sampleRateHz <= 0 || queuedFrames > Long.MAX_VALUE / 1_000L) return null
     return queuedFrames * 1_000L / sampleRateHz.toLong()
 }
 
