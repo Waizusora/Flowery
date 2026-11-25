@@ -113,6 +113,7 @@ class PlaybackService : Service() {
     @Volatile private var recoveryPositionMs = 0L
     private var lastRecoveryPersistMs = 0L
     private val io = Executors.newSingleThreadExecutor()
+    private val playbackDispatch = Executors.newSingleThreadExecutor()
     private val queue = mutableListOf<String>()
     private val queueTitles = mutableListOf<String>()
     private val queueArtists = mutableListOf<String>()
@@ -687,7 +688,7 @@ class PlaybackService : Service() {
         // Start the playback worker before optional SAF metadata extraction. The
         // metadata retriever may block on document providers; it must not delay the
         // next decoder/output producer at a track boundary.
-        io.execute {
+        playbackDispatch.execute {
             if (requestGeneration != playRequestGeneration) {
                 runCatching { preparedCurrent?.close() }
                 return@execute
@@ -1122,6 +1123,7 @@ class PlaybackService : Service() {
         session.isActive = false
         session.release()
         io.shutdownNow()
+        playbackDispatch.shutdownNow()
         playbackWakeLock?.let { lock -> if (lock.isHeld) runCatching { lock.release() } }
         playbackWakeLock = null
         super.onDestroy()
