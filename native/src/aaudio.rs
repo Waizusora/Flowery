@@ -94,10 +94,10 @@ impl Output {
         (gain as f64 * 2_147_483_648.0).round() as i64
     }
 }
-struct Engine { stream:*mut AAudioStream, output:Option<Box<Output>>, producer:Option<Producer<u8>>, last_open:[i64;11] }
+struct Engine { stream:*mut AAudioStream, output:Option<Box<Output>>, producer:Option<Producer<u8>>, producer_epoch:u64, last_open:[i64;11] }
 unsafe impl Send for Engine {}
 impl Engine {
-    fn new()->Self { Self{stream:ptr::null_mut(),output:None,producer:None,last_open:[0;11]} }
+    fn new()->Self { Self{stream:ptr::null_mut(),output:None,producer:None,producer_epoch:0,last_open:[0;11]} }
     unsafe fn stop(&mut self) {
         if !self.stream.is_null() {
             let s=AAudioStream_getState(self.stream);
@@ -108,6 +108,7 @@ impl Engine {
             }
             let _=AAudioStream_close(self.stream); self.stream=ptr::null_mut();
         }
+        self.producer_epoch = self.producer_epoch.wrapping_add(1);
         self.producer=None;
         self.output=None;
     }
@@ -183,14 +184,21 @@ fn reset_output_ring(engine: &mut Engine, expected_rate: i32, expected_channels:
     output.active.store(true, Ordering::Release);
     output.error.store(0, Ordering::Release);
     output.played.store(0, Ordering::Release);
+    engine.producer_epoch = engine.producer_epoch.wrapping_add(1).max(1);
     engine.producer = Some(producer);
     Ok(())
 }
 
 /// Returns free PCM frames in the bounded output ring.
 /// Returns queued frames, free ring capacity, and the producer's latency budget.
-pub(crate) fn output_queue_budget() -> Option<(usize, usize, usize)> {
+pub(crate) fn output_producer_epoch() -> Option<u64> {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if engine.output.is_some() && engine.producer.is_some() { Some(engine.producer_epoch) } else { None }
+}
+
+pub(crate) fn output_queue_budget(epoch: u64) -> Option<(usize, usize, usize)> {
+    let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if engine.producer_epoch != epoch { return None; }
     let output = engine.output.as_ref()?;
     let producer = engine.producer.as_ref()?;
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample)?;
@@ -205,8 +213,9 @@ pub(crate) fn output_queue_budget() -> Option<(usize, usize, usize)> {
 }
 
 /// Copies complete interleaved PCM frames into the bounded SPSC transport.
-pub(crate) fn write_output_pcm_bytes(samples: &[u8]) -> Result<usize, i32> {
+pub(crate) fn write_output_pcm_bytes(epoch: u64, samples: &[u8]) -> Result<usize, i32> {
     let mut engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if engine.producer_epoch != epoch { return Err(INVALID_STATE); }
     let output = engine.output.as_ref().ok_or(INVALID_STATE)?;
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
     if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
@@ -627,10 +636,14 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
 }
 
 /// Signals end-of-stream to the AAudio callback without crossing JNI.
-pub(crate) fn signal_stream_eof() {
-    if let Some(output) = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner()).output.as_ref() {
+pub(crate) fn signal_stream_eof(epoch: u64) -> bool {
+    let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if engine.producer_epoch != epoch { return false; }
+    if let Some(output) = engine.output.as_ref() {
         output.eof.store(true, Ordering::Release);
+        return true;
     }
+    false
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetStreamEof(_:JNIEnv,_:JClass){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.eof.store(true,Ordering::Release);}}
