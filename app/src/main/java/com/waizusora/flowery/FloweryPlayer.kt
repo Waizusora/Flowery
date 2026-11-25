@@ -36,6 +36,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val playbackGeneration = AtomicInteger(0)
     @Volatile private var lastAaudioBoundaryGeneration = -1
     @Volatile private var lastAaudioBoundaryAtNanos = 0L
+    @Volatile private var lastAaudioBoundaryQueuedDurationMs: Long? = null
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
     @Volatile private var outputSampleRate = 0
@@ -498,6 +499,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             if (shouldAdvanceAaudioQueue(3, retainOutputForNextTrack)) {
                                 lastAaudioBoundaryGeneration = generation
                                 lastAaudioBoundaryAtNanos = android.os.SystemClock.elapsedRealtimeNanos()
+                                lastAaudioBoundaryQueuedDurationMs = currentAaudioQueuedDurationMs()
                                 Log.i(
                                     "FloweryDiagnostics",
                                     "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation boundaryElapsedRealtimeNanos=$lastAaudioBoundaryAtNanos ${audioPipelineDiagnostics()}"
@@ -689,7 +691,15 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         val elapsedMs = elapsedHandoffMs(
             boundaryAtNanos, android.os.SystemClock.elapsedRealtimeNanos()
         ) ?: return "handoffFromGeneration=unknown"
-        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs"
+        val tailBudgetMs = lastAaudioBoundaryQueuedDurationMs
+        val budgetStatus = classifyHandoffTailBudget(tailBudgetMs, elapsedMs)
+        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs boundaryTailBudgetMs=${tailBudgetMs ?: \"unknown\"} tailBudgetStatus=$budgetStatus"
+    }
+
+    private fun currentAaudioQueuedDurationMs(): Long? {
+        val diagnostics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() ?: return null
+        if (diagnostics.size <= 7) return null
+        return queuedPcmDurationMs(diagnostics[2], diagnostics[7].toInt())
     }
 
     /** Compact playback telemetry for correlating audible dropouts with buffer/xrun counters. */
