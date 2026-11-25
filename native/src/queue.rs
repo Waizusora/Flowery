@@ -153,6 +153,7 @@ struct QueueSnapshot {
     queue_size: i32,
     repeat_mode: i32,
     shuffle_enabled: bool,
+    planned_next: Option<i32>,
 }
 
 static NEXT_QUEUE_HANDLE: AtomicU64 = AtomicU64::new(1);
@@ -175,7 +176,7 @@ fn create_queue_state() -> jlong {
         let mut registry = queue_registry().lock().unwrap_or_else(|error| error.into_inner());
         if let std::collections::hash_map::Entry::Vacant(entry) = registry.entry(handle) {
             entry.insert(Arc::new(Mutex::new(QueueSnapshot {
-                current_index: -1, queue_size: 0, repeat_mode: 0, shuffle_enabled: false,
+                current_index: -1, queue_size: 0, repeat_mode: 0, shuffle_enabled: false, planned_next: None,
             })));
             return handle as jlong;
         }
@@ -210,6 +211,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
     state.queue_size = size.max(0);
     state.current_index = if state.queue_size == 0 { -1 } else { index.clamp(0, state.queue_size - 1) };
+    state.planned_next = None;
     state.current_index
 }
 
@@ -221,6 +223,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     let Some(state) = queue_state(handle) else { return -1; };
     let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
     state.repeat_mode = mode;
+    state.planned_next = None;
     state.repeat_mode
 }
 
@@ -231,6 +234,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     let Some(state) = queue_state(handle) else { return -1; };
     let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
     state.repeat_mode = (state.repeat_mode + 1) % 3;
+    state.planned_next = None;
     state.repeat_mode
 }
 
@@ -241,6 +245,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     let Some(state) = queue_state(handle) else { return 0; };
     let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
     state.shuffle_enabled = enabled != 0;
+    state.planned_next = None;
     if state.shuffle_enabled { 1 } else { 0 }
 }
 
@@ -251,7 +256,39 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     let Some(state) = queue_state(handle) else { return 0; };
     let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
     state.shuffle_enabled = !state.shuffle_enabled;
+    state.planned_next = None;
     if state.shuffle_enabled { 1 } else { 0 }
+}
+
+fn peek_next(state: &mut QueueSnapshot) -> i32 {
+    if state.queue_size <= 0 || state.current_index < 0 || state.current_index >= state.queue_size {
+        state.planned_next = None;
+        return -1;
+    }
+    if let Some(next) = state.planned_next {
+        return next;
+    }
+    let next = transition(
+        state.current_index,
+        state.queue_size,
+        state.shuffle_enabled,
+        state.repeat_mode,
+        ACTION_NEXT,
+    );
+    if next >= 0 {
+        state.planned_next = Some(next);
+    }
+    next
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueuePeekNext(
+    _env: JNIEnv, _class: JClass, handle: jlong, size: jint,
+) -> jint {
+    let Some(state) = queue_state(handle) else { return -1; };
+    let mut state = state.lock().unwrap_or_else(|error| error.into_inner());
+    state.queue_size = size.max(0);
+    peek_next(&mut state)
 }
 
 #[no_mangle]
@@ -264,8 +301,17 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackQueu
     if state.queue_size == 0 || state.current_index < 0 || state.current_index >= state.queue_size {
         return -1;
     }
-    let next = transition(state.current_index, state.queue_size, state.shuffle_enabled, state.repeat_mode, action);
-    if next >= 0 { state.current_index = next; }
+    let next = if action == ACTION_NEXT {
+        peek_next(&mut state)
+    } else if action == ACTION_COMPLETION && state.repeat_mode != REPEAT_ONE {
+        peek_next(&mut state)
+    } else {
+        transition(state.current_index, state.queue_size, state.shuffle_enabled, state.repeat_mode, action)
+    };
+    if next >= 0 {
+        state.current_index = next;
+    }
+    state.planned_next = None;
     next
 }
 
