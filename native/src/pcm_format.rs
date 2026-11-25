@@ -147,7 +147,7 @@ pub(super) fn apply_replay_gain(samples: &mut UsbPcmSamples, linear_gain: f32) -
     if !linear_gain.is_finite() || !(0.0..=64.0).contains(&linear_gain) {
         return Err("ReplayGain linear multiplier is outside the supported range");
     }
-    if linear_gain == 1.0 { return Ok(()); }
+    if linear_gain == 1.0 || matches!(samples, UsbPcmSamples::Empty) { return Ok(()); }
     let gain = f64::from(linear_gain);
     match samples {
         UsbPcmSamples::S16(values) => {
@@ -204,6 +204,13 @@ mod replay_gain_pcm_tests {
         let mut samples = UsbPcmSamples::F32(vec![-0.25, 0.25, 0.75, f32::NAN, f32::INFINITY]);
         apply_replay_gain(&mut samples, 2.0).unwrap();
         assert_eq!(samples, UsbPcmSamples::F32(vec![-0.5, 0.5, 1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn empty_eof_chunk_is_a_valid_replaygain_noop() {
+        let mut empty = UsbPcmSamples::Empty;
+        assert!(apply_replay_gain(&mut empty, 2.0).is_ok());
+        assert_eq!(empty, UsbPcmSamples::Empty);
     }
 
     #[test]
