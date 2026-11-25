@@ -69,3 +69,17 @@ Runtime prefetch and producer handoff remain unimplemented.
 ## Current scope
 
 The native transition planner and generation-safe queue-boundary contract are implemented and unit-tested. Gapless playback is **not yet enabled** in the player. Runtime integration, decoder prefetch, persistent output ownership, and hardware validation remain subsequent steps.
+
+
+### Prepared resource bundle
+
+A prepared decoder/session is represented by `PreparedPlaybackResources`. It
+owns the native session handle, decoder handle, and SAF source descriptor as one
+transferable unit. Teardown is idempotent and follows dependency order: native
+session, decoder, then source descriptor. Each teardown step is attempted even
+if an earlier native release fails. Unit tests cover ordering, idempotence, and
+best-effort cleanup.
+
+This wrapper is still a resource-lifecycle primitive, not runtime prefetch. It
+is not yet constructed or consumed by `FloweryPlayer`; output lifetime and
+producer handoff remain separate implementation work.
