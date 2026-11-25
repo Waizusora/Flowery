@@ -317,6 +317,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     aaudioQueueOutputOwner.close()
                 }
                 if (!reusedQueueOutput) {
+                    // Do not associate a fresh output session with a stale queue-boundary snapshot.
+                    lastAaudioBoundaryGeneration = -1
+                    lastAaudioBoundaryAtNanos = 0L
+                    lastAaudioBoundaryQueuedDurationMs = null
                     val opened = NativeAudio.nativeStartStreamOutput(
                         sourceRate, channels, softwareVolume, deviceId,
                         requireExclusive = true,
