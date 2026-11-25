@@ -737,7 +737,7 @@ class PlaybackService : Service() {
                             return@execute
                         }
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
-                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent)
+                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent, retainOutputForNextTrack = queueState.peekNextIndex(queue.size) >= 0)
                         if (requestGeneration != playRequestGeneration) return@execute
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
                         playbackState = PlaybackStateCompat.STATE_CONNECTING
