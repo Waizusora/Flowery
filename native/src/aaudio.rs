@@ -156,7 +156,33 @@ impl Engine {
     }
 }
 static ENGINE:OnceLock<Mutex<Engine>>=OnceLock::new();
+static OUTPUT_PERSISTENT: AtomicBool = AtomicBool::new(false);
 fn engine()-> &'static Mutex<Engine>{ENGINE.get_or_init(||Mutex::new(Engine::new()))}
+
+/// Whether a completed track may release its session while retaining the device output.
+pub(crate) fn output_persistence_enabled() -> bool {
+    OUTPUT_PERSISTENT.load(Ordering::Acquire)
+}
+
+/// Replaces the SPSC ring only while the AAudio callback is stopped.
+fn reset_output_ring(engine: &mut Engine) -> Result<(), i32> {
+    let output = engine.output.as_mut().ok_or(INVALID_STATE)?;
+    let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
+    let capacity_bytes = usize::try_from(output.capacity)
+        .ok().and_then(|frames| frames.checked_mul(bytes_per_frame))
+        .filter(|bytes| *bytes > 0).ok_or(INVALID_FORMAT)?;
+    let (producer, consumer) = crate::pcm_transport::new_pcm_byte_ring(capacity_bytes)
+        .map_err(|_| INVALID_FORMAT)?;
+    // Caller holds the engine lock and has verified the stream is not running;
+    // therefore the callback cannot concurrently access this consumer endpoint.
+    unsafe { *output.consumer.get() = consumer; }
+    output.eof.store(false, Ordering::Release);
+    output.active.store(true, Ordering::Release);
+    output.error.store(0, Ordering::Release);
+    output.played.store(0, Ordering::Release);
+    engine.producer = Some(producer);
+    Ok(())
+}
 
 /// Returns free PCM frames in the bounded output ring.
 /// Returns queued frames, free ring capacity, and the producer's latency budget.
@@ -303,14 +329,14 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
         if state == STATE_STARTED {
             *start_requested = false;
         }
-        if phase == 2 && (state == STATE_OPEN || state == STATE_PAUSED) &&
+        if phase == 2 && (state == STATE_OPEN || state == STATE_PAUSED || state == STATE_STOPPED) &&
             (buffered >= low_watermark || eof) && !*start_requested {
             let result = AAudioStream_requestStart(e.stream);
             if result != OK { return Err(result); }
             *start_requested = true;
         }
         let current_state = AAudioStream_getState(e.stream);
-        if current_state == STATE_STOPPED && !eof { return Err(INVALID_STATE); }
+        if current_state == STATE_STOPPED && !eof && buffered == 0 { return Ok(false); }
         let xruns = AAudioStream_getXRunCount(e.stream);
         if xruns > 0 {
             let capacity = AAudioStream_getBufferCapacityInFrames(e.stream);
@@ -505,6 +531,42 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(_:JNIEnv,_:JClass)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
 }
+
+/// Enables/disables the explicit queue-level lease that keeps AAudio open
+/// after an individual decoder session is closed.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputPersistence(
+    _env: JNIEnv, _class: JClass, enabled: jboolean,
+) {
+    OUTPUT_PERSISTENT.store(enabled == JNI_TRUE, Ordering::Release);
+}
+
+/// Installs a fresh empty SPSC ring for the next same-format track.
+/// Must be called after the previous session is closed and its callback stopped.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStreamOutputForNextTrack(
+    mut env: JNIEnv, _class: JClass,
+) -> jint {
+    stop_output_scheduler();
+    let mut e = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if e.stream.is_null() || e.output.is_none() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output is not open");
+        return INVALID_STATE;
+    }
+    let state = unsafe { AAudioStream_getState(e.stream) };
+    if state != STATE_STOPPED && state != STATE_OPEN && state != STATE_PAUSED {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio callback must be stopped before replacing the PCM ring");
+        return INVALID_STATE;
+    }
+    match reset_output_ring(&mut e) {
+        Ok(()) => OK,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Unable to reset AAudio PCM ring");
+            error
+        }
+    }
+}
+
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeFlushStreamOutput(_:JNIEnv,_:JClass,position:jlong,start:jboolean)->jint{
  let result=flush_output_for_seek(position);
  if result!=OK{return result;}
@@ -597,7 +659,12 @@ pub(crate) fn resume_output_for_session() -> Option<i32> {
         else { INVALID_STATE }
     })
 }
+pub(crate) fn stop_output_scheduler_for_session() {
+    stop_output_scheduler();
+}
+
 pub(crate) fn stop_output_for_session() {
+    OUTPUT_PERSISTENT.store(false, Ordering::Release);
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());
     if let Some(o)=e.output.as_ref(){o.active.store(false,Ordering::Release);}
