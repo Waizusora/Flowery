@@ -165,8 +165,11 @@ pub(crate) fn output_persistence_enabled() -> bool {
 }
 
 /// Replaces the SPSC ring only while the AAudio callback is stopped.
-fn reset_output_ring(engine: &mut Engine) -> Result<(), i32> {
+fn reset_output_ring(engine: &mut Engine, expected_rate: i32, expected_channels: i32, expected_format: i32) -> Result<(), i32> {
     let output = engine.output.as_mut().ok_or(INVALID_STATE)?;
+    if output.rate != expected_rate || output.channels != expected_channels as usize || output.format != expected_format {
+        return Err(INVALID_FORMAT);
+    }
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
     let capacity_bytes = usize::try_from(output.capacity)
         .ok().and_then(|frames| frames.checked_mul(bytes_per_frame))
@@ -547,8 +550,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputPer
 /// Must be called after the previous session is closed and its callback stopped.
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStreamOutputForNextTrack(
-    mut env: JNIEnv, _class: JClass,
+    mut env: JNIEnv, _class: JClass, expected_rate: jint, expected_channels: jint, expected_format: jint,
 ) -> jint {
+    if !valid_output_format(expected_rate, expected_channels, expected_format) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid expected PCM signature for persistent AAudio output");
+        return INVALID_FORMAT;
+    }
     if !OUTPUT_PERSISTENT.load(Ordering::Acquire) {
         let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output lease is not enabled");
         return INVALID_STATE;
@@ -564,7 +571,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStrea
         let _ = env.throw_new("java/lang/IllegalStateException", "AAudio callback must be stopped before replacing the PCM ring");
         return INVALID_STATE;
     }
-    match reset_output_ring(&mut e) {
+    match reset_output_ring(&mut e, expected_rate, expected_channels, expected_format) {
         Ok(()) => OK,
         Err(error) => {
             let _ = env.throw_new("java/lang/IllegalStateException", "Unable to reset AAudio PCM ring");
@@ -752,7 +759,7 @@ mod tests {
             producer: Some(producer),
             last_open: [0; 11],
         };
-        reset_output_ring(&mut engine).unwrap();
+        reset_output_ring(&mut engine, 48_000, 2, FMT_I16).unwrap();
         let next = [9_u8, 8, 7, 6];
         let producer = engine.producer.as_mut().unwrap();
         producer.push_entire_slice(&next).unwrap();
@@ -765,6 +772,34 @@ mod tests {
         assert_eq!(output.eof.load(Ordering::Acquire), false);
         assert_eq!(output.active.load(Ordering::Acquire), true);
         assert_eq!(output.error.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn reset_output_ring_rejects_a_different_pcm_signature() {
+        let (_, consumer) = RingBuffer::<u8>::new(16);
+        let output = Output {
+            consumer: UnsafeCell::new(consumer),
+            capacity: 4,
+            channels: 2,
+            format: FMT_I16,
+            rate: 48_000,
+            bytes_per_sample: 2,
+            played: AtomicU64::new(0),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            active: AtomicBool::new(false),
+            eof: AtomicBool::new(true),
+            underruns: AtomicU64::new(0),
+            error: AtomicI32::new(0),
+        };
+        let mut engine = Engine {
+            stream: ptr::null_mut(),
+            output: Some(Box::new(output)),
+            producer: None,
+            last_open: [0; 11],
+        };
+        assert_eq!(reset_output_ring(&mut engine, 44_100, 2, FMT_I16), Err(INVALID_FORMAT));
+        assert_eq!(reset_output_ring(&mut engine, 48_000, 1, FMT_I16), Err(INVALID_FORMAT));
+        assert_eq!(reset_output_ring(&mut engine, 48_000, 2, FMT_I24), Err(INVALID_FORMAT));
     }
 
     #[test]
