@@ -130,3 +130,9 @@ internal fun queuedPcmDurationMs(queuedFrames: Long, sampleRateHz: Int): Long? {
     if (queuedFrames < 0L || sampleRateHz <= 0) return null
     return queuedFrames * 1_000L / sampleRateHz.toLong()
 }
+
+/** Converts monotonic nanosecond timestamps into a non-negative handoff duration. */
+internal fun elapsedHandoffMs(boundaryAtNanos: Long, nowNanos: Long): Long? {
+    if (boundaryAtNanos <= 0L || nowNanos < boundaryAtNanos) return null
+    return (nowNanos - boundaryAtNanos) / 1_000_000L
+}
