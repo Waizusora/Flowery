@@ -305,7 +305,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (stopped.get() || playbackGeneration.get() != generation) return@thread
                 val outputRingCapacityFrames = NativeAudio.nativeRingCapacityFrames(sourceRate)
                 val requestedOutputSignature = AAudioOutputSignature(
-                    sourceRate, channels, outputFormat, deviceId, AAudioOutputSignature.SHARING_EXCLUSIVE,
+                    sourceRate, channels, outputFormat, deviceId, aaudioQueueOutputOwner.sharingModeForNextTrack(),
                 )
                 var reusedQueueOutput = false
                 if (aaudioQueueOutputOwner.phase() == AAudioQueueOutputOwner.Phase.RETAINED) {
