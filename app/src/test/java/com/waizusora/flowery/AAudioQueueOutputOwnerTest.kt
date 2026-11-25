@@ -9,12 +9,12 @@ import org.junit.Test
 class AAudioQueueOutputOwnerTest {
     private class FakeNative : AAudioQueueOutputNative {
         val persistence = mutableListOf<Boolean>()
-        val prepared = mutableListOf<AAudioOutputSignature>()
+        val attached = mutableListOf<AAudioOutputSignature>()
         var prepareResult = 0
         var stopCount = 0
         override fun setPersistence(enabled: Boolean) { persistence += enabled }
-        override fun prepareNextTrack(signature: AAudioOutputSignature): Int {
-            prepared += signature
+        override fun attachNextTrack(signature: AAudioOutputSignature): Int {
+            attached += signature
             return prepareResult
         }
         override fun stopOutput() { stopCount += 1 }
@@ -40,7 +40,7 @@ class AAudioQueueOutputOwnerTest {
         assertTrue(owner.confirmProducerAttached())
         assertEquals(AAudioQueueOutputOwner.Phase.OPEN, owner.phase())
         assertEquals(listOf(true), native.persistence)
-        assertEquals(listOf(current), native.prepared)
+        assertEquals(listOf(current), native.attached)
     }
 
     @Test
@@ -54,12 +54,12 @@ class AAudioQueueOutputOwnerTest {
         assertFalse(owner.prepareNextTrack(signature(rate = 96_000)))
         assertFalse(owner.prepareNextTrack(signature(device = 8)))
         assertFalse(owner.prepareNextTrack(signature(sharing = AAudioOutputSignature.SHARING_SHARED)))
-        assertTrue(native.prepared.isEmpty())
+        assertTrue(native.attached.isEmpty())
         assertEquals(AAudioQueueOutputOwner.Phase.RETAINED, owner.phase())
     }
 
     @Test
-    fun nativeRingResetFailureDoesNotClaimProducerReady() {
+    fun nativeProducerAttachFailureDoesNotClaimProducerReady() {
         val native = FakeNative().apply { prepareResult = -898 }
         val owner = AAudioQueueOutputOwner(native)
         val current = signature()
