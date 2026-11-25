@@ -71,6 +71,12 @@ internal class AAudioQueueOutputOwner(
     @Synchronized
     fun currentSignature(): AAudioOutputSignature? = signature
 
+    /** Reuse the actual retained mode; a fresh AAudio open may fall back from exclusive to shared. */
+    @Synchronized
+    fun sharingModeForNextTrack(): Int =
+        if (phase == Phase.RETAINED) signature?.sharingMode ?: AAudioOutputSignature.SHARING_EXCLUSIVE
+        else AAudioOutputSignature.SHARING_EXCLUSIVE
+
     @Synchronized
     fun adoptOpenedOutput(opened: AAudioOutputSignature): Boolean {
         if (phase != Phase.CLOSED || !opened.isValid()) return false
