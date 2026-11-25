@@ -47,6 +47,7 @@ internal fun TagInfoDialog(tag: AudioTag, replayGainSettings: ReplayGainPreferen
                 Text("Effective gain: ${"%+.2f dB".format(java.util.Locale.ROOT, replayGainPlan.effectiveGainDb)}", style = MaterialTheme.typography.bodyMedium)
                 Text(
                     "Peak protection: " + when {
+                        replayGainPlan.modeLabel == "Off" -> "Not active (ReplayGain is Off)"
                         !replayGainPlan.clippingPreventionEnabled -> "Off"
                         !replayGainPlan.peakMetadataAvailable -> "Enabled, but no valid peak tag is available"
                         replayGainPlan.peakLimitApplied -> "Applied"
