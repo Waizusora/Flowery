@@ -58,6 +58,16 @@ fn producer_epoch_matches(current: u64, expected: u64) -> bool {
     current != 0 && current == expected
 }
 
+fn output_identity_matches(
+    actual_device_id: i32, actual_sharing_mode: i32,
+    expected_device_id: i32, expected_sharing_mode: i32,
+) -> bool {
+    expected_device_id >= 0
+        && matches!(expected_sharing_mode, SHARING_EXCLUSIVE | SHARING_SHARED)
+        && actual_device_id == expected_device_id
+        && actual_sharing_mode == expected_sharing_mode
+}
+
 fn valid_output_format(rate: i32, channels: i32, format: i32) -> bool {
     if rate <= 0 || channels <= 0 {
         return false;
@@ -564,6 +574,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputPer
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStreamOutputForNextTrack(
     mut env: JNIEnv, _class: JClass, expected_rate: jint, expected_channels: jint, expected_format: jint,
+    expected_device_id: jint, expected_sharing_mode: jint,
 ) -> jint {
     if !valid_output_format(expected_rate, expected_channels, expected_format) {
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid expected PCM signature for persistent AAudio output");
@@ -578,6 +589,15 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStrea
     if e.stream.is_null() || e.output.is_none() {
         let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output is not open");
         return INVALID_STATE;
+    }
+    let (actual_device_id, actual_sharing_mode) = unsafe {
+        (AAudioStream_getDeviceId(e.stream), AAudioStream_getSharingMode(e.stream))
+    };
+    if !output_identity_matches(
+        actual_device_id, actual_sharing_mode, expected_device_id, expected_sharing_mode,
+    ) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio device or sharing mode does not match the requested queue output");
+        return DEVICE_MISMATCH;
     }
     let state = unsafe { AAudioStream_getState(e.stream) };
     if state != STATE_STOPPED && state != STATE_OPEN && state != STATE_PAUSED {
@@ -822,6 +842,15 @@ mod tests {
         assert_eq!(reset_output_ring(&mut engine, 44_100, 2, FMT_I16), Err(INVALID_FORMAT));
         assert_eq!(reset_output_ring(&mut engine, 48_000, 1, FMT_I16), Err(INVALID_FORMAT));
         assert_eq!(reset_output_ring(&mut engine, 48_000, 2, FMT_I24), Err(INVALID_FORMAT));
+    }
+
+    #[test]
+    fn persistent_handoff_requires_same_device_and_sharing_mode() {
+        assert!(output_identity_matches(7, SHARING_EXCLUSIVE, 7, SHARING_EXCLUSIVE));
+        assert!(!output_identity_matches(8, SHARING_EXCLUSIVE, 7, SHARING_EXCLUSIVE));
+        assert!(!output_identity_matches(7, SHARING_SHARED, 7, SHARING_EXCLUSIVE));
+        assert!(!output_identity_matches(7, SHARING_EXCLUSIVE, 7, 9));
+        assert!(!output_identity_matches(7, SHARING_EXCLUSIVE, -1, SHARING_EXCLUSIVE));
     }
 
     #[test]
