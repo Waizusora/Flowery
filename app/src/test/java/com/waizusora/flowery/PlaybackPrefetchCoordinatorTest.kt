@@ -88,15 +88,33 @@ class PlaybackPrefetchCoordinatorTest {
     }
 
     @Test
+    fun reportsCurrentPreparationFailure() {
+        val failures = mutableListOf<String>()
+        val coordinator = PlaybackPrefetchCoordinator<Resource>(
+            DirectExecutor(),
+            onPreparationFailure = { failures += it.message.orEmpty() },
+        )
+        coordinator.beginGeneration(7L)
+
+        assertTrue(coordinator.prefetch(7L, "next-uri") {
+            error("decoder preparation failed")
+        })
+
+        assertEquals(listOf("decoder preparation failed"), failures)
+        assertNull(coordinator.take(7L, "next-uri"))
+        coordinator.close()
+    }
+
+    @Test
     fun failedPreparationDoesNotPublishAResource() {
         val coordinator = PlaybackPrefetchCoordinator<Resource>(DirectExecutor())
-        coordinator.beginGeneration(6L)
+        coordinator.beginGeneration(8L)
 
-        assertTrue(coordinator.prefetch(6L, "next-uri") {
+        assertTrue(coordinator.prefetch(8L, "next-uri") {
             error("simulated decoder preparation failure")
         })
 
-        assertNull(coordinator.take(6L, "next-uri"))
+        assertNull(coordinator.take(8L, "next-uri"))
         coordinator.close()
     }
 }
