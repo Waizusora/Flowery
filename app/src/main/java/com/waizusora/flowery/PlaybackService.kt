@@ -143,6 +143,12 @@ class PlaybackService : Service() {
     private var lastPublishedMetadataArtist = ""
     private var lastPublishedArtworkKey = ""
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val prefetchSourceResolver by lazy { AudioSourceResolver(this) }
+    private val playbackPrefetch = PlaybackPrefetchCoordinator<PreparedPlaybackResources>(
+        onPreparationFailure = { error ->
+            Log.w("FloweryDiagnostics", "GAPLESS_PREFETCH_PREPARATION_FAILURE", error)
+        }
+    )
     private var lastOutputDeviceSnapshot: List<String> = emptyList()
     private var lastAudioDiagnosticMs = 0L
     @Volatile private var outputRouteRestartPending = false
@@ -168,6 +174,7 @@ class PlaybackService : Service() {
             val uriText = queue.getOrNull(queueIndex)
             if (!outputRouteRestartPending && !recoveryNeedsPrepare &&
                 (wasPlaying || wasPaused) && !uriText.isNullOrBlank()) {
+                playbackPrefetch.invalidate()
                 outputRouteRestartPending = true
                 val previousPositionMs = player.positionMs()
                 val segmentStartMs = queueCueStarts.getOrNull(queueIndex) ?: 0L
@@ -589,6 +596,34 @@ class PlaybackService : Service() {
         return callInterruptionPolicy.blocksPlayback(isCallAudioMode())
     }
 
+    /**
+     * Prepare the next decoder/session in the background without opening an
+     * output stream. The resource remains owned by the prefetch slot until a
+     * future persistent-output handoff consumes it.
+     */
+    private fun scheduleNextTrackPrefetch(generation: Long) {
+        val nextIndex = queueState.peekNextIndex(queue.size)
+        val nextUriText = queue.getOrNull(nextIndex)?.takeIf { it.isNotBlank() } ?: return
+        val nextStartMs = queueCueStarts.getOrNull(nextIndex) ?: 0L
+        val nextEndMs = queueCueEnds.getOrNull(nextIndex)?.takeIf { it > 0L }
+        val key = "$nextUriText|$nextStartMs|${nextEndMs ?: -1L}"
+        val targetUri = Uri.parse(nextUriText)
+
+        val accepted = playbackPrefetch.prefetch(generation, key) {
+            PreparedPlaybackResources.prepare(
+                applicationContext,
+                targetUri,
+                prefetchSourceResolver::resolveExtension,
+            )
+        }
+        if (accepted) {
+            Log.i(
+                "FloweryDiagnostics",
+                "GAPLESS_PREFETCH_SCHEDULED generation=$generation nextIndex=$nextIndex " +
+                    "segmentStartMs=$nextStartMs segmentEndMs=${nextEndMs ?: -1L}"
+            )
+        }
+    }
     private fun playCurrent(initialPositionMs: Long = 0L) {
         if (isPlaybackBlockedByCall()) {
             publishState("Playback paused during call · press Play after call")
@@ -600,6 +635,8 @@ class PlaybackService : Service() {
             return
         }
         val requestGeneration = ++playRequestGeneration
+        playbackPrefetch.beginGeneration(requestGeneration)
+        scheduleNextTrackPrefetch(requestGeneration)
         val uri = Uri.parse(uriText)
         val segmentStartMs = queueCueStarts.getOrNull(selectedIndex) ?: 0L
         val segmentEndMs = queueCueEnds.getOrNull(selectedIndex)?.takeIf { it > 0L }
@@ -791,6 +828,7 @@ class PlaybackService : Service() {
 
     private fun stopPlayback() {
         playRequestGeneration++
+        playbackPrefetch.invalidate()
         Log.w("FloweryDiagnostics", "STOP_PLAYBACK index=$queueIndex queueSize=${queue.size} repeat=$repeatMode shuffle=$shuffle")
         player.stop()
         hasAudioFocus = false
@@ -1051,6 +1089,7 @@ class PlaybackService : Service() {
     override fun onDestroy() {
         Log.w("FloweryDiagnostics", "SERVICE_DESTROY index=$queueIndex queueSize=${queue.size} playbackState=$playbackState")
         persistPlaybackSnapshot()
+        playbackPrefetch.close()
         player.close { queueState.close() }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) focusRequest?.let(audioManager::abandonAudioFocusRequest)
         else abandonLegacyAudioFocus()
