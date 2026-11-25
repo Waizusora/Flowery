@@ -684,8 +684,37 @@ class PlaybackService : Service() {
         publishTrackMetadata(0L)
         startForeground(NOTIFICATION_ID, buildNotification())
 
-        // SAF metadata extraction can block on document providers. Keep it off the
-        // service callback thread so Android SystemUI media commands stay responsive.
+        // Start the playback worker before optional SAF metadata extraction. The
+        // metadata retriever may block on document providers; it must not delay the
+        // next decoder/output producer at a track boundary.
+        io.execute {
+            if (requestGeneration != playRequestGeneration) {
+                runCatching { preparedCurrent?.close() }
+                return@execute
+            }
+            try {
+                if (callInterruptionPolicy.isInterrupted) {
+                    Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_blocked reason=call_interruption index=$selectedIndex")
+                    runCatching { preparedCurrent?.close() }
+                    return@execute
+                }
+                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
+                player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent, retainOutputForNextTrack = hasNextQueueItem)
+                if (requestGeneration != playRequestGeneration) return@execute
+                Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
+                playbackState = PlaybackStateCompat.STATE_CONNECTING
+                publishSessionState()
+            } catch (error: Throwable) {
+                runCatching { preparedCurrent?.close() }
+                if (requestGeneration == playRequestGeneration) {
+                    Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$selectedIndex queueSize=${queue.size} title=$currentTitle", error)
+                    publishState("Unable to load file: ${error.message}")
+                }
+            }
+        }
+
+        // Metadata is deliberately independent from engine startup. A slow SAF
+        // provider can update SystemUI later, but cannot hold up audio preparation.
         io.execute {
             var resolvedTitle = fallbackTitle
             var resolvedArtist = fallbackArtist
@@ -714,10 +743,7 @@ class PlaybackService : Service() {
             }
 
             mainHandler.post {
-                if (requestGeneration != playRequestGeneration) {
-                    runCatching { preparedCurrent?.close() }
-                    return@post
-                }
+                if (requestGeneration != playRequestGeneration) return@post
                 currentTitle = resolvedTitle
                 currentArtist = resolvedArtist
                 currentArtwork = resolvedArtwork?.bitmap
@@ -725,32 +751,6 @@ class PlaybackService : Service() {
                 sourceMetadataDurationMs = resolvedDurationMs
                 publishTrackMetadata(sourceMetadataDurationMs)
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
-
-                io.execute {
-                    if (requestGeneration != playRequestGeneration) {
-                        runCatching { preparedCurrent?.close() }
-                        return@execute
-                    }
-                    try {
-                        if (callInterruptionPolicy.isInterrupted) {
-                            Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_blocked reason=call_interruption index=$selectedIndex")
-                            runCatching { preparedCurrent?.close() }
-                            return@execute
-                        }
-                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
-                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent, retainOutputForNextTrack = hasNextQueueItem)
-                        if (requestGeneration != playRequestGeneration) return@execute
-                        Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
-                        playbackState = PlaybackStateCompat.STATE_CONNECTING
-                        publishSessionState()
-                    } catch (error: Throwable) {
-                        runCatching { preparedCurrent?.close() }
-                        if (requestGeneration == playRequestGeneration) {
-                            Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$selectedIndex queueSize=${queue.size} title=$currentTitle", error)
-                            publishState("Unable to load file: ${error.message}")
-                        }
-                    }
-                }
             }
         }
     }
