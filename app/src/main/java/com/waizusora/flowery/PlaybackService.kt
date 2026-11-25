@@ -637,12 +637,18 @@ class PlaybackService : Service() {
             Log.e("FloweryDiagnostics", "PLAY_CURRENT_ABORT queueSize=${queue.size} index=$selectedIndex; selected item is missing")
             return
         }
-        val requestGeneration = ++playRequestGeneration
-        playbackPrefetch.beginGeneration(requestGeneration)
-        scheduleNextTrackPrefetch(requestGeneration)
         val uri = Uri.parse(uriText)
         val segmentStartMs = queueCueStarts.getOrNull(selectedIndex) ?: 0L
         val segmentEndMs = queueCueEnds.getOrNull(selectedIndex)?.takeIf { it > 0L }
+        val currentPrefetchKey = "$uriText|$segmentStartMs|${segmentEndMs ?: -1L}"
+        // Take from the previous generation before beginGeneration invalidates its slot.
+        val preparedCurrent = playbackPrefetch.take(playRequestGeneration, currentPrefetchKey)
+        val requestGeneration = ++playRequestGeneration
+        playbackPrefetch.beginGeneration(requestGeneration)
+        scheduleNextTrackPrefetch(requestGeneration)
+        if (preparedCurrent != null) {
+            Log.i("FloweryDiagnostics", "GAPLESS_PREFETCH_CONSUMED generation=$requestGeneration index=$selectedIndex")
+        }
         recoverySessionAvailable = true
         recoveryNeedsPrepare = false
         enginePositionAvailable = false
@@ -663,6 +669,7 @@ class PlaybackService : Service() {
         val focusAccepted = requestFocus()
         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=focus_request_done accepted=$focusAccepted index=$selectedIndex")
         if (!focusAccepted) {
+            runCatching { preparedCurrent?.close() }
             publishState("Playback could not start because audio focus was denied")
             return
         }
@@ -706,7 +713,10 @@ class PlaybackService : Service() {
             }
 
             mainHandler.post {
-                if (requestGeneration != playRequestGeneration) return@post
+                if (requestGeneration != playRequestGeneration) {
+                    runCatching { preparedCurrent?.close() }
+                    return@post
+                }
                 currentTitle = resolvedTitle
                 currentArtist = resolvedArtist
                 currentArtwork = resolvedArtwork?.bitmap
@@ -716,19 +726,24 @@ class PlaybackService : Service() {
                 getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
 
                 io.execute {
-                    if (requestGeneration != playRequestGeneration) return@execute
+                    if (requestGeneration != playRequestGeneration) {
+                        runCatching { preparedCurrent?.close() }
+                        return@execute
+                    }
                     try {
                         if (callInterruptionPolicy.isInterrupted) {
                             Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_blocked reason=call_interruption index=$selectedIndex")
+                            runCatching { preparedCurrent?.close() }
                             return@execute
                         }
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
-                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs)
+                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent)
                         if (requestGeneration != playRequestGeneration) return@execute
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
                         playbackState = PlaybackStateCompat.STATE_CONNECTING
                         publishSessionState()
                     } catch (error: Throwable) {
+                        runCatching { preparedCurrent?.close() }
                         if (requestGeneration == playRequestGeneration) {
                             Log.e("FloweryDiagnostics", "PLAYBACK_START_FAILURE index=$selectedIndex queueSize=${queue.size} title=$currentTitle", error)
                             publishState("Unable to load file: ${error.message}")
