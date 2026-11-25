@@ -7,6 +7,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AAudioQueueOutputOwnerTest {
+    @Test
+    fun queuedPcmDurationUsesOutputRateAndRejectsInvalidInputs() {
+        assertEquals(100L, queuedPcmDurationMs(4_800, 48_000))
+        assertEquals(50L, queuedPcmDurationMs(2_205, 44_100))
+        assertEquals(0L, queuedPcmDurationMs(0, 48_000))
+        assertNull(queuedPcmDurationMs(-1, 48_000))
+        assertNull(queuedPcmDurationMs(4_800, 0))
+    }
+
+
     private class FakeNative : AAudioQueueOutputNative {
         val persistence = mutableListOf<Boolean>()
         val attached = mutableListOf<AAudioOutputSignature>()
