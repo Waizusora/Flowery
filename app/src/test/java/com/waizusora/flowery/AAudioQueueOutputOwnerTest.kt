@@ -12,7 +12,11 @@ class AAudioQueueOutputOwnerTest {
         val attached = mutableListOf<AAudioOutputSignature>()
         var prepareResult = 0
         var stopCount = 0
-        override fun setPersistence(enabled: Boolean) { persistence += enabled }
+        var failEnablePersistence = false
+        override fun setPersistence(enabled: Boolean) {
+            if (enabled && failEnablePersistence) error("native persistence lease failed")
+            persistence += enabled
+        }
         override fun attachNextTrack(signature: AAudioOutputSignature): Int {
             attached += signature
             return prepareResult
@@ -74,6 +78,39 @@ class AAudioQueueOutputOwnerTest {
         owner.close()
         assertEquals(1, native.stopCount)
         assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
+    }
+
+    @Test
+    fun failedPersistenceEnableDoesNotPublishRetainedLease() {
+        val native = FakeNative().apply { failEnablePersistence = true }
+        val owner = AAudioQueueOutputOwner(native)
+        assertTrue(owner.adoptOpenedOutput(signature()))
+
+        assertFalse(owner.retainForNextTrack())
+        assertEquals(AAudioQueueOutputOwner.Phase.OPEN, owner.phase())
+        assertTrue(native.persistence.isEmpty())
+
+        owner.close()
+        assertEquals(1, native.stopCount)
+        assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
+    }
+
+    @Test
+    fun failedProducerStartupAfterNativeAttachReleasesPreparedOutput() {
+        val native = FakeNative()
+        val owner = AAudioQueueOutputOwner(native)
+        val current = signature()
+        assertTrue(owner.adoptOpenedOutput(current))
+        assertTrue(owner.retainForNextTrack())
+        assertTrue(owner.prepareNextTrack(current))
+
+        // Model native decoder/pump startup failing after the ring epoch changed.
+        owner.close()
+
+        assertEquals(listOf(true, false), native.persistence)
+        assertEquals(1, native.stopCount)
+        assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
+        assertNull(owner.currentSignature())
     }
 
     @Test
