@@ -45,3 +45,61 @@ internal object ReplayGainPreferences {
 
     fun apply(context: Context): Boolean = saveAndApply(context, read(context))
 }
+
+internal data class ReplayGainDisplayPlan(
+    val modeLabel: String,
+    val effectiveGainDb: Float,
+    val peakLimitApplied: Boolean,
+    val peakMetadataAvailable: Boolean,
+    val clippingPreventionEnabled: Boolean
+)
+
+internal fun calculateReplayGainDisplay(
+    tag: AudioTag,
+    state: ReplayGainPreferenceState
+): ReplayGainDisplayPlan {
+    fun parseDb(value: String): Float? {
+        val parsed = value.trim().removeSuffix("dB").trim().toFloatOrNull() ?: return null
+        return parsed.takeIf { it.isFinite() && it in -60f..24f }
+    }
+    fun parsePeak(value: String): Float? {
+        val parsed = value.trim().toFloatOrNull() ?: return null
+        return parsed.takeIf { it.isFinite() && it > 0f && it <= 16f }
+    }
+
+    val mode = state.mode.coerceIn(0, 2)
+    if (mode == 0) {
+        return ReplayGainDisplayPlan("Off", 0f, false, false, state.preventClipping)
+    }
+
+    val selected = when (mode) {
+        1 -> Triple(
+            parseDb(tag.replayGainTrackGain),
+            parsePeak(tag.replayGainTrackPeak),
+            state.trackPreampDb
+        )
+        else -> Triple(
+            parseDb(tag.replayGainAlbumGain) ?: parseDb(tag.replayGainTrackGain),
+            parsePeak(tag.replayGainAlbumPeak) ?: parsePeak(tag.replayGainTrackPeak),
+            state.albumPreampDb
+        )
+    }
+    val (tagGain, peak, preamp) = selected
+    val safePreamp = preamp.takeIf { it.isFinite() }?.coerceIn(-24f, 24f) ?: 0f
+    var effectiveGain = (tagGain ?: 0f) + safePreamp
+    var peakLimitApplied = false
+    if (state.preventClipping && peak != null) {
+        val maximumGain = -20f * kotlin.math.log10(peak)
+        if (effectiveGain > maximumGain) {
+            effectiveGain = maximumGain
+            peakLimitApplied = true
+        }
+    }
+    return ReplayGainDisplayPlan(
+        if (mode == 1) "Track" else "Album",
+        effectiveGain,
+        peakLimitApplied,
+        peak != null,
+        state.preventClipping
+    )
+}
