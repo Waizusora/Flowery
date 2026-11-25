@@ -70,6 +70,21 @@ Runtime prefetch and producer handoff remain unimplemented.
 
 The native transition planner and generation-safe queue-boundary contract are implemented and unit-tested. Gapless playback is **not yet enabled** in the player. Runtime integration, decoder prefetch, persistent output ownership, and hardware validation remain subsequent steps.
 
+### Same-signature AAudio producer handoff primitive
+
+A native handoff operation now advances the producer epoch while preserving the
+existing SPSC ring, queued PCM tail, played-frame counter, and AAudio callback.
+It validates the PCM tuple and actual output device/sharing identity. Old
+producer writes become stale; the next producer can use the same ring without
+replacing its consumer endpoint. The queue output owner now calls this attach
+operation instead of resetting the ring.
+
+This primitive is not sufficient by itself for gapless playback. The old
+producer must be joined before attachment, and natural track EOF must not mark
+the shared output as queue EOF. The prefetched next producer must start while
+enough old-track PCM remains buffered. Runtime wiring and continuity tests are
+still pending.
+
 
 ### Prepared resource bundle
 
