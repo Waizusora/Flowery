@@ -31,7 +31,11 @@ internal fun TagInfoDialog(tag: AudioTag, replayGainSettings: ReplayGainPreferen
                     "Bit depth" to tag.bitDepth.takeIf { it > 0 }?.let { "$it bit" }.orEmpty(),
                     "Channels" to tag.channels.takeIf { it > 0 }?.toString().orEmpty(),
                     "Bitrate" to tag.bitrateKbps.takeIf { it > 0 }?.let { "$it kbps" }.orEmpty(),
-                    "Duration" to tag.durationMs.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60000, (it / 1000) % 60) }.orEmpty()
+                    "Duration" to tag.durationMs.takeIf { it > 0 }?.let { "%d:%02d".format(it / 60000, (it / 1000) % 60) }.orEmpty(),
+                    "ReplayGain track gain" to tag.replayGainTrackGain,
+                    "ReplayGain track peak" to tag.replayGainTrackPeak,
+                    "ReplayGain album gain" to tag.replayGainAlbumGain,
+                    "ReplayGain album peak" to tag.replayGainAlbumPeak
                 ).forEach { (label, value) ->
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium)
