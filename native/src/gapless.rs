@@ -138,6 +138,22 @@ mod tests {
     }
 
     #[test]
+    fn every_aaudio_pcm_signature_change_requires_output_reopen() {
+        let current = signature(OutputRoute::AAudio, 48_000, 2, 16, 1);
+        let changed = [
+            signature(OutputRoute::AAudio, 44_100, 2, 16, 1),
+            signature(OutputRoute::AAudio, 48_000, 1, 16, 1),
+            signature(OutputRoute::AAudio, 48_000, 2, 24, 1),
+            signature(OutputRoute::AAudio, 48_000, 2, 16, 2),
+        ];
+        for next in changed {
+            let plan = plan_transition(current, next);
+            assert_eq!(plan.kind, TransitionKind::ReconfigureOutput);
+            assert!(!plan.sample_continuous);
+        }
+    }
+
+    #[test]
     fn route_change_requires_route_reopen() {
         let current = signature(OutputRoute::AAudio, 48_000, 2, 16, 1);
         let next = signature(OutputRoute::UsbDirect, 48_000, 2, 16, 1);
