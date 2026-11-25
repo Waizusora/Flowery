@@ -18,6 +18,44 @@ class AAudioQueueOutputOwnerTest {
         assertEquals(HandoffTailBudgetStatus.UNKNOWN, classifyHandoffTailBudget(-1, 20))
     }
     @Test
+    fun handoffCounterComparisonReportsUnderrunXrunAndQueueDepthDeltas() {
+        val boundary = AAudioHandoffCounterSnapshot(
+            callbackUnderruns = 4, xrunCount = 2, queuedFrames = 4_800, sampleRateHz = 48_000,
+        )
+        val clean = compareAaudioHandoffCounters(
+            boundary,
+            AAudioHandoffCounterSnapshot(4, 2, 2_400, 48_000),
+        )
+        assertEquals(0L, clean?.callbackUnderruns)
+        assertEquals(0L, clean?.xrunCount)
+        assertEquals(2_400L, clean?.queuedFrames)
+        assertEquals(50L, clean?.queuedDurationMs)
+        assertEquals("NO_COUNTER_INCREASE", clean?.status)
+
+        val underrun = compareAaudioHandoffCounters(
+            boundary,
+            AAudioHandoffCounterSnapshot(5, 2, 1_200, 48_000),
+        )
+        assertEquals(1L, underrun?.callbackUnderruns)
+        assertEquals("COUNTER_INCREASED", underrun?.status)
+
+        val xrun = compareAaudioHandoffCounters(
+            boundary,
+            AAudioHandoffCounterSnapshot(4, 3, 1_200, 48_000),
+        )
+        assertEquals(1L, xrun?.xrunCount)
+        assertEquals("COUNTER_INCREASED", xrun?.status)
+
+        val empty = compareAaudioHandoffCounters(
+            boundary,
+            AAudioHandoffCounterSnapshot(4, 2, 0, 48_000),
+        )
+        assertEquals("QUEUE_EMPTY", empty?.status)
+        assertNull(compareAaudioHandoffCounters(boundary, AAudioHandoffCounterSnapshot(3, 2, 1, 48_000)))
+        assertNull(compareAaudioHandoffCounters(boundary, null))
+    }
+
+    @Test
     fun elapsedHandoffDurationUsesMonotonicTimestamps() {
         assertEquals(25L, elapsedHandoffMs(1_000_000L, 26_000_000L))
         assertEquals(0L, elapsedHandoffMs(5_000_000L, 5_000_000L))
