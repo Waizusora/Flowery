@@ -256,6 +256,10 @@ Each record includes the same output diagnostics as the boundary snapshots, incl
 
 The AAudio owner tests also cover a thrown exception from the native attach bridge, persistence-enable failure, persistence-revoke failure, and cleanup after producer startup failure. A failed attach must not advance the owner to PREPARED; cleanup must stop the output and clear the owner state even if lease revocation reports an error.
 
+Handoff-stage records now also report cumulative-counter deltas against the early-boundary snapshot: `callbackUnderrunDelta` and `xrunDelta`, plus the current handoff queue depth and duration. Counter resets/decreases are reported as `UNKNOWN`; they are not treated as a clean result. `NO_COUNTER_INCREASE` is only an observation, not proof of continuity, and `QUEUE_EMPTY` marks an empty queue at the sampled handoff stage. The comparison is valid only for the same retained AAudio output generation chain.
+
+The explicit physical-device procedure, including same-signature repetition, changed-signature reopen cases, logcat capture, and acceptance criteria, is maintained in [GAPLESS_DEVICE_VALIDATION.md](GAPLESS_DEVICE_VALIDATION.md). AAudio now emits `AAUDIO_OUTPUT_SIGNATURE_READY` after adopting or reusing the output so the actual rate, format, channels, device ID, and sharing mode can be checked against the requested transition.
+
 ### Cross-boundary PCM callback tests
 
 Native tests now enqueue the next track's PCM before the output callback consumes the previous track's tail. A single callback request spans the boundary and must receive the old track bytes followed immediately by the next track bytes, with exact byte ordering. The test matrix covers short and longer prebuffer combinations (1, 2, and 8 frames per side), in addition to the two-frame handoff case.
