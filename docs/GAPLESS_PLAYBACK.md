@@ -105,3 +105,9 @@ Prefetch preparation failures are reported through an optional callback only whi
 The native playback queue now exposes a non-advancing next-index peek. In shuffle mode, the selected candidate is cached so repeated prefetch checks and the eventual NEXT or natural COMPLETION transition consume the same candidate rather than drawing a different random item. Queue selection, repeat-mode changes, and shuffle changes invalidate the cached candidate. Repeat-One keeps its existing natural-completion behavior (replay current item); peeking does not change that behavior. A queue with no next item returns -1 and is not prefetched.
 
 This is queue-policy plumbing only. It does not yet schedule `PreparedPlaybackResources` from the service or connect them to an active output producer.
+
+## Service-side decoder prefetch wiring
+
+`PlaybackService` now starts preparation for the native queue's peeked next item when a playback generation is started. It captures the target URI and CUE segment identity, opens and primes a decoder/session on the dedicated prefetch executor, and leaves the prepared resource owned by the generation-scoped slot. Stop, service destruction, output-route changes, and generation replacement cancel or dispose pending/unclaimed resources. Repeat/shuffle changes refresh the selected candidate; clearing a candidate does not invalidate the active generation.
+
+This wiring deliberately does not take the prepared resource or pass it to `FloweryPlayer`: the current player still creates its own decoder and owns output lifetime per track. Until the persistent output/producer handoff is implemented, this is preparation-only and may duplicate decoder setup at a track boundary. It is not yet runtime gapless playback and does not reduce the audible transition gap by itself.
