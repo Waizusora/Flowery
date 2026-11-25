@@ -263,3 +263,9 @@ The player now emits three additional snapshots for same-signature queue reuse:
 Each record includes the same output diagnostics as the boundary snapshots, including queued frames, callback underruns, XRun count, output format, stream rate, and device identity. For physical validation, correlate these records by playback generation with `AAUDIO_EARLY_TRACK_BOUNDARY` and `AAUDIO_TRACK_BOUNDARY_DRAINED`. The attach and pump records are lifecycle timestamps, not proof that a minimum PCM prebuffer has already accumulated. A valid continuity result still requires queued PCM to remain nonzero across the handoff, no underrun/XRun increase, and listening or captured-loopback verification on a physical Android device.
 
 The AAudio owner tests also cover a thrown exception from the native attach bridge, persistence-enable failure, persistence-revoke failure, and cleanup after producer startup failure. A failed attach must not advance the owner to PREPARED; cleanup must stop the output and clear the owner state even if lease revocation reports an error.
+
+### Cross-boundary PCM callback tests
+
+Native tests now enqueue the next track's PCM before the output callback consumes the previous track's tail. A single callback request spans the boundary and must receive the old track bytes followed immediately by the next track bytes, with exact byte ordering. The test matrix covers short and longer prebuffer combinations (1, 2, and 8 frames per side), in addition to the two-frame handoff case.
+
+These tests verify ring preservation and callback ordering when the next PCM is already available. They do not simulate Android decoder startup latency, AAudio scheduling jitter, or a real device callback racing with the next producer. They therefore do not prove that Flowery can always deliver the next PCM before the old tail drains. Device-level continuity remains a required validation gate.
