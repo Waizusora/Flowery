@@ -788,6 +788,10 @@ fn start_stream_pump_worker(
                     break;
                 }
                 Err(write_error) => {
+                    if crate::aaudio::output_producer_epoch() != Some(output_epoch) {
+                        thread_status.store(2, Ordering::Release);
+                        break;
+                    }
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
                         format!("AAudio ring buffer write failed: {write_error}");
                     thread_status.store(-2, Ordering::Release);
