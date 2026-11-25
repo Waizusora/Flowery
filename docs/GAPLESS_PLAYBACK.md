@@ -154,3 +154,9 @@ This is a native race-safety prerequisite for queue-level handoff. It does not i
 The persistent same-format handoff API now also requires the expected AAudio device ID and sharing mode. Native code reads both values from the still-open stream and rejects a handoff if either differs. This prevents a queue owner from reusing an output opened for another Android device or silently changing between EXCLUSIVE and SHARED operation.
 
 The identity guard is in addition to the existing sample-rate, channel-count, and output-format checks. Tests cover matching identity, device mismatch, sharing-mode mismatch, invalid sharing mode, and invalid expected device ID. The API remains a foundation only; FloweryPlayer does not call it yet.
+
+### Kotlin queue-level AAudio lease coordinator
+
+`AAudioQueueOutputOwner` now models the queue's ownership of an already-open AAudio stream. It adopts the opened output signature, enables the native persistence lease at a track boundary, permits ring reset only for an identical sample-rate/channel/format/device-ID/sharing-mode signature, and confirms producer attachment as a separate transition. A native reset failure leaves the owner retained but not prepared; a PCM or device mismatch does not touch the ring and must be handled by an explicit output reconfiguration path. Queue completion or cancellation revokes persistence and stops output exactly once.
+
+Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/sharing mismatches, native reset failure, duplicate adoption, and idempotent close. This coordinator is not yet wired into `FloweryPlayer` or `PlaybackService`; runtime gapless remains disabled until the player can consume prepared decoder resources and transfer producer ownership without tearing down the output.
