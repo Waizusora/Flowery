@@ -32,6 +32,7 @@ class AAudioQueueOutputOwnerTest {
         assertEquals(0L, queuedPcmDurationMs(0, 48_000))
         assertNull(queuedPcmDurationMs(-1, 48_000))
         assertNull(queuedPcmDurationMs(4_800, 0))
+        assertNull(queuedPcmDurationMs(Long.MAX_VALUE, 48_000))
     }
 
 
