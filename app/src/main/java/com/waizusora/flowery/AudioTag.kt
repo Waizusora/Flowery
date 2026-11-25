@@ -25,6 +25,10 @@ data class AudioTag(
     val bitDepth: Int,
     val channels: Int,
     val bitrateKbps: Int,
-    val durationMs: Long
+    val durationMs: Long,
+    val replayGainTrackGain: String,
+    val replayGainTrackPeak: String,
+    val replayGainAlbumGain: String,
+    val replayGainAlbumPeak: String
 )
 
