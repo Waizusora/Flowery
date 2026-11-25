@@ -12,6 +12,7 @@ class PreparedPlaybackResourcesTest {
     ) = PreparedPlaybackResources(
         decoderHandle = 11L,
         sessionHandle = 22L,
+        route = 0,
         sourceSampleRateHz = 96_000,
         channels = 2,
         sourceValidBits = 24,
