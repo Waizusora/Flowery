@@ -356,7 +356,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         throw IllegalStateException("$reason $device; $details")
                     }
                 } else {
-                    Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_REUSED rate=$sourceRate channels=$channels format=$outputFormat deviceId=$deviceId")
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "AAUDIO_NEXT_PRODUCER_ATTACH_COMPLETE rate=$sourceRate channels=$channels format=$outputFormat deviceId=$deviceId ${audioPipelineDiagnostics()}"
+                    )
                 }
                 outputSampleRate = sourceRate
                 outputBitDepth = sourceBits
@@ -421,6 +424,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     check(aaudioQueueOutputOwner.confirmProducerAttached()) {
                         "The persistent AAudio output did not accept the next producer."
                     }
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "AAUDIO_NEXT_PRODUCER_PUMP_STARTED generation=$generation ${audioPipelineDiagnostics()}"
+                    )
                 }
                 // Forward a seek requested while the decoder/session was still opening.
                 pendingSeekMs.getAndSet(-1L).takeIf { it >= 0L }?.let { requested ->
@@ -435,6 +442,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 check(NativeAudio.nativeStartOutputScheduler(sessionHandle, lowWatermarkFrames) == 0) {
                     "Unable to start the Rust-owned AAudio output scheduler"
+                }
+                if (reusedQueueOutput) {
+                    Log.i(
+                        "FloweryDiagnostics",
+                        "AAUDIO_NEXT_PRODUCER_SCHEDULER_STARTED generation=$generation ${audioPipelineDiagnostics()}"
+                    )
                 }
                 val shouldStartPaused = synchronized(outputLifecycleLock) {
                     outputReady = true
