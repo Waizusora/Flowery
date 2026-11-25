@@ -3,6 +3,7 @@ package com.waizusora.flowery
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
+import java.util.concurrent.CancellationException
 
 /**
  * Schedules at most one prepared next-track resource for a playback generation.
@@ -18,6 +19,7 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { task ->
         Thread(task, "FloweryPlaybackPrefetch").apply { isDaemon = true }
     },
+    private val onPreparationFailure: (Throwable) -> Unit = {},
 ) : AutoCloseable {
     private val lock = Any()
     private val slot = PreparedPlaybackSlot<T>()
@@ -53,7 +55,13 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@submit
-                } catch (_: Throwable) {
+                } catch (_: CancellationException) {
+                    return@submit
+                } catch (error: Throwable) {
+                    val report = synchronized(lock) {
+                        !closed && generation == targetGeneration && requestSerial == request
+                    }
+                    if (report) runCatching { onPreparationFailure(error) }
                     return@submit
                 }
                 val accepted = synchronized(lock) {
