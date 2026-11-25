@@ -105,6 +105,18 @@ class AAudioQueueOutputOwnerTest {
     ) = AAudioOutputSignature(rate, channels, format, device, sharing)
 
     @Test
+    fun nextTrackUsesActualRetainedSharingModeAfterSharedFallback() {
+        val owner = AAudioQueueOutputOwner(FakeNative())
+        val shared = signature(sharing = AAudioOutputSignature.SHARING_SHARED)
+
+        assertEquals(AAudioOutputSignature.SHARING_EXCLUSIVE, owner.sharingModeForNextTrack())
+        assertTrue(owner.adoptOpenedOutput(shared))
+        assertTrue(owner.retainForNextTrack())
+        assertEquals(AAudioOutputSignature.SHARING_SHARED, owner.sharingModeForNextTrack())
+        assertNull(owner.reuseRejectionReason(shared.copy(rate = shared.sampleRateHz)))
+    }
+
+    @Test
     fun identicalPcmAndDeviceSignatureCanBePreparedAndAttached() {
         val native = FakeNative()
         val owner = AAudioQueueOutputOwner(native)
