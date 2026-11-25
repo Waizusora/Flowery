@@ -416,7 +416,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
             *start_requested = true;
         }
         let current_state = AAudioStream_getState(e.stream);
-        if current_state == STATE_STOPPED && !eof && !track_eof && buffered == 0 { return Ok(false); }
+        if current_state == STATE_STOPPED && !eof && !track_eof && buffered == 0 { return Ok((false, false)); }
         let xruns = AAudioStream_getXRunCount(e.stream);
         if xruns > 0 {
             let capacity = AAudioStream_getBufferCapacityInFrames(e.stream);
