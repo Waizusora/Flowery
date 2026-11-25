@@ -746,7 +746,7 @@ fn start_stream_pump_worker(
             if let Some(limit) = frame_limit {
                 let remaining = limit.saturating_sub(produced_frames);
                 if remaining == 0 {
-                    crate::aaudio::signal_stream_eof(output_epoch);
+                    crate::aaudio::signal_stream_track_eof(output_epoch);
                     thread_status.store(1, Ordering::Release);
                     break;
                 }
@@ -761,7 +761,7 @@ fn start_stream_pump_worker(
                 }
             };
             if samples.is_empty() {
-                crate::aaudio::signal_stream_eof(output_epoch);
+                crate::aaudio::signal_stream_track_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
             }
@@ -799,7 +799,7 @@ fn start_stream_pump_worker(
                 }
             }
             if frame_limit.is_some_and(|limit| produced_frames >= limit) {
-                crate::aaudio::signal_stream_eof(output_epoch);
+                crate::aaudio::signal_stream_track_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
             }
