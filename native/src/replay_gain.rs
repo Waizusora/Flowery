@@ -220,3 +220,16 @@ mod tests {
         assert_eq!(plan.gain_db, 0.0);
     }
 }
+
+/// Process-wide playback preference. USB Direct deliberately never reads this setting.
+static SETTINGS: std::sync::OnceLock<std::sync::RwLock<ReplayGainSettings>> = std::sync::OnceLock::new();
+
+pub fn settings() -> ReplayGainSettings {
+    *SETTINGS.get_or_init(|| std::sync::RwLock::new(ReplayGainSettings::default()))
+        .read().unwrap_or_else(|error| error.into_inner())
+}
+
+pub fn set_settings(value: ReplayGainSettings) {
+    *SETTINGS.get_or_init(|| std::sync::RwLock::new(ReplayGainSettings::default()))
+        .write().unwrap_or_else(|error| error.into_inner()) = value;
+}
