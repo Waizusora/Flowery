@@ -686,8 +686,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         if (boundaryAtNanos <= 0L || boundaryGeneration < 0 || boundaryGeneration >= generation) {
             return "handoffFromGeneration=none"
         }
-        val elapsedMs = (android.os.SystemClock.elapsedRealtimeNanos() - boundaryAtNanos)
-            .coerceAtLeast(0L) / 1_000_000L
+        val elapsedMs = elapsedHandoffMs(
+            boundaryAtNanos, android.os.SystemClock.elapsedRealtimeNanos()
+        ) ?: return "handoffFromGeneration=unknown"
         return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs"
     }
 
