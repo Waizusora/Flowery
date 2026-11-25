@@ -124,6 +124,51 @@ internal class AAudioQueueOutputOwner(
     }
 }
 
+
+/** Cumulative callback/XRun counters and queue depth captured from one AAudio snapshot. */
+internal data class AAudioHandoffCounterSnapshot(
+    val callbackUnderruns: Long,
+    val xrunCount: Long,
+    val queuedFrames: Long,
+    val sampleRateHz: Int,
+)
+
+internal data class AAudioHandoffCounterDelta(
+    val callbackUnderruns: Long,
+    val xrunCount: Long,
+    val queuedFrames: Long,
+    val queuedDurationMs: Long?,
+) {
+    val status: String
+        get() = when {
+            callbackUnderruns > 0L || xrunCount > 0L -> "COUNTER_INCREASED"
+            queuedFrames == 0L -> "QUEUE_EMPTY"
+            else -> "NO_COUNTER_INCREASE"
+        }
+}
+
+/**
+ * Compares cumulative counters from the same retained AAudio stream.
+ * A reset/decrease is UNKNOWN, never silently treated as a clean handoff.
+ */
+internal fun compareAaudioHandoffCounters(
+    boundary: AAudioHandoffCounterSnapshot?,
+    current: AAudioHandoffCounterSnapshot?,
+): AAudioHandoffCounterDelta? {
+    if (boundary == null || current == null ||
+        boundary.callbackUnderruns < 0L || boundary.xrunCount < 0L || boundary.queuedFrames < 0L ||
+        current.callbackUnderruns < boundary.callbackUnderruns ||
+        current.xrunCount < boundary.xrunCount || current.queuedFrames < 0L ||
+        current.sampleRateHz <= 0
+    ) return null
+    return AAudioHandoffCounterDelta(
+        callbackUnderruns = current.callbackUnderruns - boundary.callbackUnderruns,
+        xrunCount = current.xrunCount - boundary.xrunCount,
+        queuedFrames = current.queuedFrames,
+        queuedDurationMs = queuedPcmDurationMs(current.queuedFrames, current.sampleRateHz),
+    )
+}
+
 /** Classifies whether handoff startup finished before the previous track's queued tail budget. */
 internal enum class HandoffTailBudgetStatus { UNKNOWN, WITHIN_BUDGET, EXCEEDED }
 
