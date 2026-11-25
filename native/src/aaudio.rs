@@ -547,6 +547,10 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputPer
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStreamOutputForNextTrack(
     mut env: JNIEnv, _class: JClass,
 ) -> jint {
+    if !OUTPUT_PERSISTENT.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output lease is not enabled");
+        return INVALID_STATE;
+    }
     stop_output_scheduler();
     let mut e = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if e.stream.is_null() || e.output.is_none() {
@@ -720,6 +724,45 @@ mod tests {
 
     fn test_output(capacity_frames: usize, channels: usize, queued: &[u8]) -> Output {
         test_output_format(capacity_frames, channels, FMT_I16, 2, queued)
+    }
+
+    #[test]
+    fn reset_output_ring_discards_old_track_and_accepts_new_pcm() {
+        let (mut producer, consumer) = RingBuffer::<u8>::new(16);
+        producer.push_entire_slice(&[1, 2, 3, 4]).unwrap();
+        let output = Output {
+            consumer: UnsafeCell::new(consumer),
+            capacity: 4,
+            channels: 2,
+            format: FMT_I16,
+            rate: 48_000,
+            bytes_per_sample: 2,
+            played: AtomicU64::new(12),
+            volume: AtomicU32::new(1.0_f32.to_bits()),
+            active: AtomicBool::new(false),
+            eof: AtomicBool::new(true),
+            underruns: AtomicU64::new(3),
+            error: AtomicI32::new(-1),
+        };
+        let mut engine = Engine {
+            stream: ptr::null_mut(),
+            output: Some(Box::new(output)),
+            producer: Some(producer),
+            last_open: [0; 11],
+        };
+        reset_output_ring(&mut engine).unwrap();
+        let next = [9_u8, 8, 7, 6];
+        let producer = engine.producer.as_mut().unwrap();
+        producer.push_entire_slice(&next).unwrap();
+        let output = engine.output.as_ref().unwrap();
+        let consumer = unsafe { &mut *output.consumer.get() };
+        let mut received = [0_u8; 4];
+        consumer.pop_entire_slice(&mut received).unwrap();
+        assert_eq!(received, next);
+        assert_eq!(output.played.load(Ordering::Acquire), 0);
+        assert_eq!(output.eof.load(Ordering::Acquire), false);
+        assert_eq!(output.active.load(Ordering::Acquire), true);
+        assert_eq!(output.error.load(Ordering::Acquire), 0);
     }
 
     #[test]
