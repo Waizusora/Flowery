@@ -575,7 +575,25 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 Thread.currentThread().interrupt()
             } catch (error: Throwable) {
                 sessionFailed = true
-                Log.e("FloweryDiagnostics", "PLAYBACK_ENGINE_FAILURE generation=$generation", error)
+                val streamPumpStatus = if (handle != 0L) {
+                    runCatching { NativeAudio.nativeGetStreamPumpStatus(handle) }
+                        .getOrDefault(Int.MIN_VALUE)
+                } else {
+                    Int.MIN_VALUE
+                }
+                val streamPumpError = if (handle != 0L) {
+                    runCatching { NativeAudio.nativeGetStreamPumpError(handle) }
+                        .getOrElse { "Unable to read stream-pump error: ${it.message}" }
+                } else {
+                    "No active decoder handle"
+                }
+                Log.e(
+                    "FloweryDiagnostics",
+                    "PLAYBACK_ENGINE_FAILURE generation=$generation decoderHandle=$handle " +
+                        "sessionHandle=$sessionHandle streamPumpStatus=$streamPumpStatus " +
+                        "streamPumpError=${streamPumpError.replace('\n', ' ')}",
+                    error
+                )
                 if (!stopped.get()) onState("Playback error: ${error.message ?: error.javaClass.simpleName}")
             } finally {
                 // Closing the native session stops and joins its AAudio decode/output workers.
