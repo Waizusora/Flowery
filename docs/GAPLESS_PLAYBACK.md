@@ -83,3 +83,11 @@ best-effort cleanup.
 This wrapper is still a resource-lifecycle primitive, not runtime prefetch. It
 is not yet constructed or consumed by `FloweryPlayer`; output lifetime and
 producer handoff remain separate implementation work.
+
+
+The preparation factory now opens the SAF descriptor, creates the native decoder,
+primes decoder metadata, creates a native playback session in Prepared phase,
+and returns all handles in the owned bundle. Failure at any preparation step
+releases every resource already acquired. The factory does not start AAudio or
+USB output workers. It is ready for integration with the generation-keyed slot,
+but `FloweryPlayer` still uses its existing single-track open path today.
