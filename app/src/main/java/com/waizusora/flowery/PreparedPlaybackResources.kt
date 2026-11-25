@@ -62,6 +62,7 @@ internal class PreparedPlaybackResources(
             uri: Uri,
             resolveExtension: (Uri) -> String,
         ): PreparedPlaybackResources {
+            check(ReplayGainPreferences.apply(context)) { "ReplayGain preferences could not be applied to the native audio engine." }
             val source = PlaybackSourceDescriptor.open(context, uri, resolveExtension)
             var decoderHandle = 0L
             var sessionHandle = 0L
