@@ -72,6 +72,13 @@ class AAudioQueueOutputOwnerTest {
     }
 
     @Test
+    fun outputSignatureMatchesNativeChannelLimits() {
+        assertTrue(signature(channels = 6, format = 1).isValid())
+        assertTrue(signature(channels = 8, format = 4).isValid())
+        assertFalse(signature(channels = 6, format = 2).isValid())
+        assertFalse(signature(channels = 9, format = 1).isValid())
+    }
+    @Test
     fun queueCloseRevokesLeaseAndStopsOutputExactlyOnce() {
         val native = FakeNative()
         val owner = AAudioQueueOutputOwner(native)
