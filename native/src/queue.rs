@@ -359,3 +359,62 @@ mod handle_tests {
         destroy_queue_state(second);
     }
 }
+
+
+#[cfg(test)]
+mod prefetch_tests {
+    use super::*;
+
+    fn state(current_index: i32, queue_size: i32, shuffle_enabled: bool, repeat_mode: i32) -> QueueSnapshot {
+        QueueSnapshot {
+            current_index,
+            queue_size,
+            repeat_mode,
+            shuffle_enabled,
+            planned_next: None,
+        }
+    }
+
+    #[test]
+    fn repeated_peek_returns_the_same_shuffle_candidate() {
+        let mut queue = state(1, 5, true, 0);
+        let first = peek_next(&mut queue);
+        let second = peek_next(&mut queue);
+        assert!((0..5).contains(&first));
+        assert_ne!(first, 1);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn completion_consumes_the_prefetched_candidate() {
+        let mut queue = state(0, 5, true, 0);
+        let planned = peek_next(&mut queue);
+        let completed = if queue.repeat_mode != REPEAT_ONE {
+            peek_next(&mut queue)
+        } else {
+            -2
+        };
+        assert_eq!(completed, planned);
+        queue.current_index = completed;
+        queue.planned_next = None;
+        assert_eq!(queue.current_index, planned);
+    }
+
+    #[test]
+    fn repeat_one_preview_does_not_change_completion_semantics() {
+        let mut queue = state(2, 5, false, REPEAT_ONE);
+        assert_eq!(peek_next(&mut queue), 3);
+        assert_eq!(
+            transition(queue.current_index, queue.queue_size, queue.shuffle_enabled, queue.repeat_mode, ACTION_COMPLETION),
+            -2
+        );
+    }
+
+    #[test]
+    fn invalid_or_terminal_queue_has_no_prefetch_candidate() {
+        let mut invalid = state(-1, 3, false, 0);
+        assert_eq!(peek_next(&mut invalid), -1);
+        let mut terminal = state(2, 3, false, 0);
+        assert_eq!(peek_next(&mut terminal), -1);
+    }
+}
