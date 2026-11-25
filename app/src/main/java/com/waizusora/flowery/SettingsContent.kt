@@ -61,6 +61,21 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
     usbVolumeMaxDb: Float,
     usbVolumeResolutionDb: Float) {
     val context = LocalContext.current
+    val replayGainInitial = remember(context) { ReplayGainPreferences.read(context) }
+    var replayGainMode by remember(context) { mutableStateOf(replayGainInitial.mode) }
+    var replayGainTrackPreamp by remember(context) { mutableStateOf(replayGainInitial.trackPreampDb) }
+    var replayGainAlbumPreamp by remember(context) { mutableStateOf(replayGainInitial.albumPreampDb) }
+    var replayGainPreventClipping by remember(context) { mutableStateOf(replayGainInitial.preventClipping) }
+    LaunchedEffect(page, replayGainMode, replayGainTrackPreamp, replayGainAlbumPreamp, replayGainPreventClipping) {
+        if (page == SettingsPage.AUDIO) {
+            ReplayGainPreferences.saveAndApply(
+                context,
+                ReplayGainPreferenceState(
+                    replayGainMode, replayGainTrackPreamp, replayGainAlbumPreamp, replayGainPreventClipping
+                )
+            )
+        }
+    }
     val routeResolver = remember(context) { AndroidOutputRouteResolver(context) }
     val usbAudioScanner = remember(context) { UsbAudioDeviceScanner(context) }
     var detectedOutput by remember(routeResolver) { mutableStateOf(routeResolver.detectCurrent()) }
@@ -267,6 +282,64 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                     "Android's public USB Host API does not expose isochronous streaming transfers.",
                 color = muted, style = MaterialTheme.typography.bodySmall
             )
+            HorizontalDivider(color = muted.copy(alpha = .25f))
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("REPLAYGAIN", color = color, fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleSmall)
+                Text("Loudness normalization for Android-managed playback.", color = muted,
+                    style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "Off", 1 to "Track", 2 to "Album").forEach { (mode, label) ->
+                        FilterChip(
+                            selected = replayGainMode == mode,
+                            onClick = { replayGainMode = mode },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Track preamp", color = color, style = MaterialTheme.typography.bodyMedium)
+                        Text("%.1f dB".format(java.util.Locale.ROOT, replayGainTrackPreamp),
+                            color = muted, style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = replayGainTrackPreamp,
+                        onValueChange = { replayGainTrackPreamp = it },
+                        valueRange = -12f..12f,
+                        enabled = replayGainMode == 1
+                    )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Album preamp", color = color, style = MaterialTheme.typography.bodyMedium)
+                        Text("%.1f dB".format(java.util.Locale.ROOT, replayGainAlbumPreamp),
+                            color = muted, style = MaterialTheme.typography.labelMedium)
+                    }
+                    Slider(
+                        value = replayGainAlbumPreamp,
+                        onValueChange = { replayGainAlbumPreamp = it },
+                        valueRange = -12f..12f,
+                        enabled = replayGainMode == 2
+                    )
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Prevent clipping", color = color, style = MaterialTheme.typography.bodyMedium)
+                        Text("Limit positive gain using ReplayGain peak metadata.",
+                            color = muted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(
+                        checked = replayGainPreventClipping,
+                        onCheckedChange = { replayGainPreventClipping = it }
+                    )
+                }
+                Text(
+                    "ReplayGain affects Android AAudio playback only. USB Direct bypasses this processing and remains bit-perfect.",
+                    color = muted, style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
 
 
