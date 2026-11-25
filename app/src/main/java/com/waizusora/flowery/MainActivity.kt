@@ -359,6 +359,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logPreviousProcessExitReasons()
+        // Restore the persisted ReplayGain mode before any playback can start.
+        if (!ReplayGainPreferences.apply(this)) {
+            Log.w("FloweryReplayGain", "Unable to apply persisted ReplayGain settings to the native engine")
+        }
         val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
         restoreFolders()
         restoreScannedTracks()
