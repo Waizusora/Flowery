@@ -918,13 +918,15 @@ class PlaybackService : Service() {
         Log.i("FloweryDiagnostics", "TRACK_COMPLETION completedIndex=$completedIndex queueSize=${queue.size} nextIndex=$nextIndex repeat=$repeatMode shuffle=$shuffle")
         when (nextIndex) {
             -2 -> {
-                player.stop()
+                // FloweryPlayer has already drained and retained the AAudio output.
+                // Let playCurrent/player.play perform the replacement with
+                // preserveRetainedOutput=true; stopping here would close the queue output.
                 playCurrent()
             }
             -1 -> finishQueuePlayback()
             else -> {
                 queueIndex = nextIndex
-                player.stop()
+                // Do not stop the retained output between naturally adjacent tracks.
                 playCurrent()
             }
         }
