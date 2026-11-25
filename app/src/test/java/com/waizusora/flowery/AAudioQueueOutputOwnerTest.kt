@@ -11,6 +11,7 @@ class AAudioQueueOutputOwnerTest {
         val persistence = mutableListOf<Boolean>()
         val attached = mutableListOf<AAudioOutputSignature>()
         var prepareResult = 0
+        var throwOnAttach = false
         var stopCount = 0
         var failEnablePersistence = false
         var failDisablePersistence = false
@@ -21,6 +22,7 @@ class AAudioQueueOutputOwnerTest {
         }
         override fun attachNextTrack(signature: AAudioOutputSignature): Int {
             attached += signature
+            if (throwOnAttach) error("native producer attach threw")
             return prepareResult
         }
         override fun stopOutput() { stopCount += 1 }
@@ -126,6 +128,23 @@ class AAudioQueueOutputOwnerTest {
         assertFalse(owner.prepareNextTrack(current))
         assertFalse(owner.confirmProducerAttached())
         assertEquals(AAudioQueueOutputOwner.Phase.RETAINED, owner.phase())
+    }
+
+    @Test
+    fun nativeProducerAttachExceptionDoesNotAdvanceOwnerPhase() {
+        val native = FakeNative().apply { throwOnAttach = true }
+        val owner = AAudioQueueOutputOwner(native)
+        val current = signature()
+        assertTrue(owner.adoptOpenedOutput(current))
+        assertTrue(owner.retainForNextTrack())
+
+        assertFalse(owner.prepareNextTrack(current))
+        assertFalse(owner.confirmProducerAttached())
+        assertEquals(AAudioQueueOutputOwner.Phase.RETAINED, owner.phase())
+
+        owner.close()
+        assertEquals(1, native.stopCount)
+        assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
     }
 
     @Test
