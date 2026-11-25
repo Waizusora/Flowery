@@ -295,3 +295,4 @@ When reviewing a device log:
 - A different sample rate, channel count, PCM format, device ID, or sharing mode must take the explicit output-reopen path.
 - Reuse success must be followed by attach, prebuffer, pump, and scheduler events. A retained stream alone is not proof of a continuous PCM handoff.
 - Logs captured from an APK built before this diagnostic change will not contain the new `reason` or signature fields; rebuild and install the branch APK before collecting another trace.
+- If signatures match but native attach still fails, `reason` now preserves the native result class: `NATIVE_INVALID_STATE(-895)`, `NATIVE_DEVICE_MISMATCH(-897)`, `NATIVE_PCM_FORMAT_MISMATCH(-898)`, `NATIVE_ATTACH_ERROR(code)`, or `NATIVE_ATTACH_EXCEPTION(...)`. This separates Kotlin-side signature mismatch from native stream-lifecycle or identity rejection.
