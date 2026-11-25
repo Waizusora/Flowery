@@ -160,3 +160,7 @@ The identity guard is in addition to the existing sample-rate, channel-count, an
 `AAudioQueueOutputOwner` now models the queue's ownership of an already-open AAudio stream. It adopts the opened output signature, enables the native persistence lease at a track boundary, permits ring reset only for an identical sample-rate/channel/format/device-ID/sharing-mode signature, and confirms producer attachment as a separate transition. A native reset failure leaves the owner retained but not prepared; a PCM or device mismatch does not touch the ring and must be handled by an explicit output reconfiguration path. Queue completion or cancellation revokes persistence and stops output exactly once.
 
 Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/sharing mismatches, native reset failure, duplicate adoption, and idempotent close. This coordinator is not yet wired into `FloweryPlayer` or `PlaybackService`; runtime gapless remains disabled until the player can consume prepared decoder resources and transfer producer ownership without tearing down the output.
+
+### Queue EOF cleanup
+
+`PlaybackService.finishQueuePlayback()` now invalidates the generation-scoped prefetch coordinator before stopping the player. A prepared decoder/session that was waiting for a next track is therefore closed when the queue actually ends, rather than remaining held by a queue that has no successor. Explicit stop and service destruction continue to invalidate/close the same coordinator.
