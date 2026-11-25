@@ -58,6 +58,11 @@ fn output_should_complete(eof: bool, track_eof: bool, buffered_frames: u64, acti
     (eof || track_eof) && buffered_frames == 0 && !active
 }
 
+/// Non-terminal notification for a queue owner when a track has ended but
+/// buffered PCM remains; terminal completion is reported only after drain.
+fn output_scheduler_status(track_eof: bool, complete: bool) -> Option<i32> {
+    if complete { Some(1) } else if track_eof { Some(3) } else { None }
+}
 fn producer_epoch_matches(current: u64, expected: u64) -> bool {
     current != 0 && current == expected
 }
@@ -517,14 +522,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                         // decoder reaches EOF while buffered PCM is still draining.
                         // Status 3 is non-terminal: single-track playback continues
                         // waiting for status 1, while a queue owner may hand off now.
-                        if track_eof && !complete {
-                            thread_status.store(3, Ordering::Release);
-                        }
-                        if complete &&
-                            crate::playback_session::transition_session_phase(&worker_session, 4) &&
-                            crate::playback_session::transition_session_phase(&worker_session, 5) {
-                            thread_status.store(1, Ordering::Release);
-                            break;
+                        match output_scheduler_status(track_eof, complete) {
+                            Some(3) => thread_status.store(3, Ordering::Release),
+                            Some(1) => {
+                                if crate::playback_session::transition_session_phase(&worker_session, 4) &&
+                                    crate::playback_session::transition_session_phase(&worker_session, 5) {
+                                    thread_status.store(1, Ordering::Release);
+                                    break;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Err(error) => {
@@ -1019,6 +1026,13 @@ mod tests {
         assert_eq!(engine.producer_epoch, 3);
     }
 
+    #[test]
+    fn scheduler_publishes_nonterminal_boundary_before_final_drain() {
+        assert_eq!(output_scheduler_status(true, false), Some(3));
+        assert_eq!(output_scheduler_status(false, false), None);
+        assert_eq!(output_scheduler_status(true, true), Some(1));
+        assert_eq!(output_scheduler_status(false, true), Some(1));
+    }
     #[test]
     fn track_eof_completes_only_after_buffer_drains_without_closing_queue_output() {
         assert!(!output_should_complete(false, true, 128, false));
