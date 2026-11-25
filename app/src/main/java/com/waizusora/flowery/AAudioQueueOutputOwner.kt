@@ -22,6 +22,9 @@ internal data class AAudioOutputSignature(
     }
 }
 
+/** Status 3 is an early, non-terminal boundary; status 4 is the drained boundary. */
+internal fun shouldAdvanceAaudioQueue(status: Int, hasNextTrack: Boolean): Boolean =
+    status == 4 || (status == 3 && hasNextTrack)
 internal interface AAudioQueueOutputNative {
     fun setPersistence(enabled: Boolean)
     fun attachNextTrack(signature: AAudioOutputSignature): Int
