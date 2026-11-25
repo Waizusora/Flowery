@@ -151,6 +151,29 @@ Direct still owns its per-track libusb session. Persistent output ownership,
 producer handoff at an early queue boundary, and continuity/underrun validation
 remain outstanding.
 
+## FloweryPlayer persistent AAudio output integration
+
+`FloweryPlayer` now owns an `AAudioQueueOutputOwner` for the active queue. At
+normal track completion, it retains the open AAudio device stream only when the
+service reports a next queue item. The native session is then closed while the
+native persistence lease keeps the AAudio stream and SPSC output ring alive.
+
+When the next track starts, the player compares its requested sample rate,
+channel count, sample format, device ID, and sharing mode with the retained
+output. An exact match advances the native producer epoch and reuses the
+existing stream/ring; the next segmented decoder pump is attached to that
+producer before the output scheduler is restarted. A mismatch, failed attach,
+route change, queue end, or explicit stop closes the retained output and uses
+the normal output-open path.
+
+This is persistent output reuse, not yet verified gapless playback. Track EOF
+currently completes after the ring drains, and the service starts the next
+producer only after that completion callback. The callback may therefore emit
+silence between tracks even though the AAudio device stream remains open. A
+future queue-boundary signal must start/attach the next producer before the
+buffer drains, and continuity/underrun instrumentation must verify the result.
+USB Direct remains on its independent libusb lifecycle and is not affected.
+
 ## Persistent output lifetime contract
 
 The native gapless module now models output lifetime separately from decoder lifetime. A track EOF detaches the current producer but keeps the output open. A same-signature next track attaches a new producer epoch without reopening output. A changed PCM signature requires an explicit reconfiguration completion before the next producer is considered attached. Only queue EOF or cancellation closes the output; stale generations cannot attach or close it.
