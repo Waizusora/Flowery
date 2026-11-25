@@ -461,7 +461,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
                 if crate::aaudio::output_persistence_enabled() {
                     // The queue-level owner retains the opened stream/ring across
                     // this decoder session boundary. Stop only the old scheduler.
-                    crate::aaudio::stop_output_scheduler_for_session();
+                    crate::aaudio::stop_output_scheduler_for_session(handle);
                 } else {
                     crate::aaudio::stop_output_for_session();
                 }
