@@ -68,6 +68,46 @@ fn output_identity_matches(
         && actual_sharing_mode == expected_sharing_mode
 }
 
+/// Advances producer ownership without replacing the SPSC ring or discarding
+/// PCM already queued by the previous track. The old worker must be joined
+/// before the new producer reads the returned epoch.
+fn attach_output_producer_for_next_track(
+    engine: &mut Engine,
+    persistent: bool,
+    expected_rate: i32,
+    expected_channels: i32,
+    expected_format: i32,
+    expected_device_id: i32,
+    expected_sharing_mode: i32,
+) -> Result<u64, i32> {
+    if !persistent { return Err(INVALID_STATE); }
+    let output = engine.output.as_ref().ok_or(INVALID_STATE)?;
+    if output.rate != expected_rate
+        || output.channels != expected_channels as usize
+        || output.format != expected_format
+    {
+        return Err(INVALID_FORMAT);
+    }
+    if !output_identity_matches(
+        engine.last_open[5] as i32,
+        engine.last_open[6] as i32,
+        expected_device_id,
+        expected_sharing_mode,
+    ) {
+        return Err(DEVICE_MISMATCH);
+    }
+    if engine.producer.is_none() { return Err(INVALID_STATE); }
+
+    engine.producer_epoch = engine.producer_epoch.wrapping_add(1).max(1);
+    let epoch = engine.producer_epoch;
+    let output = engine.output.as_ref().ok_or(INVALID_STATE)?;
+    output.eof.store(false, Ordering::Release);
+    output.active.store(true, Ordering::Release);
+    output.error.store(0, Ordering::Release);
+    // Keep the queued tail and played-frame counter intact across the handoff.
+    Ok(epoch)
+}
+
 fn valid_output_format(rate: i32, channels: i32, format: i32) -> bool {
     if rate <= 0 || channels <= 0 {
         return false;
@@ -571,6 +611,50 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputPer
 
 /// Installs a fresh empty SPSC ring for the next same-format track.
 /// Must be called after the previous session is closed and its callback stopped.
+/// Invalidates the previous producer epoch while preserving queued PCM and
+/// the running AAudio callback. This is the same-signature gapless handoff path.
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeAttachStreamProducerForNextTrack(
+    mut env: JNIEnv, _class: JClass, expected_rate: jint, expected_channels: jint, expected_format: jint,
+    expected_device_id: jint, expected_sharing_mode: jint,
+) -> jint {
+    if !valid_output_format(expected_rate, expected_channels, expected_format) {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid expected PCM signature for producer handoff");
+        return INVALID_FORMAT;
+    }
+    if !OUTPUT_PERSISTENT.load(Ordering::Acquire) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output lease is not enabled");
+        return INVALID_STATE;
+    }
+    stop_output_scheduler();
+    let mut e = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if e.stream.is_null() || e.output.is_none() {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio output is not open");
+        return INVALID_STATE;
+    }
+    let (actual_device_id, actual_sharing_mode, state) = unsafe {
+        (AAudioStream_getDeviceId(e.stream), AAudioStream_getSharingMode(e.stream), AAudioStream_getState(e.stream))
+    };
+    if !output_identity_matches(actual_device_id, actual_sharing_mode, expected_device_id, expected_sharing_mode) {
+        let _ = env.throw_new("java/lang/IllegalStateException", "Persistent AAudio device or sharing mode does not match the requested queue output");
+        return DEVICE_MISMATCH;
+    }
+    if state == STATE_DISCONNECTED {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output disconnected before producer handoff");
+        return INVALID_STATE;
+    }
+    match attach_output_producer_for_next_track(
+        &mut e, OUTPUT_PERSISTENT.load(Ordering::Acquire), expected_rate, expected_channels,
+        expected_format, expected_device_id, expected_sharing_mode,
+    ) {
+        Ok(_) => OK,
+        Err(error) => {
+            let _ = env.throw_new("java/lang/IllegalStateException", "Unable to attach the next AAudio producer");
+            error
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePrepareStreamOutputForNextTrack(
     mut env: JNIEnv, _class: JClass, expected_rate: jint, expected_channels: jint, expected_format: jint,
@@ -851,6 +935,62 @@ mod tests {
         assert!(!output_identity_matches(7, SHARING_SHARED, 7, SHARING_EXCLUSIVE));
         assert!(!output_identity_matches(7, SHARING_EXCLUSIVE, 7, 9));
         assert!(!output_identity_matches(7, SHARING_EXCLUSIVE, -1, SHARING_EXCLUSIVE));
+    }
+
+    #[test]
+    fn same_signature_handoff_preserves_buffered_pcm_and_invalidates_old_epoch() {
+        let (mut producer, consumer) = rtrb::RingBuffer::<u8>::new(64);
+        producer.push_entire_slice(&[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        let free_before = producer.slots();
+        let output = Output {
+            consumer: UnsafeCell::new(consumer), capacity: 64, channels: 2,
+            format: FMT_I16, rate: 48_000, bytes_per_sample: 2,
+            played: AtomicU64::new(123), volume: AtomicU32::new(1.0f32.to_bits()),
+            active: AtomicBool::new(false), eof: AtomicBool::new(true),
+            underruns: AtomicU64::new(0), error: AtomicI32::new(-1),
+        };
+        let mut engine = Engine::new();
+        engine.output = Some(Box::new(output));
+        engine.producer = Some(producer);
+        engine.producer_epoch = 9;
+        engine.last_open[5] = 7;
+        engine.last_open[6] = SHARING_EXCLUSIVE;
+
+        let next_epoch = attach_output_producer_for_next_track(
+            &mut engine, true, 48_000, 2, FMT_I16, 7, SHARING_EXCLUSIVE,
+        ).unwrap();
+
+        assert_eq!(next_epoch, 10);
+        assert!(!producer_epoch_matches(engine.producer_epoch, 9));
+        let output = engine.output.as_ref().unwrap();
+        assert_eq!(engine.producer.as_ref().unwrap().slots(), free_before);
+        assert!(!output.eof.load(Ordering::Acquire));
+        assert!(output.active.load(Ordering::Acquire));
+        assert_eq!(output.error.load(Ordering::Acquire), 0);
+        assert_eq!(output.played.load(Ordering::Acquire), 123);
+    }
+
+    #[test]
+    fn same_signature_handoff_rejects_mismatch_without_changing_epoch() {
+        let (producer, consumer) = rtrb::RingBuffer::<u8>::new(64);
+        let output = Output {
+            consumer: UnsafeCell::new(consumer), capacity: 64, channels: 2,
+            format: FMT_I16, rate: 48_000, bytes_per_sample: 2,
+            played: AtomicU64::new(0), volume: AtomicU32::new(1.0f32.to_bits()),
+            active: AtomicBool::new(false), eof: AtomicBool::new(true),
+            underruns: AtomicU64::new(0), error: AtomicI32::new(0),
+        };
+        let mut engine = Engine::new();
+        engine.output = Some(Box::new(output));
+        engine.producer = Some(producer);
+        engine.producer_epoch = 3;
+        engine.last_open[5] = 7;
+        engine.last_open[6] = SHARING_EXCLUSIVE;
+
+        assert_eq!(attach_output_producer_for_next_track(&mut engine, true, 96_000, 2, FMT_I16, 7, SHARING_EXCLUSIVE), Err(INVALID_FORMAT));
+        assert_eq!(attach_output_producer_for_next_track(&mut engine, true, 48_000, 2, FMT_I16, 8, SHARING_EXCLUSIVE), Err(DEVICE_MISMATCH));
+        assert_eq!(attach_output_producer_for_next_track(&mut engine, false, 48_000, 2, FMT_I16, 7, SHARING_EXCLUSIVE), Err(INVALID_STATE));
+        assert_eq!(engine.producer_epoch, 3);
     }
 
     #[test]
