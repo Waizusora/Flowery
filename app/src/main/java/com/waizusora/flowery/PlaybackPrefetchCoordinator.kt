@@ -47,6 +47,8 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
             check(!closed) { "Prefetch coordinator is closed." }
             if (targetGeneration != generation) return false
             pending?.cancel(true)
+            pending = null
+            slot.clear()
             requestSerial += 1L
             val request = requestSerial
             pending = executor.submit {
