@@ -475,8 +475,8 @@ class PlaybackService : Service() {
                     }
                 }
             }
-            ACTION_SHUFFLE -> { shuffle = !shuffle; publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
-            ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
+            ACTION_SHUFFLE -> { shuffle = !shuffle; scheduleNextTrackPrefetch(playRequestGeneration); publishState(if (shuffle) "Shuffle enabled" else "Shuffle disabled") }
+            ACTION_REPEAT -> { repeatMode = queueState.cycleRepeatMode(); scheduleNextTrackPrefetch(playRequestGeneration); publishState("Repeat mode: ${listOf("Off", "All", "One")[repeatMode]}") }
             ACTION_SEEK -> {
                 recoveryPositionMs = intent.getLongExtra(EXTRA_POSITION, 0L).coerceAtLeast(0L)
                 player.seekTo(recoveryPositionMs)
@@ -603,7 +603,10 @@ class PlaybackService : Service() {
      */
     private fun scheduleNextTrackPrefetch(generation: Long) {
         val nextIndex = queueState.peekNextIndex(queue.size)
-        val nextUriText = queue.getOrNull(nextIndex)?.takeIf { it.isNotBlank() } ?: return
+        val nextUriText = queue.getOrNull(nextIndex)?.takeIf { it.isNotBlank() } ?: run {
+            playbackPrefetch.clearPrefetch()
+            return
+        }
         val nextStartMs = queueCueStarts.getOrNull(nextIndex) ?: 0L
         val nextEndMs = queueCueEnds.getOrNull(nextIndex)?.takeIf { it > 0L }
         val key = "$nextUriText|$nextStartMs|${nextEndMs ?: -1L}"
