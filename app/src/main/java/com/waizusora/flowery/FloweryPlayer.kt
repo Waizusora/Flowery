@@ -421,6 +421,23 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     "Unable to start the Rust-owned segmented AAudio decode scheduler"
                 }
                 if (reusedQueueOutput) {
+                    val prebufferedFrames = NativeAudio.nativeWaitForStreamPrebuffer(
+                        handle, lowWatermarkFrames, 350
+                    )
+                    check(prebufferedFrames >= -1) {
+                        "The next AAudio producer stopped before prebuffer became ready."
+                    }
+                    if (prebufferedFrames >= 0) {
+                        Log.i(
+                            "FloweryDiagnostics",
+                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_READY generation=$generation queuedFrames=$prebufferedFrames requiredFrames=$lowWatermarkFrames ${audioPipelineDiagnostics()}"
+                        )
+                    } else {
+                        Log.w(
+                            "FloweryDiagnostics",
+                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_TIMEOUT generation=$generation requiredFrames=$lowWatermarkFrames ${audioPipelineDiagnostics()}"
+                        )
+                    }
                     check(aaudioQueueOutputOwner.confirmProducerAttached()) {
                         "The persistent AAudio output did not accept the next producer."
                     }
