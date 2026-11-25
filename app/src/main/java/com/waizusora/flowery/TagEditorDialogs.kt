@@ -13,7 +13,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.unit.dp
 
 @androidx.compose.runtime.Composable
-internal fun TagInfoDialog(tag: AudioTag, onDismiss: () -> Unit) {
+internal fun TagInfoDialog(tag: AudioTag, replayGainSettings: ReplayGainPreferenceState, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Audio file information") },
@@ -36,6 +36,25 @@ internal fun TagInfoDialog(tag: AudioTag, onDismiss: () -> Unit) {
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium)
                 }
+                val replayGainPlan = calculateReplayGainDisplay(tag, replayGainSettings)
+                HorizontalDivider()
+                Text("REPLAYGAIN PROCESSING", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Text("Selected mode: ${replayGainPlan.modeLabel}", style = MaterialTheme.typography.bodyMedium)
+                Text("Effective gain: ${"%+.2f dB".format(java.util.Locale.ROOT, replayGainPlan.effectiveGainDb)}", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "Peak protection: " + when {
+                        !replayGainPlan.clippingPreventionEnabled -> "Off"
+                        !replayGainPlan.peakMetadataAvailable -> "Enabled, but no valid peak tag is available"
+                        replayGainPlan.peakLimitApplied -> "Applied"
+                        else -> "Enabled; no gain reduction required"
+                    },
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "ReplayGain is applied to Android AAudio playback only. USB Direct bypasses this processing.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } }
