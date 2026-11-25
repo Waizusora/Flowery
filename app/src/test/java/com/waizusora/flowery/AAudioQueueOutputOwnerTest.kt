@@ -94,6 +94,6 @@ class AAudioQueueOutputOwnerTest {
         assertFalse(owner.adoptOpenedOutput(signature(rate = 0)))
         assertTrue(owner.adoptOpenedOutput(signature()))
         assertFalse(owner.adoptOpenedOutput(signature(device = 8)))
-        assertFalse(owner.retainForNextTrack().not())
+        assertTrue(owner.retainForNextTrack())
     }
 }
