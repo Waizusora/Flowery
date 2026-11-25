@@ -251,3 +251,15 @@ tail is still being consumed. Without a successor it waits for terminal
 completion. This moves queue advancement earlier, but service dispatch,
 metadata work, decoder setup, and producer refill can still exceed the
 remaining buffered duration. Silence-free continuity is not yet verified.
+
+### AAudio producer handoff telemetry
+
+The player now emits three additional snapshots for same-signature queue reuse:
+
+- `AAUDIO_NEXT_PRODUCER_ATTACH_COMPLETE`: after the native producer epoch is attached, before the next decode pump starts.
+- `AAUDIO_NEXT_PRODUCER_PUMP_STARTED`: after the segmented decode pump starts and the queue owner confirms the producer handoff.
+- `AAUDIO_NEXT_PRODUCER_SCHEDULER_STARTED`: after the output scheduler is restarted for the next track.
+
+Each record includes the same output diagnostics as the boundary snapshots, including queued frames, callback underruns, XRun count, output format, stream rate, and device identity. For physical validation, correlate these records by playback generation with `AAUDIO_EARLY_TRACK_BOUNDARY` and `AAUDIO_TRACK_BOUNDARY_DRAINED`. The attach and pump records are lifecycle timestamps, not proof that a minimum PCM prebuffer has already accumulated. A valid continuity result still requires queued PCM to remain nonzero across the handoff, no underrun/XRun increase, and listening or captured-loopback verification on a physical Android device.
+
+The AAudio owner tests also cover a thrown exception from the native attach bridge, persistence-enable failure, persistence-revoke failure, and cleanup after producer startup failure. A failed attach must not advance the owner to PREPARED; cleanup must stop the output and clear the owner state even if lease revocation reports an error.
