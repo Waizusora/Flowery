@@ -761,7 +761,7 @@ fn start_stream_pump_worker(
                 }
             };
             if samples.is_empty() {
-                crate::aaudio::signal_stream_eof();
+                crate::aaudio::signal_stream_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
             }
@@ -795,7 +795,7 @@ fn start_stream_pump_worker(
                 }
             }
             if frame_limit.is_some_and(|limit| produced_frames >= limit) {
-                crate::aaudio::signal_stream_eof();
+                crate::aaudio::signal_stream_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
             }
