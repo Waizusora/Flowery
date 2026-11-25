@@ -34,6 +34,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     private val outputLifecycleLock = Any()
     @Volatile private var outputReady = false
     private val playbackGeneration = AtomicInteger(0)
+    @Volatile private var lastAaudioBoundaryGeneration = -1
+    @Volatile private var lastAaudioBoundaryAtNanos = 0L
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
     @Volatile private var outputSampleRate = 0
@@ -358,7 +360,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 } else {
                     Log.i(
                         "FloweryDiagnostics",
-                        "AAUDIO_NEXT_PRODUCER_ATTACH_COMPLETE rate=$sourceRate channels=$channels format=$outputFormat deviceId=$deviceId ${audioPipelineDiagnostics()}"
+                        "AAUDIO_NEXT_PRODUCER_ATTACH_COMPLETE rate=$sourceRate channels=$channels format=$outputFormat deviceId=$deviceId ${handoffLatencyDiagnostics(generation)} ${audioPipelineDiagnostics()}"
                     )
                 }
                 outputSampleRate = sourceRate
@@ -430,12 +432,12 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     if (prebufferedFrames >= 0) {
                         Log.i(
                             "FloweryDiagnostics",
-                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_READY generation=$generation queuedFrames=$prebufferedFrames requiredFrames=$lowWatermarkFrames ${audioPipelineDiagnostics()}"
+                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_READY generation=$generation queuedFrames=$prebufferedFrames requiredFrames=$lowWatermarkFrames ${handoffLatencyDiagnostics(generation)} ${audioPipelineDiagnostics()}"
                         )
                     } else {
                         Log.w(
                             "FloweryDiagnostics",
-                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_TIMEOUT generation=$generation requiredFrames=$lowWatermarkFrames ${audioPipelineDiagnostics()}"
+                            "AAUDIO_NEXT_PRODUCER_PREBUFFER_TIMEOUT generation=$generation requiredFrames=$lowWatermarkFrames ${handoffLatencyDiagnostics(generation)} ${audioPipelineDiagnostics()}"
                         )
                     }
                     check(aaudioQueueOutputOwner.confirmProducerAttached()) {
@@ -443,7 +445,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                     Log.i(
                         "FloweryDiagnostics",
-                        "AAUDIO_NEXT_PRODUCER_PUMP_STARTED generation=$generation ${audioPipelineDiagnostics()}"
+                        "AAUDIO_NEXT_PRODUCER_PUMP_STARTED generation=$generation ${handoffLatencyDiagnostics(generation)} ${audioPipelineDiagnostics()}"
                     )
                 }
                 // Forward a seek requested while the decoder/session was still opening.
@@ -463,7 +465,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 if (reusedQueueOutput) {
                     Log.i(
                         "FloweryDiagnostics",
-                        "AAUDIO_NEXT_PRODUCER_SCHEDULER_STARTED generation=$generation ${audioPipelineDiagnostics()}"
+                        "AAUDIO_NEXT_PRODUCER_SCHEDULER_STARTED generation=$generation ${handoffLatencyDiagnostics(generation)} ${audioPipelineDiagnostics()}"
                     )
                 }
                 val shouldStartPaused = synchronized(outputLifecycleLock) {
@@ -494,9 +496,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         1 -> break
                         3 -> {
                             if (shouldAdvanceAaudioQueue(3, retainOutputForNextTrack)) {
+                                lastAaudioBoundaryGeneration = generation
+                                lastAaudioBoundaryAtNanos = android.os.SystemClock.elapsedRealtimeNanos()
                                 Log.i(
                                     "FloweryDiagnostics",
-                                    "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation ${audioPipelineDiagnostics()}"
+                                    "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation boundaryElapsedRealtimeNanos=$lastAaudioBoundaryAtNanos ${audioPipelineDiagnostics()}"
                                 )
                                 break
                             }
@@ -675,6 +679,18 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     } else {
         standaloneDacVolume?.snapshot
     }
+    /** Monotonic elapsed time from the previous track's early boundary to this handoff stage. */
+    private fun handoffLatencyDiagnostics(generation: Int): String {
+        val boundaryGeneration = lastAaudioBoundaryGeneration
+        val boundaryAtNanos = lastAaudioBoundaryAtNanos
+        if (boundaryAtNanos <= 0L || boundaryGeneration < 0 || boundaryGeneration >= generation) {
+            return "handoffFromGeneration=none"
+        }
+        val elapsedMs = (android.os.SystemClock.elapsedRealtimeNanos() - boundaryAtNanos)
+            .coerceAtLeast(0L) / 1_000_000L
+        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs"
+    }
+
     /** Compact playback telemetry for correlating audible dropouts with buffer/xrun counters. */
     fun audioPipelineDiagnostics(): String {
         if (usbRouteActive) {
