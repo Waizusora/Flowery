@@ -240,6 +240,7 @@ fn reset_output_ring(engine: &mut Engine, expected_rate: i32, expected_channels:
     // therefore the callback cannot concurrently access this consumer endpoint.
     unsafe { *output.consumer.get() = consumer; }
     output.eof.store(false, Ordering::Release);
+    output.track_eof.store(false, Ordering::Release);
     output.active.store(true, Ordering::Release);
     output.error.store(0, Ordering::Release);
     output.played.store(0, Ordering::Release);
@@ -408,7 +409,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
             *start_requested = true;
         }
         let current_state = AAudioStream_getState(e.stream);
-        if current_state == STATE_STOPPED && !eof && buffered == 0 { return Ok(false); }
+        if current_state == STATE_STOPPED && !eof && !track_eof && buffered == 0 { return Ok(false); }
         let xruns = AAudioStream_getXRunCount(e.stream);
         if xruns > 0 {
             let capacity = AAudioStream_getBufferCapacityInFrames(e.stream);
@@ -1023,6 +1024,21 @@ mod tests {
         assert!(output_should_complete(false, true, 0, false));
         assert!(!output_should_complete(false, true, 0, true));
         assert!(!output_should_complete(false, false, 0, false));
+    }
+
+    #[test]
+    fn track_eof_does_not_stop_callback_when_ring_is_empty() {
+        let mut output = test_output(4, 2, &[]);
+        output.track_eof.store(true, Ordering::Release);
+        output.active.store(false, Ordering::Release);
+        let mut audio = [0x55; 8];
+        let result = unsafe {
+            data_callback(ptr::null_mut(), (&mut output as *mut Output).cast(),
+                audio.as_mut_ptr().cast(), 2)
+        };
+        assert_eq!(result, 0);
+        assert!(!output.active.load(Ordering::Acquire));
+        assert_eq!(audio, [0; 8]);
     }
 
     #[test]
