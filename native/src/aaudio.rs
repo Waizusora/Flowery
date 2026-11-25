@@ -54,6 +54,10 @@ extern "C" {
 
 const OK:i32=0; const INVALID_STATE:i32=-895; const DEVICE_SELECTION_UNAVAILABLE:i32=-896; const DEVICE_MISMATCH:i32=-897; const INVALID_FORMAT:i32=-898;
 
+fn producer_epoch_matches(current: u64, expected: u64) -> bool {
+    current != 0 && current == expected
+}
+
 fn valid_output_format(rate: i32, channels: i32, format: i32) -> bool {
     if rate <= 0 || channels <= 0 {
         return false;
@@ -198,7 +202,7 @@ pub(crate) fn output_producer_epoch() -> Option<u64> {
 
 pub(crate) fn output_queue_budget(epoch: u64) -> Option<(usize, usize, usize)> {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if engine.producer_epoch != epoch { return None; }
+    if !producer_epoch_matches(engine.producer_epoch, epoch) { return None; }
     let output = engine.output.as_ref()?;
     let producer = engine.producer.as_ref()?;
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample)?;
@@ -215,7 +219,7 @@ pub(crate) fn output_queue_budget(epoch: u64) -> Option<(usize, usize, usize)> {
 /// Copies complete interleaved PCM frames into the bounded SPSC transport.
 pub(crate) fn write_output_pcm_bytes(epoch: u64, samples: &[u8]) -> Result<usize, i32> {
     let mut engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if engine.producer_epoch != epoch { return Err(INVALID_STATE); }
+    if !producer_epoch_matches(engine.producer_epoch, epoch) { return Err(INVALID_STATE); }
     let output = engine.output.as_ref().ok_or(INVALID_STATE)?;
     let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
     if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
@@ -540,7 +544,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
         e.last_open[10]=7; // Exclusive mode is mandatory; shared fallback is prohibited.
     }
     if result!=OK{unsafe{e.stop();}return result;}
-    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);e.producer=Some(producer);let _=&mut env;OK
+    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);e.producer_epoch=e.producer_epoch.wrapping_add(1).max(1);e.producer=Some(producer);let _=&mut env;OK
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(_:JNIEnv,_:JClass)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
@@ -638,7 +642,7 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
 /// Signals end-of-stream to the AAudio callback without crossing JNI.
 pub(crate) fn signal_stream_eof(epoch: u64) -> bool {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if engine.producer_epoch != epoch { return false; }
+    if !producer_epoch_matches(engine.producer_epoch, epoch) { return false; }
     if let Some(output) = engine.output.as_ref() {
         output.eof.store(true, Ordering::Release);
         return true;
@@ -770,6 +774,7 @@ mod tests {
             stream: ptr::null_mut(),
             output: Some(Box::new(output)),
             producer: Some(producer),
+            producer_epoch: 1,
             last_open: [0; 11],
         };
         reset_output_ring(&mut engine, 48_000, 2, FMT_I16).unwrap();
@@ -808,11 +813,19 @@ mod tests {
             stream: ptr::null_mut(),
             output: Some(Box::new(output)),
             producer: None,
+            producer_epoch: 1,
             last_open: [0; 11],
         };
         assert_eq!(reset_output_ring(&mut engine, 44_100, 2, FMT_I16), Err(INVALID_FORMAT));
         assert_eq!(reset_output_ring(&mut engine, 48_000, 1, FMT_I16), Err(INVALID_FORMAT));
         assert_eq!(reset_output_ring(&mut engine, 48_000, 2, FMT_I24), Err(INVALID_FORMAT));
+    }
+
+    #[test]
+    fn stale_output_producer_epoch_is_rejected() {
+        assert!(producer_epoch_matches(9, 9));
+        assert!(!producer_epoch_matches(10, 9));
+        assert!(!producer_epoch_matches(0, 0));
     }
 
     #[test]
