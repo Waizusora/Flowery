@@ -313,7 +313,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     reusedQueueOutput = compatibilityFailure == null &&
                         aaudioQueueOutputOwner.prepareNextTrack(requestedOutputSignature)
                     if (!reusedQueueOutput) {
-                        val rejectionReason = compatibilityFailure ?: "NATIVE_PRODUCER_ATTACH_FAILED"
+                        val rejectionReason = compatibilityFailure
+                            ?: aaudioQueueOutputOwner.lastPrepareFailureReason()
+                            ?: "NATIVE_PRODUCER_ATTACH_FAILED"
                         Log.i(
                             "FloweryDiagnostics",
                             "AAUDIO_QUEUE_OUTPUT_REUSE_REJECTED reason=$rejectionReason " +
