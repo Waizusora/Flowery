@@ -7,6 +7,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AAudioQueueOutputOwnerTest {
+
+    @Test
+    fun handoffTailBudgetClassificationUsesBoundaryQueueAndElapsedStartup() {
+        assertEquals(HandoffTailBudgetStatus.WITHIN_BUDGET, classifyHandoffTailBudget(120, 120))
+        assertEquals(HandoffTailBudgetStatus.WITHIN_BUDGET, classifyHandoffTailBudget(120, 85))
+        assertEquals(HandoffTailBudgetStatus.EXCEEDED, classifyHandoffTailBudget(120, 121))
+        assertEquals(HandoffTailBudgetStatus.UNKNOWN, classifyHandoffTailBudget(null, 20))
+        assertEquals(HandoffTailBudgetStatus.UNKNOWN, classifyHandoffTailBudget(120, null))
+        assertEquals(HandoffTailBudgetStatus.UNKNOWN, classifyHandoffTailBudget(-1, 20))
+    }
     @Test
     fun elapsedHandoffDurationUsesMonotonicTimestamps() {
         assertEquals(25L, elapsedHandoffMs(1_000_000L, 26_000_000L))
