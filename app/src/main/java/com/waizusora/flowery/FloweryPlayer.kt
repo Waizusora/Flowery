@@ -37,6 +37,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
     @Volatile private var lastAaudioBoundaryGeneration = -1
     @Volatile private var lastAaudioBoundaryAtNanos = 0L
     @Volatile private var lastAaudioBoundaryQueuedDurationMs: Long? = null
+    @Volatile private var lastAaudioBoundaryCounters: AAudioHandoffCounterSnapshot? = null
     @Volatile private var softwareVolume = 1f
     @Volatile private var outputDucked = false
     @Volatile private var outputSampleRate = 0
@@ -321,6 +322,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     lastAaudioBoundaryGeneration = -1
                     lastAaudioBoundaryAtNanos = 0L
                     lastAaudioBoundaryQueuedDurationMs = null
+                    lastAaudioBoundaryCounters = null
                     val opened = NativeAudio.nativeStartStreamOutput(
                         sourceRate, channels, softwareVolume, deviceId,
                         requireExclusive = true,
@@ -503,7 +505,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             if (shouldAdvanceAaudioQueue(3, retainOutputForNextTrack)) {
                                 lastAaudioBoundaryGeneration = generation
                                 lastAaudioBoundaryAtNanos = android.os.SystemClock.elapsedRealtimeNanos()
-                                lastAaudioBoundaryQueuedDurationMs = currentAaudioQueuedDurationMs()
+                                lastAaudioBoundaryCounters = currentAaudioCounterSnapshot()
+                                lastAaudioBoundaryQueuedDurationMs = lastAaudioBoundaryCounters?.let {
+                                    queuedPcmDurationMs(it.queuedFrames, it.sampleRateHz)
+                                }
                                 Log.i(
                                     "FloweryDiagnostics",
                                     "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation boundaryElapsedRealtimeNanos=$lastAaudioBoundaryAtNanos ${audioPipelineDiagnostics()}"
@@ -697,13 +702,24 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         ) ?: return "handoffFromGeneration=unknown"
         val tailBudgetMs = lastAaudioBoundaryQueuedDurationMs
         val budgetStatus = classifyHandoffTailBudget(tailBudgetMs, elapsedMs)
-        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs boundaryTailBudgetMs=${tailBudgetMs ?: "unknown"} tailBudgetStatus=$budgetStatus"
+        val counterDelta = compareAaudioHandoffCounters(
+            lastAaudioBoundaryCounters, currentAaudioCounterSnapshot(),
+        )
+        val counterSummary = counterDelta?.let {
+            "callbackUnderrunDelta=${it.callbackUnderruns} xrunDelta=${it.xrunCount} handoffQueuedFrames=${it.queuedFrames} handoffQueuedDurationMs=${it.queuedDurationMs ?: "unknown"} handoffCounterStatus=${it.status}"
+        } ?: "callbackUnderrunDelta=unknown xrunDelta=unknown handoffQueuedFrames=unknown handoffQueuedDurationMs=unknown handoffCounterStatus=UNKNOWN"
+        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs boundaryTailBudgetMs=${tailBudgetMs ?: "unknown"} tailBudgetStatus=$budgetStatus $counterSummary"
     }
 
-    private fun currentAaudioQueuedDurationMs(): Long? {
+    private fun currentAaudioCounterSnapshot(): AAudioHandoffCounterSnapshot? {
         val diagnostics = runCatching { NativeAudio.nativeGetOutputDiagnostics() }.getOrNull() ?: return null
         if (diagnostics.size <= 7) return null
-        return queuedPcmDurationMs(diagnostics[2], diagnostics[7].toInt())
+        return AAudioHandoffCounterSnapshot(
+            callbackUnderruns = diagnostics[0],
+            xrunCount = diagnostics[1],
+            queuedFrames = diagnostics[2],
+            sampleRateHz = diagnostics[7].toInt(),
+        )
     }
 
     /** Compact playback telemetry for correlating audible dropouts with buffer/xrun counters. */
