@@ -503,6 +503,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,fail_on_shared:jboolean,format:jint,capacity:jint)->jint{
+    // A fresh device open always starts a new output ownership scope.
+    OUTPUT_PERSISTENT.store(false, Ordering::Release);
     if !(channels==1||channels==2) || capacity<2048 || !valid_output_format(rate,channels,format){return INVALID_FORMAT;}
     let mut cap=1u64;while cap<capacity as u64{cap<<=1;}
     let bytes_per_sample=match format{FMT_I16=>2,FMT_FLOAT=>4,FMT_I24=>3,FMT_I32=>4,_=>return INVALID_FORMAT};
