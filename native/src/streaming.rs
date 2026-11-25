@@ -708,6 +708,8 @@ fn start_stream_pump_worker(
         return Err("Playback session is cancelled".into());
     }
     let worker_epoch = session.epoch.load(Ordering::Acquire);
+    let output_epoch = crate::aaudio::output_producer_epoch()
+        .ok_or_else(|| "AAudio output producer is unavailable".to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let error = Arc::new(Mutex::new(String::new()));
@@ -719,11 +721,12 @@ fn start_stream_pump_worker(
         let mut produced_frames = 0_u64;
         while !thread_stop.load(Ordering::Acquire) {
             if thread_session.cancelled.load(Ordering::Acquire) ||
-                thread_session.epoch.load(Ordering::Acquire) != worker_epoch {
+                thread_session.epoch.load(Ordering::Acquire) != worker_epoch ||
+                crate::aaudio::output_producer_epoch() != Some(output_epoch) {
                 thread_status.store(2, Ordering::Release);
                 break;
             }
-            let Some((queued, available, queue_target)) = crate::aaudio::output_queue_budget() else {
+            let Some((queued, available, queue_target)) = crate::aaudio::output_queue_budget(output_epoch) else {
                 thread::sleep(Duration::from_millis(2));
                 continue;
             };
@@ -743,7 +746,7 @@ fn start_stream_pump_worker(
             if let Some(limit) = frame_limit {
                 let remaining = limit.saturating_sub(produced_frames);
                 if remaining == 0 {
-                    crate::aaudio::signal_stream_eof();
+                    crate::aaudio::signal_stream_eof(output_epoch);
                     thread_status.store(1, Ordering::Release);
                     break;
                 }
@@ -772,7 +775,7 @@ fn start_stream_pump_worker(
                 thread_status.store(-2, Ordering::Release);
                 break;
             }
-            match crate::aaudio::write_output_pcm_bytes(&samples) {
+            match crate::aaudio::write_output_pcm_bytes(output_epoch, &samples) {
                 Ok(written) if written == samples.len() / bytes_per_frame => {
                     produced_frames = produced_frames.saturating_add(written as u64);
                 }
