@@ -15,6 +15,7 @@ use std::thread::{self, JoinHandle};
 #[cfg(target_os = "android")]
 use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
+use std::io::{Seek, SeekFrom};
 
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jlong};
@@ -142,6 +143,38 @@ pub(super) struct StreamDecoder {
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
     consecutive_decode_errors: u32,
+    replay_gain_metadata: crate::replay_gain::ReplayGainMetadata,
+}
+
+/// Read standard ReplayGain tags from a duplicated descriptor before the decoder
+/// starts consuming the stream. Lofty normalizes ID3 TXXX, Vorbis comments and
+/// MP4 freeform metadata into the same ItemKey values.
+fn read_replay_gain_metadata(fd: i32) -> crate::replay_gain::ReplayGainMetadata {
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 {
+        return crate::replay_gain::ReplayGainMetadata::default();
+    }
+
+    let mut file = unsafe { File::from_raw_fd(duplicate) };
+    // dup() shares the underlying file offset. Rewind before parsing and restore
+    // it afterward so Symphonia always starts from the beginning of the asset.
+    let _ = file.seek(SeekFrom::Start(0));
+    let metadata = lofty::read_from(&mut file)
+        .ok()
+        .and_then(|tagged| {
+            use lofty::file::TaggedFileExt;
+            use lofty::tag::ItemKey;
+            let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+            Some(crate::replay_gain::ReplayGainMetadata::from_values(
+                tag.get_string(ItemKey::ReplayGainTrackGain),
+                tag.get_string(ItemKey::ReplayGainTrackPeak),
+                tag.get_string(ItemKey::ReplayGainAlbumGain),
+                tag.get_string(ItemKey::ReplayGainAlbumPeak),
+            ))
+        })
+        .unwrap_or_default();
+    let _ = file.seek(SeekFrom::Start(0));
+    metadata
 }
 
 fn gapless_format_options() -> FormatOptions {
@@ -151,6 +184,7 @@ fn gapless_format_options() -> FormatOptions {
 
 impl StreamDecoder {
     fn new(fd: i32, extension: &str) -> Result<Self,String> {
+        let replay_gain_metadata = read_replay_gain_metadata(fd);
         let duplicate = unsafe { libc::dup(fd) };
         if duplicate < 0 { return Err("Unable to duplicate the selected document descriptor".into()); }
         let file = unsafe { File::from_raw_fd(duplicate) };
@@ -237,6 +271,7 @@ impl StreamDecoder {
             usb_pending: None, eof: false,
             duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
+            replay_gain_metadata,
         })
     }
 
@@ -260,6 +295,10 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
+
+    pub(super) fn replay_gain_metadata(&self) -> crate::replay_gain::ReplayGainMetadata {
+        self.replay_gain_metadata
+    }
 
     pub(super) fn playback_metadata(&self) -> (usize, usize, u8, u8) {
         (self.source_rate, self.channels, self.source_bits, self.source_data_format)
