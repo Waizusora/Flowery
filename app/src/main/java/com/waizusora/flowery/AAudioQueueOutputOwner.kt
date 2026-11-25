@@ -87,12 +87,31 @@ internal class AAudioQueueOutputOwner(
     }
 
     /**
+     * Explains why a retained output cannot be reused. A null result means the
+     * requested signature is compatible and the native attach may be attempted.
+     */
+    @Synchronized
+    fun reuseRejectionReason(next: AAudioOutputSignature): String? {
+        if (phase != Phase.RETAINED) return "PHASE_$phase"
+        if (!next.isValid()) return "INVALID_NEXT_SIGNATURE"
+        val current = signature ?: return "MISSING_RETAINED_SIGNATURE"
+        val differences = buildList {
+            if (current.sampleRateHz != next.sampleRateHz) add("sampleRate:${current.sampleRateHz}->${next.sampleRateHz}")
+            if (current.channels != next.channels) add("channels:${current.channels}->${next.channels}")
+            if (current.outputFormat != next.outputFormat) add("format:${current.outputFormat}->${next.outputFormat}")
+            if (current.deviceId != next.deviceId) add("deviceId:${current.deviceId}->${next.deviceId}")
+            if (current.sharingMode != next.sharingMode) add("sharingMode:${current.sharingMode}->${next.sharingMode}")
+        }
+        return differences.takeIf { it.isNotEmpty() }?.joinToString(prefix = "SIGNATURE_MISMATCH(", postfix = ")")
+    }
+
+    /**
      * Attaches a new producer epoch only when the next track has an identical
      * PCM and device signature. The existing ring and buffered tail are preserved.
      */
     @Synchronized
     fun prepareNextTrack(next: AAudioOutputSignature): Boolean {
-        if (phase != Phase.RETAINED || signature != next || !next.isValid()) return false
+        if (reuseRejectionReason(next) != null) return false
         val result = runCatching { native.attachNextTrack(next) }.getOrElse { return false }
         if (result != 0) return false
         phase = Phase.PREPARED
