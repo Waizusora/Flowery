@@ -99,3 +99,9 @@ Android now has a generation-scoped `PlaybackPrefetchCoordinator<T>` around `Pre
 Unit tests cover successful ownership transfer, generation invalidation, rejection of stale-generation requests, cleanup on close, and preparation failure. The coordinator is still a foundation: it is not yet connected to `PlaybackService` or `FloweryPlayer`, does not decide the next queue item, and does not hand a prepared decoder to a running output worker. Runtime gapless playback therefore remains disabled.
 
 Prefetch preparation failures are reported through an optional callback only while the request is still current. Failures from superseded generations are suppressed, and a failed preparation never publishes a partial resource. Cancellation and thread interruption are treated as normal invalidation rather than user-visible decoder errors.
+
+## Native queue lookahead
+
+The native playback queue now exposes a non-advancing next-index peek. In shuffle mode, the selected candidate is cached so repeated prefetch checks and the eventual NEXT or natural COMPLETION transition consume the same candidate rather than drawing a different random item. Queue selection, repeat-mode changes, and shuffle changes invalidate the cached candidate. Repeat-One keeps its existing natural-completion behavior (replay current item); peeking does not change that behavior. A queue with no next item returns -1 and is not prefetched.
+
+This is queue-policy plumbing only. It does not yet schedule `PreparedPlaybackResources` from the service or connect them to an active output producer.
