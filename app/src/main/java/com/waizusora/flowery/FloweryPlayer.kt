@@ -686,7 +686,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             ?: return "backend=AAudio diagnostics=unavailable"
         if (d.size <= 26) return "backend=AAudio diagnosticsSize=${d.size}"
         return "backend=AAudio decodedRateHz=$decodedSampleRate decodedPcm=$decodedPcmFormat outputRateHz=$outputSampleRate outputPcm=$outputPcmFormat " +
-            "callbackUnderruns=${d[0]} xrunCount=${d[1]} queuedFrames=${d[2]} ringCapacityFrames=${d[3]} " +
+            "callbackUnderruns=${d[0]} xrunCount=${d[1]} queuedFrames=${d[2]} queuedDurationMs=${queuedPcmDurationMs(d[2], d[7].toInt()) ?: "unknown"} ringCapacityFrames=${d[3]} " +
             "bufferSizeFrames=${d[4]} framesPerBurst=${d[5]} streamState=${d[6]} " +
             "actualRateHz=${d[7]} deviceId=${d[8]} sharingMode=${d[9]} format=${d[10]} " +
             "channels=${d[11]} performanceMode=${d[12]} bufferCapacityFrames=${d[26]}"
