@@ -51,6 +51,11 @@ internal class PreparedPlaybackSlot<T : AutoCloseable> {
     }
 
     @Synchronized
+    fun clear() {
+        closeEntry()
+    }
+
+    @Synchronized
     fun invalidate() {
         generation = if (generation == Long.MAX_VALUE) 1L else generation + 1L
         closeEntry()
