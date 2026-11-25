@@ -225,9 +225,9 @@ The identity guard is in addition to the existing sample-rate, channel-count, an
 
 ### Kotlin queue-level AAudio lease coordinator
 
-`AAudioQueueOutputOwner` now models the queue's ownership of an already-open AAudio stream. It adopts the opened output signature, enables the native persistence lease at a track boundary, permits ring reset only for an identical sample-rate/channel/format/device-ID/sharing-mode signature, and confirms producer attachment as a separate transition. A native reset failure leaves the owner retained but not prepared; a PCM or device mismatch does not touch the ring and must be handled by an explicit output reconfiguration path. Queue completion or cancellation revokes persistence and stops output exactly once.
+`AAudioQueueOutputOwner` now models the queue's ownership of an already-open AAudio stream. It adopts the opened output signature, enables the native persistence lease at a track boundary, advances the producer epoch without replacing the ring only for an identical sample-rate/channel/format/device-ID/sharing-mode signature, and confirms producer attachment as a separate transition. A native attach failure leaves the owner retained but not prepared; a PCM or device mismatch does not touch the ring and must be handled by an explicit output reconfiguration path. Queue completion or cancellation revokes persistence and stops output exactly once.
 
-Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/sharing mismatches, native reset failure, duplicate adoption, and idempotent close. This coordinator is not yet wired into `FloweryPlayer` or `PlaybackService`; runtime gapless remains disabled until the player can consume prepared decoder resources and transfer producer ownership without tearing down the output.
+Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/sharing mismatches, native attach failure, duplicate adoption, and idempotent close. `FloweryPlayer` now uses this coordinator to retain and reuse a compatible AAudio output across sessions. Runtime gapless remains unverified until the early boundary signal results in a new producer being attached and refilling the ring before its tail drains.
 
 ### Queue EOF cleanup
 
@@ -236,16 +236,18 @@ Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/
 
 ### Track EOF versus queue EOF
 
-The AAudio streaming producer now signals **track EOF** independently from
-**queue/output EOF**. At track EOF, the producer becomes inactive and the
-scheduler completes after the queued PCM tail drains, but the data callback
-does not request stream termination. A subsequent producer can clear the
-track boundary and refill the same ring. Queue EOF remains terminal and is
-still the condition that lets the callback stop after draining.
+The AAudio streaming producer signals **track EOF** independently from
+**queue/output EOF**. At track EOF, the producer becomes inactive but the
+callback remains alive and drains queued PCM. The scheduler now publishes
+status `3` as soon as it observes track EOF while buffered PCM remains; this is
+non-terminal and remains visible until the scheduler publishes status `4`
+after the tail drains. Status `1` remains ordinary terminal completion when no
+early boundary was observed. Queue EOF remains terminal and is still the
+condition that lets the callback stop after draining.
 
-This is a lifecycle prerequisite, not runtime gapless playback. The player now
-consumes prefetched decoders and can retain/reuse a compatible AAudio stream
-and ring across track sessions. However, the service still starts the next
-producer only after the current scheduler reports that the ring has drained.
-The callback can therefore output silence between tracks; an early queue-boundary
-handoff and continuity/underrun tests are still required.
+When the queue has a successor, `FloweryPlayer` exits its current worker on
+status `3`, retains the output lease, and notifies the service while the PCM
+tail is still being consumed. Without a successor it waits for terminal
+completion. This moves queue advancement earlier, but service dispatch,
+metadata work, decoder setup, and producer refill can still exceed the
+remaining buffered duration. Silence-free continuity is not yet verified.
