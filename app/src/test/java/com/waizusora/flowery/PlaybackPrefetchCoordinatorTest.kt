@@ -135,4 +135,26 @@ class PlaybackPrefetchCoordinatorTest {
         assertEquals(0, replacement.closeCount)
     }
 
+    @Test
+    fun replacementRequestClosesOldSlotBeforePreparingNewCandidate() {
+        val failures = mutableListOf<String>()
+        val coordinator = PlaybackPrefetchCoordinator<Resource>(
+            DirectExecutor(),
+            onPreparationFailure = { failures += it.message.orEmpty() },
+        )
+        val old = Resource()
+        coordinator.beginGeneration(10L)
+        coordinator.prefetch(10L, "old-next") { old }
+
+        coordinator.prefetch(10L, "new-next") {
+            error("new candidate unavailable")
+        }
+
+        assertEquals(1, old.closeCount)
+        assertNull(coordinator.take(10L, "old-next"))
+        assertNull(coordinator.take(10L, "new-next"))
+        assertEquals(listOf("new candidate unavailable"), failures)
+        coordinator.close()
+    }
+
 }
