@@ -14,6 +14,7 @@ mod playback_policy;
 mod usb_audio;
 mod output_compatibility;
 mod high_quality_resampler;
+mod replay_gain;
 mod usb_uac2;
 mod usb_isochronous;
 mod usb_feedback;
