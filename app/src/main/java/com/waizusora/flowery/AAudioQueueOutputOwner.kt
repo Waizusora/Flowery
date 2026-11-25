@@ -124,6 +124,16 @@ internal class AAudioQueueOutputOwner(
     }
 }
 
+/** Classifies whether handoff startup finished before the previous track's queued tail budget. */
+internal enum class HandoffTailBudgetStatus { UNKNOWN, WITHIN_BUDGET, EXCEEDED }
+
+internal fun classifyHandoffTailBudget(boundaryQueuedDurationMs: Long?, handoffElapsedMs: Long?): HandoffTailBudgetStatus {
+    if (boundaryQueuedDurationMs == null || boundaryQueuedDurationMs < 0L || handoffElapsedMs == null || handoffElapsedMs < 0L) {
+        return HandoffTailBudgetStatus.UNKNOWN
+    }
+    return if (handoffElapsedMs <= boundaryQueuedDurationMs) HandoffTailBudgetStatus.WITHIN_BUDGET
+    else HandoffTailBudgetStatus.EXCEEDED
+}
 
 /** Converts queued output frames into a conservative duration budget. */
 internal fun queuedPcmDurationMs(queuedFrames: Long, sampleRateHz: Int): Long? {
