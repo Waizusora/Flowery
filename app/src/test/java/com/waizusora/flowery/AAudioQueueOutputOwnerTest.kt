@@ -120,6 +120,22 @@ class AAudioQueueOutputOwnerTest {
     }
 
     @Test
+    fun reuseRejectionReasonIdentifiesEverySignatureFieldMismatch() {
+        val owner = AAudioQueueOutputOwner(FakeNative())
+        val retained = signature(rate = 48_000, channels = 2, format = 1, device = 7, sharing = 0)
+        assertTrue(owner.adoptOpenedOutput(retained))
+        assertTrue(owner.retainForNextTrack())
+
+        assertNull(owner.reuseRejectionReason(retained))
+        assertTrue(owner.reuseRejectionReason(signature(rate = 96_000))!!.contains("sampleRate:48000->96000"))
+        assertTrue(owner.reuseRejectionReason(signature(channels = 1))!!.contains("channels:2->1"))
+        assertTrue(owner.reuseRejectionReason(signature(format = 3))!!.contains("format:1->3"))
+        assertTrue(owner.reuseRejectionReason(signature(device = 8))!!.contains("deviceId:7->8"))
+        assertTrue(owner.reuseRejectionReason(signature(sharing = 1))!!.contains("sharingMode:0->1"))
+        assertEquals("PHASE_CLOSED", AAudioQueueOutputOwner(FakeNative()).reuseRejectionReason(retained))
+    }
+
+    @Test
     fun pcmOrDeviceChangeIsRejectedWithoutTouchingNativeRing() {
         val native = FakeNative()
         val owner = AAudioQueueOutputOwner(native)
