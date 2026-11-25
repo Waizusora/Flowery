@@ -38,6 +38,9 @@ internal class PlaybackQueueState : AutoCloseable {
         NativeAudio.nativePlaybackQueueSetShuffle(handle, enabled)
     }
 
+    /** Returns the next queue index without advancing playback; -1 means no next item. */
+    fun peekNextIndex(queueSize: Int): Int = NativeAudio.nativePlaybackQueuePeekNext(handle, queueSize)
+
     /** Returns an index, -1 to stop, or -2 to replay the current item on completion. */
     fun transition(queueSize: Int, action: Action): Int =
         NativeAudio.nativePlaybackQueueTransition(handle, queueSize, action.nativeValue)
