@@ -111,3 +111,9 @@ This is queue-policy plumbing only. It does not yet schedule `PreparedPlaybackRe
 `PlaybackService` now starts preparation for the native queue's peeked next item when a playback generation is started. It captures the target URI and CUE segment identity, opens and primes a decoder/session on the dedicated prefetch executor, and leaves the prepared resource owned by the generation-scoped slot. Stop, service destruction, output-route changes, and generation replacement cancel or dispose pending/unclaimed resources. Repeat/shuffle changes refresh the selected candidate; clearing a candidate does not invalidate the active generation.
 
 This wiring deliberately does not take the prepared resource or pass it to `FloweryPlayer`: the current player still creates its own decoder and owns output lifetime per track. Until the persistent output/producer handoff is implemented, this is preparation-only and may duplicate decoder setup at a track boundary. It is not yet runtime gapless playback and does not reduce the audible transition gap by itself.
+
+## Persistent output lifetime contract
+
+The native gapless module now models output lifetime separately from decoder lifetime. A track EOF detaches the current producer but keeps the output open. A same-signature next track attaches a new producer epoch without reopening output. A changed PCM signature requires an explicit reconfiguration completion before the next producer is considered attached. Only queue EOF or cancellation closes the output; stale generations cannot attach or close it.
+
+This is a tested lifecycle contract, not yet wired to the AAudio engine or libusb transfer workers. Current AAudio still owns one global output ring/producer and its scheduler is tied to one playback session. USB Direct still starts a libusb stream worker per decoder and closes it at track completion. Runtime producer handoff remains the next implementation task.
