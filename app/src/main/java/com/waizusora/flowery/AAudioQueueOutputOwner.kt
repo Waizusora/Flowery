@@ -79,7 +79,9 @@ internal class AAudioQueueOutputOwner(
     @Synchronized
     fun retainForNextTrack(): Boolean {
         if (phase != Phase.OPEN) return false
-        native.setPersistence(true)
+        // The lease is not retained unless the native persistence flag was
+        // actually accepted. Keep OPEN so the caller can take the normal close path.
+        if (runCatching { native.setPersistence(true) }.isFailure) return false
         phase = Phase.RETAINED
         return true
     }
