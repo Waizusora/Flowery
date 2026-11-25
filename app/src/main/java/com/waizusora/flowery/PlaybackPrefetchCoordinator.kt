@@ -85,6 +85,16 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
         else slot.take(targetGeneration, key)
     }
 
+    fun clearPrefetch() {
+        synchronized(lock) {
+            if (closed) return
+            requestSerial += 1L
+            pending?.cancel(true)
+            pending = null
+            slot.clear()
+        }
+    }
+
     fun invalidate() {
         synchronized(lock) {
             if (closed) return
