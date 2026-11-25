@@ -558,6 +558,17 @@ mod output_lifetime_tests {
     }
 
     #[test]
+    fn invalid_pcm_does_not_open_output() {
+        let mut output = OutputLifetime::new();
+        let invalid = PcmSignature { sample_rate_hz: 0, ..pcm(48_000) };
+        assert_eq!(
+            output.apply(OutputLifetimeEvent::Open { generation: 6, signature: invalid }),
+            OutputLifetimeAction::RejectInvalidPcm
+        );
+        assert_eq!(output.phase(), OutputLifetimePhase::Closed);
+    }
+
+    #[test]
     fn stale_generation_cannot_attach_or_close_output() {
         let mut o = OutputLifetime::new();
         o.apply(OutputLifetimeEvent::Open { generation: 5, signature: pcm(48_000) });
