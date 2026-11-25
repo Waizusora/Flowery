@@ -134,3 +134,9 @@ The native AAudio layer now exposes two queue-owner APIs through `NativeAudio`:
 The scheduler can now request start from AAudio's STOPPED state after the next producer has filled the ring to its low-watermark. This is required because the callback returns its normal stop signal after draining a track EOF.
 
 These APIs are not yet called by `FloweryPlayer` or `PlaybackService`. The current player still opens a new output for each track and its cleanup explicitly calls `nativeStopOutput()`. Do not enable the lease from the current player until queue-level ownership and same-format validation are wired in. Format changes still require a separate drain/reopen/re-negotiate path; this API intentionally supports only same-signature continuation.
+
+### PCM signature guard for AAudio handoff
+
+The next-track ring reset now takes the expected sample rate, channel count, and AAudio output format. Native code validates all three against the currently opened stream before replacing either SPSC endpoint. A mismatch returns an explicit invalid-format result and leaves the existing ring untouched; the caller must use the output reconfiguration path instead. Unit tests cover sample-rate, channel-count, and sample-format mismatches.
+
+This prevents a future queue owner from accidentally treating a different PCM signature as a same-format continuation. The Kotlin player does not yet invoke this handoff API, so no claim of runtime gapless playback is made.
