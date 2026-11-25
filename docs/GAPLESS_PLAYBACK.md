@@ -123,3 +123,14 @@ This is a tested lifecycle contract, not yet wired to the AAudio engine or libus
 The AAudio output scheduler no longer calls `Engine::stop()` when its decoder session reaches the completed phase. Scheduler completion now reports the track/session as finished without directly destroying the device stream or ring allocation. The AAudio callback may still return its normal stop signal after the current track's EOF buffer drains; this change preserves the stream object and ring allocation, not uninterrupted playback by itself.
 
 The current single-track Kotlin owner still closes the output through `nativeClosePlaybackSession` / `nativeStopOutput`. A future queue-level owner must explicitly retain that output across session close, reset EOF only after a valid next producer is ready, refill the existing ring, and restart the stream. Until that ownership handoff is implemented, this change is only teardown separation and must not be described as runtime gapless playback.
+
+## AAudio persistent-output lease and ring handoff API
+
+The native AAudio layer now exposes two queue-owner APIs through `NativeAudio`:
+
+- `nativeSetOutputPersistence(true)` establishes an explicit lease. Closing a completed decoder session then stops/joins its session scheduler and decoder worker but retains the opened AAudio stream and output allocation. Cancellation/failure and `nativeStopOutput()` still revoke the lease and close output.
+- `nativePrepareStreamOutputForNextTrack()` requires that lease and a stopped/open/paused stream. It replaces the SPSC ring endpoints, resets per-track output position and EOF/error state, and leaves the same AAudio stream object available for the next producer. It rejects a running callback rather than mutating a live SPSC consumer.
+
+The scheduler can now request start from AAudio's STOPPED state after the next producer has filled the ring to its low-watermark. This is required because the callback returns its normal stop signal after draining a track EOF.
+
+These APIs are not yet called by `FloweryPlayer` or `PlaybackService`. The current player still opens a new output for each track and its cleanup explicitly calls `nativeStopOutput()`. Do not enable the lease from the current player until queue-level ownership and same-format validation are wired in. Format changes still require a separate drain/reopen/re-negotiate path; this API intentionally supports only same-signature continuation.
