@@ -22,6 +22,7 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
     private val lock = Any()
     private val slot = PreparedPlaybackSlot<T>()
     private var generation = 0L
+    private var requestSerial = 0L
     private var pending: Future<*>? = null
     private var closed = false
 
@@ -31,6 +32,7 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
             check(!closed) { "Prefetch coordinator is closed." }
             if (generation == nextGeneration) return
             generation = nextGeneration
+            requestSerial += 1L
             pending?.cancel(true)
             pending = null
             slot.beginGeneration(nextGeneration)
@@ -43,6 +45,8 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
             check(!closed) { "Prefetch coordinator is closed." }
             if (targetGeneration != generation) return false
             pending?.cancel(true)
+            requestSerial += 1L
+            val request = requestSerial
             pending = executor.submit {
                 val prepared = try {
                     prepare()
@@ -53,10 +57,15 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
                     return@submit
                 }
                 val accepted = synchronized(lock) {
-                    !closed && slot.publish(targetGeneration, key, prepared)
+                    if (!closed && generation == targetGeneration && requestSerial == request) {
+                        slot.publish(targetGeneration, key, prepared)
+                    } else {
+                        runCatching { prepared.close() }
+                        false
+                    }
                 }
-                // publish() closes rejected stale resources. Accepted resources
-                // are now owned by the slot and will be closed or transferred there.
+                // Accepted resources are now owned by the slot and will be closed
+                // or transferred there. Superseded work is disposed above.
                 if (!accepted) return@submit
             }
             return true
@@ -71,6 +80,7 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
     fun invalidate() {
         synchronized(lock) {
             if (closed) return
+            requestSerial += 1L
             pending?.cancel(true)
             pending = null
             slot.invalidate()
@@ -82,6 +92,7 @@ internal class PlaybackPrefetchCoordinator<T : AutoCloseable>(
         synchronized(lock) {
             if (closed) return
             closed = true
+            requestSerial += 1L
             pending?.cancel(true)
             pending = null
             slot.close()
