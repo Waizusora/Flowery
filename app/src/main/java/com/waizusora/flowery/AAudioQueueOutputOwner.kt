@@ -157,7 +157,7 @@ internal fun compareAaudioHandoffCounters(
 ): AAudioHandoffCounterDelta? {
     if (boundary == null || current == null ||
         boundary.callbackUnderruns < 0L || boundary.xrunCount < 0L || boundary.queuedFrames < 0L ||
-        current.callbackUnderruns < boundary.callbackUnderruns ||
+        boundary.sampleRateHz <= 0 || current.callbackUnderruns < boundary.callbackUnderruns ||
         current.xrunCount < boundary.xrunCount || current.queuedFrames < 0L ||
         current.sampleRateHz <= 0
     ) return null
