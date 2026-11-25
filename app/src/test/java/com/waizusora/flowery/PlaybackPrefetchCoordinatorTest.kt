@@ -117,4 +117,22 @@ class PlaybackPrefetchCoordinatorTest {
         assertNull(coordinator.take(8L, "next-uri"))
         coordinator.close()
     }
+    @Test
+    fun clearPrefetchDisposesResourceWithoutChangingGeneration() {
+        val coordinator = PlaybackPrefetchCoordinator<Resource>(DirectExecutor())
+        val stale = Resource()
+        val replacement = Resource()
+        coordinator.beginGeneration(9L)
+        coordinator.prefetch(9L, "old-next") { stale }
+
+        coordinator.clearPrefetch()
+
+        assertEquals(1, stale.closeCount)
+        assertNull(coordinator.take(9L, "old-next"))
+        assertTrue(coordinator.prefetch(9L, "new-next") { replacement })
+        assertSame(replacement, coordinator.take(9L, "new-next"))
+        coordinator.close()
+        assertEquals(0, replacement.closeCount)
+    }
+
 }
