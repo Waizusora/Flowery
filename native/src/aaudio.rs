@@ -2,6 +2,7 @@ use jni::objects::JClass;
 use jni::sys::{jboolean, jint, jlong, jlongArray, JNI_TRUE};
 use jni::JNIEnv;
 use std::cell::UnsafeCell;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::ptr;
 use crate::pcm_format::PcmFormat;
@@ -374,32 +375,89 @@ struct OutputScheduler {
     status: Arc<AtomicI32>,
     thread: JoinHandle<()>,
 }
-static OUTPUT_SCHEDULER: OnceLock<Mutex<Option<OutputScheduler>>> = OnceLock::new();
+static OUTPUT_SCHEDULERS: OnceLock<Mutex<HashMap<jlong, OutputScheduler>>> = OnceLock::new();
 static OUTPUT_SCHEDULER_LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
 
-fn output_scheduler() -> &'static Mutex<Option<OutputScheduler>> {
-    OUTPUT_SCHEDULER.get_or_init(|| Mutex::new(None))
+fn output_schedulers() -> &'static Mutex<HashMap<jlong, OutputScheduler>> {
+    OUTPUT_SCHEDULERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn output_scheduler_lifecycle() -> &'static Mutex<()> {
     OUTPUT_SCHEDULER_LIFECYCLE.get_or_init(|| Mutex::new(()))
 }
 
-fn stop_output_scheduler_locked() {
-    let worker = output_scheduler().lock().unwrap_or_else(|p| p.into_inner()).take();
-    if let Some(worker) = worker {
-        worker.stop.store(true, Ordering::Release);
-        if worker.thread.thread().id() != thread::current().id() {
-            let _ = worker.thread.join();
-        }
+fn stop_scheduler_worker(worker: OutputScheduler) {
+    worker.stop.store(true, Ordering::Release);
+    if worker.thread.thread().id() != thread::current().id() {
+        let _ = worker.thread.join();
     }
+}
+
+fn take_scheduler_for_session(
+    schedulers: &mut HashMap<jlong, OutputScheduler>,
+    session_handle: jlong,
+) -> Option<OutputScheduler> {
+    schedulers.remove(&session_handle)
+}
+
+fn take_all_schedulers(
+    schedulers: &mut HashMap<jlong, OutputScheduler>,
+) -> Vec<OutputScheduler> {
+    schedulers.drain().map(|(_, worker)| worker).collect()
+}
+
+fn scheduler_status_from_registry(
+    schedulers: &HashMap<jlong, OutputScheduler>,
+    session_handle: jlong,
+) -> jint {
+    schedulers.get(&session_handle)
+        .map(|worker| worker.status.load(Ordering::Acquire))
+        // A missing scheduler is terminal for this session, not a global
+        // registry error that could be confused with another session's worker.
+        .unwrap_or(2)
+}
+
+/// Removes and joins only the scheduler owned by the supplied playback session.
+fn stop_output_scheduler_locked(session_handle: jlong) {
+    let worker = take_scheduler_for_session(
+        &mut output_schedulers().lock().unwrap_or_else(|p| p.into_inner()),
+        session_handle,
+    );
+    if let Some(worker) = worker {
+        stop_scheduler_worker(worker);
+    }
+}
+
+/// Full output replacement/shutdown invalidates every scheduler using the shared engine.
+fn stop_all_output_schedulers_locked() {
+    let workers = {
+        let mut schedulers = output_schedulers().lock().unwrap_or_else(|p| p.into_inner());
+        take_all_schedulers(&mut schedulers)
+    };
+    for worker in workers {
+        stop_scheduler_worker(worker);
+    }
+}
+
+fn stop_scheduler_for_session(session_handle: jlong) {
+    let _lifecycle = output_scheduler_lifecycle()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    stop_output_scheduler_locked(session_handle);
 }
 
 fn stop_output_scheduler() {
     let _lifecycle = output_scheduler_lifecycle()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    stop_output_scheduler_locked();
+    stop_all_output_schedulers_locked();
+}
+
+fn output_scheduler_status_for_session(session_handle: jlong) -> jint {
+    scheduler_status_from_registry(
+        &output_schedulers().lock().unwrap_or_else(|p| p.into_inner()),
+        session_handle,
+    )
 }
 
 fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut bool) -> Result<(bool, bool), i32> {
@@ -463,7 +521,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
     let _lifecycle = output_scheduler_lifecycle()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    stop_output_scheduler_locked();
+    stop_output_scheduler_locked(session_handle);
     let stop = Arc::new(AtomicBool::new(false));
     let status = Arc::new(AtomicI32::new(0));
     let thread_stop = Arc::clone(&stop);
@@ -574,8 +632,8 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                 let _ = env.throw_new("java/lang/IllegalStateException", "Playback session ended while the AAudio scheduler was starting");
                 return -1;
             }
-            *output_scheduler().lock().unwrap_or_else(|p| p.into_inner()) =
-                Some(OutputScheduler { stop, status, thread });
+            output_schedulers().lock().unwrap_or_else(|p| p.into_inner())
+                .insert(session_handle, OutputScheduler { stop, status, thread });
             drop(session_gate);
             0
         }
@@ -588,17 +646,16 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputSchedulerStatus(
-    _env: JNIEnv, _class: JClass, _session_handle: jlong,
+    _env: JNIEnv, _class: JClass, session_handle: jlong,
 ) -> jint {
-    output_scheduler().lock().unwrap_or_else(|p| p.into_inner())
-        .as_ref().map(|worker| worker.status.load(Ordering::Acquire)).unwrap_or(-1)
+    output_scheduler_status_for_session(session_handle)
 }
 
 #[no_mangle]
 pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputScheduler(
-    _env: JNIEnv, _class: JClass, _session_handle: jlong,
+    _env: JNIEnv, _class: JClass, session_handle: jlong,
 ) {
-    stop_output_scheduler();
+    stop_scheduler_for_session(session_handle);
 }
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamOutput(mut env:JNIEnv,_:JClass,rate:jint,channels:jint,volume:f32,device:jint,exclusive:jboolean,fail_on_shared:jboolean,format:jint,capacity:jint)->jint{
@@ -839,11 +896,21 @@ pub(crate) fn resume_output_for_session() -> Option<i32> {
         else { INVALID_STATE }
     })
 }
-pub(crate) fn stop_output_scheduler_for_session() {
-    stop_output_scheduler();
+pub(crate) fn stop_output_scheduler_for_session(session_handle: jlong) {
+    stop_scheduler_for_session(session_handle);
 }
 
-pub(crate) fn stop_output_for_session() {
+/// Stops one session's scheduler. The shared device is shut down only when no
+/// other live AAudio session can own or be preparing it.
+pub(crate) fn stop_output_for_session(session_handle: jlong) {
+    stop_scheduler_for_session(session_handle);
+    if crate::playback_session::has_other_active_aaudio_session(session_handle) {
+        return;
+    }
+    stop_output_completely();
+}
+
+fn stop_output_completely() {
     OUTPUT_PERSISTENT.store(false, Ordering::Release);
     stop_output_scheduler();
     let mut e=engine().lock().unwrap_or_else(|p|p.into_inner());
@@ -857,7 +924,7 @@ pub(crate) fn stop_output_for_session() {
     resume_output_for_session().unwrap_or(INVALID_STATE)
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutput(_:JNIEnv,_:JClass){
-    stop_output_for_session();
+    stop_output_completely();
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeIsOutputActive(_:JNIEnv,_:JClass)->jboolean{if engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.active.load(Ordering::Acquire)).unwrap_or(false){JNI_TRUE}else{0}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputUnderrunCount(_:JNIEnv,_:JClass)->jint{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.underruns.load(Ordering::Acquire).min(i32::MAX as u64) as i32).unwrap_or(0)}
@@ -870,6 +937,61 @@ pub(crate) fn stop_output_for_session() {
 mod tests {
     use super::*;
     use rtrb::RingBuffer;
+
+    fn test_scheduler(status: i32) -> OutputScheduler {
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            while !worker_stop.load(Ordering::Acquire) {
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+        OutputScheduler {
+            stop,
+            status: Arc::new(AtomicI32::new(status)),
+            thread,
+        }
+    }
+
+    #[test]
+    fn scheduler_registry_isolated_by_playback_session() {
+        let mut schedulers = HashMap::new();
+        schedulers.insert(101, test_scheduler(0));
+        schedulers.insert(202, test_scheduler(3));
+
+        assert_eq!(scheduler_status_from_registry(&schedulers, 101), 0);
+        assert_eq!(scheduler_status_from_registry(&schedulers, 202), 3);
+
+        let old_session = take_scheduler_for_session(&mut schedulers, 101).unwrap();
+        stop_scheduler_worker(old_session);
+
+        assert_eq!(scheduler_status_from_registry(&schedulers, 101), 2);
+        assert_eq!(scheduler_status_from_registry(&schedulers, 202), 3);
+        assert!(schedulers.contains_key(&202));
+
+        for worker in take_all_schedulers(&mut schedulers) {
+            stop_scheduler_worker(worker);
+        }
+        assert!(schedulers.is_empty());
+    }
+
+    #[test]
+    fn replacing_one_scheduler_does_not_remove_another_session() {
+        let mut schedulers = HashMap::new();
+        schedulers.insert(11, test_scheduler(0));
+        schedulers.insert(22, test_scheduler(4));
+
+        let previous = take_scheduler_for_session(&mut schedulers, 11).unwrap();
+        stop_scheduler_worker(previous);
+        schedulers.insert(11, test_scheduler(0));
+
+        assert_eq!(scheduler_status_from_registry(&schedulers, 11), 0);
+        assert_eq!(scheduler_status_from_registry(&schedulers, 22), 4);
+
+        for worker in take_all_schedulers(&mut schedulers) {
+            stop_scheduler_worker(worker);
+        }
+    }
 
     fn test_output_format(
         capacity_frames: usize,

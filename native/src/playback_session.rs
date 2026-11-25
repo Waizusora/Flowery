@@ -59,6 +59,20 @@ pub(super) fn session_ref(handle: jlong) -> Option<Arc<SessionState>> {
     registry().lock().unwrap_or_else(|error| error.into_inner()).get(&handle).cloned()
 }
 
+/// Whether another live AAudio session may already own or be preparing the shared output.
+pub(crate) fn has_other_active_aaudio_session(handle: jlong) -> bool {
+    registry()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .any(|(other_handle, session)| {
+            *other_handle != handle
+                && session.route == 0
+                && !session.cancelled.load(Ordering::Acquire)
+                && !matches!(session.phase.load(Ordering::Acquire) as i32, 5 | 6 | 7)
+        })
+}
+
 fn register_session(session: SessionState) -> jlong {
     let session = Arc::new(session);
     loop {
@@ -314,7 +328,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativePlaybackSess
     }
     #[cfg(target_os = "android")]
     if stop_output {
-        crate::aaudio::stop_output_for_session();
+        crate::aaudio::stop_output_for_session(handle);
     }
     0
 }
@@ -434,7 +448,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCancelPlayba
         drop(_gate);
         #[cfg(target_os = "android")]
         if session.route == 0 {
-            crate::aaudio::stop_output_for_session();
+            crate::aaudio::stop_output_for_session(handle);
         }
     }
 }
@@ -461,9 +475,9 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
                 if crate::aaudio::output_persistence_enabled() {
                     // The queue-level owner retains the opened stream/ring across
                     // this decoder session boundary. Stop only the old scheduler.
-                    crate::aaudio::stop_output_scheduler_for_session();
+                    crate::aaudio::stop_output_scheduler_for_session(handle);
                 } else {
-                    crate::aaudio::stop_output_for_session();
+                    crate::aaudio::stop_output_for_session(handle);
                 }
             }
             // Keep the shared decoder alive until every producer and in-flight JNI

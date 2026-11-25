@@ -60,12 +60,22 @@ internal class AAudioQueueOutputOwner(
 
     private var phase = Phase.CLOSED
     private var signature: AAudioOutputSignature? = null
+    private var lastPrepareFailure: String? = null
+
+    @Synchronized
+    fun lastPrepareFailureReason(): String? = lastPrepareFailure
 
     @Synchronized
     fun phase(): Phase = phase
 
     @Synchronized
     fun currentSignature(): AAudioOutputSignature? = signature
+
+    /** Reuse the actual retained mode; a fresh AAudio open may fall back from exclusive to shared. */
+    @Synchronized
+    fun sharingModeForNextTrack(): Int =
+        if (phase == Phase.RETAINED) signature?.sharingMode ?: AAudioOutputSignature.SHARING_EXCLUSIVE
+        else AAudioOutputSignature.SHARING_EXCLUSIVE
 
     @Synchronized
     fun adoptOpenedOutput(opened: AAudioOutputSignature): Boolean {
@@ -111,9 +121,25 @@ internal class AAudioQueueOutputOwner(
      */
     @Synchronized
     fun prepareNextTrack(next: AAudioOutputSignature): Boolean {
-        if (reuseRejectionReason(next) != null) return false
-        val result = runCatching { native.attachNextTrack(next) }.getOrElse { return false }
-        if (result != 0) return false
+        val compatibilityFailure = reuseRejectionReason(next)
+        if (compatibilityFailure != null) {
+            lastPrepareFailure = compatibilityFailure
+            return false
+        }
+        val result = runCatching { native.attachNextTrack(next) }.getOrElse { error ->
+            lastPrepareFailure = "NATIVE_ATTACH_EXCEPTION(" + error.javaClass.simpleName + ":" + error.message + ")"
+            return false
+        }
+        if (result != 0) {
+            lastPrepareFailure = when (result) {
+                -895 -> "NATIVE_INVALID_STATE(" + result + ")"
+                -897 -> "NATIVE_DEVICE_MISMATCH(" + result + ")"
+                -898 -> "NATIVE_PCM_FORMAT_MISMATCH(" + result + ")"
+                else -> "NATIVE_ATTACH_ERROR(" + result + ")"
+            }
+            return false
+        }
+        lastPrepareFailure = null
         phase = Phase.PREPARED
         return true
     }

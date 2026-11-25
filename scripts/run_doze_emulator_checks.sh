@@ -10,6 +10,28 @@ read_app_pid() {
   adb shell pidof "$PACKAGE" | tr -d '\r' | xargs
 }
 
+capture_deviceidle_state() {
+  local phase="$1"
+  local expected="$2"
+  local output="$REPORT/${phase}-state.txt"
+
+  # Emulator load can make the default 10-second dumpsys service deadline
+  # expire even though deviceidle itself is functioning. Give the service
+  # more time and retry before treating the state check as a real failure.
+  for attempt in 1 2 3; do
+    if adb shell dumpsys -t 30 deviceidle > "$output" 2>&1 &&
+      grep -Eq "$expected" "$output"; then
+      cat "$output"
+      return 0
+    fi
+    echo "deviceidle state capture for $phase did not match on attempt $attempt/3." >&2
+    sleep 2
+  done
+
+  cat "$output" >&2
+  return 1
+}
+
 assert_app_pid_unchanged() {
   local phase="$1"
   local current_pid
@@ -40,8 +62,7 @@ adb shell input keyevent 3
 echo "Entering forced Light Doze"
 adb shell dumpsys deviceidle force-idle light | tee "$REPORT/light-force.txt"
 sleep 5
-adb shell dumpsys deviceidle | tee "$REPORT/light-state.txt"
-grep -Eq 'mLightState=(IDLE|IDLE_MAINTENANCE)' "$REPORT/light-state.txt"
+capture_deviceidle_state "light" 'mLightState=(IDLE|IDLE_MAINTENANCE)'
 assert_app_pid_unchanged "light_doze"
 
 echo "Exiting forced Light Doze"
@@ -52,16 +73,14 @@ assert_app_pid_unchanged "after_light_doze"
 echo "Entering forced Deep Doze"
 adb shell dumpsys deviceidle force-idle deep | tee "$REPORT/deep-force.txt"
 sleep 5
-adb shell dumpsys deviceidle | tee "$REPORT/deep-state.txt"
-grep -Eq 'mState=IDLE([[:space:]]|$)' "$REPORT/deep-state.txt"
+capture_deviceidle_state "deep" 'mState=IDLE([[:space:]]|$)'
 read_app_pid | tee "$REPORT/process-during-deep-doze.txt"
 assert_app_pid_unchanged "deep_doze"
 
 echo "Exiting forced Deep Doze"
 adb shell dumpsys deviceidle unforce | tee "$REPORT/deep-unforce.txt"
 sleep 2
-adb shell dumpsys deviceidle | tee "$REPORT/active-state.txt"
-grep -q 'mForceIdle=false' "$REPORT/active-state.txt"
+capture_deviceidle_state "active" 'mForceIdle=false'
 assert_app_pid_unchanged "after_deep_doze"
 
 echo "Doze transition and application process continuity checks passed. Playback continuity is not asserted by this workflow."

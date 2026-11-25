@@ -105,6 +105,18 @@ class AAudioQueueOutputOwnerTest {
     ) = AAudioOutputSignature(rate, channels, format, device, sharing)
 
     @Test
+    fun nextTrackUsesActualRetainedSharingModeAfterSharedFallback() {
+        val owner = AAudioQueueOutputOwner(FakeNative())
+        val shared = signature(sharing = AAudioOutputSignature.SHARING_SHARED)
+
+        assertEquals(AAudioOutputSignature.SHARING_EXCLUSIVE, owner.sharingModeForNextTrack())
+        assertTrue(owner.adoptOpenedOutput(shared))
+        assertTrue(owner.retainForNextTrack())
+        assertEquals(AAudioOutputSignature.SHARING_SHARED, owner.sharingModeForNextTrack())
+        assertNull(owner.reuseRejectionReason(shared))
+    }
+
+    @Test
     fun identicalPcmAndDeviceSignatureCanBePreparedAndAttached() {
         val native = FakeNative()
         val owner = AAudioQueueOutputOwner(native)
@@ -202,8 +214,27 @@ class AAudioQueueOutputOwnerTest {
     }
 
     @Test
-    fun nativeProducerAttachFailureDoesNotClaimProducerReady() {
-        val native = FakeNative().apply { prepareResult = -898 }
+    fun nativeProducerAttachFailurePreservesNativeErrorCodeForDiagnostics() {
+        val cases = listOf(
+            -895 to "NATIVE_INVALID_STATE(-895)",
+            -897 to "NATIVE_DEVICE_MISMATCH(-897)",
+            -898 to "NATIVE_PCM_FORMAT_MISMATCH(-898)",
+            -777 to "NATIVE_ATTACH_ERROR(-777)",
+        )
+        for ((code, expected) in cases) {
+            val native = FakeNative().apply { prepareResult = code }
+            val owner = AAudioQueueOutputOwner(native)
+            val current = signature()
+            assertTrue(owner.adoptOpenedOutput(current))
+            assertTrue(owner.retainForNextTrack())
+            assertFalse(owner.prepareNextTrack(current))
+            assertEquals(expected, owner.lastPrepareFailureReason())
+            assertEquals(AAudioQueueOutputOwner.Phase.RETAINED, owner.phase())
+        }
+    }
+
+    @Test
+    fun nativeProducerAttachFailureDoesNotClaimProducerReady() {        val native = FakeNative().apply { prepareResult = -898 }
         val owner = AAudioQueueOutputOwner(native)
         val current = signature()
         assertTrue(owner.adoptOpenedOutput(current))
