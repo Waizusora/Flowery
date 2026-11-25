@@ -470,7 +470,7 @@ class MainActivity : ComponentActivity() {
                 }
             )
 
-            infoTag?.let { tag -> TagInfoDialog(tag, onDismiss = { infoTag = null }) }
+            infoTag?.let { tag -> TagInfoDialog(tag, ReplayGainPreferences.read(this@MainActivity), onDismiss = { infoTag = null }) }
             editingTag?.let { tag ->
                 TagEditorDialog(
                     tag = tag,
@@ -756,7 +756,11 @@ class MainActivity : ComponentActivity() {
             bitDepth = json.optInt("bitDepth"),
             channels = json.optInt("channels"),
             bitrateKbps = json.optInt("bitrateKbps"),
-            durationMs = json.optLong("durationMs")
+            durationMs = json.optLong("durationMs"),
+            replayGainTrackGain = json.optString("replayGainTrackGain"),
+            replayGainTrackPeak = json.optString("replayGainTrackPeak"),
+            replayGainAlbumGain = json.optString("replayGainAlbumGain"),
+            replayGainAlbumPeak = json.optString("replayGainAlbumPeak")
         )
     }
 
