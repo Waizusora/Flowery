@@ -542,6 +542,22 @@ mod output_lifetime_tests {
         assert_eq!(o.phase(), OutputLifetimePhase::Closed);
     }
     #[test]
+    fn invalid_next_signature_does_not_replace_detached_producer() {
+        let mut o = OutputLifetime::new();
+        o.apply(OutputLifetimeEvent::Open { generation: 7, signature: pcm(48_000) });
+        o.apply(OutputLifetimeEvent::TrackEof { generation: 7 });
+        let invalid = PcmSignature { sample_rate_hz: 0, ..pcm(48_000) };
+        assert_eq!(
+            o.apply(OutputLifetimeEvent::AttachProducer { generation: 7, signature: invalid }),
+            OutputLifetimeAction::RejectInvalidPcm
+        );
+        assert!(matches!(
+            o.phase(),
+            OutputLifetimePhase::Open { producer_attached: false, producer_epoch: 1, .. }
+        ));
+    }
+
+    #[test]
     fn stale_generation_cannot_attach_or_close_output() {
         let mut o = OutputLifetime::new();
         o.apply(OutputLifetimeEvent::Open { generation: 5, signature: pcm(48_000) });
