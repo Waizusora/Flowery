@@ -179,3 +179,19 @@ Unit tests use a fake native bridge to cover same-signature handoff, PCM/device/
 ### Queue EOF cleanup
 
 `PlaybackService.finishQueuePlayback()` now invalidates the generation-scoped prefetch coordinator before stopping the player. A prepared decoder/session that was waiting for a next track is therefore closed when the queue actually ends, rather than remaining held by a queue that has no successor. Explicit stop and service destruction continue to invalidate/close the same coordinator.
+
+
+### Track EOF versus queue EOF
+
+The AAudio streaming producer now signals **track EOF** independently from
+**queue/output EOF**. At track EOF, the producer becomes inactive and the
+scheduler completes after the queued PCM tail drains, but the data callback
+does not request stream termination. A subsequent producer can clear the
+track boundary and refill the same ring. Queue EOF remains terminal and is
+still the condition that lets the callback stop after draining.
+
+This is a lifecycle prerequisite, not runtime gapless playback. The current
+player still tears down per-track resources and does not yet consume prefetched
+decoders through the persistent queue output owner. If no next producer is
+attached before the ring empties, the callback can output silence; continuity
+must be proven after producer handoff is wired into the queue.
