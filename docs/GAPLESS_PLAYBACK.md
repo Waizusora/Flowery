@@ -51,7 +51,7 @@ The native `GaplessBoundary` contract distinguishes decoder EOF from queue EOF:
 - `QueueEof` is the only event that finishes the queue.
 - Events from an older playback generation are ignored. Cancellation makes later events for that generation inert.
 
-The state machine is deliberately pure and unit-tested. It defines coordination semantics but is not yet wired into the Android player or native output workers.
+The state machine remains a pure, unit-tested contract. Runtime AAudio handoff currently uses the dedicated output-owner and scheduler lifecycle APIs described below; this state machine is not itself the runtime coordinator.
 
 
 ## Prepared decoder ownership foundation
@@ -62,13 +62,11 @@ transfers ownership exactly once, closes replaced or stale resources, and can be
 invalidated on seek/skip/route changes. Unit tests cover stale publication,
 generation replacement, one-shot transfer, mismatched keys, and cleanup.
 
-This is an ownership primitive only: it is not yet called by `PlaybackService`
-or `FloweryPlayer`, and it does not yet create decoders or keep an output alive.
-Runtime prefetch and producer handoff remain unimplemented.
+The ownership primitive is integrated into `PlaybackService` and `FloweryPlayer`: the service prepares the next decoder/session asynchronously, then transfers a matching URI/CUE bundle to the player. Output retention and native producer handoff are implemented separately below.
 
 ## Current scope
 
-The native transition planner and generation-safe queue-boundary contract are implemented and unit-tested. Gapless playback is **not yet enabled** in the player. Runtime integration, decoder prefetch, persistent output ownership, and hardware validation remain subsequent steps.
+The native transition planner, generation-safe prefetch, prepared-resource consumption, persistent AAudio output ownership, and early-boundary producer handoff are implemented. Silence-free continuity is not yet certified: physical-device listening or loopback validation remains mandatory, and changed PCM signatures still require an explicit drain/reopen transition.
 
 ### Same-signature AAudio producer handoff primitive
 
@@ -79,11 +77,11 @@ producer writes become stale; the next producer can use the same ring without
 replacing its consumer endpoint. The queue output owner now calls this attach
 operation instead of resetting the ring.
 
-This primitive is not sufficient by itself for gapless playback. The old
-producer must be joined before attachment, and natural track EOF must not mark
-the shared output as queue EOF. The prefetched next producer must start while
-enough old-track PCM remains buffered. Runtime wiring and continuity tests are
-still pending.
+This primitive is not sufficient by itself for gapless playback. The previous
+producer is stopped with its session, track EOF is distinct from queue EOF, and
+the next producer is attached to the retained ring under a new epoch. Early
+boundary notification and a bounded prebuffer barrier reduce the handoff race;
+device-level continuity still requires physical validation.
 
 
 ### Prepared resource bundle
@@ -120,13 +118,13 @@ Prefetch preparation failures are reported through an optional callback only whi
 
 The native playback queue now exposes a non-advancing next-index peek. In shuffle mode, the selected candidate is cached so repeated prefetch checks and the eventual NEXT or natural COMPLETION transition consume the same candidate rather than drawing a different random item. Queue selection, repeat-mode changes, and shuffle changes invalidate the cached candidate. Repeat-One keeps its existing natural-completion behavior (replay current item); peeking does not change that behavior. A queue with no next item returns -1 and is not prefetched.
 
-This is queue-policy plumbing only. It does not yet schedule `PreparedPlaybackResources` from the service or connect them to an active output producer.
+The queue lookahead is consumed by service-side prefetch scheduling. The selected next URI/CUE key is prepared asynchronously and its resource bundle is transferred to the next player generation when it matches.
 
 ## Service-side decoder prefetch wiring
 
 `PlaybackService` now starts preparation for the native queue's peeked next item when a playback generation is started. It captures the target URI and CUE segment identity, opens and primes a decoder/session on the dedicated prefetch executor, and leaves the prepared resource owned by the generation-scoped slot. Stop, service destruction, output-route changes, and generation replacement cancel or dispose pending/unclaimed resources. Repeat/shuffle changes refresh the selected candidate; clearing a candidate does not invalidate the active generation.
 
-This wiring now takes a prepared resource only when its generation and URI/CUE key match the selected queue item. The resource is passed to `FloweryPlayer`, which starts the already-prepared native session and closes the owned session, decoder, and source descriptor together after playback. If the slot is empty, stale, or keyed to another item, the player uses its normal open path. The output is still opened and closed per track, so this reduces duplicate preparation but does not provide runtime gapless playback or guarantee a shorter audible gap.
+This wiring takes a prepared resource only when its generation and URI/CUE key match the selected queue item. The resource is passed to `FloweryPlayer`, which starts the already-prepared native session and closes the owned session, decoder, and source descriptor together after playback. If the slot is empty, stale, or keyed to another item, the player uses its normal open path. For identical AAudio PCM/device signatures, the existing output is retained and reused; other routes or changed signatures follow their explicit transition path.
 
 ## Prefetched resource consumption in FloweryPlayer
 
@@ -172,23 +170,17 @@ producer before the output scheduler is restarted. A mismatch, failed attach,
 route change, queue end, or explicit stop closes the retained output and uses
 the normal output-open path.
 
-This is persistent output reuse, not yet verified gapless playback. Track EOF
-currently completes after the ring drains, and the service starts the next
-producer only after that completion callback. The callback may therefore emit
-silence between tracks even though the AAudio device stream remains open. A
-future queue-boundary signal must start/attach the next producer before the
-buffer drains, and continuity/underrun instrumentation must verify the result.
-USB Direct remains on its independent libusb lifecycle and is not affected.
+This is persistent output reuse with an early non-terminal track-boundary signal. When the decoder reaches EOF while PCM remains, the scheduler reports the boundary before the ring drains; the service can start the next player while the callback continues consuming the old tail. The next producer attaches under a new epoch and prebuffers before the scheduler restarts. A dispatch or decode delay can still exhaust the tail, so queued-duration telemetry and physical continuity validation remain necessary. USB Direct remains on its independent libusb lifecycle and is not affected.
 
 ## Persistent output lifetime contract
 
 The native gapless module now models output lifetime separately from decoder lifetime. A track EOF detaches the current producer but keeps the output open. A same-signature next track attaches a new producer epoch without reopening output. A changed PCM signature requires an explicit reconfiguration completion before the next producer is considered attached. Only queue EOF or cancellation closes the output; stale generations cannot attach or close it.
 
-This is a tested lifecycle contract, not yet wired to the AAudio engine or libusb transfer workers. Current AAudio still owns one global output ring/producer and its scheduler is tied to one playback session. USB Direct still starts a libusb stream worker per decoder and closes it at track completion. Runtime producer handoff remains the next implementation task.
+The AAudio lifecycle is now wired to the persistent output ring and scheduler: track EOF detaches the producer without setting queue EOF, and a matching next track attaches a fresh producer epoch. USB Direct remains independent and is not covered by this AAudio handoff implementation.
 
 ## AAudio scheduler teardown separation
 
-The AAudio output scheduler no longer calls `Engine::stop()` when its decoder session reaches the completed phase. Scheduler completion now reports the track/session as finished without directly destroying the device stream or ring allocation. The AAudio callback may still return its normal stop signal after the current track's EOF buffer drains; this change preserves the stream object and ring allocation, not uninterrupted playback by itself.
+The AAudio output scheduler no longer calls `Engine::stop()` when its decoder session reaches the completed phase. Track EOF reports a non-terminal boundary and does not set queue EOF, so the callback remains alive while the current ring tail is consumed. Queue EOF or explicit cancellation remains terminal. This separates output lifetime from decoder-session lifetime; it does not alone guarantee that the next producer arrives before the tail drains.
 
 `FloweryPlayer` now retains the output lease for queued playback and reuses the stream/ring for a matching PCM/device signature. This preserves the callback and queued tail across session teardown. It is still not gapless by itself: the next producer must be attached before the tail drains.
 
@@ -215,7 +207,7 @@ Each opened AAudio output ring now owns a monotonically advancing producer epoch
 
 Replacing the ring for a same-signature next track advances the epoch before a new producer starts. Stale workers detect the mismatch and exit; a late PCM chunk or EOF notification from an older track is rejected and cannot contaminate or prematurely finish the next track's ring. Closing output also invalidates the previous epoch.
 
-This is a native race-safety prerequisite for queue-level handoff. It does not itself retain output, attach the next decoder, or enable gapless playback in the Kotlin player.
+This is the native race-safety foundation used by the Kotlin queue owner: retained output attachment advances the producer epoch, and stale workers cannot write into or finish the next track's ring.
 
 ### AAudio output identity guard
 
@@ -269,6 +261,12 @@ The AAudio owner tests also cover a thrown exception from the native attach brid
 Native tests now enqueue the next track's PCM before the output callback consumes the previous track's tail. A single callback request spans the boundary and must receive the old track bytes followed immediately by the next track bytes, with exact byte ordering. The test matrix covers short and longer prebuffer combinations (1, 2, and 8 frames per side), in addition to the two-frame handoff case.
 
 These tests verify ring preservation and callback ordering when the next PCM is already available. They do not simulate Android decoder startup latency, AAudio scheduling jitter, or a real device callback racing with the next producer. They therefore do not prove that Flowery can always deliver the next PCM before the old tail drains. Device-level continuity remains a required validation gate.
+
+
+
+### Monotonic handoff latency measurements
+
+The early-boundary event now records a monotonic timestamp. The next generation's attach, prebuffer-ready/timeout, pump-started, and scheduler-started records include elapsed milliseconds from that previous boundary. This allows the actual service dispatch plus producer startup interval to be compared with the old track's `queuedDurationMs` runway. Monotonic time is used rather than wall-clock time, so clock corrections do not distort the measurement. The telemetry is observational: it does not yet adapt the low-watermark or claim a guaranteed no-gap transition.
 
 ### Remaining-tail time budget
 
