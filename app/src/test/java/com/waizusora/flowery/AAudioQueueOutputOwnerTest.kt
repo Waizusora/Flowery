@@ -52,6 +52,7 @@ class AAudioQueueOutputOwnerTest {
         )
         assertEquals("QUEUE_EMPTY", empty?.status)
         assertNull(compareAaudioHandoffCounters(boundary, AAudioHandoffCounterSnapshot(3, 2, 1, 48_000)))
+        assertNull(compareAaudioHandoffCounters(boundary.copy(sampleRateHz = 0), AAudioHandoffCounterSnapshot(4, 2, 1, 48_000)))
         assertNull(compareAaudioHandoffCounters(boundary, null))
     }
 
