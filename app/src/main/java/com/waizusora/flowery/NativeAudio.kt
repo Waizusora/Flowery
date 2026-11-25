@@ -73,7 +73,7 @@ object NativeAudio {
     external fun nativeStartStreamOutput(sampleRate: Int, channels: Int, volume: Float, deviceId: Int, requireExclusive: Boolean, failOnShared: Boolean, outputFormat: Int, capacityFrames: Int): Int
     external fun nativeStartStreamPlayback(): Int
     external fun nativeSetOutputPersistence(enabled: Boolean)
-    external fun nativePrepareStreamOutputForNextTrack(): Int
+    external fun nativePrepareStreamOutputForNextTrack(sampleRate: Int, channels: Int, outputFormat: Int): Int
     external fun nativeStartOutputScheduler(session: Long, lowWatermarkFrames: Int): Int
     external fun nativeGetOutputSchedulerStatus(session: Long): Int
     external fun nativeStopOutputScheduler(session: Long)
