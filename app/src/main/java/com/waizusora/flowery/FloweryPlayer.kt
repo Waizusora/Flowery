@@ -419,6 +419,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                 }
 
+                Log.i(
+                    "FloweryDiagnostics",
+                    "AAUDIO_OUTPUT_SIGNATURE_READY generation=$generation reused=$reusedQueueOutput sourceRate=$sourceRate actualRate=$outputSampleRate channels=$channels sourceFormat=$outputFormat actualFormat=$actualFormat deviceId=$actualDeviceId sharingMode=$actualSharingMode"
+                )
+
                 // Start after a short prebuffer; the native producer caps queued PCM to limit control latency.
                 val lowWatermarkFrames = NativeAudio.nativePlaybackLowWatermarkFrames(
                     sourceRate, outputRingCapacityFrames
