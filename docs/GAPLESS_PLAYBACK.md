@@ -148,3 +148,9 @@ Each opened AAudio output ring now owns a monotonically advancing producer epoch
 Replacing the ring for a same-signature next track advances the epoch before a new producer starts. Stale workers detect the mismatch and exit; a late PCM chunk or EOF notification from an older track is rejected and cannot contaminate or prematurely finish the next track's ring. Closing output also invalidates the previous epoch.
 
 This is a native race-safety prerequisite for queue-level handoff. It does not itself retain output, attach the next decoder, or enable gapless playback in the Kotlin player.
+
+### AAudio output identity guard
+
+The persistent same-format handoff API now also requires the expected AAudio device ID and sharing mode. Native code reads both values from the still-open stream and rejects a handoff if either differs. This prevents a queue owner from reusing an output opened for another Android device or silently changing between EXCLUSIVE and SHARED operation.
+
+The identity guard is in addition to the existing sample-rate, channel-count, and output-format checks. Tests cover matching identity, device mismatch, sharing-mode mismatch, invalid sharing mode, and invalid expected device ID. The API remains a foundation only; FloweryPlayer does not call it yet.
