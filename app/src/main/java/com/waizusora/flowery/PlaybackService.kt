@@ -858,6 +858,7 @@ class PlaybackService : Service() {
      */
     private fun finishQueuePlayback() {
         playRequestGeneration++
+        playbackPrefetch.invalidate()
         Log.i("FloweryDiagnostics", "QUEUE_FINISHED index=$queueIndex queueSize=${queue.size}; service_retained=true")
         player.stop()
         hasAudioFocus = false
