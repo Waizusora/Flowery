@@ -693,7 +693,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         ) ?: return "handoffFromGeneration=unknown"
         val tailBudgetMs = lastAaudioBoundaryQueuedDurationMs
         val budgetStatus = classifyHandoffTailBudget(tailBudgetMs, elapsedMs)
-        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs boundaryTailBudgetMs=${tailBudgetMs ?: \"unknown\"} tailBudgetStatus=$budgetStatus"
+        return "handoffFromGeneration=$boundaryGeneration handoffElapsedMs=$elapsedMs boundaryTailBudgetMs=${tailBudgetMs ?: "unknown"} tailBudgetStatus=$budgetStatus"
     }
 
     private fun currentAaudioQueuedDurationMs(): Long? {
