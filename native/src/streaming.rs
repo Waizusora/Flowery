@@ -605,6 +605,33 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetReplayGainSettings(
+    _env: JNIEnv,
+    _class: JClass,
+    mode: jint,
+    track_preamp_db: f32,
+    album_preamp_db: f32,
+    prevent_clipping: jni::sys::jboolean,
+) -> jint {
+    let mode = match mode {
+        0 => crate::replay_gain::ReplayGainMode::Off,
+        1 => crate::replay_gain::ReplayGainMode::Track,
+        2 => crate::replay_gain::ReplayGainMode::Album,
+        _ => return -1,
+    };
+    if !track_preamp_db.is_finite() || !album_preamp_db.is_finite() {
+        return -2;
+    }
+    crate::replay_gain::set_settings(crate::replay_gain::ReplayGainSettings {
+        mode,
+        track_preamp_db,
+        album_preamp_db,
+        prevent_clipping: prevent_clipping != 0,
+    });
+    0
+}
+
 fn aaudio_seek_request_is_current(
     request: &crate::playback_session::AAudioSeekRequest,
     current_epoch: u64,
