@@ -2,6 +2,8 @@ use std::fs::File;
 #[cfg(target_os = "android")]
 use std::io::ErrorKind;
 use std::time::Duration;
+#[cfg(target_os = "android")]
+use std::time::Instant;
 use std::collections::HashMap;
 #[cfg(target_os = "android")]
 use crate::write_text_to_java;
@@ -45,6 +47,13 @@ fn alac_channel_count(extra_data: Option<&[u8]>) -> Option<usize> {
 fn alac_bit_depth(extra_data: Option<&[u8]>) -> Option<u8> {
     let bit_depth = *alac_magic_cookie(extra_data)?.get(5)?;
     matches!(bit_depth, 16 | 20 | 24 | 32).then_some(bit_depth)
+}
+
+
+/// True once enough PCM is queued, or a short track has reached EOF with
+/// its remaining PCM already available to the output callback.
+fn stream_prebuffer_ready(queued_frames: usize, minimum_frames: usize, pump_status: i32) -> bool {
+    queued_frames >= minimum_frames || (pump_status == 1 && queued_frames > 0)
 }
 
 fn milliseconds_to_frames(milliseconds: u64, sample_rate: usize) -> u64 {
@@ -875,6 +884,40 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartSegment
     }
 }
 
+
+/// Waits briefly for the segmented producer to prebuffer before a retained
+/// AAudio output scheduler is restarted. Returns queued frames, 0 for an
+/// empty completed track, -1 on timeout, or -2 if the producer failed/stopped.
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWaitForStreamPrebuffer(
+    mut env: JNIEnv, _class: JClass, handle: jlong, minimum_frames: jint, timeout_ms: jint,
+) -> jint {
+    if handle <= 0 || minimum_frames <= 0 || timeout_ms <= 0 {
+        let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid AAudio prebuffer wait configuration");
+        return -2;
+    }
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(2_000) as u64);
+    loop {
+        let Some((queued, _, _)) = crate::aaudio::output_queue_budget(
+            crate::aaudio::output_producer_epoch().unwrap_or(0)
+        ) else {
+            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output producer disappeared during prebuffer");
+            return -2;
+        };
+        let Some((status, _)) = stream_pump_status(handle) else { return -2; };
+        if status < 0 || status == 2 { return -2; }
+        if status == 1 {
+            return queued.min(i32::MAX as usize) as jint;
+        }
+        if stream_prebuffer_ready(queued, minimum_frames as usize, status) {
+            return queued.min(i32::MAX as usize) as jint;
+        }
+        if Instant::now() >= deadline { return -1; }
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// Legacy unbounded/explicit-frame worker entry point retained for native callers.
 #[cfg(target_os = "android")]
 #[no_mangle]
@@ -960,6 +1003,17 @@ mod handle_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prebuffer_wait_accepts_minimum_queue_or_short_track_eof() {
+        assert!(!stream_prebuffer_ready(0, 4_800, 0));
+        assert!(!stream_prebuffer_ready(4_799, 4_800, 0));
+        assert!(stream_prebuffer_ready(4_800, 4_800, 0));
+        assert!(stream_prebuffer_ready(12_000, 4_800, 0));
+        assert!(stream_prebuffer_ready(320, 4_800, 1));
+        assert!(!stream_prebuffer_ready(0, 4_800, 1));
+        assert!(!stream_prebuffer_ready(4_799, 4_800, 2));
+    }
+
     use super::*;
     use crate::pcm_format::quantize_signed_pcm;
     use std::sync::atomic::{AtomicU64, Ordering};
