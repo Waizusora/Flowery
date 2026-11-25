@@ -23,15 +23,15 @@ internal data class AAudioOutputSignature(
 
 internal interface AAudioQueueOutputNative {
     fun setPersistence(enabled: Boolean)
-    fun prepareNextTrack(signature: AAudioOutputSignature): Int
+    fun attachNextTrack(signature: AAudioOutputSignature): Int
     fun stopOutput()
 }
 
 internal class JniAAudioQueueOutputNative : AAudioQueueOutputNative {
     override fun setPersistence(enabled: Boolean) = NativeAudio.nativeSetOutputPersistence(enabled)
 
-    override fun prepareNextTrack(signature: AAudioOutputSignature): Int =
-        NativeAudio.nativePrepareStreamOutputForNextTrack(
+    override fun attachNextTrack(signature: AAudioOutputSignature): Int =
+        NativeAudio.nativeAttachStreamProducerForNextTrack(
             signature.sampleRateHz,
             signature.channels,
             signature.outputFormat,
@@ -80,13 +80,13 @@ internal class AAudioQueueOutputOwner(
     }
 
     /**
-     * Resets the ring only when the next track has an identical PCM and device
-     * signature. A mismatch is left for the caller's explicit reconfigure path.
+     * Attaches a new producer epoch only when the next track has an identical
+     * PCM and device signature. The existing ring and buffered tail are preserved.
      */
     @Synchronized
     fun prepareNextTrack(next: AAudioOutputSignature): Boolean {
         if (phase != Phase.RETAINED || signature != next || !next.isValid()) return false
-        val result = runCatching { native.prepareNextTrack(next) }.getOrElse { return false }
+        val result = runCatching { native.attachNextTrack(next) }.getOrElse { return false }
         if (result != 0) return false
         phase = Phase.PREPARED
         return true
