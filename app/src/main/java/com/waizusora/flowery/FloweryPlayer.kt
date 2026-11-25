@@ -131,6 +131,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             var handle = 0L
             var sessionHandle = 0L
             var sessionFailed = false
+            var completedNormally = false
             try {
                 previousWorker?.let { previous ->
                     if (previous !== Thread.currentThread()) {
@@ -431,7 +432,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     }
                 }
 
-                if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
+                completedNormally = !stopped.get() && playbackGeneration.get() == generation
             } catch (error: InterruptedException) {
                 sessionFailed = !stopped.get()
                 Thread.currentThread().interrupt()
@@ -457,6 +458,11 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 }
                 if (playbackGeneration.get() == generation) NativeAudio.nativeStopOutput()
                 sourceDescriptor?.close()
+                // Notify the service only after native workers and per-track resources
+                // have been released. Queue advancement must not race session teardown.
+                if (completedNormally && playbackGeneration.get() == generation && !stopped.get()) {
+                    onState("Playback finished")
+                }
             }
         }
     }
