@@ -113,7 +113,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
         NativeAudio.nativeSetOutputVolume(softwareVolume * gain)
     }
 
-    fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L, preparedResources: PreparedPlaybackResources? = null, retainOutputForNextTrack: Boolean = false) {
+    internal fun play(uri: Uri, segmentStartMs: Long = 0L, segmentEndMs: Long? = null, startPaused: Boolean = false, initialPositionMs: Long = 0L, preparedResources: PreparedPlaybackResources? = null, retainOutputForNextTrack: Boolean = false) {
         val previousWorker = worker
         stop(preserveRetainedOutput = true)
         stopped.set(false)
