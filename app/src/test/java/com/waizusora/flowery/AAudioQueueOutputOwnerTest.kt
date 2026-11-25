@@ -59,6 +59,24 @@ class AAudioQueueOutputOwnerTest {
     }
 
     @Test
+    fun channelCountAndSampleFormatChangesRequireAReopen() {
+        val native = FakeNative()
+        val owner = AAudioQueueOutputOwner(native)
+        val current = signature(rate = 48_000, channels = 2, format = 1)
+        assertTrue(owner.adoptOpenedOutput(current))
+        assertTrue(owner.retainForNextTrack())
+
+        assertFalse(owner.prepareNextTrack(signature(channels = 1)))
+        assertFalse(owner.prepareNextTrack(signature(format = 3)))
+        assertTrue(native.attached.isEmpty())
+        assertEquals(AAudioQueueOutputOwner.Phase.RETAINED, owner.phase())
+
+        owner.close()
+        assertEquals(1, native.stopCount)
+        assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
+    }
+
+    @Test
     fun nativeProducerAttachFailureDoesNotClaimProducerReady() {
         val native = FakeNative().apply { prepareResult = -898 }
         val owner = AAudioQueueOutputOwner(native)
