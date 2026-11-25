@@ -5,31 +5,40 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- Rose petals: compact silhouette kept inside the adaptive-icon safe zone. -->
+    <!-- Small, centered five-petal outline flower. -->
     <path
-        android:fillColor="#E98BA7"
-        android:pathData="M54,78 C46,72 34,63 31,52 C28,42 34,35 43,38 C49,40 53,47 54,55 C55,44 62,35 71,36 C81,37 84,46 79,56 C75,65 63,74 54,78Z" />
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#42A5F5"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="
+            M54,49
+            C49,45 48,39 54,34
+            C60,39 59,45 54,49
+            Z
+            M49,52
+            C43,53 38,50 37,44
+            C43,41 48,44 52,50
+            Z
+            M59,52
+            C65,53 70,50 71,44
+            C65,41 60,44 56,50
+            Z
+            M51,59
+            C48,65 43,68 38,64
+            C39,57 44,54 51,55
+            Z
+            M57,59
+            C60,65 65,68 70,64
+            C69,57 64,54 57,55
+            Z" />
     <path
-        android:fillColor="#D96F91"
-        android:pathData="M54,75 C45,68 40,59 42,49 C43,42 49,39 55,43 C60,47 61,55 57,63 C56,67 55,71 54,75Z" />
-    <path
-        android:fillColor="#C9577D"
-        android:pathData="M55,75 C54,64 59,53 68,48 C75,44 81,48 79,56 C77,64 66,72 55,75Z" />
-    <path
-        android:fillColor="#F3B0C2"
-        android:pathData="M51,72 C42,67 35,61 35,53 C35,47 39,44 44,47 C49,50 51,59 51,72Z" />
-    <path
-        android:fillColor="#E98BA7"
-        android:pathData="M54,78 C44,75 35,70 29,62 C24,55 26,48 31,46 C37,44 41,52 45,60 C48,67 51,73 54,78Z" />
-    <path
-        android:fillColor="#D96F91"
-        android:pathData="M54,78 C63,73 73,66 79,57 C84,50 89,51 90,57 C91,65 78,75 54,82Z" />
-    <path
-        android:fillColor="#C9577D"
-        android:pathData="M54,77 C48,83 42,86 35,87 C41,91 49,90 54,85 C60,90 68,90 74,86 C66,85 59,82 54,77Z" />
-
-    <!-- Small musical note integrated into the upper rose petal. -->
-    <path
-        android:fillColor="#B94D73"
-        android:pathData="M56,20 C63,29 71,31 79,33 L79,39 C71,37 64,34 59,29 L59,55 C59,61 54,65 48,64 C43,63 41,58 44,54 C47,50 53,50 56,53 Z" />
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#42A5F5"
+        android:strokeWidth="2.4"
+        android:pathData="M54,52
+            m-3.2,0
+            a3.2,3.2 0,1 0,6.4 0
+            a3.2,3.2 0,1 0,-6.4 0" />
 </vector>
