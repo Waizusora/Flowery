@@ -13,6 +13,7 @@ class PreparedPlaybackResourcesTest {
         decoderHandle = 11L,
         sessionHandle = 22L,
         route = 0,
+        sourceFileDescriptor = 7,
         sourceSampleRateHz = 96_000,
         channels = 2,
         sourceValidBits = 24,
