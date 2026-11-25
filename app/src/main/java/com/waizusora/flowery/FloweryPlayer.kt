@@ -209,6 +209,10 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 // preference here: the playback stream must follow the currently attached route.
                 val selectedTarget = routeResolver.detectCurrent()
                 usbRouteActive = selectedTarget == AndroidOutputTarget.USB
+                if (selectedTarget == AndroidOutputTarget.USB && aaudioQueueOutputOwner.phase() != AAudioQueueOutputOwner.Phase.CLOSED) {
+                    // A retained Android-managed stream must not remain open during USB Direct playback.
+                    aaudioQueueOutputOwner.close()
+                }
                 if (selectedTarget == AndroidOutputTarget.USB) {
                     check(segmentEndMs == null) {
                         "Native USB playback currently does not support bounded CUE segments; refusing to play past the selected segment."
