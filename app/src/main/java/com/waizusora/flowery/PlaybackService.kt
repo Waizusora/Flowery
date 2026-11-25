@@ -645,6 +645,7 @@ class PlaybackService : Service() {
         val preparedCurrent = playbackPrefetch.take(playRequestGeneration, currentPrefetchKey)
         val requestGeneration = ++playRequestGeneration
         playbackPrefetch.beginGeneration(requestGeneration)
+        val hasNextQueueItem = queueState.peekNextIndex(queue.size) >= 0
         scheduleNextTrackPrefetch(requestGeneration)
         if (preparedCurrent != null) {
             Log.i("FloweryDiagnostics", "GAPLESS_PREFETCH_CONSUMED generation=$requestGeneration index=$selectedIndex")
@@ -737,7 +738,7 @@ class PlaybackService : Service() {
                             return@execute
                         }
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_start index=$selectedIndex")
-                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent, retainOutputForNextTrack = queueState.peekNextIndex(queue.size) >= 0)
+                        player.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs, preparedResources = preparedCurrent, retainOutputForNextTrack = hasNextQueueItem)
                         if (requestGeneration != playRequestGeneration) return@execute
                         Log.i("FloweryDiagnostics", "PLAY_PHASE phase=engine_play_return index=$selectedIndex; waiting_for_engine_started_callback=true")
                         playbackState = PlaybackStateCompat.STATE_CONNECTING
