@@ -897,12 +897,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeWaitForStrea
         let _ = env.throw_new("java/lang/IllegalArgumentException", "Invalid AAudio prebuffer wait configuration");
         return -2;
     }
+    let Some(output_epoch) = crate::aaudio::output_producer_epoch() else {
+        let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output producer disappeared before prebuffer");
+        return -2;
+    };
     let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(2_000) as u64);
     loop {
-        let Some(output_epoch) = crate::aaudio::output_producer_epoch() else {
-            let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output producer disappeared during prebuffer");
-            return -2;
-        };
         let Some((queued, output_rate_hz)) = crate::aaudio::output_queue_snapshot(output_epoch) else {
             let _ = env.throw_new("java/lang/IllegalStateException", "AAudio output producer changed during prebuffer");
             return -2;
