@@ -18,6 +18,7 @@ internal class PreparedPlaybackResources(
     val decoderHandle: Long,
     val sessionHandle: Long,
     val route: Int,
+    val sourceFileDescriptor: Int,
     val sourceSampleRateHz: Int,
     val channels: Int,
     val sourceValidBits: Int,
@@ -32,6 +33,7 @@ internal class PreparedPlaybackResources(
         require(decoderHandle != 0L) { "Prepared decoder handle must be valid." }
         require(sessionHandle != 0L) { "Prepared playback session handle must be valid." }
         require(route in 0..3) { "Prepared playback route is unsupported." }
+        require(sourceFileDescriptor >= 0) { "Prepared source file descriptor is invalid." }
         require(sourceSampleRateHz > 0) { "Prepared source sample rate must be positive." }
         require(channels in 1..8) { "Prepared source channel count must be between 1 and 8." }
         require(sourceValidBits in 1..32) { "Prepared source bit depth must be between 1 and 32." }
@@ -92,6 +94,7 @@ internal class PreparedPlaybackResources(
                     decoderHandle = decoderHandle,
                     sessionHandle = sessionHandle,
                     route = route,
+                    sourceFileDescriptor = source.fileDescriptor,
                     sourceSampleRateHz = sampleRate,
                     channels = channels,
                     sourceValidBits = validBits,
