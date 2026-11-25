@@ -368,7 +368,7 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 val routeName = outputRoute.target.name
                 val outputInfo = NativeAudio.nativeGetOutputDiagnostics()
                 outputSampleRate = outputInfo.getOrNull(7)?.toInt()?.takeIf { it > 0 } ?: sourceRate
-                val actualFormat = outputInfo.getOrNull(10)?.toInt() ?: -1
+                val actualFormat = outputInfo.getOrNull(10)?.toInt()?.takeIf { it in 1..4 } ?: outputFormat
                 outputBitDepth = when (actualFormat) {
                     1 -> 16
                     2 -> 32
@@ -383,13 +383,13 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                     4 -> "Signed PCM32"
                     else -> decodedPcmFormat
                 }
-                val actualSharingMode = outputInfo.getOrNull(9)?.toInt() ?: -1
+                val actualSharingMode = outputInfo.getOrNull(9)?.toInt()?.takeIf { it in 0..1 } ?: AAudioOutputSignature.SHARING_EXCLUSIVE
                 val sharingName = when (actualSharingMode) {
                     0 -> "EXCLUSIVE"
                     1 -> "SHARED"
                     else -> "unknown sharing mode"
                 }
-                val actualDeviceId = outputInfo.getOrNull(8)?.toInt() ?: 0
+                val actualDeviceId = outputInfo.getOrNull(8)?.toInt()?.takeIf { it >= 0 } ?: deviceId
                 val actualOutputSignature = AAudioOutputSignature(
                     outputSampleRate, channels, actualFormat, actualDeviceId, actualSharingMode,
                 )
