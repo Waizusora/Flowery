@@ -416,8 +416,12 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartOutputS
                     Ok(true) => {
                         if crate::playback_session::transition_session_phase(&worker_session, 4) &&
                             crate::playback_session::transition_session_phase(&worker_session, 5) {
-                            let mut output_engine = engine().lock().unwrap_or_else(|p| p.into_inner());
-                            unsafe { output_engine.stop(); }
+                            // Decoder/session completion is not the owner of the
+                            // device stream lifetime. Leave the opened AAudio stream and
+                            // its ring allocated until the route owner explicitly closes
+                            // them; a future queue-level handoff may refill/restart it.
+                            // The current single-track Kotlin owner still closes it from
+                            // nativeClosePlaybackSession/nativeStopOutput.
                             thread_status.store(1, Ordering::Release);
                             break;
                         }
