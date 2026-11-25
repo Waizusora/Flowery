@@ -263,6 +263,18 @@ pub(crate) fn output_producer_epoch() -> Option<u64> {
     if engine.output.is_some() && engine.producer.is_some() { Some(engine.producer_epoch) } else { None }
 }
 
+pub(crate) fn output_queue_snapshot(epoch: u64) -> Option<(usize, u32)> {
+    let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !producer_epoch_matches(engine.producer_epoch, epoch) { return None; }
+    let output = engine.output.as_ref()?;
+    let producer = engine.producer.as_ref()?;
+    let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample)?;
+    if bytes_per_frame == 0 || output.rate <= 0 { return None; }
+    let free = producer.slots() / bytes_per_frame;
+    let queued = (output.capacity as usize).saturating_sub(free);
+    Some((queued, output.rate as u32))
+}
+
 pub(crate) fn output_queue_budget(epoch: u64) -> Option<(usize, usize, usize)> {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if !producer_epoch_matches(engine.producer_epoch, epoch) { return None; }
