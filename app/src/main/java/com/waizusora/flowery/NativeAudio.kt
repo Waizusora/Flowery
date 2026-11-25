@@ -65,6 +65,7 @@ object NativeAudio {
     external fun nativeGetStreamDurationMs(handle: Long): Long
     external fun nativeStartStreamPump(handle: Long, session: Long, maxFrames: Int, totalFrames: Long): Int
     external fun nativeStartSegmentedStreamPump(handle: Long, session: Long, maxFrames: Int, segmentStartMs: Long, segmentEndMs: Long): Int
+    external fun nativeWaitForStreamPrebuffer(handle: Long, minimumFrames: Int, timeoutMs: Int): Int
     external fun nativeGetStreamPumpStatus(handle: Long): Int
     external fun nativeGetStreamPumpError(handle: Long): String
     external fun nativeStopStreamPump(handle: Long)
