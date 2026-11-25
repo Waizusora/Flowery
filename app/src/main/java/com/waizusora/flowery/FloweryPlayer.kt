@@ -464,14 +464,20 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                         1 -> break
                         3 -> {
                             if (shouldAdvanceAaudioQueue(3, retainOutputForNextTrack)) {
-                                Log.i("FloweryDiagnostics", "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation")
+                                Log.i(
+                                    "FloweryDiagnostics",
+                                    "AAUDIO_EARLY_TRACK_BOUNDARY generation=$generation ${audioPipelineDiagnostics()}"
+                                )
                                 break
                             }
                             Thread.sleep(8)
                         }
                         4 -> {
                             if (shouldAdvanceAaudioQueue(4, retainOutputForNextTrack)) {
-                                Log.i("FloweryDiagnostics", "AAUDIO_TRACK_BOUNDARY_DRAINED generation=$generation")
+                                Log.i(
+                                    "FloweryDiagnostics",
+                                    "AAUDIO_TRACK_BOUNDARY_DRAINED generation=$generation ${audioPipelineDiagnostics()}"
+                                )
                                 break
                             }
                             Thread.sleep(8)
