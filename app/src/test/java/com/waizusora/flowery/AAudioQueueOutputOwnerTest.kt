@@ -8,6 +8,14 @@ import org.junit.Test
 
 class AAudioQueueOutputOwnerTest {
     @Test
+    fun elapsedHandoffDurationUsesMonotonicTimestamps() {
+        assertEquals(25L, elapsedHandoffMs(1_000_000L, 26_000_000L))
+        assertEquals(0L, elapsedHandoffMs(5_000_000L, 5_000_000L))
+        assertNull(elapsedHandoffMs(0L, 5_000_000L))
+        assertNull(elapsedHandoffMs(6_000_000L, 5_000_000L))
+    }
+
+    @Test
     fun queuedPcmDurationUsesOutputRateAndRejectsInvalidInputs() {
         assertEquals(100L, queuedPcmDurationMs(4_800, 48_000))
         assertEquals(50L, queuedPcmDurationMs(2_205, 44_100))
