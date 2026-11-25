@@ -777,7 +777,10 @@ mod tests {
             producer_epoch: 1,
             last_open: [0; 11],
         };
+        let previous_epoch = engine.producer_epoch;
         reset_output_ring(&mut engine, 48_000, 2, FMT_I16).unwrap();
+        assert_ne!(engine.producer_epoch, previous_epoch);
+        assert!(!producer_epoch_matches(engine.producer_epoch, previous_epoch));
         let next = [9_u8, 8, 7, 6];
         let producer = engine.producer.as_mut().unwrap();
         producer.push_entire_slice(&next).unwrap();
