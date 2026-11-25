@@ -123,3 +123,10 @@ internal class AAudioQueueOutputOwner(
         }
     }
 }
+
+
+/** Converts queued output frames into a conservative duration budget. */
+internal fun queuedPcmDurationMs(queuedFrames: Long, sampleRateHz: Int): Long? {
+    if (queuedFrames < 0L || sampleRateHz <= 0) return null
+    return queuedFrames * 1_000L / sampleRateHz.toLong()
+}
