@@ -13,8 +13,10 @@ class AAudioQueueOutputOwnerTest {
         var prepareResult = 0
         var stopCount = 0
         var failEnablePersistence = false
+        var failDisablePersistence = false
         override fun setPersistence(enabled: Boolean) {
             if (enabled && failEnablePersistence) error("native persistence lease failed")
+            if (!enabled && failDisablePersistence) error("native persistence revoke failed")
             persistence += enabled
         }
         override fun attachNextTrack(signature: AAudioOutputSignature): Int {
@@ -152,6 +154,19 @@ class AAudioQueueOutputOwnerTest {
         owner.close()
 
         assertEquals(listOf(true, false), native.persistence)
+        assertEquals(1, native.stopCount)
+        assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
+        assertNull(owner.currentSignature())
+    }
+
+    @Test
+    fun persistenceRevokeFailureStillStopsOutputAndClearsOwnerState() {
+        val native = FakeNative().apply { failDisablePersistence = true }
+        val owner = AAudioQueueOutputOwner(native)
+        assertTrue(owner.adoptOpenedOutput(signature()))
+        assertTrue(owner.retainForNextTrack())
+
+        assertTrue(runCatching { owner.close() }.isFailure)
         assertEquals(1, native.stopCount)
         assertEquals(AAudioQueueOutputOwner.Phase.CLOSED, owner.phase())
         assertNull(owner.currentSignature())
