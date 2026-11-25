@@ -252,7 +252,8 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                             )
                         }
                     }
-                    if (!stopped.get() && playbackGeneration.get() == generation) onState("Playback finished")
+                    // Defer completion until the USB session and decoder are closed in finally.
+                    completedNormally = !stopped.get() && playbackGeneration.get() == generation
                     return@thread
                 }
                 val outputRoute = routeResolver.resolve(selectedTarget)
