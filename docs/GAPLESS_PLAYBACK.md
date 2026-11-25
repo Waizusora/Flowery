@@ -151,6 +151,12 @@ Direct still owns its per-track libusb session. Persistent output ownership,
 producer handoff at an early queue boundary, and continuity/underrun validation
 remain outstanding.
 
+### Early AAudio track-boundary notification
+
+The native output scheduler now publishes status `3` when the decoder reaches track EOF while buffered PCM remains. This status is non-terminal: the scheduler continues draining the current ring and eventually publishes status `1` when the track is fully drained. Single-track playback ignores status `3` and waits for normal completion. When the queue has a next item, `FloweryPlayer` may exit its current track worker on status `3`, retain the output lease, and let the service begin preparing/attaching the next track while the old PCM tail is still being consumed.
+
+This reduces the handoff delay by the remaining ring-drain interval. It does not guarantee gapless output: service scheduling, metadata work, decoder attachment, and producer refill must all finish before the ring empties. Runtime underrun counters and boundary continuity tests are still required. USB Direct is unchanged.
+
 ## FloweryPlayer persistent AAudio output integration
 
 `FloweryPlayer` now owns an `AAudioQueueOutputOwner` for the active queue. At
@@ -184,7 +190,7 @@ This is a tested lifecycle contract, not yet wired to the AAudio engine or libus
 
 The AAudio output scheduler no longer calls `Engine::stop()` when its decoder session reaches the completed phase. Scheduler completion now reports the track/session as finished without directly destroying the device stream or ring allocation. The AAudio callback may still return its normal stop signal after the current track's EOF buffer drains; this change preserves the stream object and ring allocation, not uninterrupted playback by itself.
 
-The current single-track Kotlin owner still closes the output through `nativeClosePlaybackSession` / `nativeStopOutput`. A future queue-level owner must explicitly retain that output across session close, reset EOF only after a valid next producer is ready, refill the existing ring, and restart the stream. Until that ownership handoff is implemented, this change is only teardown separation and must not be described as runtime gapless playback.
+`FloweryPlayer` now retains the output lease for queued playback and reuses the stream/ring for a matching PCM/device signature. This preserves the callback and queued tail across session teardown. It is still not gapless by itself: the next producer must be attached before the tail drains.
 
 ## AAudio persistent-output lease and ring handoff API
 
@@ -195,13 +201,13 @@ The native AAudio layer now exposes two queue-owner APIs through `NativeAudio`:
 
 The scheduler can now request start from AAudio's STOPPED state after the next producer has filled the ring to its low-watermark. This is required because the callback returns its normal stop signal after draining a track EOF.
 
-These APIs are not yet called by `FloweryPlayer` or `PlaybackService`. The current player still opens a new output for each track and its cleanup explicitly calls `nativeStopOutput()`. Do not enable the lease from the current player until queue-level ownership and same-format validation are wired in. Format changes still require a separate drain/reopen/re-negotiate path; this API intentionally supports only same-signature continuation.
+`FloweryPlayer` now calls the producer-attach API for a retained output only after exact PCM/device signature matching. The ring and already queued PCM are preserved. A mismatch releases the retained output and follows the ordinary output-open path; this does not attempt an in-place format change.
 
 ### PCM signature guard for AAudio handoff
 
 The next-track ring reset now takes the expected sample rate, channel count, and AAudio output format. Native code validates all three against the currently opened stream before replacing either SPSC endpoint. A mismatch returns an explicit invalid-format result and leaves the existing ring untouched; the caller must use the output reconfiguration path instead. Unit tests cover sample-rate, channel-count, and sample-format mismatches.
 
-This prevents a future queue owner from accidentally treating a different PCM signature as a same-format continuation. The Kotlin player does not yet invoke this handoff API, so no claim of runtime gapless playback is made.
+This prevents a future queue owner from accidentally treating a different PCM signature as a same-format continuation. `FloweryPlayer` invokes the handoff API after a compatible next decoder has been prepared. This is a same-signature producer handoff foundation; continuity is not yet verified.
 
 ### AAudio producer epoch isolation
 
@@ -215,7 +221,7 @@ This is a native race-safety prerequisite for queue-level handoff. It does not i
 
 The persistent same-format handoff API now also requires the expected AAudio device ID and sharing mode. Native code reads both values from the still-open stream and rejects a handoff if either differs. This prevents a queue owner from reusing an output opened for another Android device or silently changing between EXCLUSIVE and SHARED operation.
 
-The identity guard is in addition to the existing sample-rate, channel-count, and output-format checks. Tests cover matching identity, device mismatch, sharing-mode mismatch, invalid sharing mode, and invalid expected device ID. The API remains a foundation only; FloweryPlayer does not call it yet.
+The identity guard is in addition to the existing sample-rate, channel-count, and output-format checks. Tests cover matching identity, device mismatch, sharing-mode mismatch, invalid sharing mode, and invalid expected device ID. `FloweryPlayer` now uses this identity guard before reusing a retained output.
 
 ### Kotlin queue-level AAudio lease coordinator
 
