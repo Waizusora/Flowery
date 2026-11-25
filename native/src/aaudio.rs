@@ -1006,6 +1006,36 @@ mod tests {
         assert!(output.active.load(Ordering::Acquire));
         assert_eq!(output.error.load(Ordering::Acquire), 0);
         assert_eq!(output.played.load(Ordering::Acquire), 123);
+
+        // The callback must still observe the previous track's queued tail
+        // before any bytes from the next producer are consumed.
+        let output_ptr = engine.output.as_deref_mut().unwrap() as *mut Output;
+        let mut old_tail = [0u8; 8];
+        let callback_result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                output_ptr.cast(),
+                old_tail.as_mut_ptr().cast(),
+                2,
+            )
+        };
+        assert_eq!(callback_result, 0);
+        assert_eq!(old_tail, [1, 2, 3, 4, 5, 6, 7, 8]);
+
+        engine.producer.as_mut().unwrap()
+            .push_entire_slice(&[9, 10, 11, 12, 13, 14, 15, 16])
+            .unwrap();
+        let mut next_track = [0u8; 8];
+        let callback_result = unsafe {
+            data_callback(
+                ptr::null_mut(),
+                output_ptr.cast(),
+                next_track.as_mut_ptr().cast(),
+                2,
+            )
+        };
+        assert_eq!(callback_result, 0);
+        assert_eq!(next_track, [9, 10, 11, 12, 13, 14, 15, 16]);
     }
 
     #[test]
