@@ -458,7 +458,13 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeClosePlaybac
             #[cfg(target_os = "android")]
             if session.route == 0 {
                 crate::streaming::stop_stream_pump_worker(session.decoder_handle);
-                crate::aaudio::stop_output_for_session();
+                if crate::aaudio::output_persistence_enabled() {
+                    // The queue-level owner retains the opened stream/ring across
+                    // this decoder session boundary. Stop only the old scheduler.
+                    crate::aaudio::stop_output_scheduler_for_session();
+                } else {
+                    crate::aaudio::stop_output_for_session();
+                }
             }
             // Keep the shared decoder alive until every producer and in-flight JNI
             // operation releases its session reference.
