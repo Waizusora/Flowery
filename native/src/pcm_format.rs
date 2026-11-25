@@ -140,6 +140,86 @@ mod integer_pcm_gain_tests {
     }
 }
 
+/// Apply ReplayGain to an AAudio-owned decoded chunk. This function must only
+/// receive the drained chunk returned by read_usb_frames; it never mutates the
+/// decoder's shared pending buffer and is not called by USB Direct.
+pub(super) fn apply_replay_gain(samples: &mut UsbPcmSamples, linear_gain: f32) -> Result<(), &'static str> {
+    if !linear_gain.is_finite() || !(0.0..=64.0).contains(&linear_gain) {
+        return Err("ReplayGain linear multiplier is outside the supported range");
+    }
+    if linear_gain == 1.0 { return Ok(()); }
+    let gain = f64::from(linear_gain);
+    match samples {
+        UsbPcmSamples::S16(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+            }
+        }
+        UsbPcmSamples::S24(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(-8_388_608.0, 8_388_607.0) as i32;
+            }
+        }
+        UsbPcmSamples::S32(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+            }
+        }
+        UsbPcmSamples::F32(values) => {
+            for value in values {
+                *value = if value.is_finite() {
+                    (f64::from(*value) * gain).clamp(-1.0, 1.0) as f32
+                } else { 0.0 };
+            }
+        }
+        _ => return Err("ReplayGain is unsupported for this AAudio decoded sample representation"),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod replay_gain_pcm_tests {
+    use super::{apply_replay_gain, UsbPcmSamples};
+
+    #[test]
+    fn applies_gain_to_integer_formats_with_saturation() {
+        let mut s16 = UsbPcmSamples::S16(vec![-20_000, 20_000]);
+        apply_replay_gain(&mut s16, 2.0).unwrap();
+        assert_eq!(s16, UsbPcmSamples::S16(vec![-32_768, 32_767]));
+
+        let mut s24 = UsbPcmSamples::S24(vec![-5_000_000, 5_000_000]);
+        apply_replay_gain(&mut s24, 2.0).unwrap();
+        assert_eq!(s24, UsbPcmSamples::S24(vec![-8_388_608, 8_388_607]));
+
+        let mut s32 = UsbPcmSamples::S32(vec![-1_000_000_000, 1_000_000_000]);
+        apply_replay_gain(&mut s32, 2.0).unwrap();
+        assert_eq!(s32, UsbPcmSamples::S32(vec![-2_000_000_000, 2_000_000_000]));
+    }
+
+    #[test]
+    fn applies_gain_to_float_and_sanitizes_non_finite_values() {
+        let mut samples = UsbPcmSamples::F32(vec![-0.25, 0.25, 0.75, f32::NAN, f32::INFINITY]);
+        apply_replay_gain(&mut samples, 2.0).unwrap();
+        assert_eq!(samples, UsbPcmSamples::F32(vec![-0.5, 0.5, 1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn unity_gain_is_value_preserving() {
+        let mut samples = UsbPcmSamples::S32(vec![i32::MIN, -1, 0, 1, i32::MAX]);
+        apply_replay_gain(&mut samples, 1.0).unwrap();
+        assert_eq!(samples, UsbPcmSamples::S32(vec![i32::MIN, -1, 0, 1, i32::MAX]));
+    }
+
+    #[test]
+    fn rejects_invalid_gain_and_unsupported_representations() {
+        assert!(apply_replay_gain(&mut UsbPcmSamples::S16(vec![1]), f32::NAN).is_err());
+        assert!(apply_replay_gain(&mut UsbPcmSamples::U8(vec![128]), 2.0).is_err());
+    }
+}
+
 /// Platform-neutral signed integer PCM layout used at native output boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PcmFormat {
