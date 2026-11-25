@@ -12,7 +12,8 @@ internal data class AAudioOutputSignature(
     val sharingMode: Int,
 ) {
     fun isValid(): Boolean =
-        sampleRateHz > 0 && channels in 1..2 && outputFormat in 1..4 &&
+        sampleRateHz > 0 && channels in 1..8 && outputFormat in 1..4 &&
+            (outputFormat != 2 || channels <= 2) &&
             deviceId >= 0 && sharingMode in SHARING_EXCLUSIVE..SHARING_SHARED
 
     companion object {
