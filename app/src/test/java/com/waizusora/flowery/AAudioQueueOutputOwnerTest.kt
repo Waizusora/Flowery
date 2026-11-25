@@ -113,7 +113,7 @@ class AAudioQueueOutputOwnerTest {
         assertTrue(owner.adoptOpenedOutput(shared))
         assertTrue(owner.retainForNextTrack())
         assertEquals(AAudioOutputSignature.SHARING_SHARED, owner.sharingModeForNextTrack())
-        assertNull(owner.reuseRejectionReason(shared.copy(rate = shared.sampleRateHz)))
+        assertNull(owner.reuseRejectionReason(shared))
     }
 
     @Test
