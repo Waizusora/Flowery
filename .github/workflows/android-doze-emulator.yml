@@ -2,9 +2,9 @@ name: Android Doze Emulator
 
 on:
   push:
-    branches: [try]
+    branches: [main, try]
   pull_request:
-    branches: [try]
+    branches: [main, try]
   workflow_dispatch:
 
 permissions:
