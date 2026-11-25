@@ -59,9 +59,15 @@ internal class PlaybackCoordinator(
         segmentStartMs: Long = 0L,
         segmentEndMs: Long? = null,
         initialPositionMs: Long = 0L,
+        preparedResources: PreparedPlaybackResources? = null,
+        retainOutputForNextTrack: Boolean = false,
     ) {
         transition(EVENT_PREPARE)
-        engine.play(uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs)
+        engine.play(
+            uri, segmentStartMs, segmentEndMs, initialPositionMs = initialPositionMs,
+            preparedResources = preparedResources,
+            retainOutputForNextTrack = retainOutputForNextTrack,
+        )
     }
 
     @Synchronized
