@@ -95,23 +95,24 @@ session, decoder, then source descriptor. Each teardown step is attempted even
 if an earlier native release fails. Unit tests cover ordering, idempotence, and
 best-effort cleanup.
 
-This wrapper is still a resource-lifecycle primitive, not runtime prefetch. It
-is not yet constructed or consumed by `FloweryPlayer`; output lifetime and
-producer handoff remain separate implementation work.
+The wrapper is now used by the service's prefetch slot and can be transferred
+to `FloweryPlayer`. Output lifetime and producer handoff remain separate
+implementation work.
 
 
-The preparation factory now opens the SAF descriptor, creates the native decoder,
+The preparation factory opens the SAF descriptor, creates the native decoder,
 primes decoder metadata, creates a native playback session in Prepared phase,
 and returns all handles in the owned bundle. Failure at any preparation step
 releases every resource already acquired. The factory does not start AAudio or
-USB output workers. It is ready for integration with the generation-keyed slot,
-but `FloweryPlayer` still uses its existing single-track open path today.
+USB output workers. The generation-keyed slot now publishes and transfers this
+bundle to `FloweryPlayer`; if no matching prepared bundle is ready, the player
+falls back to its normal open path.
 
 ## Playback prefetch coordinator foundation
 
 Android now has a generation-scoped `PlaybackPrefetchCoordinator<T>` around `PreparedPlaybackSlot<T>`. It schedules one preparation task away from the playback/output thread, accepts results only for the current playback generation and latest prefetch request, and disposes resources produced by superseded or invalidated work. A successful `take(generation, key)` transfers ownership exactly once; closing the coordinator disposes any resource that was never claimed.
 
-Unit tests cover successful ownership transfer, generation invalidation, rejection of stale-generation requests, cleanup on close, and preparation failure. The coordinator is still a foundation: it is not yet connected to `PlaybackService` or `FloweryPlayer`, does not decide the next queue item, and does not hand a prepared decoder to a running output worker. Runtime gapless playback therefore remains disabled.
+Unit tests cover successful ownership transfer, generation invalidation, rejection of stale-generation requests, cleanup on close, and preparation failure. `PlaybackService` now selects the matching prepared URI/CUE resource from the previous generation before advancing the coordinator generation, then passes ownership to `FloweryPlayer`. This removes the duplicate decoder/session preparation when prefetch has completed; it does not keep the output alive or hand a producer into a running output worker. Runtime gapless playback therefore remains disabled.
 
 Prefetch preparation failures are reported through an optional callback only while the request is still current. Failures from superseded generations are suppressed, and a failed preparation never publishes a partial resource. Cancellation and thread interruption are treated as normal invalidation rather than user-visible decoder errors.
 
@@ -125,7 +126,30 @@ This is queue-policy plumbing only. It does not yet schedule `PreparedPlaybackRe
 
 `PlaybackService` now starts preparation for the native queue's peeked next item when a playback generation is started. It captures the target URI and CUE segment identity, opens and primes a decoder/session on the dedicated prefetch executor, and leaves the prepared resource owned by the generation-scoped slot. Stop, service destruction, output-route changes, and generation replacement cancel or dispose pending/unclaimed resources. Repeat/shuffle changes refresh the selected candidate; clearing a candidate does not invalidate the active generation.
 
-This wiring deliberately does not take the prepared resource or pass it to `FloweryPlayer`: the current player still creates its own decoder and owns output lifetime per track. Until the persistent output/producer handoff is implemented, this is preparation-only and may duplicate decoder setup at a track boundary. It is not yet runtime gapless playback and does not reduce the audible transition gap by itself.
+This wiring now takes a prepared resource only when its generation and URI/CUE key match the selected queue item. The resource is passed to `FloweryPlayer`, which starts the already-prepared native session and closes the owned session, decoder, and source descriptor together after playback. If the slot is empty, stale, or keyed to another item, the player uses its normal open path. The output is still opened and closed per track, so this reduces duplicate preparation but does not provide runtime gapless playback or guarantee a shorter audible gap.
+
+## Prefetched resource consumption in FloweryPlayer
+
+`PlaybackService` now consumes the next-track prefetch by matching the exact URI
+and CUE segment key against the previous playback generation. It takes the
+resource before starting the new generation, because generation replacement
+disposes anything that remains unclaimed in the slot. The resource is then handed
+to `FloweryPlayer`; stale requests, audio-focus rejection, call interruption,
+and asynchronous metadata cancellation close an unclaimed bundle.
+
+`FloweryPlayer` accepts an optional `PreparedPlaybackResources` bundle. When
+present, it reuses the already-created decoder and Prepared native session,
+skips reopening the SAF descriptor and recreating decoder/session state, and
+starts the prepared session. Its `finally` path delegates teardown to the bundle,
+which releases the native session, decoder, and descriptor exactly once. If no
+matching prefetch is available, the existing open-and-prepare path remains the
+fallback.
+
+This is the first runtime consumption of prefetched resources, not runtime
+gapless playback. AAudio still opens a new output stream for each track, and USB
+Direct still owns its per-track libusb session. Persistent output ownership,
+producer handoff at an early queue boundary, and continuity/underrun validation
+remain outstanding.
 
 ## Persistent output lifetime contract
 
