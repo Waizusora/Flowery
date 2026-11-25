@@ -54,6 +54,10 @@ extern "C" {
 
 const OK:i32=0; const INVALID_STATE:i32=-895; const DEVICE_SELECTION_UNAVAILABLE:i32=-896; const DEVICE_MISMATCH:i32=-897; const INVALID_FORMAT:i32=-898;
 
+fn output_should_complete(eof: bool, track_eof: bool, buffered_frames: u64, active: bool) -> bool {
+    (eof || track_eof) && buffered_frames == 0 && !active
+}
+
 fn producer_epoch_matches(current: u64, expected: u64) -> bool {
     current != 0 && current == expected
 }
@@ -102,6 +106,7 @@ fn attach_output_producer_for_next_track(
     let epoch = engine.producer_epoch;
     let output = engine.output.as_ref().ok_or(INVALID_STATE)?;
     output.eof.store(false, Ordering::Release);
+    output.track_eof.store(false, Ordering::Release);
     output.active.store(true, Ordering::Release);
     output.error.store(0, Ordering::Release);
     // Keep the queued tail and played-frame counter intact across the handoff.
@@ -140,7 +145,7 @@ struct Output {
     consumer: UnsafeCell<Consumer<u8>>, capacity:u64, channels:usize, format:i32, rate:i32,
     bytes_per_sample:usize,
     played:AtomicU64, volume:AtomicU32,
-    active:AtomicBool, eof:AtomicBool, underruns:AtomicU64, error:AtomicI32,
+    active:AtomicBool, eof:AtomicBool, track_eof:AtomicBool, underruns:AtomicU64, error:AtomicI32,
 }
 impl Output {
     fn gain_q31(&self)->i64 {
@@ -388,6 +393,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
         (output.capacity as u64).saturating_sub((e.producer.as_ref().ok_or(INVALID_STATE)?.slots() / bytes_per_frame) as u64)
     };
     let eof = output.eof.load(Ordering::Acquire);
+    let track_eof = output.track_eof.load(Ordering::Acquire);
     let active = output.active.load(Ordering::Acquire);
     unsafe {
         let state = AAudioStream_getState(e.stream);
@@ -413,7 +419,7 @@ fn output_scheduler_tick(low_watermark: u64, phase: i32, start_requested: &mut b
             }
         }
     }
-    Ok(eof && buffered == 0 && !active)
+    Ok(output_should_complete(eof, track_eof, buffered, active))
 }
 
 #[no_mangle]
@@ -744,6 +750,19 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
 }
 
 /// Signals end-of-stream to the AAudio callback without crossing JNI.
+/// Marks only the current decoder producer as finished. The AAudio device
+/// callback remains alive and may be fed by the next queue item.
+pub(crate) fn signal_stream_track_eof(epoch: u64) -> bool {
+    let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !producer_epoch_matches(engine.producer_epoch, epoch) { return false; }
+    if let Some(output) = engine.output.as_ref() {
+        output.track_eof.store(true, Ordering::Release);
+        output.active.store(false, Ordering::Release);
+        return true;
+    }
+    false
+}
+
 pub(crate) fn signal_stream_eof(epoch: u64) -> bool {
     let engine = engine().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if !producer_epoch_matches(engine.producer_epoch, epoch) { return false; }
@@ -847,6 +866,7 @@ mod tests {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(true),
             eof: AtomicBool::new(false),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(0),
             error: AtomicI32::new(0),
         }
@@ -871,6 +891,7 @@ mod tests {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(false),
             eof: AtomicBool::new(true),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(3),
             error: AtomicI32::new(-1),
         };
@@ -913,6 +934,7 @@ mod tests {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(false),
             eof: AtomicBool::new(true),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(0),
             error: AtomicI32::new(0),
         };
@@ -947,6 +969,7 @@ mod tests {
             format: FMT_I16, rate: 48_000, bytes_per_sample: 2,
             played: AtomicU64::new(123), volume: AtomicU32::new(1.0f32.to_bits()),
             active: AtomicBool::new(false), eof: AtomicBool::new(true),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(0), error: AtomicI32::new(-1),
         };
         let mut engine = Engine::new();
@@ -978,6 +1001,7 @@ mod tests {
             format: FMT_I16, rate: 48_000, bytes_per_sample: 2,
             played: AtomicU64::new(0), volume: AtomicU32::new(1.0f32.to_bits()),
             active: AtomicBool::new(false), eof: AtomicBool::new(true),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(0), error: AtomicI32::new(0),
         };
         let mut engine = Engine::new();
@@ -991,6 +1015,20 @@ mod tests {
         assert_eq!(attach_output_producer_for_next_track(&mut engine, true, 48_000, 2, FMT_I16, 8, SHARING_EXCLUSIVE), Err(DEVICE_MISMATCH));
         assert_eq!(attach_output_producer_for_next_track(&mut engine, false, 48_000, 2, FMT_I16, 7, SHARING_EXCLUSIVE), Err(INVALID_STATE));
         assert_eq!(engine.producer_epoch, 3);
+    }
+
+    #[test]
+    fn track_eof_completes_only_after_buffer_drains_without_closing_queue_output() {
+        assert!(!output_should_complete(false, true, 128, false));
+        assert!(output_should_complete(false, true, 0, false));
+        assert!(!output_should_complete(false, true, 0, true));
+        assert!(!output_should_complete(false, false, 0, false));
+    }
+
+    #[test]
+    fn queue_eof_remains_a_terminal_output_condition() {
+        assert!(!output_should_complete(true, false, 64, false));
+        assert!(output_should_complete(true, false, 0, false));
     }
 
     #[test]
@@ -1035,6 +1073,7 @@ mod tests {
             volume: AtomicU32::new(1.0_f32.to_bits()),
             active: AtomicBool::new(true),
             eof: AtomicBool::new(false),
+            track_eof: AtomicBool::new(false),
             underruns: AtomicU64::new(0),
             error: AtomicI32::new(0),
         };
@@ -1107,6 +1146,7 @@ mod tests {
                 volume: AtomicU32::new(1.0_f32.to_bits()),
                 active: AtomicBool::new(true),
                 eof: AtomicBool::new(false),
+            track_eof: AtomicBool::new(false),
                 underruns: AtomicU64::new(0),
                 error: AtomicI32::new(0),
             };
