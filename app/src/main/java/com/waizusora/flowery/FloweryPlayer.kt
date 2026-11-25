@@ -309,9 +309,17 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
                 )
                 var reusedQueueOutput = false
                 if (aaudioQueueOutputOwner.phase() == AAudioQueueOutputOwner.Phase.RETAINED) {
-                    reusedQueueOutput = aaudioQueueOutputOwner.prepareNextTrack(requestedOutputSignature)
+                    val compatibilityFailure = aaudioQueueOutputOwner.reuseRejectionReason(requestedOutputSignature)
+                    reusedQueueOutput = compatibilityFailure == null &&
+                        aaudioQueueOutputOwner.prepareNextTrack(requestedOutputSignature)
                     if (!reusedQueueOutput) {
-                        Log.i("FloweryDiagnostics", "AAUDIO_QUEUE_OUTPUT_REUSE_REJECTED nextRate=$sourceRate nextChannels=$channels nextFormat=$outputFormat deviceId=$deviceId")
+                        val rejectionReason = compatibilityFailure ?: "NATIVE_PRODUCER_ATTACH_FAILED"
+                        Log.i(
+                            "FloweryDiagnostics",
+                            "AAUDIO_QUEUE_OUTPUT_REUSE_REJECTED reason=$rejectionReason " +
+                                "retainedSignature=${aaudioQueueOutputOwner.currentSignature()} " +
+                                "requestedSignature=$requestedOutputSignature"
+                        )
                         aaudioQueueOutputOwner.close()
                     }
                 } else if (aaudioQueueOutputOwner.phase() != AAudioQueueOutputOwner.Phase.CLOSED) {
