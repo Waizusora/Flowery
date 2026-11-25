@@ -79,6 +79,14 @@ class AAudioQueueOutputOwnerTest {
         assertFalse(signature(channels = 9, format = 1).isValid())
     }
     @Test
+    fun earlyBoundaryAdvancesOnlyWhenQueueHasNextTrack() {
+        assertTrue(shouldAdvanceAaudioQueue(status = 3, hasNextTrack = true))
+        assertFalse(shouldAdvanceAaudioQueue(status = 3, hasNextTrack = false))
+        assertTrue(shouldAdvanceAaudioQueue(status = 4, hasNextTrack = false))
+        assertFalse(shouldAdvanceAaudioQueue(status = 0, hasNextTrack = true))
+        assertFalse(shouldAdvanceAaudioQueue(status = 1, hasNextTrack = true))
+    }
+    @Test
     fun queueCloseRevokesLeaseAndStopsOutputExactlyOnce() {
         val native = FakeNative()
         val owner = AAudioQueueOutputOwner(native)
