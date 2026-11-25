@@ -45,8 +45,9 @@ internal class JniAAudioQueueOutputNative : AAudioQueueOutputNative {
 /**
  * Queue-scoped lease coordinator for one already-open AAudio stream.
  *
- * This class is deliberately independent of FloweryPlayer until the player can
- * transfer decoder producers without closing the queue-owned device output.
+ * FloweryPlayer owns one instance for its active queue. It retains a compatible
+ * AAudio stream after track EOF and releases it on queue EOF, cancellation, or
+ * a PCM/device signature change.
  */
 internal class AAudioQueueOutputOwner(
     private val native: AAudioQueueOutputNative,
