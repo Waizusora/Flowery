@@ -140,3 +140,11 @@ These APIs are not yet called by `FloweryPlayer` or `PlaybackService`. The curre
 The next-track ring reset now takes the expected sample rate, channel count, and AAudio output format. Native code validates all three against the currently opened stream before replacing either SPSC endpoint. A mismatch returns an explicit invalid-format result and leaves the existing ring untouched; the caller must use the output reconfiguration path instead. Unit tests cover sample-rate, channel-count, and sample-format mismatches.
 
 This prevents a future queue owner from accidentally treating a different PCM signature as a same-format continuation. The Kotlin player does not yet invoke this handoff API, so no claim of runtime gapless playback is made.
+
+### AAudio producer epoch isolation
+
+Each opened AAudio output ring now owns a monotonically advancing producer epoch. A segmented decode worker captures the epoch when it starts. Queue-budget reads, PCM writes, and all track-EOF signals are accepted only while that epoch still owns the ring.
+
+Replacing the ring for a same-signature next track advances the epoch before a new producer starts. Stale workers detect the mismatch and exit; a late PCM chunk or EOF notification from an older track is rejected and cannot contaminate or prematurely finish the next track's ring. Closing output also invalidates the previous epoch.
+
+This is a native race-safety prerequisite for queue-level handoff. It does not itself retain output, attach the next decoder, or enable gapless playback in the Kotlin player.
