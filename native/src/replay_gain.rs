@@ -210,6 +210,38 @@ mod tests {
     }
 
     #[test]
+    fn album_mode_prefers_album_values_and_applies_album_preamp() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("-8 dB"), Some("0.9"), Some("-5 dB"), Some("1.1"),
+        );
+        let plan = metadata.plan(ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            album_preamp_db: 1.0,
+            prevent_clipping: false,
+            ..ReplayGainSettings::default()
+        });
+        assert!((plan.gain_db - -4.0).abs() < 0.0001);
+        assert!((plan.linear_gain - 10.0_f32.powf(-4.0 / 20.0)).abs() < 0.0001);
+        assert!(!plan.peak_limit_applied);
+    }
+
+    #[test]
+    fn album_mode_falls_back_to_track_peak_for_clipping_protection() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("6 dB"), Some("1.2"), None, None,
+        );
+        let plan = metadata.plan(ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: true,
+            ..ReplayGainSettings::default()
+        });
+        let expected = -20.0 * 1.2_f32.log10();
+        assert!(plan.peak_limit_applied);
+        assert!((plan.gain_db - expected).abs() < 0.0001);
+        assert!(plan.linear_gain * 1.2 <= 1.0001);
+    }
+
+    #[test]
     fn preamp_is_bounded_and_non_finite_values_are_ignored() {
         let metadata = ReplayGainMetadata::from_values(None, None, None, None);
         let plan = metadata.plan(ReplayGainSettings {
