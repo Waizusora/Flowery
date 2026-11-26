@@ -391,6 +391,19 @@ impl UsbPcmSamples {
             Self::S32(v) => v.len(), Self::F32(v) => v.len(), Self::F64(v) => v.len() }
     }
 
+    /// Allocation capacity in typed samples, used by the AAudio worker telemetry.
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::Empty => 0,
+            Self::U8(v) => v.capacity(),
+            Self::S16(v) => v.capacity(),
+            Self::S24(v) => v.capacity(),
+            Self::S32(v) => v.capacity(),
+            Self::F32(v) => v.capacity(),
+            Self::F64(v) => v.capacity(),
+        }
+    }
+
     /// USB Audio Class Type I data format code: PCM=1, PCM8=2, IEEE_FLOAT=3.
     pub fn data_format_code(&self) -> u8 {
         match self {
