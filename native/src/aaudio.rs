@@ -70,6 +70,10 @@ fn producer_epoch_matches(current: u64, expected: u64) -> bool {
     current != 0 && current == expected
 }
 
+fn output_track_position_frames(played: u64, track_start: u64) -> u64 {
+    played.saturating_sub(track_start)
+}
+
 fn output_identity_matches(
     actual_device_id: i32, actual_sharing_mode: i32,
     expected_device_id: i32, expected_sharing_mode: i32,
@@ -108,7 +112,18 @@ fn attach_output_producer_for_next_track(
     ) {
         return Err(DEVICE_MISMATCH);
     }
-    if engine.producer.is_none() { return Err(INVALID_STATE); }
+    let producer = engine.producer.as_ref().ok_or(INVALID_STATE)?;
+    let bytes_per_frame = output.channels.checked_mul(output.bytes_per_sample).ok_or(INVALID_FORMAT)?;
+    if bytes_per_frame == 0 { return Err(INVALID_FORMAT); }
+    // The current ring contains only the previous track's remaining tail at
+    // this ownership boundary. The next track's clock begins after that tail.
+    let free_frames = producer.slots() / bytes_per_frame;
+    let queued_tail_frames = output.capacity.saturating_sub(free_frames as u64);
+    let played_frames = output.played.load(Ordering::Acquire);
+    OUTPUT_TRACK_START_FRAME.store(
+        played_frames.saturating_add(queued_tail_frames),
+        Ordering::Release,
+    );
 
     engine.producer_epoch = engine.producer_epoch.wrapping_add(1).max(1);
     let epoch = engine.producer_epoch;
@@ -225,6 +240,7 @@ impl Engine {
 }
 static ENGINE:OnceLock<Mutex<Engine>>=OnceLock::new();
 static OUTPUT_PERSISTENT: AtomicBool = AtomicBool::new(false);
+static OUTPUT_TRACK_START_FRAME: AtomicU64 = AtomicU64::new(0);
 fn engine()-> &'static Mutex<Engine>{ENGINE.get_or_init(||Mutex::new(Engine::new()))}
 
 /// Whether a completed track may release its session while retaining the device output.
@@ -252,6 +268,7 @@ fn reset_output_ring(engine: &mut Engine, expected_rate: i32, expected_channels:
     output.active.store(true, Ordering::Release);
     output.error.store(0, Ordering::Release);
     output.played.store(0, Ordering::Release);
+    OUTPUT_TRACK_START_FRAME.store(0, Ordering::Release);
     engine.producer_epoch = engine.producer_epoch.wrapping_add(1).max(1);
     engine.producer = Some(producer);
     Ok(())
@@ -684,7 +701,7 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStopOutputSc
         e.last_open[10]=7; // Exclusive mode is mandatory; shared fallback is prohibited.
     }
     if result!=OK{unsafe{e.stop();}return result;}
-    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);e.producer_epoch=e.producer_epoch.wrapping_add(1).max(1);e.producer=Some(producer);let _=&mut env;OK
+    out.active.store(true,Ordering::Release);e.last_open[5]=unsafe{AAudioStream_getDeviceId(e.stream)} as i64;e.last_open[6]=actual_sharing as i64;e.last_open[7]=out.rate as i64;e.last_open[8]=channels as i64;e.last_open[9]=format as i64;if e.last_open[10]!=4{e.last_open[10]=0;}e.output=Some(out);OUTPUT_TRACK_START_FRAME.store(0,Ordering::Release);e.producer_epoch=e.producer_epoch.wrapping_add(1).max(1);e.producer=Some(producer);let _=&mut env;OK
 }
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeStartStreamPlayback(_:JNIEnv,_:JClass)->jint{
  let e=engine().lock().unwrap_or_else(|p|p.into_inner());if e.output.is_none()||e.stream.is_null(){return INVALID_STATE;}unsafe{let s=AAudioStream_getState(e.stream);if s==STATE_STARTED{return OK;}if s!=STATE_OPEN&&s!=STATE_PAUSED&&s!=STATE_STOPPED{return INVALID_STATE;}AAudioStream_requestStart(e.stream)}
@@ -828,6 +845,7 @@ pub(crate) fn flush_output_for_seek(position: i64) -> i32 {
         if popped.is_empty() { break; }
     }
     output.played.store(position as u64, Ordering::Release);
+    OUTPUT_TRACK_START_FRAME.store(0, Ordering::Release);
     output.eof.store(false, Ordering::Release);
     output.active.store(true, Ordering::Release);
     OK
@@ -859,7 +877,7 @@ pub(crate) fn signal_stream_eof(epoch: u64) -> bool {
 
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetStreamEof(_:JNIEnv,_:JClass){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.eof.store(true,Ordering::Release);}}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetStreamBufferedFrames(_:JNIEnv,_:JClass)->jint{let e=engine().lock().unwrap_or_else(|p|p.into_inner());match (e.output.as_ref(),e.producer.as_ref()){(Some(o),Some(p))=>{let bpf=o.channels*o.bytes_per_sample;if bpf==0{0}else{o.capacity.saturating_sub((p.slots()/bpf) as u64).min(i32::MAX as u64) as i32}},_=>0}}
-#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|o.played.load(Ordering::Acquire) as i64).unwrap_or(0)}
+#[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeGetOutputPositionFrames(_:JNIEnv,_:JClass)->jlong{engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref().map(|o|output_track_position_frames(o.played.load(Ordering::Acquire),OUTPUT_TRACK_START_FRAME.load(Ordering::Acquire)) as i64).unwrap_or(0)}
 #[no_mangle] pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetOutputVolume(_:JNIEnv,_:JClass,v:f32){if let Some(o)=engine().lock().unwrap_or_else(|p|p.into_inner()).output.as_ref(){o.volume.store(v.clamp(0.0,1.0).to_bits(),Ordering::Relaxed);}}
 pub(crate) fn pause_output_for_session() -> Option<i32> {
     let e=engine().lock().unwrap_or_else(|p|p.into_inner());
@@ -935,6 +953,12 @@ fn stop_output_completely() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn track_position_excludes_previous_track_tail_and_never_goes_negative() {
+        assert_eq!(super::output_track_position_frames(50_000, 44_100), 5_900);
+        assert_eq!(super::output_track_position_frames(40_000, 44_100), 0);
+    }
+
     use super::*;
     use rtrb::RingBuffer;
 

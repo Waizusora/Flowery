@@ -140,6 +140,111 @@ mod integer_pcm_gain_tests {
     }
 }
 
+/// Apply ReplayGain to an AAudio-owned decoded chunk. This function must only
+/// receive the drained chunk returned by read_usb_frames; it never mutates the
+/// decoder's shared pending buffer and is not called by USB Direct.
+pub(super) fn apply_replay_gain(samples: &mut UsbPcmSamples, linear_gain: f32) -> Result<(), &'static str> {
+    if !linear_gain.is_finite() || !(0.0..=64.0).contains(&linear_gain) {
+        return Err("ReplayGain linear multiplier is outside the supported range");
+    }
+    if linear_gain == 1.0 || matches!(samples, UsbPcmSamples::Empty) { return Ok(()); }
+    let gain = f64::from(linear_gain);
+    match samples {
+        UsbPcmSamples::S16(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(f64::from(i16::MIN), f64::from(i16::MAX)) as i16;
+            }
+        }
+        UsbPcmSamples::S24(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(-8_388_608.0, 8_388_607.0) as i32;
+            }
+        }
+        UsbPcmSamples::S32(values) => {
+            for value in values {
+                *value = (f64::from(*value) * gain).round()
+                    .clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32;
+            }
+        }
+        UsbPcmSamples::F32(values) => {
+            for value in values {
+                *value = if value.is_finite() {
+                    (f64::from(*value) * gain).clamp(-1.0, 1.0) as f32
+                } else { 0.0 };
+            }
+        }
+        _ => return Err("ReplayGain is unsupported for this AAudio decoded sample representation"),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod replay_gain_pcm_tests {
+    use super::{apply_replay_gain, UsbPcmSamples};
+
+    #[test]
+    fn applies_gain_to_integer_formats_with_saturation() {
+        let mut s16 = UsbPcmSamples::S16(vec![-20_000, 20_000]);
+        apply_replay_gain(&mut s16, 2.0).unwrap();
+        assert_eq!(s16, UsbPcmSamples::S16(vec![-32_768, 32_767]));
+
+        let mut s24 = UsbPcmSamples::S24(vec![-5_000_000, 5_000_000]);
+        apply_replay_gain(&mut s24, 2.0).unwrap();
+        assert_eq!(s24, UsbPcmSamples::S24(vec![-8_388_608, 8_388_607]));
+
+        let mut s32 = UsbPcmSamples::S32(vec![-1_000_000_000, 1_000_000_000]);
+        apply_replay_gain(&mut s32, 2.0).unwrap();
+        assert_eq!(s32, UsbPcmSamples::S32(vec![-2_000_000_000, 2_000_000_000]));
+    }
+
+    #[test]
+    fn applies_gain_to_float_and_sanitizes_non_finite_values() {
+        let mut samples = UsbPcmSamples::F32(vec![-0.25, 0.25, 0.75, f32::NAN, f32::INFINITY]);
+        apply_replay_gain(&mut samples, 2.0).unwrap();
+        assert_eq!(samples, UsbPcmSamples::F32(vec![-0.5, 0.5, 1.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn fractional_gain_is_applied_consistently_to_all_pcm_widths() {
+        let mut s16 = UsbPcmSamples::S16(vec![-3, 3]);
+        let mut s24 = UsbPcmSamples::S24(vec![-3, 3]);
+        let mut s32 = UsbPcmSamples::S32(vec![-3, 3]);
+        let mut f32 = UsbPcmSamples::F32(vec![-0.75, 0.75]);
+
+        apply_replay_gain(&mut s16, 0.5).unwrap();
+        apply_replay_gain(&mut s24, 0.5).unwrap();
+        apply_replay_gain(&mut s32, 0.5).unwrap();
+        apply_replay_gain(&mut f32, 0.5).unwrap();
+
+        assert_eq!(s16, UsbPcmSamples::S16(vec![-2, 2]));
+        assert_eq!(s24, UsbPcmSamples::S24(vec![-2, 2]));
+        assert_eq!(s32, UsbPcmSamples::S32(vec![-2, 2]));
+        assert_eq!(f32, UsbPcmSamples::F32(vec![-0.375, 0.375]));
+    }
+
+    #[test]
+    fn empty_eof_chunk_is_a_valid_replaygain_noop() {
+        let mut empty = UsbPcmSamples::Empty;
+        assert!(apply_replay_gain(&mut empty, 2.0).is_ok());
+        assert_eq!(empty, UsbPcmSamples::Empty);
+    }
+
+    #[test]
+    fn unity_gain_is_value_preserving() {
+        let mut samples = UsbPcmSamples::S32(vec![i32::MIN, -1, 0, 1, i32::MAX]);
+        apply_replay_gain(&mut samples, 1.0).unwrap();
+        assert_eq!(samples, UsbPcmSamples::S32(vec![i32::MIN, -1, 0, 1, i32::MAX]));
+    }
+
+    #[test]
+    fn rejects_invalid_gain_and_unsupported_representations() {
+        assert!(apply_replay_gain(&mut UsbPcmSamples::S16(vec![1]), f32::NAN).is_err());
+        assert!(apply_replay_gain(&mut UsbPcmSamples::U8(vec![128]), 2.0).is_err());
+    }
+}
+
 /// Platform-neutral signed integer PCM layout used at native output boundaries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct PcmFormat {
@@ -222,16 +327,62 @@ impl UsbPcmSamples {
         Ok(())
     }
 
-    pub fn drain(&mut self, count: usize) -> Self {
-        macro_rules! take { ($v:expr, $variant:ident) => {{ let n = count.min($v.len()); Self::$variant($v.drain(..n).collect()) }}; }
+    pub fn clear(&mut self) {
         match self {
-            Self::Empty => Self::Empty,
-            Self::U8(v) => take!(v, U8),
-            Self::S16(v) => take!(v, S16),
-            Self::S24(v) => take!(v, S24),
-            Self::S32(v) => take!(v, S32),
-            Self::F32(v) => take!(v, F32),
-            Self::F64(v) => take!(v, F64),
+            Self::Empty => {},
+            Self::U8(values) => values.clear(),
+            Self::S16(values) => values.clear(),
+            Self::S24(values) => values.clear(),
+            Self::S32(values) => values.clear(),
+            Self::F32(values) => values.clear(),
+            Self::F64(values) => values.clear(),
+        }
+    }
+
+    /// Preserve the original allocating drain API for USB Direct callers.
+    /// Android AAudio uses `drain_into` with a reusable destination buffer.
+    pub fn drain(&mut self, count: usize) -> Self {
+        let mut output = Self::Empty;
+        self.drain_into(count, &mut output)
+            .expect("draining PCM into a matching empty buffer cannot fail");
+        output
+    }
+
+    /// Move a bounded sample range into a caller-owned buffer while retaining
+    /// that buffer's allocation for the next streaming chunk.
+    pub fn drain_into(&mut self, count: usize, output: &mut Self) -> Result<(), &'static str> {
+        if matches!(self, Self::Empty) {
+            output.clear();
+            return Ok(());
+        }
+        if matches!(output, Self::Empty) {
+            *output = match self {
+                Self::Empty => Self::Empty,
+                Self::U8(_) => Self::U8(Vec::new()),
+                Self::S16(_) => Self::S16(Vec::new()),
+                Self::S24(_) => Self::S24(Vec::new()),
+                Self::S32(_) => Self::S32(Vec::new()),
+                Self::F32(_) => Self::F32(Vec::new()),
+                Self::F64(_) => Self::F64(Vec::new()),
+            };
+        }
+        macro_rules! take_into {
+            ($source:expr, $destination:expr) => {{
+                let take = count.min($source.len());
+                $destination.clear();
+                $destination.extend_from_slice(&$source[..take]);
+                $source.drain(..take);
+            }};
+        }
+        match (self, output) {
+            (Self::Empty, Self::Empty) => Ok(()),
+            (Self::U8(source), Self::U8(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S16(source), Self::S16(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S24(source), Self::S24(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S32(source), Self::S32(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::F32(source), Self::F32(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::F64(source), Self::F64(destination)) => { take_into!(source, destination); Ok(()) },
+            _ => Err("Decoded sample representation changed while reusing the PCM chunk buffer"),
         }
     }
 
@@ -252,6 +403,67 @@ impl UsbPcmSamples {
     }
 }
 
+
+#[cfg(test)]
+mod reusable_pcm_chunk_tests {
+    use super::UsbPcmSamples;
+
+    #[test]
+    fn drain_into_reuses_typed_buffer_and_preserves_remaining_samples() {
+        let cases = [
+            (UsbPcmSamples::S16(vec![1, 2, 3, 4]), UsbPcmSamples::S16(vec![1, 2]), UsbPcmSamples::S16(vec![3, 4])),
+            (UsbPcmSamples::S24(vec![1, 2, 3, 4]), UsbPcmSamples::S24(vec![1, 2]), UsbPcmSamples::S24(vec![3, 4])),
+            (UsbPcmSamples::S32(vec![1, 2, 3, 4]), UsbPcmSamples::S32(vec![1, 2]), UsbPcmSamples::S32(vec![3, 4])),
+            (UsbPcmSamples::F32(vec![1.0, 2.0, 3.0, 4.0]), UsbPcmSamples::F32(vec![1.0, 2.0]), UsbPcmSamples::F32(vec![3.0, 4.0])),
+        ];
+        for (mut source, expected_first, expected_remaining) in cases {
+            let mut output = UsbPcmSamples::Empty;
+            source.drain_into(2, &mut output).unwrap();
+            assert_eq!(output, expected_first);
+            let capacity = match &output {
+                UsbPcmSamples::S16(v) => v.capacity(),
+                UsbPcmSamples::S24(v) | UsbPcmSamples::S32(v) => v.capacity(),
+                UsbPcmSamples::F32(v) => v.capacity(),
+                _ => unreachable!(),
+            };
+            source.drain_into(2, &mut output).unwrap();
+            assert_eq!(output, expected_remaining);
+            let next_capacity = match &output {
+                UsbPcmSamples::S16(v) => v.capacity(),
+                UsbPcmSamples::S24(v) | UsbPcmSamples::S32(v) => v.capacity(),
+                UsbPcmSamples::F32(v) => v.capacity(),
+                _ => unreachable!(),
+            };
+            assert_eq!(next_capacity, capacity, "chunk buffer allocation should be retained");
+            source.drain_into(2, &mut output).unwrap();
+            assert_eq!(output.len(), 0);
+        }
+    }
+
+    #[test]
+    fn drain_into_handles_eof_and_rejects_format_changes() {
+        let mut eof = UsbPcmSamples::Empty;
+        let mut output = UsbPcmSamples::S16(vec![7, 8]);
+        output.clear();
+        eof.drain_into(8, &mut output).unwrap();
+        assert_eq!(output.len(), 0);
+
+        let mut source = UsbPcmSamples::S16(vec![1, 2]);
+        let mut wrong_format = UsbPcmSamples::F32(vec![0.5]);
+        assert!(source.drain_into(1, &mut wrong_format).is_err());
+    }
+
+    #[test]
+    fn empty_typed_chunk_keeps_its_representation_and_capacity() {
+        let mut source = UsbPcmSamples::S32(vec![1, 2]);
+        let mut output = UsbPcmSamples::Empty;
+        source.drain_into(2, &mut output).unwrap();
+        let capacity = match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => unreachable!() };
+        source.drain_into(2, &mut output).unwrap();
+        assert_eq!(output.len(), 0);
+        assert_eq!(match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => 0 }, capacity);
+    }
+}
 
 /// Derive the PCM declaration from the decoder's actual output buffer.
 /// Container metadata is only a hint: lossy codecs commonly omit sample_format

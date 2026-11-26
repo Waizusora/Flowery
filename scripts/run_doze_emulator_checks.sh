@@ -2,9 +2,9 @@
 set -euo pipefail
 
 PACKAGE="com.waizusora.flowery"
-mkdir -p build/doze-report
 REPORT="$GITHUB_WORKSPACE/build/doze-report"
 APK="$GITHUB_WORKSPACE/app/build/outputs/apk/debug/app-debug.apk"
+mkdir -p "$REPORT"
 
 read_app_pid() {
   adb shell pidof "$PACKAGE" | tr -d '\r' | xargs
@@ -12,19 +12,17 @@ read_app_pid() {
 
 capture_deviceidle_state() {
   local phase="$1"
-  local expected="$2"
+  local mode="$2"
+  local expected="$3"
   local output="$REPORT/${phase}-state.txt"
 
-  # Emulator load can make the default 10-second dumpsys service deadline
-  # expire even though deviceidle itself is functioning. Give the service
-  # more time and retry before treating the state check as a real failure.
-  for attempt in 1 2 3; do
-    if adb shell dumpsys -t 30 deviceidle > "$output" 2>&1 &&
-      grep -Eq "$expected" "$output"; then
+  for attempt in 1 2 3 4 5; do
+    if adb shell cmd deviceidle get "$mode" >"$output" 2>&1 &&
+      grep -Eiq "$expected" "$output"; then
       cat "$output"
       return 0
     fi
-    echo "deviceidle state capture for $phase did not match on attempt $attempt/3." >&2
+    echo "deviceidle $mode state capture for $phase did not match on attempt $attempt/5." >&2
     sleep 2
   done
 
@@ -53,34 +51,35 @@ for attempt in $(seq 1 30); do
   fi
   sleep 2
 done
+
 APP_PID="$(read_app_pid)"
 test -n "$APP_PID"
 printf 'app_pid_before=%s\n' "$APP_PID" | tee "$REPORT/process.txt"
-
 adb shell input keyevent 3
 
 echo "Entering forced Light Doze"
-adb shell dumpsys deviceidle force-idle light | tee "$REPORT/light-force.txt"
+adb shell cmd deviceidle force-idle light | tee "$REPORT/light-force.txt"
 sleep 5
-capture_deviceidle_state "light" 'mLightState=(IDLE|IDLE_MAINTENANCE)'
+capture_deviceidle_state "light" "light" '^(IDLE|IDLE_MAINTENANCE)$'
 assert_app_pid_unchanged "light_doze"
 
 echo "Exiting forced Light Doze"
-adb shell dumpsys deviceidle unforce | tee "$REPORT/light-unforce.txt"
+adb shell cmd deviceidle unforce | tee "$REPORT/light-unforce.txt"
 sleep 2
+capture_deviceidle_state "after-light" "light" '^(ACTIVE|INACTIVE|IDLE)$'
 assert_app_pid_unchanged "after_light_doze"
 
 echo "Entering forced Deep Doze"
-adb shell dumpsys deviceidle force-idle deep | tee "$REPORT/deep-force.txt"
+adb shell cmd deviceidle force-idle deep | tee "$REPORT/deep-force.txt"
 sleep 5
-capture_deviceidle_state "deep" 'mState=IDLE([[:space:]]|$)'
+capture_deviceidle_state "deep" "deep" '^IDLE$'
 read_app_pid | tee "$REPORT/process-during-deep-doze.txt"
 assert_app_pid_unchanged "deep_doze"
 
 echo "Exiting forced Deep Doze"
-adb shell dumpsys deviceidle unforce | tee "$REPORT/deep-unforce.txt"
+adb shell cmd deviceidle unforce | tee "$REPORT/deep-unforce.txt"
 sleep 2
-capture_deviceidle_state "active" 'mForceIdle=false'
+capture_deviceidle_state "active" "deep" '^(ACTIVE|INACTIVE)$'
 assert_app_pid_unchanged "after_deep_doze"
 
 echo "Doze transition and application process continuity checks passed. Playback continuity is not asserted by this workflow."

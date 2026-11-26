@@ -15,6 +15,7 @@ use std::thread::{self, JoinHandle};
 #[cfg(target_os = "android")]
 use crate::playback_session::session_ref;
 use std::os::fd::FromRawFd;
+use std::io::{Seek, SeekFrom};
 
 use jni::objects::{JClass, JString};
 use jni::sys::{jint, jlong};
@@ -142,6 +143,47 @@ pub(super) struct StreamDecoder {
     time_base: Option<symphonia::core::units::TimeBase>,
     discard_source_frames: u64,
     consecutive_decode_errors: u32,
+    replay_gain_metadata: crate::replay_gain::ReplayGainMetadata,
+}
+
+/// Read standard ReplayGain tags from a duplicated descriptor before the decoder
+/// starts consuming the stream. Lofty normalizes ID3 TXXX, Vorbis comments and
+/// MP4 freeform metadata into the same ItemKey values.
+fn apply_stream_replay_gain(
+    samples: &mut crate::pcm_format::UsbPcmSamples,
+    metadata: crate::replay_gain::ReplayGainMetadata,
+    settings: crate::replay_gain::ReplayGainSettings,
+) -> Result<(), &'static str> {
+    let plan = metadata.plan(settings);
+    crate::pcm_format::apply_replay_gain(samples, plan.linear_gain)
+}
+
+fn read_replay_gain_metadata(fd: i32) -> crate::replay_gain::ReplayGainMetadata {
+    let duplicate = unsafe { libc::dup(fd) };
+    if duplicate < 0 {
+        return crate::replay_gain::ReplayGainMetadata::default();
+    }
+
+    let mut file = unsafe { File::from_raw_fd(duplicate) };
+    // dup() shares the underlying file offset. Rewind before parsing and restore
+    // it afterward so Symphonia always starts from the beginning of the asset.
+    let _ = file.seek(SeekFrom::Start(0));
+    let metadata = lofty::read_from(&mut file)
+        .ok()
+        .and_then(|tagged| {
+            use lofty::file::TaggedFileExt;
+            use lofty::tag::ItemKey;
+            let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
+            Some(crate::replay_gain::ReplayGainMetadata::from_values(
+                tag.get_string(ItemKey::ReplayGainTrackGain),
+                tag.get_string(ItemKey::ReplayGainTrackPeak),
+                tag.get_string(ItemKey::ReplayGainAlbumGain),
+                tag.get_string(ItemKey::ReplayGainAlbumPeak),
+            ))
+        })
+        .unwrap_or_default();
+    let _ = file.seek(SeekFrom::Start(0));
+    metadata
 }
 
 fn gapless_format_options() -> FormatOptions {
@@ -151,6 +193,7 @@ fn gapless_format_options() -> FormatOptions {
 
 impl StreamDecoder {
     fn new(fd: i32, extension: &str) -> Result<Self,String> {
+        let replay_gain_metadata = read_replay_gain_metadata(fd);
         let duplicate = unsafe { libc::dup(fd) };
         if duplicate < 0 { return Err("Unable to duplicate the selected document descriptor".into()); }
         let file = unsafe { File::from_raw_fd(duplicate) };
@@ -237,6 +280,7 @@ impl StreamDecoder {
             usb_pending: None, eof: false,
             duration_ms, time_base, discard_source_frames: 0,
             consecutive_decode_errors: 0,
+            replay_gain_metadata,
         })
     }
 
@@ -260,6 +304,10 @@ impl StreamDecoder {
         Ok(requested_ms)
     }
 
+
+    pub(super) fn replay_gain_metadata(&self) -> crate::replay_gain::ReplayGainMetadata {
+        self.replay_gain_metadata
+    }
 
     pub(super) fn playback_metadata(&self) -> (usize, usize, u8, u8) {
         (self.source_rate, self.channels, self.source_bits, self.source_data_format)
@@ -349,7 +397,13 @@ impl StreamDecoder {
     }
 
     #[cfg(target_os = "android")]
-    fn read_aaudio_pcm_frames(&mut self, requested: usize) -> Result<Vec<u8>,String> {
+    fn read_aaudio_pcm_frames_into(
+        &mut self,
+        requested: usize,
+        samples: &mut crate::pcm_format::UsbPcmSamples,
+        bytes: &mut Vec<u8>,
+    ) -> Result<bool,String> {
+        bytes.clear();
         let is_integer_pcm = matches!(self.source_bits, 16 | 24 | 32)
             && self.source_data_format == 1;
         let is_float_pcm = self.source_bits == 32 && self.source_data_format == 3;
@@ -359,7 +413,15 @@ impl StreamDecoder {
                 self.source_bits, self.source_data_format
             ));
         }
-        let samples = self.read_usb_frames(requested)?;
+        // The worker retains this typed buffer between chunks. The decoder's
+        // pending PCM queue is also retained when drained so its allocation can
+        // accept subsequent decoded packets without being discarded at each boundary.
+        if !self.read_usb_frames_into(requested, samples)? {
+            return Ok(false);
+        }
+        let settings = crate::replay_gain::settings();
+        apply_stream_replay_gain(samples, self.replay_gain_metadata, settings)
+            .map_err(str::to_string)?;
         let format = crate::pcm_format::PcmFormat {
             sample_rate: self.source_rate as u32,
             channels: self.channels as u16,
@@ -367,15 +429,43 @@ impl StreamDecoder {
             subslot_bytes: self.source_bits / 8,
             little_endian: true,
         }.validate().map_err(str::to_string)?;
-        let mut bytes = Vec::with_capacity(samples.len() * usize::from(format.subslot_bytes));
+        // Keep the output allocation across decode iterations. The worker owns
+        // this buffer, so reuse does not introduce sharing or synchronization.
+        let required = samples.len() * usize::from(format.subslot_bytes);
+        if bytes.capacity() < required {
+            bytes.reserve(required);
+        }
         if is_float_pcm {
-            crate::pcm_format::encode_usb_float_pcm(&samples, format, &mut bytes)
+            crate::pcm_format::encode_usb_float_pcm(&samples, format, bytes)
                 .map_err(str::to_string)?;
         } else {
-            crate::pcm_format::encode_usb_pcm(&samples, format, &mut bytes)
+            crate::pcm_format::encode_usb_pcm(&samples, format, bytes)
                 .map_err(str::to_string)?;
         }
-        Ok(bytes)
+        Ok(true)
+    }
+
+    #[cfg(target_os = "android")]
+    fn read_usb_frames_into(
+        &mut self,
+        requested: usize,
+        output: &mut crate::pcm_format::UsbPcmSamples,
+    ) -> Result<bool,String> {
+        while self.usb_pending.as_ref().map(|samples| samples.len() == 0).unwrap_or(true) && !self.eof {
+            self.decode_packet()?;
+        }
+        let Some(pending) = self.usb_pending.as_mut() else {
+            if self.eof {
+                output.clear();
+                return Ok(false);
+            }
+            return Err("USB decoder produced no typed PCM buffer".into());
+        };
+        let take = requested.saturating_mul(self.channels).min(pending.len());
+        pending.drain_into(take, output).map_err(str::to_string)?;
+        // Keep an empty pending vector alive: the next decoded packet can append
+        // into its existing allocation instead of allocating a new queue.
+        Ok(output.len() != 0)
     }
 
     #[cfg(target_os = "android")]
@@ -562,6 +652,33 @@ pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeCreateStream
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_com_waizusora_flowery_NativeAudio_nativeSetReplayGainSettings(
+    _env: JNIEnv,
+    _class: JClass,
+    mode: jint,
+    track_preamp_db: f32,
+    album_preamp_db: f32,
+    prevent_clipping: jni::sys::jboolean,
+) -> jint {
+    let mode = match mode {
+        0 => crate::replay_gain::ReplayGainMode::Off,
+        1 => crate::replay_gain::ReplayGainMode::Track,
+        2 => crate::replay_gain::ReplayGainMode::Album,
+        _ => return -1,
+    };
+    if !track_preamp_db.is_finite() || !album_preamp_db.is_finite() {
+        return -2;
+    }
+    crate::replay_gain::set_settings(crate::replay_gain::ReplayGainSettings {
+        mode,
+        track_preamp_db,
+        album_preamp_db,
+        prevent_clipping: prevent_clipping != 0,
+    });
+    0
+}
+
 fn aaudio_seek_request_is_current(
     request: &crate::playback_session::AAudioSeekRequest,
     current_epoch: u64,
@@ -728,6 +845,10 @@ fn start_stream_pump_worker(
     let thread_session = Arc::clone(&session);
     let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
         let mut produced_frames = 0_u64;
+        // Reused for every chunk to avoid allocating a fresh byte Vec on the
+        // streaming hot path.
+        let mut pcm_buffer = Vec::new();
+        let mut pcm_samples = crate::pcm_format::UsbPcmSamples::Empty;
         while !thread_stop.load(Ordering::Acquire) {
             if thread_session.cancelled.load(Ordering::Acquire) ||
                 thread_session.epoch.load(Ordering::Acquire) != worker_epoch ||
@@ -761,15 +882,15 @@ fn start_stream_pump_worker(
                 }
                 frames = frames.min(remaining as usize);
             }
-            let samples = match decoder.read_aaudio_pcm_frames(frames) {
-                Ok(samples) => samples,
+            let has_samples = match decoder.read_aaudio_pcm_frames_into(frames, &mut pcm_samples, &mut pcm_buffer) {
+                Ok(has_samples) => has_samples,
                 Err(decode_error) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = decode_error;
                     thread_status.store(-2, Ordering::Release);
                     break;
                 }
             };
-            if samples.is_empty() {
+            if !has_samples {
                 crate::aaudio::signal_stream_track_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
@@ -778,20 +899,20 @@ fn start_stream_pump_worker(
             let bytes_per_sample = usize::from(decoder.source_bits / 8);
             let bytes_per_frame = channels * bytes_per_sample;
             drop(decoder);
-            if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
+            if bytes_per_frame == 0 || pcm_buffer.len() % bytes_per_frame != 0 {
                 *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
                     "AAudio PCM byte chunk is not aligned to complete source frames".into();
                 thread_status.store(-2, Ordering::Release);
                 break;
             }
-            match crate::aaudio::write_output_pcm_bytes(output_epoch, &samples) {
-                Ok(written) if written == samples.len() / bytes_per_frame => {
+            match crate::aaudio::write_output_pcm_bytes(output_epoch, &pcm_buffer) {
+                Ok(written) if written == pcm_buffer.len() / bytes_per_frame => {
                     produced_frames = produced_frames.saturating_add(written as u64);
                 }
                 Ok(written) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = format!(
                         "AAudio ring buffer accepted an incomplete PCM chunk ({written} of {} frames)",
-                        samples.len() / bytes_per_frame
+                        pcm_buffer.len() / bytes_per_frame
                     );
                     thread_status.store(-2, Ordering::Release);
                     break;
@@ -1009,6 +1130,64 @@ mod handle_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::apply_stream_replay_gain;
+    use crate::pcm_format::UsbPcmSamples;
+    use crate::replay_gain::{ReplayGainMetadata, ReplayGainMode, ReplayGainSettings};
+
+    #[test]
+    fn album_decoder_path_applies_album_gain_instead_of_track_gain() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("-8.00 dB"), None, Some("-5.00 dB"), None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: false,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let expected_gain = 10.0_f32.powf(-5.0 / 20.0);
+        let expected = (10_000.0_f32 * expected_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
+    #[test]
+    fn album_decoder_path_applies_track_gain_when_album_gain_is_missing() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("-9.93 dB"), Some("0.5"), None, None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: false,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let expected_gain = 10.0_f32.powf(-9.93 / 20.0);
+        let expected = (10_000.0_f32 * expected_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
+    #[test]
+    fn album_decoder_path_falls_back_to_track_peak_for_clipping_protection() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("6.00 dB"), Some("1.2"), None, None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: true,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let limited_gain = 1.0 / 1.2_f32;
+        let expected = (10_000.0_f32 * limited_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
     #[test]
     fn prebuffer_wait_accepts_minimum_queue_or_short_track_eof() {
         assert!(!stream_prebuffer_ready(0, 4_800, 0));

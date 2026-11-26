@@ -14,6 +14,7 @@ mod playback_policy;
 mod usb_audio;
 mod output_compatibility;
 mod high_quality_resampler;
+mod replay_gain;
 mod usb_uac2;
 mod usb_isochronous;
 mod usb_feedback;
@@ -435,6 +436,10 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "comment": tag.get_string(ItemKey::Comment).unwrap_or_default(),
             "composer": tag.get_string(ItemKey::Composer).unwrap_or_default(),
             "lyrics": tag.get_string(ItemKey::Lyrics).or_else(|| tag.get_string(ItemKey::UnsyncLyrics)).unwrap_or_default(),
+            "replayGainTrackGain": tag.get_string(ItemKey::ReplayGainTrackGain).unwrap_or_default(),
+            "replayGainTrackPeak": tag.get_string(ItemKey::ReplayGainTrackPeak).unwrap_or_default(),
+            "replayGainAlbumGain": tag.get_string(ItemKey::ReplayGainAlbumGain).unwrap_or_default(),
+            "replayGainAlbumPeak": tag.get_string(ItemKey::ReplayGainAlbumPeak).unwrap_or_default(),
             "pictureMime": picture.and_then(|p| p.mime_type()).map(|mime| format!("{mime:?}")).unwrap_or_default(),
             "pictureBase64": picture.map(|p| base64::engine::general_purpose::STANDARD.encode(p.data())).unwrap_or_default(),
             "tagType": format!("{:?}", tag.tag_type()),
@@ -451,6 +456,8 @@ fn tag_json(path: &std::path::Path) -> Result<String, String> {
             "title": "", "artist": "", "album": "", "albumArtist": "", "genre": "",
             "year": "", "track": "", "disc": "", "comment": "", "composer": "",
             "lyrics": "", "pictureMime": "", "pictureBase64": "",
+            "replayGainTrackGain": "", "replayGainTrackPeak": "",
+            "replayGainAlbumGain": "", "replayGainAlbumPeak": "",
             "tagType": "None", "fileType": format!("{:?}", tagged.file_type()),
             "sampleRate": tagged.properties().sample_rate(), "bitDepth": tagged.properties().bit_depth(),
             "channels": tagged.properties().channels(), "bitrateKbps": tagged.properties().overall_bitrate(),

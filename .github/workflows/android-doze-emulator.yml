@@ -94,8 +94,8 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          emulator-boot-timeout: 900
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 1200
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot -wipe-data -cores 2 -memory 4096
           script: bash scripts/run_doze_emulator_checks.sh
 
       - name: Upload Doze diagnostics

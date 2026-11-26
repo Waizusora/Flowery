@@ -359,6 +359,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         logPreviousProcessExitReasons()
+        // Restore the persisted ReplayGain mode before any playback can start.
+        if (!ReplayGainPreferences.apply(this)) {
+            Log.w("FloweryReplayGain", "Unable to apply persisted ReplayGain settings to the native engine")
+        }
         val audioPreferences = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
         restoreFolders()
         restoreScannedTracks()
@@ -466,7 +470,7 @@ class MainActivity : ComponentActivity() {
                 }
             )
 
-            infoTag?.let { tag -> TagInfoDialog(tag, onDismiss = { infoTag = null }) }
+            infoTag?.let { tag -> TagInfoDialog(tag, ReplayGainPreferences.read(this@MainActivity), onDismiss = { infoTag = null }) }
             editingTag?.let { tag ->
                 TagEditorDialog(
                     tag = tag,
@@ -752,7 +756,11 @@ class MainActivity : ComponentActivity() {
             bitDepth = json.optInt("bitDepth"),
             channels = json.optInt("channels"),
             bitrateKbps = json.optInt("bitrateKbps"),
-            durationMs = json.optLong("durationMs")
+            durationMs = json.optLong("durationMs"),
+            replayGainTrackGain = json.optString("replayGainTrackGain"),
+            replayGainTrackPeak = json.optString("replayGainTrackPeak"),
+            replayGainAlbumGain = json.optString("replayGainAlbumGain"),
+            replayGainAlbumPeak = json.optString("replayGainAlbumPeak")
         )
     }
 
