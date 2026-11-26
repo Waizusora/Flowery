@@ -397,7 +397,12 @@ impl StreamDecoder {
     }
 
     #[cfg(target_os = "android")]
-    fn read_aaudio_pcm_frames(&mut self, requested: usize) -> Result<Vec<u8>,String> {
+    fn read_aaudio_pcm_frames_into(
+        &mut self,
+        requested: usize,
+        bytes: &mut Vec<u8>,
+    ) -> Result<bool,String> {
+        bytes.clear();
         let is_integer_pcm = matches!(self.source_bits, 16 | 24 | 32)
             && self.source_data_format == 1;
         let is_float_pcm = self.source_bits == 32 && self.source_data_format == 3;
@@ -412,7 +417,7 @@ impl StreamDecoder {
         // sample format and must pass through as an empty chunk so the pump
         // can publish EOF instead of failing when ReplayGain is enabled.
         if samples.len() == 0 {
-            return Ok(Vec::new());
+            return Ok(false);
         }
         let settings = crate::replay_gain::settings();
         apply_stream_replay_gain(&mut samples, self.replay_gain_metadata, settings)
@@ -424,15 +429,20 @@ impl StreamDecoder {
             subslot_bytes: self.source_bits / 8,
             little_endian: true,
         }.validate().map_err(str::to_string)?;
-        let mut bytes = Vec::with_capacity(samples.len() * usize::from(format.subslot_bytes));
+        // Keep the output allocation across decode iterations. The worker owns
+        // this buffer, so reuse does not introduce sharing or synchronization.
+        let required = samples.len() * usize::from(format.subslot_bytes);
+        if bytes.capacity() < required {
+            bytes.reserve(required);
+        }
         if is_float_pcm {
-            crate::pcm_format::encode_usb_float_pcm(&samples, format, &mut bytes)
+            crate::pcm_format::encode_usb_float_pcm(&samples, format, bytes)
                 .map_err(str::to_string)?;
         } else {
-            crate::pcm_format::encode_usb_pcm(&samples, format, &mut bytes)
+            crate::pcm_format::encode_usb_pcm(&samples, format, bytes)
                 .map_err(str::to_string)?;
         }
-        Ok(bytes)
+        Ok(true)
     }
 
     #[cfg(target_os = "android")]
@@ -812,6 +822,9 @@ fn start_stream_pump_worker(
     let thread_session = Arc::clone(&session);
     let worker = thread::Builder::new().name("flowery-aaudio-decode".into()).spawn(move || {
         let mut produced_frames = 0_u64;
+        // Reused for every chunk to avoid allocating a fresh byte Vec on the
+        // streaming hot path.
+        let mut pcm_buffer = Vec::new();
         while !thread_stop.load(Ordering::Acquire) {
             if thread_session.cancelled.load(Ordering::Acquire) ||
                 thread_session.epoch.load(Ordering::Acquire) != worker_epoch ||
@@ -845,15 +858,15 @@ fn start_stream_pump_worker(
                 }
                 frames = frames.min(remaining as usize);
             }
-            let samples = match decoder.read_aaudio_pcm_frames(frames) {
-                Ok(samples) => samples,
+            let has_samples = match decoder.read_aaudio_pcm_frames_into(frames, &mut pcm_buffer) {
+                Ok(has_samples) => has_samples,
                 Err(decode_error) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = decode_error;
                     thread_status.store(-2, Ordering::Release);
                     break;
                 }
             };
-            if samples.is_empty() {
+            if !has_samples {
                 crate::aaudio::signal_stream_track_eof(output_epoch);
                 thread_status.store(1, Ordering::Release);
                 break;
@@ -862,20 +875,20 @@ fn start_stream_pump_worker(
             let bytes_per_sample = usize::from(decoder.source_bits / 8);
             let bytes_per_frame = channels * bytes_per_sample;
             drop(decoder);
-            if bytes_per_frame == 0 || samples.len() % bytes_per_frame != 0 {
+            if bytes_per_frame == 0 || pcm_buffer.len() % bytes_per_frame != 0 {
                 *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) =
                     "AAudio PCM byte chunk is not aligned to complete source frames".into();
                 thread_status.store(-2, Ordering::Release);
                 break;
             }
-            match crate::aaudio::write_output_pcm_bytes(output_epoch, &samples) {
-                Ok(written) if written == samples.len() / bytes_per_frame => {
+            match crate::aaudio::write_output_pcm_bytes(output_epoch, &pcm_buffer) {
+                Ok(written) if written == pcm_buffer.len() / bytes_per_frame => {
                     produced_frames = produced_frames.saturating_add(written as u64);
                 }
                 Ok(written) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = format!(
                         "AAudio ring buffer accepted an incomplete PCM chunk ({written} of {} frames)",
-                        samples.len() / bytes_per_frame
+                        pcm_buffer.len() / bytes_per_frame
                     );
                     thread_status.store(-2, Ordering::Release);
                     break;
