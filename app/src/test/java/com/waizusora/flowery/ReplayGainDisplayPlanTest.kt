@@ -100,6 +100,20 @@ class ReplayGainDisplayPlanTest {
     }
 
     @Test
+    fun albumFallbackPeakAlsoLimitsGain() {
+        val peak = 1.2f
+        val plan = calculateReplayGainDisplay(
+            tag(trackGain = "6 dB", trackPeak = peak.toString()),
+            ReplayGainPreferenceState(mode = 2, preventClipping = true)
+        )
+        val expected = -20f * kotlin.math.log10(peak)
+        assertTrue(plan.peakLimitApplied)
+        assertEquals(expected, plan.effectiveGainDb, 0.0001f)
+        val linearGain = 10f.pow(plan.effectiveGainDb / 20f)
+        assertTrue(peak * linearGain <= 1.0001f)
+    }
+
+    @Test
     fun invalidMetadataIsIgnoredAndGainRemainsFinite() {
         val plan = calculateReplayGainDisplay(
             tag(trackGain = "NaN", trackPeak = "Infinity"),
