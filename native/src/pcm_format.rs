@@ -339,6 +339,15 @@ impl UsbPcmSamples {
         }
     }
 
+    /// Preserve the original allocating drain API for USB Direct callers.
+    /// Android AAudio uses `drain_into` with a reusable destination buffer.
+    pub fn drain(&mut self, count: usize) -> Self {
+        let mut output = Self::Empty;
+        self.drain_into(count, &mut output)
+            .expect("draining PCM into a matching empty buffer cannot fail");
+        output
+    }
+
     /// Move a bounded sample range into a caller-owned buffer while retaining
     /// that buffer's allocation for the next streaming chunk.
     pub fn drain_into(&mut self, count: usize, output: &mut Self) -> Result<(), &'static str> {
