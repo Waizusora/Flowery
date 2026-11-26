@@ -423,7 +423,7 @@ mod reusable_pcm_chunk_tests {
             };
             assert_eq!(next_capacity, capacity, "chunk buffer allocation should be retained");
             source.drain_into(2, &mut output).unwrap();
-            assert!(output.is_empty());
+            assert_eq!(output.len(), 0);
         }
     }
 
@@ -433,7 +433,7 @@ mod reusable_pcm_chunk_tests {
         let mut output = UsbPcmSamples::S16(vec![7, 8]);
         output.clear();
         eof.drain_into(8, &mut output).unwrap();
-        assert!(output.is_empty());
+        assert_eq!(output.len(), 0);
 
         let mut source = UsbPcmSamples::S16(vec![1, 2]);
         let mut wrong_format = UsbPcmSamples::F32(vec![0.5]);
@@ -447,7 +447,7 @@ mod reusable_pcm_chunk_tests {
         source.drain_into(2, &mut output).unwrap();
         let capacity = match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => unreachable!() };
         source.drain_into(2, &mut output).unwrap();
-        assert!(output.is_empty());
+        assert_eq!(output.len(), 0);
         assert_eq!(match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => 0 }, capacity);
     }
 }
