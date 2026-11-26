@@ -18,8 +18,9 @@ The AAudio decoder worker owns and reuses two output buffers for its lifetime:
 - `pcm_buffer: Vec<u8>` retains the encoded output-byte capacity between chunks.
 
 The typed pending decoder buffer is also retained after draining. Capacity may still grow
-when a larger chunk or format is encountered; the code does not currently expose a count
-of such growth events. This is a code-path inventory, not a measured allocation profile.
+when a larger chunk or format is encountered. The new telemetry below measures growth of
+the two worker-owned output buffers, but not this pending buffer or decoder internals.
+This is a code-path inventory, not a measured allocation profile.
 
 The callback is the sole SPSC consumer. It pops into AAudio's supplied destination,
 applies output gain in place, zero-fills any missing tail, and updates atomic playback
@@ -54,7 +55,12 @@ ReplayGain is enabled.
 For each workload:
 
 1. Force-stop Flowery, launch it, and start the selected AAudio track or queue.
-2. Capture the initial diagnostic snapshot from the app's audio-pipeline diagnostics.
+2. Capture the initial diagnostic snapshot from the app's audio-pipeline diagnostics. Flowery
+logs `AUDIO_PIPELINE` every five seconds while playback is active; retrieve snapshots with
+`adb logcat -s FloweryDiagnostics:I` (or save a run with
+`adb logcat -v time -s FloweryDiagnostics:I > flowery-audio-baseline.log`).
+Record one early snapshot and one near the end of the workload. The `AAUDIO_NEXT_*`
+entries also include handoff diagnostics during gapless transitions.
 3. Record process memory and CPU after the stream has stabilized.
 4. Run the workload without interacting with the UI except where the workload requires
    next/previous or seek.
@@ -116,6 +122,7 @@ identifies the bottleneck, and rerun the same workload matrix afterward.
 
 - Source-level buffer ownership reviewed.
 - Existing AAudio underrun, XRun, queue, and hardware-buffer diagnostics identified.
+- Worker output-buffer capacity-growth telemetry implemented and CI-verified.
 - Device-side measurements: pending.
 - Native allocation profile: pending.
 - No performance tuning has been applied in this audit stage.
