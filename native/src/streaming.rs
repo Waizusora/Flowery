@@ -400,6 +400,7 @@ impl StreamDecoder {
     fn read_aaudio_pcm_frames_into(
         &mut self,
         requested: usize,
+        samples: &mut crate::pcm_format::UsbPcmSamples,
         bytes: &mut Vec<u8>,
     ) -> Result<bool,String> {
         bytes.clear();
@@ -412,15 +413,14 @@ impl StreamDecoder {
                 self.source_bits, self.source_data_format
             ));
         }
-        let mut samples = self.read_usb_frames(requested)?;
-        // EOF is represented by an empty typed buffer. It is not an audio
-        // sample format and must pass through as an empty chunk so the pump
-        // can publish EOF instead of failing when ReplayGain is enabled.
-        if samples.len() == 0 {
+        // The worker retains this typed buffer between chunks. The decoder's
+        // pending PCM queue is also retained when drained so its allocation can
+        // accept subsequent decoded packets without being discarded at each boundary.
+        if !self.read_usb_frames_into(requested, samples)? {
             return Ok(false);
         }
         let settings = crate::replay_gain::settings();
-        apply_stream_replay_gain(&mut samples, self.replay_gain_metadata, settings)
+        apply_stream_replay_gain(samples, self.replay_gain_metadata, settings)
             .map_err(str::to_string)?;
         let format = crate::pcm_format::PcmFormat {
             sample_rate: self.source_rate as u32,
@@ -443,6 +443,29 @@ impl StreamDecoder {
                 .map_err(str::to_string)?;
         }
         Ok(true)
+    }
+
+    #[cfg(target_os = "android")]
+    fn read_usb_frames_into(
+        &mut self,
+        requested: usize,
+        output: &mut crate::pcm_format::UsbPcmSamples,
+    ) -> Result<bool,String> {
+        while self.usb_pending.as_ref().map(|samples| samples.len() == 0).unwrap_or(true) && !self.eof {
+            self.decode_packet()?;
+        }
+        let Some(pending) = self.usb_pending.as_mut() else {
+            if self.eof {
+                output.clear();
+                return Ok(false);
+            }
+            return Err("USB decoder produced no typed PCM buffer".into());
+        };
+        let take = requested.saturating_mul(self.channels).min(pending.len());
+        pending.drain_into(take, output).map_err(str::to_string)?;
+        // Keep an empty pending vector alive: the next decoded packet can append
+        // into its existing allocation instead of allocating a new queue.
+        Ok(!output.is_empty())
     }
 
     #[cfg(target_os = "android")]
@@ -825,6 +848,7 @@ fn start_stream_pump_worker(
         // Reused for every chunk to avoid allocating a fresh byte Vec on the
         // streaming hot path.
         let mut pcm_buffer = Vec::new();
+        let mut pcm_samples = crate::pcm_format::UsbPcmSamples::Empty;
         while !thread_stop.load(Ordering::Acquire) {
             if thread_session.cancelled.load(Ordering::Acquire) ||
                 thread_session.epoch.load(Ordering::Acquire) != worker_epoch ||
@@ -858,7 +882,7 @@ fn start_stream_pump_worker(
                 }
                 frames = frames.min(remaining as usize);
             }
-            let has_samples = match decoder.read_aaudio_pcm_frames_into(frames, &mut pcm_buffer) {
+            let has_samples = match decoder.read_aaudio_pcm_frames_into(frames, &mut pcm_samples, &mut pcm_buffer) {
                 Ok(has_samples) => has_samples,
                 Err(decode_error) => {
                     *thread_error.lock().unwrap_or_else(|poison| poison.into_inner()) = decode_error;
