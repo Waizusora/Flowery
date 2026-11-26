@@ -769,7 +769,9 @@ class FloweryPlayer(private val context: Context, private val onState: (String) 
             "callbackUnderruns=${d[0]} xrunCount=${d[1]} queuedFrames=${d[2]} queuedDurationMs=${queuedPcmDurationMs(d[2], d[7].toInt()) ?: "unknown"} ringCapacityFrames=${d[3]} " +
             "bufferSizeFrames=${d[4]} framesPerBurst=${d[5]} streamState=${d[6]} " +
             "actualRateHz=${d[7]} deviceId=${d[8]} sharingMode=${d[9]} format=${d[10]} " +
-            "channels=${d[11]} performanceMode=${d[12]} bufferCapacityFrames=${d[26]}"
+            "channels=${d[11]} performanceMode=${d[12]} bufferCapacityFrames=${d[26]} " +
+            "typedBufferGrowthEvents=${d[34]} typedBufferPeakSamples=${d[35]} byteBufferGrowthEvents=${d[36]} " +
+            "byteBufferPeakBytes=${d[37]} decodedChunks=${d[38]}"
     }
     fun positionMs(): Long {
         usbPlaybackSession?.let { usb ->
