@@ -327,16 +327,49 @@ impl UsbPcmSamples {
         Ok(())
     }
 
-    pub fn drain(&mut self, count: usize) -> Self {
-        macro_rules! take { ($v:expr, $variant:ident) => {{ let n = count.min($v.len()); Self::$variant($v.drain(..n).collect()) }}; }
+    pub fn clear(&mut self) {
         match self {
-            Self::Empty => Self::Empty,
-            Self::U8(v) => take!(v, U8),
-            Self::S16(v) => take!(v, S16),
-            Self::S24(v) => take!(v, S24),
-            Self::S32(v) => take!(v, S32),
-            Self::F32(v) => take!(v, F32),
-            Self::F64(v) => take!(v, F64),
+            Self::Empty => {},
+            Self::U8(values) => values.clear(),
+            Self::S16(values) => values.clear(),
+            Self::S24(values) => values.clear(),
+            Self::S32(values) => values.clear(),
+            Self::F32(values) => values.clear(),
+            Self::F64(values) => values.clear(),
+        }
+    }
+
+    /// Move a bounded sample range into a caller-owned buffer while retaining
+    /// that buffer's allocation for the next streaming chunk.
+    pub fn drain_into(&mut self, count: usize, output: &mut Self) -> Result<(), &'static str> {
+        if matches!(output, Self::Empty) {
+            *output = match self {
+                Self::Empty => Self::Empty,
+                Self::U8(_) => Self::U8(Vec::new()),
+                Self::S16(_) => Self::S16(Vec::new()),
+                Self::S24(_) => Self::S24(Vec::new()),
+                Self::S32(_) => Self::S32(Vec::new()),
+                Self::F32(_) => Self::F32(Vec::new()),
+                Self::F64(_) => Self::F64(Vec::new()),
+            };
+        }
+        macro_rules! take_into {
+            ($source:expr, $destination:expr) => {{
+                let take = count.min($source.len());
+                $destination.clear();
+                $destination.extend_from_slice(&$source[..take]);
+                $source.drain(..take);
+            }};
+        }
+        match (self, output) {
+            (Self::Empty, Self::Empty) => Ok(()),
+            (Self::U8(source), Self::U8(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S16(source), Self::S16(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S24(source), Self::S24(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::S32(source), Self::S32(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::F32(source), Self::F32(destination)) => { take_into!(source, destination); Ok(()) },
+            (Self::F64(source), Self::F64(destination)) => { take_into!(source, destination); Ok(()) },
+            _ => Err("Decoded sample representation changed while reusing the PCM chunk buffer"),
         }
     }
 
@@ -357,6 +390,67 @@ impl UsbPcmSamples {
     }
 }
 
+
+#[cfg(test)]
+mod reusable_pcm_chunk_tests {
+    use super::UsbPcmSamples;
+
+    #[test]
+    fn drain_into_reuses_typed_buffer_and_preserves_remaining_samples() {
+        let cases = [
+            (UsbPcmSamples::S16(vec![1, 2, 3, 4]), UsbPcmSamples::S16(vec![1, 2]), UsbPcmSamples::S16(vec![3, 4])),
+            (UsbPcmSamples::S24(vec![1, 2, 3, 4]), UsbPcmSamples::S24(vec![1, 2]), UsbPcmSamples::S24(vec![3, 4])),
+            (UsbPcmSamples::S32(vec![1, 2, 3, 4]), UsbPcmSamples::S32(vec![1, 2]), UsbPcmSamples::S32(vec![3, 4])),
+            (UsbPcmSamples::F32(vec![1.0, 2.0, 3.0, 4.0]), UsbPcmSamples::F32(vec![1.0, 2.0]), UsbPcmSamples::F32(vec![3.0, 4.0])),
+        ];
+        for (mut source, expected_first, expected_remaining) in cases {
+            let mut output = UsbPcmSamples::Empty;
+            source.drain_into(2, &mut output).unwrap();
+            assert_eq!(output, expected_first);
+            let capacity = match &output {
+                UsbPcmSamples::S16(v) => v.capacity(),
+                UsbPcmSamples::S24(v) | UsbPcmSamples::S32(v) => v.capacity(),
+                UsbPcmSamples::F32(v) => v.capacity(),
+                _ => unreachable!(),
+            };
+            source.drain_into(2, &mut output).unwrap();
+            assert_eq!(output, expected_remaining);
+            let next_capacity = match &output {
+                UsbPcmSamples::S16(v) => v.capacity(),
+                UsbPcmSamples::S24(v) | UsbPcmSamples::S32(v) => v.capacity(),
+                UsbPcmSamples::F32(v) => v.capacity(),
+                _ => unreachable!(),
+            };
+            assert_eq!(next_capacity, capacity, "chunk buffer allocation should be retained");
+            source.drain_into(2, &mut output).unwrap();
+            assert!(output.is_empty());
+        }
+    }
+
+    #[test]
+    fn drain_into_handles_eof_and_rejects_format_changes() {
+        let mut eof = UsbPcmSamples::Empty;
+        let mut output = UsbPcmSamples::S16(vec![7, 8]);
+        output.clear();
+        eof.drain_into(8, &mut output).unwrap();
+        assert!(output.is_empty());
+
+        let mut source = UsbPcmSamples::S16(vec![1, 2]);
+        let mut wrong_format = UsbPcmSamples::F32(vec![0.5]);
+        assert!(source.drain_into(1, &mut wrong_format).is_err());
+    }
+
+    #[test]
+    fn empty_typed_chunk_keeps_its_representation_and_capacity() {
+        let mut source = UsbPcmSamples::S32(vec![1, 2]);
+        let mut output = UsbPcmSamples::Empty;
+        source.drain_into(2, &mut output).unwrap();
+        let capacity = match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => unreachable!() };
+        source.drain_into(2, &mut output).unwrap();
+        assert!(output.is_empty());
+        assert_eq!(match &output { UsbPcmSamples::S32(values) => values.capacity(), _ => 0 }, capacity);
+    }
+}
 
 /// Derive the PCM declaration from the decoder's actual output buffer.
 /// Container metadata is only a hint: lossy codecs commonly omit sample_format
