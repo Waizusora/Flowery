@@ -465,7 +465,7 @@ impl StreamDecoder {
         pending.drain_into(take, output).map_err(str::to_string)?;
         // Keep an empty pending vector alive: the next decoded packet can append
         // into its existing allocation instead of allocating a new queue.
-        Ok(!output.is_empty())
+        Ok(output.len() != 0)
     }
 
     #[cfg(target_os = "android")]
