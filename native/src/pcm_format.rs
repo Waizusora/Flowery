@@ -342,6 +342,10 @@ impl UsbPcmSamples {
     /// Move a bounded sample range into a caller-owned buffer while retaining
     /// that buffer's allocation for the next streaming chunk.
     pub fn drain_into(&mut self, count: usize, output: &mut Self) -> Result<(), &'static str> {
+        if matches!(self, Self::Empty) {
+            output.clear();
+            return Ok(());
+        }
         if matches!(output, Self::Empty) {
             *output = match self {
                 Self::Empty => Self::Empty,
