@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::write_text_to_java;
 use std::sync::{Arc, Mutex, OnceLock};
 #[cfg(target_os = "android")]
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 #[cfg(target_os = "android")]
 use std::thread::{self, JoinHandle};
 #[cfg(target_os = "android")]
@@ -32,6 +32,56 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::formats::probe::Hint;
+
+#[cfg(target_os = "android")]
+static AAUDIO_TYPED_BUFFER_GROWTH_EVENTS: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "android")]
+static AAUDIO_TYPED_BUFFER_PEAK_CAPACITY: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "android")]
+static AAUDIO_BYTE_BUFFER_GROWTH_EVENTS: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "android")]
+static AAUDIO_BYTE_BUFFER_PEAK_CAPACITY: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "android")]
+static AAUDIO_BUFFER_CHUNKS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(target_os = "android")]
+fn reset_aaudio_buffer_growth_diagnostics() {
+    AAUDIO_TYPED_BUFFER_GROWTH_EVENTS.store(0, Ordering::Release);
+    AAUDIO_TYPED_BUFFER_PEAK_CAPACITY.store(0, Ordering::Release);
+    AAUDIO_BYTE_BUFFER_GROWTH_EVENTS.store(0, Ordering::Release);
+    AAUDIO_BYTE_BUFFER_PEAK_CAPACITY.store(0, Ordering::Release);
+    AAUDIO_BUFFER_CHUNKS.store(0, Ordering::Release);
+}
+
+/// Returns worker-side allocation-growth counters for the active AAudio session.
+/// Capacities are measured in typed samples and encoded bytes respectively.
+#[cfg(target_os = "android")]
+pub(super) fn aaudio_buffer_growth_diagnostics() -> [u64; 5] {
+    [
+        AAUDIO_TYPED_BUFFER_GROWTH_EVENTS.load(Ordering::Acquire),
+        AAUDIO_TYPED_BUFFER_PEAK_CAPACITY.load(Ordering::Acquire),
+        AAUDIO_BYTE_BUFFER_GROWTH_EVENTS.load(Ordering::Acquire),
+        AAUDIO_BYTE_BUFFER_PEAK_CAPACITY.load(Ordering::Acquire),
+        AAUDIO_BUFFER_CHUNKS.load(Ordering::Acquire),
+    ]
+}
+
+#[cfg(target_os = "android")]
+fn record_aaudio_buffer_capacities(
+    typed_before: usize,
+    typed_after: usize,
+    bytes_before: usize,
+    bytes_after: usize,
+) {
+    if typed_after > typed_before {
+        AAUDIO_TYPED_BUFFER_GROWTH_EVENTS.fetch_add(1, Ordering::Relaxed);
+    }
+    if bytes_after > bytes_before {
+        AAUDIO_BYTE_BUFFER_GROWTH_EVENTS.fetch_add(1, Ordering::Relaxed);
+    }
+    AAUDIO_TYPED_BUFFER_PEAK_CAPACITY.fetch_max(typed_after as u64, Ordering::Relaxed);
+    AAUDIO_BYTE_BUFFER_PEAK_CAPACITY.fetch_max(bytes_after as u64, Ordering::Relaxed);
+}
 
 fn alac_magic_cookie(extra_data: Option<&[u8]>) -> Option<&[u8]> {
     let cookie = extra_data?;
@@ -847,6 +897,7 @@ fn start_stream_pump_worker(
         let mut produced_frames = 0_u64;
         // Reused for every chunk to avoid allocating a fresh byte Vec on the
         // streaming hot path.
+        reset_aaudio_buffer_growth_diagnostics();
         let mut pcm_buffer = Vec::new();
         let mut pcm_samples = crate::pcm_format::UsbPcmSamples::Empty;
         while !thread_stop.load(Ordering::Acquire) {
@@ -882,6 +933,8 @@ fn start_stream_pump_worker(
                 }
                 frames = frames.min(remaining as usize);
             }
+            let typed_capacity_before = pcm_samples.capacity();
+            let byte_capacity_before = pcm_buffer.capacity();
             let has_samples = match decoder.read_aaudio_pcm_frames_into(frames, &mut pcm_samples, &mut pcm_buffer) {
                 Ok(has_samples) => has_samples,
                 Err(decode_error) => {
@@ -895,6 +948,13 @@ fn start_stream_pump_worker(
                 thread_status.store(1, Ordering::Release);
                 break;
             }
+            record_aaudio_buffer_capacities(
+                typed_capacity_before,
+                pcm_samples.capacity(),
+                byte_capacity_before,
+                pcm_buffer.capacity(),
+            );
+            AAUDIO_BUFFER_CHUNKS.fetch_add(1, Ordering::Relaxed);
             let channels = decoder.channels;
             let bytes_per_sample = usize::from(decoder.source_bits / 8);
             let bytes_per_frame = channels * bytes_per_sample;
