@@ -119,3 +119,26 @@ identifies the bottleneck, and rerun the same workload matrix afterward.
 - Device-side measurements: pending.
 - Native allocation profile: pending.
 - No performance tuning has been applied in this audit stage.
+
+
+## Worker buffer growth telemetry
+
+The AAudio diagnostic snapshot now includes five worker-side values:
+
+| Field | Meaning |
+|---|---|
+| `typedBufferGrowthEvents` | Number of chunks where the reusable typed PCM vector capacity increased. |
+| `typedBufferPeakSamples` | Highest typed PCM vector capacity observed, in sample elements. |
+| `byteBufferGrowthEvents` | Number of chunks where the reusable encoded-byte vector capacity increased. |
+| `byteBufferPeakBytes` | Highest encoded-byte vector capacity observed, in bytes. |
+| `decodedChunks` | Number of successfully decoded chunks in the current worker session. |
+
+The counters reset when a new AAudio decode worker starts. They are updated only by the
+decoder worker and read as atomics from the diagnostics path. They do not add logging,
+allocation, locking, or extra work to the AAudio real-time callback.
+
+A growth event means vector capacity increased across that chunk boundary; it is not an
+exact count of allocator calls because a single reserve may internally choose a larger
+capacity. These counters also do not include Symphonia's internal allocations or the
+decoder's pending PCM storage. Use a native allocation profiler for a complete allocation
+profile.
