@@ -207,6 +207,24 @@ mod replay_gain_pcm_tests {
     }
 
     #[test]
+    fn fractional_gain_is_applied_consistently_to_all_pcm_widths() {
+        let mut s16 = UsbPcmSamples::S16(vec![-3, 3]);
+        let mut s24 = UsbPcmSamples::S24(vec![-3, 3]);
+        let mut s32 = UsbPcmSamples::S32(vec![-3, 3]);
+        let mut f32 = UsbPcmSamples::F32(vec![-0.75, 0.75]);
+
+        apply_replay_gain(&mut s16, 0.5).unwrap();
+        apply_replay_gain(&mut s24, 0.5).unwrap();
+        apply_replay_gain(&mut s32, 0.5).unwrap();
+        apply_replay_gain(&mut f32, 0.5).unwrap();
+
+        assert_eq!(s16, UsbPcmSamples::S16(vec![-2, 2]));
+        assert_eq!(s24, UsbPcmSamples::S24(vec![-2, 2]));
+        assert_eq!(s32, UsbPcmSamples::S32(vec![-2, 2]));
+        assert_eq!(f32, UsbPcmSamples::F32(vec![-0.375, 0.375]));
+    }
+
+    #[test]
     fn empty_eof_chunk_is_a_valid_replaygain_noop() {
         let mut empty = UsbPcmSamples::Empty;
         assert!(apply_replay_gain(&mut empty, 2.0).is_ok());
