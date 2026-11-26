@@ -149,6 +149,15 @@ pub(super) struct StreamDecoder {
 /// Read standard ReplayGain tags from a duplicated descriptor before the decoder
 /// starts consuming the stream. Lofty normalizes ID3 TXXX, Vorbis comments and
 /// MP4 freeform metadata into the same ItemKey values.
+fn apply_stream_replay_gain(
+    samples: &mut crate::pcm_format::UsbPcmSamples,
+    metadata: crate::replay_gain::ReplayGainMetadata,
+    settings: crate::replay_gain::ReplayGainSettings,
+) -> Result<(), &'static str> {
+    let plan = metadata.plan(settings);
+    crate::pcm_format::apply_replay_gain(samples, plan.linear_gain)
+}
+
 fn read_replay_gain_metadata(fd: i32) -> crate::replay_gain::ReplayGainMetadata {
     let duplicate = unsafe { libc::dup(fd) };
     if duplicate < 0 {
@@ -406,8 +415,7 @@ impl StreamDecoder {
             return Ok(Vec::new());
         }
         let settings = crate::replay_gain::settings();
-        let plan = self.replay_gain_metadata.plan(settings);
-        crate::pcm_format::apply_replay_gain(&mut samples, plan.linear_gain)
+        apply_stream_replay_gain(&mut samples, self.replay_gain_metadata, settings)
             .map_err(str::to_string)?;
         let format = crate::pcm_format::PcmFormat {
             sample_rate: self.source_rate as u32,
@@ -1085,6 +1093,64 @@ mod handle_tests {
 
 #[cfg(test)]
 mod tests {
+    use super::apply_stream_replay_gain;
+    use crate::pcm_format::UsbPcmSamples;
+    use crate::replay_gain::{ReplayGainMetadata, ReplayGainMode, ReplayGainSettings};
+
+    #[test]
+    fn album_decoder_path_applies_album_gain_instead_of_track_gain() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("-8.00 dB"), None, Some("-5.00 dB"), None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: false,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let expected_gain = 10.0_f32.powf(-5.0 / 20.0);
+        let expected = (10_000.0_f32 * expected_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
+    #[test]
+    fn album_decoder_path_applies_track_gain_when_album_gain_is_missing() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("-9.93 dB"), Some("0.5"), None, None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: false,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let expected_gain = 10.0_f32.powf(-9.93 / 20.0);
+        let expected = (10_000.0_f32 * expected_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
+    #[test]
+    fn album_decoder_path_falls_back_to_track_peak_for_clipping_protection() {
+        let metadata = ReplayGainMetadata::from_values(
+            Some("6.00 dB"), Some("1.2"), None, None,
+        );
+        let settings = ReplayGainSettings {
+            mode: ReplayGainMode::Album,
+            prevent_clipping: true,
+            ..ReplayGainSettings::default()
+        };
+        let mut samples = UsbPcmSamples::S16(vec![10_000, -10_000]);
+        apply_stream_replay_gain(&mut samples, metadata, settings).unwrap();
+
+        let limited_gain = 1.0 / 1.2_f32;
+        let expected = (10_000.0_f32 * limited_gain).round() as i16;
+        assert_eq!(samples, UsbPcmSamples::S16(vec![expected, -expected]));
+    }
+
     #[test]
     fn prebuffer_wait_accepts_minimum_queue_or_short_track_eof() {
         assert!(!stream_prebuffer_ready(0, 4_800, 0));
