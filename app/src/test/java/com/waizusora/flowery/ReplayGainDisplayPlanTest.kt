@@ -1,6 +1,7 @@
 package com.waizusora.flowery
 
 import android.net.Uri
+import org.mockito.Mockito.mock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,7 +15,7 @@ class ReplayGainDisplayPlanTest {
         albumGain: String = "",
         albumPeak: String = ""
     ) = AudioTag(
-        uri = Uri.EMPTY,
+        uri = mock(Uri::class.java),
         fileName = "test.flac",
         title = "Test",
         artist = "",
