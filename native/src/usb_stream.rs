@@ -962,9 +962,7 @@ fn run_worker(
                 producer_stop.store(true, Ordering::Release);
                 let _ = producer_thread.join();
                 set_error(&error, &status, message);
-                for slot in slots.drain(..) {
-                    unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
-                }
+                slots.clear();
                 return;
             }
         },
