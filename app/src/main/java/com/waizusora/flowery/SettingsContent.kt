@@ -546,11 +546,14 @@ internal fun SettingsContent(page: SettingsPage, color: Color, muted: Color, the
                 DropdownMenu(
                     expanded = encodingExpanded,
                     onDismissRequest = { encodingExpanded = false },
-                    modifier = Modifier.heightIn(max = 360.dp)
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    shadowElevation = 8.dp
                 ) {
                     availableEncodings.forEach { encoding ->
                         DropdownMenuItem(
-                            text = { Text(encoding) },
+                            text = { Text(encoding, color = MaterialTheme.colorScheme.onSurface) },
                             onClick = {
                                 changeEncoding(encoding)
                                 encodingExpanded = false
