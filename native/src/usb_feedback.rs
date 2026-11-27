@@ -471,3 +471,187 @@ mod tests {
         assert!(tracker.update(f64::NAN).is_err());
     }
 }
+
+
+#[cfg(test)]
+mod reacquisition_integration_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// Deterministic worker-level harness: time and transfer completions are
+    /// injected by the test, while the production policy primitives are used
+    /// unchanged. No libusb device or wall-clock sleep is involved.
+    struct SimulatedFeedbackStream {
+        lifecycle: FeedbackReacquisitionState,
+        tracker: FeedbackRateTracker,
+        scheduler: PacketFrameScheduler,
+        audio_transfers_in_flight: usize,
+        terminal_error: bool,
+    }
+
+    impl SimulatedFeedbackStream {
+        fn new() -> Self {
+            Self {
+                lifecycle: FeedbackReacquisitionState::Running,
+                tracker: FeedbackRateTracker::new(0.25).unwrap(),
+                scheduler: PacketFrameScheduler::default(),
+                audio_transfers_in_flight: 0,
+                terminal_error: false,
+            }
+        }
+
+        fn submit_audio(&mut self) -> bool {
+            if self.terminal_error
+                || !self.lifecycle.audio_submission_allowed()
+                || !audio_clock_is_ready(true, self.tracker.estimate_hz())
+            {
+                return false;
+            }
+            self.audio_transfers_in_flight += 1;
+            self.lifecycle.audio_submission_started();
+            true
+        }
+
+        fn observe_feedback_age(&mut self, age: Option<Duration>, timeout: Duration) {
+            let stale = feedback_clock_is_stale(age, timeout);
+            self.lifecycle.begin_if_stale(stale);
+        }
+
+        fn complete_audio_transfer(&mut self) {
+            assert!(self.audio_transfers_in_flight > 0);
+            self.audio_transfers_in_flight -= 1;
+            if self.audio_transfers_in_flight == 0 {
+                let was_quiescing =
+                    self.lifecycle == FeedbackReacquisitionState::Quiescing;
+                self.lifecycle.audio_ring_drained();
+                if was_quiescing {
+                    self.scheduler.reset();
+                    self.tracker.reset();
+                }
+            }
+        }
+
+        fn complete_feedback(
+            &mut self,
+            transfer_status: i32,
+            packet_status: i32,
+            bytes: &[u8],
+            speed: FeedbackBusSpeed,
+        ) -> Result<(), String> {
+            let expected = match speed {
+                FeedbackBusSpeed::Full => 3,
+                FeedbackBusSpeed::High => 4,
+            };
+            if let Err(error) = validate_feedback_completion(
+                transfer_status, packet_status, bytes.len() as u32, expected,
+            ) {
+                self.terminal_error = true;
+                return Err(error);
+            }
+            let measured = match decode_feedback_rate_hz(bytes, speed) {
+                Ok(rate) => rate,
+                Err(error) => {
+                    self.terminal_error = true;
+                    return Err(error);
+                }
+            };
+            if self.lifecycle.ignores_feedback_for_estimation() {
+                return Ok(());
+            }
+            if self.lifecycle == FeedbackReacquisitionState::AwaitingFreshFeedback {
+                self.tracker.update(measured)?;
+                self.lifecycle.fresh_sample_accepted();
+                return Ok(());
+            }
+            self.tracker.update_checked(measured, 0.02)?;
+            Ok(())
+        }
+    }
+
+    fn high_speed_feedback(rate_hz: f64) -> [u8; 4] {
+        let fixed = ((rate_hz / 8_000.0) * 65_536.0).round() as u32;
+        fixed.to_le_bytes()
+    }
+
+    #[test]
+    fn delayed_feedback_quiesces_drains_ignores_old_samples_and_recovers() {
+        let mut stream = SimulatedFeedbackStream::new();
+        let timeout = Duration::from_millis(250);
+        let initial = high_speed_feedback(48_000.0);
+
+        stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).unwrap();
+        assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
+        assert!(stream.submit_audio());
+        assert!(stream.submit_audio());
+        assert_eq!(stream.audio_transfers_in_flight, 2);
+
+        // The feedback clock ages beyond its descriptor-derived stale limit.
+        stream.observe_feedback_age(Some(timeout + Duration::from_nanos(1)), timeout);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
+        assert!(!stream.submit_audio());
+
+        // A late but otherwise valid sample during quiescing must not seed
+        // the next estimator epoch while old audio packets remain in flight.
+        let late = high_speed_feedback(48_020.0);
+        stream.complete_feedback(0, 0, &late, FeedbackBusSpeed::High).unwrap();
+        assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
+
+        stream.complete_audio_transfer();
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
+        assert_eq!(stream.audio_transfers_in_flight, 1);
+        stream.complete_audio_transfer();
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert_eq!(stream.tracker.estimate_hz(), None);
+
+        // Only a fresh post-drain sample starts the new clock epoch.
+        let recovered = high_speed_feedback(48_050.0);
+        stream.complete_feedback(0, 0, &recovered, FeedbackBusSpeed::High).unwrap();
+        assert_eq!(stream.tracker.estimate_hz(), Some(48_050.0));
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
+        assert!(stream.submit_audio());
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
+        assert_eq!(stream.audio_transfers_in_flight, 1);
+    }
+
+    #[test]
+    fn feedback_disconnect_during_reacquisition_fails_closed() {
+        let mut stream = SimulatedFeedbackStream::new();
+        let initial = high_speed_feedback(48_000.0);
+        stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).unwrap();
+        assert!(stream.submit_audio());
+
+        stream.observe_feedback_age(
+            Some(Duration::from_millis(251)),
+            Duration::from_millis(250),
+        );
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
+        assert!(!stream.submit_audio());
+
+        // Simulate libusb reporting a disconnected/cancelled feedback transfer.
+        let error = stream.complete_feedback(
+            -4, 0, &initial, FeedbackBusSpeed::High,
+        ).unwrap_err();
+        assert!(error.contains("transfer failed"));
+        assert!(stream.terminal_error);
+        assert!(!stream.submit_audio());
+
+        // A later packet cannot revive a terminal stream.
+        stream.complete_audio_transfer();
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert!(!stream.submit_audio());
+    }
+
+    #[test]
+    fn delayed_but_not_stale_feedback_keeps_stream_running() {
+        let mut stream = SimulatedFeedbackStream::new();
+        let sample = high_speed_feedback(44_100.0);
+        stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).unwrap();
+        stream.observe_feedback_age(
+            Some(Duration::from_millis(249)),
+            Duration::from_millis(250),
+        );
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
+        assert!(stream.submit_audio());
+        assert_eq!(stream.tracker.estimate_hz(), Some(44_100.0));
+    }
+}
