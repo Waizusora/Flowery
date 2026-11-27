@@ -134,9 +134,31 @@ pub fn audio_submission_allowed(
     !paused && !cancelling && !eof && !stop_requested && !stream_failed
 }
 
-/// Whether a cancellation drain has exceeded its bounded wait period.
-pub fn transfer_drain_timed_out(elapsed: std::time::Duration, limit: std::time::Duration) -> bool {
-    elapsed >= limit
+/// Terminal classification for the cancellation callback drain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferDrainState {
+    /// At least one callback is still outstanding and the deadline has not elapsed.
+    Draining,
+    /// Every submitted transfer callback has been observed; resources may be released.
+    Drained,
+    /// The deadline elapsed with callbacks outstanding; callback-visible resources
+    /// must remain allocated because libusb may still access them.
+    TimedOutRetain,
+}
+
+/// Resolve drain state with callback completion taking precedence over the deadline.
+pub fn transfer_drain_state(
+    callbacks_observed: bool,
+    elapsed: std::time::Duration,
+    limit: std::time::Duration,
+) -> TransferDrainState {
+    if callbacks_observed {
+        TransferDrainState::Drained
+    } else if elapsed >= limit {
+        TransferDrainState::TimedOutRetain
+    } else {
+        TransferDrainState::Draining
+    }
 }
 
 /// Classify libusb_cancel_transfer results without treating a request as completion.
