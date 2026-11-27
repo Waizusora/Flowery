@@ -334,6 +334,12 @@ pub fn session_connection_must_be_retained(
         || previously_unsafe
 }
 
+/// A submitted libusb transfer remains callback-owned until its callback is
+/// observed. Its allocation must not be freed by the slot's destructor.
+pub fn transfer_allocation_must_be_retained(submitted: bool) -> bool {
+    submitted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,6 +367,12 @@ mod tests {
     #[test]
     fn clean_worker_exit_allows_session_teardown() {
         assert_eq!(worker_teardown_error(false, false), None);
+    }
+
+    #[test]
+    fn submitted_transfer_allocation_is_retained_but_idle_transfer_is_reclaimed() {
+        assert!(transfer_allocation_must_be_retained(true));
+        assert!(!transfer_allocation_must_be_retained(false));
     }
 
     #[test]
