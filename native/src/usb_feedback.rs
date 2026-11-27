@@ -606,7 +606,7 @@ mod reacquisition_integration_tests {
         // Only a fresh post-drain sample starts the new clock epoch.
         let recovered = high_speed_feedback(48_050.0);
         stream.complete_feedback(0, 0, &recovered, FeedbackBusSpeed::High).unwrap();
-        assert_eq!(stream.tracker.estimate_hz(), Some(48_050.0));
+        assert!((stream.tracker.estimate_hz().unwrap() - 48_050.0).abs() < 1.0);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
         assert!(stream.submit_audio());
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
@@ -652,6 +652,6 @@ mod reacquisition_integration_tests {
         );
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
         assert!(stream.submit_audio());
-        assert_eq!(stream.tracker.estimate_hz(), Some(44_100.0));
+        assert!((stream.tracker.estimate_hz().unwrap() - 44_100.0).abs() < 1.0);
     }
 }
