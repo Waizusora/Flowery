@@ -572,11 +572,17 @@ mod reacquisition_integration_tests {
                 return Ok(());
             }
             if self.lifecycle == FeedbackReacquisitionState::AwaitingFreshFeedback {
-                self.tracker.update(measured)?;
+                if let Err(error) = self.tracker.update(measured) {
+                    self.lifecycle.fail();
+                    return Err(error);
+                }
                 self.lifecycle.fresh_sample_accepted();
                 return Ok(());
             }
-            self.tracker.update_checked(measured, 0.02)?;
+            if let Err(error) = self.tracker.update_checked(measured, 0.02) {
+                self.lifecycle.fail();
+                return Err(error);
+            }
             Ok(())
         }
     }
