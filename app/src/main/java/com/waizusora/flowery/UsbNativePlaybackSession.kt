@@ -20,8 +20,9 @@ import java.util.concurrent.TimeUnit
 /**
  * Owns one class-compliant USB Audio playback stream.
  *
- * UAC1 endpoint frequency and UAC2 Clock Source frequency are negotiated
- * before the native isochronous stream is started.
+ * UAC1 endpoint frequency is programmed only when its class-specific endpoint
+ * descriptor advertises sampling-frequency control. UAC2 Clock Source frequency
+ * is negotiated through its descriptor-resolved clock topology.
  */
 internal fun startUsbPlaybackTransaction(
     negotiateClock: () -> Result<Unit>,
@@ -99,6 +100,7 @@ internal class UsbNativePlaybackSession private constructor(
     private val dataFormat: Int,
     private val feedbackEndpoint: Int,
     private val feedbackMaxPacketSize: Int,
+    private val uac1SampleRateControlAdvertised: Boolean,
     private val uac2ControlInterface: Int?,
     private val uac2ClockSourceEntity: Int?,
     private val uac2ClockControls: Int?,
@@ -129,7 +131,11 @@ internal class UsbNativePlaybackSession private constructor(
     internal val sampleFormatConversionRequired: Boolean get() = requiresSampleFormatConversion
     internal val isBitPerfectCandidate: Boolean get() = bitPerfectCandidate
     internal val clockNegotiationMode: String
-        get() = if (uac2ClockSourceEntity != null) "UAC2_GET_CUR_SET_CUR_VERIFIED" else "UAC1_SET_CUR_UNVERIFIED"
+        get() = when {
+            uac2ClockSourceEntity != null -> "UAC2_GET_CUR_SET_CUR_VERIFIED"
+            uac1SampleRateControlAdvertised -> "UAC1_SET_CUR"
+            else -> "UAC1_FIXED_RATE_DESCRIPTOR"
+        }
     internal val feedbackEndpointConfigured: Boolean get() = feedbackEndpoint != 0
 
     private var clockNegotiationCompleted = false
@@ -160,11 +166,15 @@ internal class UsbNativePlaybackSession private constructor(
                 )
             }
             operation
-        } else {
+        } else if (uac1SampleRateControlAdvertised) {
             val operation: () -> Result<Unit> = {
                 usb.setUac1SampleRate(endpoint, sampleRate)
             }
             operation
+        } else {
+            // The selected UAC1 alternate advertises a fixed discrete rate;
+            // do not send an unsupported endpoint SET_CUR request.
+            { Result.success(Unit) }
         }
         val result = startUsbPlaybackTransaction(
             negotiateClock = negotiateClock,
@@ -579,6 +589,8 @@ internal class UsbNativePlaybackSession private constructor(
                     else -> "unknown"
                 }
                 val isUac2 = plan.optBoolean("requires_uac2_clock_negotiation")
+                val uac1SampleRateControlAdvertised =
+                    plan.optBoolean("requires_uac1_sample_rate_control")
                 val clockControlInterface = if (isUac2) plan.optInt("uac2_control_interface_number", -1) else -1
                 val clockSourceEntity = if (isUac2) plan.optInt("uac2_clock_source_entity_id", -1) else -1
                 val clockControls = if (isUac2) plan.optInt("uac2_clock_controls", -1) else -1
@@ -673,6 +685,7 @@ internal class UsbNativePlaybackSession private constructor(
                     UsbNativePlaybackSession(
                         native, decoderHandle, outputRate, endpoint, packet,
                         interval, channels, bits, subslot, outputDataFormat, feedbackEndpoint, feedbackPacket,
+                        uac1SampleRateControlAdvertised,
                         if (isUac2) clockControlInterface else null,
                         if (isUac2) clockSourceEntity else null,
                         if (isUac2) clockControls else null,

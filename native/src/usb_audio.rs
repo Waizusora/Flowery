@@ -35,6 +35,9 @@ pub struct UsbAudioFormat {
     pub supported_data_formats: Vec<UsbAudioDataFormat>,
     pub sample_rates: Vec<u32>,
     pub continuous_rate_range: Option<(u32, u32)>,
+    /// UAC1 class-specific endpoint bmAttributes bit 0. None means the
+    /// class-specific endpoint descriptor was absent from the raw stream.
+    pub uac1_sampling_frequency_control: Option<bool>,
     pub endpoint_address: Option<u8>,
     pub max_packet_size: Option<u16>,
     pub interval: Option<u8>,
@@ -65,6 +68,7 @@ struct Alternate {
     supported_data_formats: Vec<UsbAudioDataFormat>,
     sample_rates: Vec<u32>,
     continuous_rate_range: Option<(u32, u32)>,
+    uac1_sampling_frequency_control: Option<bool>,
     endpoint_address: Option<u8>,
     max_packet_size: Option<u16>,
     interval: Option<u8>,
@@ -113,6 +117,7 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     supported_data_formats: a.supported_data_formats,
                     sample_rates: a.sample_rates,
                     continuous_rate_range: a.continuous_rate_range,
+                    uac1_sampling_frequency_control: a.uac1_sampling_frequency_control,
                     endpoint_address: a.endpoint_address,
                     max_packet_size: a.max_packet_size,
                     interval: a.interval,
@@ -236,6 +241,27 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     }
                 }
             }
+            // UAC1 class-specific endpoint descriptor (EP_GENERAL). The
+            // bmAttributes sampling-frequency-control bit determines whether
+            // the host is allowed to issue SET_CUR for the endpoint clock.
+            0x25 if length < 7 => {
+                if let Some(a) = current.as_ref() {
+                    if a.subclass == 0x02 && a.protocol == 0x00 && d.get(2) == Some(&0x01) {
+                        result.warnings.push(format!(
+                            "Truncated UAC1 class-specific endpoint descriptor at byte {offset}: expected at least 7 bytes, got {length}"
+                        ));
+                    }
+                }
+            }
+            0x25 => {
+                if let Some(a) = current.as_mut() {
+                    if a.subclass == 0x02 && a.protocol == 0x00
+                        && a.endpoint_address.is_some() && d[2] == 0x01
+                    {
+                        a.uac1_sampling_frequency_control = Some(d[3] & 0x01 != 0);
+                    }
+                }
+            }
             0x05 if length < 7 => {
                 result.warnings.push(format!(
                     "Truncated endpoint descriptor at byte {offset}: expected at least 7 bytes, got {length}"
@@ -296,6 +322,7 @@ pub struct UsbAudioStreamPlan {
     pub bit_resolution: u8,
     pub data_format: UsbAudioDataFormat,
     pub requires_uac2_clock_negotiation: bool,
+    pub requires_uac1_sample_rate_control: bool,
     pub feedback_endpoint_address: Option<u8>,
     pub feedback_max_packet_size: Option<u16>,
     pub feedback_interval: Option<u8>,
@@ -322,6 +349,7 @@ pub fn plan_pcm_playback_with_format(
     }
     let parsed = parse_configuration_descriptors(descriptors);
     let mut missing_async_feedback = false;
+    let mut missing_uac1_rate_control = false;
     for format in parsed.formats {
         let (Some(format_channels), Some(subslot_bytes), Some(bits), Some(endpoint), Some(packet), Some(interval)) = (
             format.channels, format.subslot_bytes, format.bit_resolution,
@@ -344,6 +372,15 @@ pub fn plan_pcm_playback_with_format(
         }
         // UAC2 frequency support is determined by the Clock Source GET_RANGE
         // control, not by the UAC1 discrete-rate fields in the AS descriptor.
+        // UAC1 can select among multiple/continuous rates only when the
+        // endpoint explicitly advertises sampling-frequency control. A
+        // single discrete rate is fixed by the descriptor and needs no SET_CUR.
+        let uac1_needs_rate_control = format.protocol == 0x00
+            && (format.sample_rates.len() > 1 || format.continuous_rate_range.is_some());
+        if uac1_needs_rate_control && format.uac1_sampling_frequency_control != Some(true) {
+            missing_uac1_rate_control = true;
+            continue;
+        }
         let rate_supported = format.sample_rates.contains(&sample_rate)
             || format.continuous_rate_range
                 .map(|(min, max)| sample_rate >= min && sample_rate <= max)
@@ -386,6 +423,8 @@ pub fn plan_pcm_playback_with_format(
             bit_resolution: bits,
             data_format: requested_format,
             requires_uac2_clock_negotiation: format.protocol == 0x20,
+            requires_uac1_sample_rate_control: format.protocol == 0x00
+                && format.uac1_sampling_frequency_control == Some(true),
             feedback_endpoint_address: if format.synchronization_type == Some(1) {
                 format.feedback_endpoint_address
             } else {
@@ -405,6 +444,9 @@ pub fn plan_pcm_playback_with_format(
     }
     if missing_async_feedback {
         return Err("The matching asynchronous USB Audio OUT endpoint has no explicit feedback endpoint; implicit feedback is not supported yet".into());
+    }
+    if missing_uac1_rate_control {
+        return Err("The UAC1 alternate advertises multiple or continuous sample rates but its class-specific endpoint descriptor does not advertise sampling-frequency control".into());
     }
     Err(format!(
         "No advertised {:?} Type I playback alternate matches {sample_rate} Hz, {channels} channel(s), {bit_resolution}-bit", requested_format
@@ -431,6 +473,49 @@ mod tests {
         assert_eq!(parsed.formats[0].subslot_bytes, Some(2));
         assert_eq!(parsed.formats[0].bit_resolution, Some(16));
         assert_eq!(parsed.formats[0].sample_rates, vec![44_100, 48_000]);
+    }
+
+    #[test]
+    fn detects_uac1_endpoint_sampling_frequency_control() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00,
+        ];
+        let parsed = parse_configuration_descriptors(&descriptors);
+        assert_eq!(parsed.formats[0].uac1_sampling_frequency_control, Some(true));
+        let plan = plan_pcm_playback(&descriptors, 48_000, 2, 16).unwrap();
+        assert!(plan.requires_uac1_sample_rate_control);
+    }
+
+    #[test]
+    fn rejects_multiple_uac1_rates_without_endpoint_sampling_frequency_control() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let error = plan_pcm_playback(&descriptors, 48_000, 2, 16).unwrap_err();
+        assert!(error.contains("does not advertise sampling-frequency control"));
+    }
+
+    #[test]
+    fn allows_fixed_uac1_rate_without_endpoint_clock_control() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 0, 1, 0, 0,
+            9, 4, 2, 1, 1, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            11, 0x24, 2, 1, 2, 2, 16, 1, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+        ];
+        let plan = plan_pcm_playback(&descriptors, 48_000, 2, 16).unwrap();
+        assert!(!plan.requires_uac1_sample_rate_control);
     }
 
     #[test]
