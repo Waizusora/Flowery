@@ -319,6 +319,21 @@ pub fn worker_teardown_error(
     }
 }
 
+/// Whether lifecycle operations must preserve the Android USB connection.
+/// This is sticky: once ownership becomes uncertain, a later close request
+/// must not remove the libusb registry entry or release the Java-owned fd.
+pub fn session_connection_must_be_retained(
+    worker_join_timed_out: bool,
+    worker_panicked: bool,
+    drain_timed_out: bool,
+    previously_unsafe: bool,
+) -> bool {
+    worker_join_timed_out
+        || worker_panicked
+        || drain_timed_out
+        || previously_unsafe
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,6 +361,15 @@ mod tests {
     #[test]
     fn clean_worker_exit_allows_session_teardown() {
         assert_eq!(worker_teardown_error(false, false), None);
+    }
+
+    #[test]
+    fn unsafe_session_state_is_sticky_across_stop_and_repeated_close() {
+        assert!(session_connection_must_be_retained(false, false, true, false));
+        assert!(session_connection_must_be_retained(false, false, false, true));
+        assert!(session_connection_must_be_retained(true, false, false, false));
+        assert!(session_connection_must_be_retained(false, true, false, false));
+        assert!(!session_connection_must_be_retained(false, false, false, false));
     }
 
 
