@@ -550,7 +550,11 @@ mod tests {
         assert_eq!(plan.feedback_interval, Some(1));
 
         // bInterval is reserved when zero for an isochronous endpoint.
-        let feedback_descriptor_interval_offset = descriptors.len() - 1;
+        let feedback_descriptor_interval_offset = descriptors
+            .windows(7)
+            .position(|d| d[0] == 7 && d[1] == 5 && d[2] == 0x81)
+            .expect("feedback endpoint descriptor")
+            + 6;
         descriptors[feedback_descriptor_interval_offset] = 0;
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
     }
@@ -568,8 +572,12 @@ mod tests {
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.interval, 1);
 
-        let last_descriptor_byte = descriptors.len() - 1;
-        descriptors[last_descriptor_byte] = 0;
+        let playback_interval_offset = descriptors
+            .windows(7)
+            .position(|d| d[0] == 7 && d[1] == 5 && d[2] == 0x01)
+            .expect("playback endpoint descriptor")
+            + 6;
+        descriptors[playback_interval_offset] = 0;
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
     }
 
