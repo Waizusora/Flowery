@@ -65,6 +65,7 @@ pub enum FeedbackReacquisitionState {
     Quiescing,
     AwaitingFreshFeedback,
     Repriming,
+    Failed,
 }
 
 impl Default for FeedbackReacquisitionState {
@@ -79,6 +80,12 @@ impl FeedbackReacquisitionState {
         } else {
             false
         }
+    }
+
+    /// Make the feedback lifecycle terminal after any stream failure.
+    /// Failed is absorbing: drain and late feedback cannot revive the stream.
+    pub fn fail(&mut self) {
+        *self = Self::Failed;
     }
 
     pub fn audio_ring_drained(&mut self) {
@@ -104,7 +111,7 @@ impl FeedbackReacquisitionState {
     }
 
     pub fn ignores_feedback_for_estimation(self) -> bool {
-        self == Self::Quiescing
+        self == Self::Quiescing || self == Self::Failed
     }
 }
 
@@ -487,7 +494,6 @@ mod reacquisition_integration_tests {
         scheduler: PacketFrameScheduler,
         audio_transfers_in_flight: Vec<u64>,
         next_transfer_id: u64,
-        terminal_error: bool,
     }
 
     impl SimulatedFeedbackStream {
@@ -498,13 +504,11 @@ mod reacquisition_integration_tests {
                 scheduler: PacketFrameScheduler::default(),
                 audio_transfers_in_flight: Vec::new(),
                 next_transfer_id: 1,
-                terminal_error: false,
             }
         }
 
         fn submit_audio(&mut self) -> Option<u64> {
-            if self.terminal_error
-                || !self.lifecycle.audio_submission_allowed()
+            if !self.lifecycle.audio_submission_allowed()
                 || !audio_clock_is_ready(true, self.tracker.estimate_hz())
             {
                 return None;
@@ -544,7 +548,7 @@ mod reacquisition_integration_tests {
             bytes: &[u8],
             speed: FeedbackBusSpeed,
         ) -> Result<(), String> {
-            if self.terminal_error {
+            if self.lifecycle == FeedbackReacquisitionState::Failed {
                 return Err("USB feedback stream is already in a terminal error state".into());
             }
             let expected = match speed {
@@ -554,13 +558,13 @@ mod reacquisition_integration_tests {
             if let Err(error) = validate_feedback_completion(
                 transfer_status, packet_status, bytes.len() as u32, expected,
             ) {
-                self.terminal_error = true;
+                self.lifecycle.fail();
                 return Err(error);
             }
             let measured = match decode_feedback_rate_hz(bytes, speed) {
                 Ok(rate) => rate,
                 Err(error) => {
-                    self.terminal_error = true;
+                    self.lifecycle.fail();
                     return Err(error);
                 }
             };
@@ -643,7 +647,7 @@ mod reacquisition_integration_tests {
             -4, 0, &initial, FeedbackBusSpeed::High,
         ).unwrap_err();
         assert!(error.contains("transfer failed"));
-        assert!(stream.terminal_error);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Failed);
         assert!(stream.submit_audio().is_none());
 
         // A later packet cannot revive a terminal stream.
@@ -683,12 +687,12 @@ mod reacquisition_integration_tests {
         let error = stream.complete_feedback(-4, 0, &sample, FeedbackBusSpeed::High).unwrap_err();
         assert!(error.contains("transfer failed"));
         stream.complete_audio_transfer(first);
-        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Failed);
         assert!(stream.submit_audio().is_none());
 
         // A valid-looking late sample must not clear the terminal error.
         assert!(stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).is_err());
-        assert!(stream.terminal_error);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Failed);
         assert_eq!(stream.tracker.estimate_hz(), None);
         assert!(stream.submit_audio().is_none());
     }
@@ -717,4 +721,16 @@ mod reacquisition_integration_tests {
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
     }
 
-}
+}\n
+    #[test]
+    fn failed_feedback_lifecycle_is_absorbing_across_drain_and_late_samples() {
+        let mut state = FeedbackReacquisitionState::Quiescing;
+        state.fail();
+        state.audio_ring_drained();
+        state.fresh_sample_accepted();
+        state.audio_submission_started();
+        assert_eq!(state, FeedbackReacquisitionState::Failed);
+        assert!(!state.audio_submission_allowed());
+        assert!(state.ignores_feedback_for_estimation());
+    }
+
