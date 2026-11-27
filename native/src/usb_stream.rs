@@ -1463,7 +1463,11 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
             // Dropping this JoinHandle detaches the still-running worker. Keep
             // the registry session and Java fd alive permanently: that worker
             // may still access the libusb context or device handle.
-            unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            if crate::usb_isochronous::session_connection_must_be_retained(
+                true, false, false, false,
+            ) {
+                unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            }
             return Err(
                 "USB stream worker did not stop before the bounded join deadline; retaining the Android USB connection to prevent use-after-free"
                     .into(),
@@ -1472,12 +1476,15 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
 
         let worker_panicked = worker.thread.join().is_err();
         let drain_timed_out = worker.status.load(Ordering::Acquire) == -2;
-        if let Some(message) = crate::usb_isochronous::worker_teardown_error(
-            worker_panicked,
-            drain_timed_out,
+        if crate::usb_isochronous::session_connection_must_be_retained(
+            false, worker_panicked, drain_timed_out, false,
         ) {
-            // Both a panic and an incomplete cancellation drain leave native
-            // ownership uncertain. Keep the registry session and Java fd alive.
+            let message = crate::usb_isochronous::worker_teardown_error(
+                worker_panicked,
+                drain_timed_out,
+            ).unwrap_or("USB worker ownership is uncertain; retain the Android USB connection");
+            // A panic or incomplete cancellation drain leaves native ownership
+            // uncertain. Keep the registry session and Java fd alive.
             unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
             return Err(message.into());
         }
@@ -1511,7 +1518,10 @@ pub(super) fn stop_session(session: i64) -> Result<(), String> {
 pub(super) fn close_session(session: i64) -> Result<(), String> {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     stop_worker_locked(session)?;
-    if unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session) {
+    let previously_unsafe = unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session);
+    if crate::usb_isochronous::session_connection_must_be_retained(
+        false, false, false, previously_unsafe,
+    ) {
         return Err("USB session has outstanding transfers that could not be drained; retain the Android USB connection".into());
     }
     crate::usb_libusb::remove_session(session);
