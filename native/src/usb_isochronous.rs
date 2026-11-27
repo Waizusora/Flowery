@@ -114,8 +114,14 @@ pub fn pause_is_drained(paused: bool, audio_transfers_pending: bool) -> bool {
 
 /// Whether the worker may queue another audio transfer.
 /// Pause drains already submitted transfers but never refills the ring until resumed.
-pub fn audio_submission_allowed(paused: bool, cancelling: bool, eof: bool) -> bool {
-    !paused && !cancelling && !eof
+pub fn audio_submission_allowed(
+    paused: bool,
+    cancelling: bool,
+    eof: bool,
+    stop_requested: bool,
+    stream_failed: bool,
+) -> bool {
+    !paused && !cancelling && !eof && !stop_requested && !stream_failed
 }
 
 /// Whether a cancellation drain has exceeded its bounded wait period.
@@ -320,10 +326,10 @@ mod tests {
 
     #[test]
     fn pause_blocks_audio_refill_and_resume_reenables_it() {
-        assert!(!audio_submission_allowed(true, false, false));
-        assert!(audio_submission_allowed(false, false, false));
-        assert!(!audio_submission_allowed(false, true, false));
-        assert!(!audio_submission_allowed(false, false, true));
+        assert!(!audio_submission_allowed(true, false, false, false, false));
+        assert!(audio_submission_allowed(false, false, false, false, false));
+        assert!(!audio_submission_allowed(false, true, false, false, false));
+        assert!(!audio_submission_allowed(false, false, true, false, false));
     }
 
     #[test]
@@ -596,4 +602,11 @@ mod tests {
         assert_eq!(s.service_interval_micros, 125);
         assert_eq!(s.packets.iter().map(|p| p.sample_frames).sum::<u32>(), 48);
     }
+    #[test]
+    fn stop_and_stream_error_are_submission_barriers() {
+        assert!(!audio_submission_allowed(false, false, false, true, false));
+        assert!(!audio_submission_allowed(false, false, false, false, true));
+        assert!(!audio_submission_allowed(false, false, false, true, true));
+    }
+
 }
