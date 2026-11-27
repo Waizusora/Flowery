@@ -1112,7 +1112,10 @@ fn run_worker(
                 }
             }
         }
-        if eof && !slots.iter().any(|slot| slot.submitted) {
+        if eof && crate::usb_isochronous::all_transfer_callbacks_observed(
+            slots.iter().map(|slot| slot.submitted),
+            false,
+        ) {
             if let Some(feedback) = feedback_slot.as_mut() {
                 if feedback.submitted && !feedback_cancelling {
                     let result = unsafe { libusb1_sys::libusb_cancel_transfer(feedback.transfer) };
@@ -1196,7 +1199,11 @@ fn run_worker(
             Ordering::Release,
         );
         let feedback_pending = feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
-        if !audio_pending && !feedback_pending {
+        let all_callbacks_observed = crate::usb_isochronous::all_transfer_callbacks_observed(
+            slots.iter().map(|slot| slot.submitted),
+            feedback_pending,
+        );
+        if all_callbacks_observed {
             if cancelling || eof || status.load(Ordering::Acquire) < 0 { break; }
             // No transfer is in flight and the stream has not ended. Record the PCM queue
             // state so a worker waiting for data that never arrives can be identified.
