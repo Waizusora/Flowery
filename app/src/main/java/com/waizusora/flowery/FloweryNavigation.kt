@@ -63,7 +63,9 @@ internal enum class SettingsPage { ROOT, AUDIO, INFO_AUDIO, LIBRARY, APPEARANCE,
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun FloweryNavigation(
-    context: Context, folders: List<LibraryFolder>, tracks: List<AudioTrackItem>,
+    context: Context,
+    onThemeChanged: (String) -> Unit,
+    folders: List<LibraryFolder>, tracks: List<AudioTrackItem>,
     isPlaying: Boolean, shuffleEnabled: Boolean, repeatMode: Int, selectedTrack: AudioTrackItem?,
     currentTag: AudioTag?, albumArtBytes: ByteArray?, displayTitle: String, displayArtist: String,
     lyrics: List<LyricLine>, positionMs: Long, durationMs: Long,
@@ -361,7 +363,9 @@ fun FloweryNavigation(
                     navigate = { settingsPage = it },
                     changeTheme = { selected ->
                         theme = selected
-                        prefs.edit().putString("theme", when (selected) { "Dark" -> "Black"; "Light" -> "Light"; else -> "Auto" }).apply()
+                        val storedTheme = when (selected) { "Dark" -> "Black"; "Light" -> "Light"; else -> "Auto" }
+                        prefs.edit().putString("theme", storedTheme).apply()
+                        onThemeChanged(selected)
                     },
                     libraryEncoding = libraryEncoding,
                     availableEncodings = availableEncodings,
