@@ -602,6 +602,25 @@ pub(super) fn read_usb_pcm_chunk(
     Ok(output)
 }
 
+/// Acquire the decoder without making shutdown wait indefinitely behind another
+/// decoder user. A stop request cancels lock acquisition; once acquired, the
+/// caller still owns the guard until the current decode operation completes.
+fn lock_decoder_while_running<T>(
+    decoder: &Mutex<T>,
+    stop: &std::sync::atomic::AtomicBool,
+) -> Option<std::sync::MutexGuard<'_, T>> {
+    loop {
+        if stop.load(std::sync::atomic::Ordering::Acquire) {
+            return None;
+        }
+        match decoder.try_lock() {
+            Ok(guard) => return Some(guard),
+            Err(std::sync::TryLockError::WouldBlock) => std::thread::yield_now(),
+            Err(std::sync::TryLockError::Poisoned(error)) => return Some(error.into_inner()),
+        }
+    }
+}
+
 /// Decode source frames and convert them through the persistent negotiated USB
 /// output pipeline. None marks decoder EOF; the caller must flush the pipeline.
 #[cfg(target_os = "android")]
@@ -609,11 +628,14 @@ pub(super) fn read_usb_output_chunk_from_decoder(
     decoder: &Arc<Mutex<StreamDecoder>>,
     max_source_frames: usize,
     pipeline: &mut crate::pcm_format::UsbPcmOutputPipeline,
+    stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Option<Vec<u8>>, String> {
     if max_source_frames == 0 || max_source_frames > 16_384 {
         return Err("USB source chunk frame count must be between 1 and 16384".into());
     }
-    let mut decoder = decoder.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(mut decoder) = lock_decoder_while_running(decoder, stop) else {
+        return Ok(None);
+    };
     let samples = decoder.read_usb_frames(max_source_frames)?;
     if matches!(samples, crate::pcm_format::UsbPcmSamples::Empty) {
         return Ok(None);
@@ -628,7 +650,8 @@ pub(super) fn read_usb_output_chunk(
     pipeline: &mut crate::pcm_format::UsbPcmOutputPipeline,
 ) -> Result<Option<Vec<u8>>, String> {
     let decoder = decoder_ref(handle).ok_or("Unknown stream decoder handle")?;
-    read_usb_output_chunk_from_decoder(&decoder, max_source_frames, pipeline)
+    let not_stopping = std::sync::atomic::AtomicBool::new(false);
+    read_usb_output_chunk_from_decoder(&decoder, max_source_frames, pipeline, &not_stopping)
 }
 
 
@@ -1194,6 +1217,30 @@ mod handle_tests {
         assert!(decoder_ref(0).is_none());
         assert!(decoder_ref(-1).is_none());
         assert!(decoder_ref(i64::MAX).is_none());
+    }
+
+    #[test]
+    fn decoder_lock_wait_is_cancelled_when_producer_stops() {
+        use std::sync::{atomic::AtomicBool, Arc, Barrier, Mutex};
+        use std::time::Duration;
+
+        let decoder = Arc::new(Mutex::new(()));
+        let held_guard = decoder.lock().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let attempting = Arc::new(Barrier::new(2));
+        let worker_decoder = Arc::clone(&decoder);
+        let worker_stop = Arc::clone(&stop);
+        let worker_attempting = Arc::clone(&attempting);
+        let worker = std::thread::spawn(move || {
+            worker_attempting.wait();
+            lock_decoder_while_running(&worker_decoder, &worker_stop).is_none()
+        });
+
+        attempting.wait();
+        std::thread::sleep(Duration::from_millis(5));
+        stop.store(true, std::sync::atomic::Ordering::Release);
+        assert!(worker.join().unwrap());
+        drop(held_guard);
     }
 }
 
