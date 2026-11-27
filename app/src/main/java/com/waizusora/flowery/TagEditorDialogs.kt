@@ -16,7 +16,10 @@ import androidx.compose.ui.unit.dp
 internal fun TagInfoDialog(tag: AudioTag, replayGainSettings: ReplayGainPreferenceState, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Audio file information") },
+        title = { Text("Audio file information", color = MaterialTheme.colorScheme.onSurface) },
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = MaterialTheme.colorScheme.onSurface,
+        textContentColor = MaterialTheme.colorScheme.onSurface,
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 listOf(
@@ -38,7 +41,8 @@ internal fun TagInfoDialog(tag: AudioTag, replayGainSettings: ReplayGainPreferen
                     "ReplayGain album peak" to tag.replayGainAlbumPeak
                 ).forEach { (label, value) ->
                     Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium)
+                    Text(value.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface)
                 }
                 val replayGainPlan = calculateReplayGainDisplay(tag, replayGainSettings)
                 HorizontalDivider()
