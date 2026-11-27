@@ -1768,7 +1768,7 @@ pub(super) fn seek(
 pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
     // Serialize the state transition with stop/close, but never hold the
     // lifecycle gate while waiting for in-flight transfers to drain.
-    let (worker_status, pause_drained) = {
+    let (worker_status, pause_drained, request_generation, ack_generation) = {
         let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
         let map = workers().lock().unwrap_or_else(|e| e.into_inner());
         let worker = map.get(&session).ok_or("USB stream worker is not running")?;
@@ -1778,24 +1778,34 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
         let state = (
             Arc::clone(&worker.status),
             Arc::clone(&worker.pause_drained),
+            Arc::clone(&worker.pause_request_generation),
+            Arc::clone(&worker.pause_ack_generation),
         );
-        worker.paused.store(paused, Ordering::Release);
-        if !paused {
+        if paused {
+            worker.pause_request_generation.fetch_add(1, Ordering::AcqRel);
+            worker.paused.store(true, Ordering::Release);
+        } else {
+            worker.paused.store(false, Ordering::Release);
+            worker.pause_request_generation.fetch_add(1, Ordering::AcqRel);
             worker.pause_drained.store(false, Ordering::Release);
         }
         state
     };
-    if !paused {
-        return Ok(());
-    }
+    if !paused { return Ok(()); }
+    let requested_generation = request_generation.load(Ordering::Acquire);
 
     let deadline = Instant::now() + PAUSE_DRAIN_TIMEOUT;
     loop {
         match crate::usb_isochronous::pause_wait_state(
             worker_status.load(Ordering::Acquire),
-            pause_drained.load(Ordering::Acquire),
+            requested_generation,
+            request_generation.load(Ordering::Acquire),
+            ack_generation.load(Ordering::Acquire),
         ) {
             crate::usb_isochronous::PauseWaitState::Drained => break,
+            crate::usb_isochronous::PauseWaitState::Superseded => {
+                return Err("USB pause request was superseded by a later state change".into());
+            }
             crate::usb_isochronous::PauseWaitState::WorkerFailed => {
                 return Err("USB stream failed while draining transfers for pause".into());
             }
@@ -1810,13 +1820,15 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
         thread::sleep(Duration::from_millis(1));
     }
 
-    // A concurrent close may have removed the worker while the gate was
-    // intentionally released. Do not report pause success for a dead session.
+    // Revalidate worker identity and the exact generation before reporting success.
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     let worker = map.get(&session).ok_or("USB stream stopped while pausing")?;
     if !Arc::ptr_eq(&worker.status, &worker_status)
         || worker.status.load(Ordering::Acquire) != 0
+        || worker.pause_request_generation.load(Ordering::Acquire) != requested_generation
+        || worker.pause_ack_generation.load(Ordering::Acquire) != requested_generation
+        || !worker.paused.load(Ordering::Acquire)
         || !worker.pause_drained.load(Ordering::Acquire)
     {
         return Err("USB stream changed state before pause completed".into());
