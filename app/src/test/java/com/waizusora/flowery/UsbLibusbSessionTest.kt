@@ -429,19 +429,19 @@ class UsbLibusbSessionTest {
 
     @Test
     fun acceptsReadableClockMultiplierControls() {
-        assertTrue(isValidUac2ClockMultiplierControls(0x05))
-        assertTrue(isValidUac2ClockMultiplierControls(0x06))
-        assertTrue(isValidUac2ClockMultiplierControls(0x09))
-        assertTrue(isValidUac2ClockMultiplierControls(0x0A))
+        assertTrue(isValidUac2ClockMultiplierControls(0x05)) // read-only / read-only
+        assertTrue(isValidUac2ClockMultiplierControls(0x07)) // writable / read-only
+        assertTrue(isValidUac2ClockMultiplierControls(0x0D)) // read-only / writable
+        assertTrue(isValidUac2ClockMultiplierControls(0x0F)) // writable / writable
     }
 
     @Test
     fun rejectsUnavailableOrReservedClockMultiplierControls() {
-        assertFalse(isValidUac2ClockMultiplierControls(0x00))
-        assertFalse(isValidUac2ClockMultiplierControls(0x03))
-        assertFalse(isValidUac2ClockMultiplierControls(0x07))
-        assertFalse(isValidUac2ClockMultiplierControls(0x0B))
-        assertFalse(isValidUac2ClockMultiplierControls(0x0F))
+        assertFalse(isValidUac2ClockMultiplierControls(0x00)) // both absent
+        assertFalse(isValidUac2ClockMultiplierControls(0x03)) // denominator absent
+        assertFalse(isValidUac2ClockMultiplierControls(0x09)) // denominator reserved
+        assertFalse(isValidUac2ClockMultiplierControls(0x0B)) // denominator reserved
+        assertFalse(isValidUac2ClockMultiplierControls(0x0E)) // numerator reserved
     }
 
     @Test
