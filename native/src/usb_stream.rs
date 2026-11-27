@@ -1147,11 +1147,24 @@ fn run_worker(
         }
         if feedback_reacquisition.audio_submission_allowed()
             && crate::usb_isochronous::audio_submission_allowed(
-                paused.load(Ordering::Acquire), cancelling, eof,
+                paused.load(Ordering::Acquire),
+                cancelling,
+                eof,
+                stop.load(Ordering::Acquire),
+                status.load(Ordering::Acquire) < 0,
             )
             && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz)
         {
             for slot in &mut slots {
+                if !crate::usb_isochronous::audio_submission_allowed(
+                    paused.load(Ordering::Acquire),
+                    cancelling,
+                    eof,
+                    stop.load(Ordering::Acquire),
+                    status.load(Ordering::Acquire) < 0,
+                ) {
+                    break;
+                }
                 if !slot.submitted {
                     match fill_and_submit(slot, config, &pcm_queue, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
                         Ok(true) => feedback_reacquisition.audio_submission_started(),
