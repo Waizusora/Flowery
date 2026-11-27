@@ -487,9 +487,10 @@ internal class UsbLibusbSession internal constructor(
             }
 
             fun canNegotiateSource(sourceId: Int, controls: Int, rate: Int): Boolean {
-                // GET_RANGE is authoritative for both host-programmable and read-only
-                // Clock Sources. Rate selection for read-only sources is expected to
-                // follow the chosen AudioStreaming alternate setting.
+                // A Clock Source with bmControls=0b00 has no frequency control;
+                // GET_RANGE is not a legal capability probe for an absent control.
+                if (!isUac2ControlPresent(controls)) return false
+                // GET_RANGE is authoritative for read-only and host-programmable sources.
                 return supportsRate(sourceId, rate)
             }
             if (clockPaths.isNotEmpty()) {
@@ -525,6 +526,11 @@ internal class UsbLibusbSession internal constructor(
                         sourceRate = scaled / numerator
                     }
                     if (!valid || sourceRate !in 1..Int.MAX_VALUE.toLong()) continue
+                    if (!isUac2ControlPresent(path.sourceControls)) {
+                        failures += "source " + path.sourceEntityId +
+                            " has no Clock Frequency control (bmControls=0b00); requested rate cannot be verified"
+                        continue
+                    }
                     if (!supportsRate(path.sourceEntityId, sourceRate.toInt())) {
                         failures += "source " + path.sourceEntityId + " does not advertise " + sourceRate +
                             " Hz (GET_RANGE transfer result " + lastRangeLength + ")"
@@ -752,6 +758,11 @@ internal class UsbLibusbSession internal constructor(
                 sourceSampleRate = calculatedSourceRate.toInt()
             }
 
+            if (!isUac2ControlPresent(selectedClockControls)) {
+                return Result.failure(IllegalStateException(
+                    "UAC2 Clock Source $selectedClockSource has no Clock Frequency control (bmControls=0b00); requested rate cannot be verified"
+                ))
+            }
             if (!supportsRate(selectedClockSource, sourceSampleRate)) {
                 return Result.failure(IllegalArgumentException("USB DAC Clock Source $selectedClockSource does not advertise required source frequency $sourceSampleRate Hz for output $sampleRate Hz"))
             }

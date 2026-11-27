@@ -65,11 +65,14 @@ analog output.
     triggers rollback. This prevents a DAC from retaining a stale rate (for
     example 384 kHz while 96 kHz PCM is streamed), which would consume samples
     at the wrong speed and shift the pitch by the ratio of the two rates.
-  - Read-only or absent (`0b01` / `0b00`): `GET_RANGE` is the capability gate. If
-    the requested rate is advertised, negotiation succeeds without requiring
-    `GET_CUR` to already match and without issuing `SET_CUR`. Rate selection is
-    expected to follow the chosen AudioStreaming alternate setting, which is the
-    common behavior for fixed-clock class-compliant DACs.
+  - Read-only (`0b01`): `GET_RANGE` is the capability gate. If the requested
+    rate is advertised, negotiation succeeds without requiring `GET_CUR` to
+    already match and without issuing `SET_CUR`; the active rate is expected to
+    follow the chosen AudioStreaming alternate setting.
+  - Absent (`0b00`): no Clock Frequency control exists, so Flowery must not send
+    `GET_RANGE` or `GET_CUR`. Because UAC2 AudioStreaming descriptors do not
+    provide a substitute discrete-rate list, the engine fails closed rather than
+    claiming that the requested rate is supported.
   - `UAC2_CLOCK_READY` logs `sourceCurrentHz` (before negotiation) and
     `sourceActiveHz` (after negotiation). A `sourceActiveHz` that differs from
     `sourceRequiredHz` indicates the clock was not aligned.

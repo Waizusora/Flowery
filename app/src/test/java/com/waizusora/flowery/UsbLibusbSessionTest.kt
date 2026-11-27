@@ -26,6 +26,7 @@ class UsbLibusbSessionTest {
         var sourceWriteCompleted = false
         var sourceRate = 44_100
         val writes = mutableListOf<String>()
+        val requests = mutableListOf<String>()
         var failNextSourceWrite = false
         var failSourceRestore = false
 
@@ -39,6 +40,7 @@ class UsbLibusbSessionTest {
             timeoutMs: Int
         ): Int {
             val entityId = index ushr 8
+            requests += "$requestType:$request:$value:$entityId"
             if (requestType == 0xA1 && request == 0x02 && entityId == 9) {
                 // One discrete range: 48 kHz only.
                 buffer[0] = 1
@@ -96,6 +98,31 @@ class UsbLibusbSessionTest {
                 ((bytes[1].toInt() and 0xFF) shl 8) or
                 ((bytes[2].toInt() and 0xFF) shl 16) or
                 ((bytes[3].toInt() and 0xFF) shl 24)
+    }
+
+    @Test
+    fun rejectsClockSourceWithoutFrequencyControlBeforeSendingControlRequests() {
+        val fake = FakeUsbControl()
+        val session = UsbLibusbSession(null, 1L, fake)
+        val path = Uac2ClockPath(
+            sourceEntityId = 9,
+            sourceControls = 0x00,
+            selectors = emptyList(),
+            multipliers = emptyList(),
+            clockEntities = listOf(9)
+        )
+
+        val result = session.negotiateUac2Clock(
+            controlInterfaceNumber = 0,
+            clockSourceEntityId = 9,
+            clockControls = 0x00,
+            sampleRate = 48_000,
+            clockPaths = listOf(path)
+        )
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()?.message?.contains("has no Clock Frequency control") == true)
+        assertTrue(fake.requests.isEmpty())
     }
 
     @Test
