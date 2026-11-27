@@ -312,6 +312,25 @@ mod tests {
     }
 
     #[test]
+    fn feedback_completion_requires_successful_transfer_and_packet() {
+        assert_eq!(validate_feedback_completion(0, 0, 3, 3), Ok(()));
+        assert!(validate_feedback_completion(5, 0, 3, 3)
+            .unwrap_err().contains("transfer failed"));
+        assert!(validate_feedback_completion(0, 2, 3, 3)
+            .unwrap_err().contains("packet failed"));
+    }
+
+    #[test]
+    fn feedback_completion_rejects_short_long_and_empty_packets() {
+        assert!(validate_feedback_completion(0, 0, 2, 3)
+            .unwrap_err().contains("received 2, expected 3"));
+        assert!(validate_feedback_completion(0, 0, 4, 3)
+            .unwrap_err().contains("received 4, expected 3"));
+        assert!(validate_feedback_completion(0, 0, 0, 0)
+            .unwrap_err().contains("must be non-zero"));
+    }
+
+    #[test]
     fn feedback_clock_staleness_handles_missing_and_expired_samples() {
         use std::time::Duration;
         let timeout = Duration::from_millis(500);
