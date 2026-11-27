@@ -485,7 +485,8 @@ mod reacquisition_integration_tests {
         lifecycle: FeedbackReacquisitionState,
         tracker: FeedbackRateTracker,
         scheduler: PacketFrameScheduler,
-        audio_transfers_in_flight: usize,
+        audio_transfers_in_flight: Vec<u64>,
+        next_transfer_id: u64,
         terminal_error: bool,
     }
 
@@ -495,21 +496,24 @@ mod reacquisition_integration_tests {
                 lifecycle: FeedbackReacquisitionState::Running,
                 tracker: FeedbackRateTracker::new(0.25).unwrap(),
                 scheduler: PacketFrameScheduler::default(),
-                audio_transfers_in_flight: 0,
+                audio_transfers_in_flight: Vec::new(),
+                next_transfer_id: 1,
                 terminal_error: false,
             }
         }
 
-        fn submit_audio(&mut self) -> bool {
+        fn submit_audio(&mut self) -> Option<u64> {
             if self.terminal_error
                 || !self.lifecycle.audio_submission_allowed()
                 || !audio_clock_is_ready(true, self.tracker.estimate_hz())
             {
-                return false;
+                return None;
             }
-            self.audio_transfers_in_flight += 1;
+            let id = self.next_transfer_id;
+            self.next_transfer_id += 1;
+            self.audio_transfers_in_flight.push(id);
             self.lifecycle.audio_submission_started();
-            true
+            Some(id)
         }
 
         fn observe_feedback_age(&mut self, age: Option<Duration>, timeout: Duration) {
@@ -517,10 +521,12 @@ mod reacquisition_integration_tests {
             self.lifecycle.begin_if_stale(stale);
         }
 
-        fn complete_audio_transfer(&mut self) {
-            assert!(self.audio_transfers_in_flight > 0);
-            self.audio_transfers_in_flight -= 1;
-            if self.audio_transfers_in_flight == 0 {
+        fn complete_audio_transfer(&mut self, transfer_id: u64) {
+            let index = self.audio_transfers_in_flight.iter()
+                .position(|id| *id == transfer_id)
+                .expect("audio transfer must be in flight");
+            self.audio_transfers_in_flight.remove(index);
+            if self.audio_transfers_in_flight.is_empty() {
                 let was_quiescing =
                     self.lifecycle == FeedbackReacquisitionState::Quiescing;
                 self.lifecycle.audio_ring_drained();
@@ -538,6 +544,9 @@ mod reacquisition_integration_tests {
             bytes: &[u8],
             speed: FeedbackBusSpeed,
         ) -> Result<(), String> {
+            if self.terminal_error {
+                return Err("USB feedback stream is already in a terminal error state".into());
+            }
             let expected = match speed {
                 FeedbackBusSpeed::Full => 3,
                 FeedbackBusSpeed::High => 4,
@@ -581,9 +590,9 @@ mod reacquisition_integration_tests {
 
         stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).unwrap();
         assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
-        assert!(stream.submit_audio());
-        assert!(stream.submit_audio());
-        assert_eq!(stream.audio_transfers_in_flight, 2);
+        let first_audio = stream.submit_audio().unwrap();
+        let second_audio = stream.submit_audio().unwrap();
+        assert_eq!(stream.audio_transfers_in_flight.len(), 2);
 
         // The feedback clock ages beyond its descriptor-derived stale limit.
         stream.observe_feedback_age(Some(timeout + Duration::from_nanos(1)), timeout);
@@ -596,10 +605,12 @@ mod reacquisition_integration_tests {
         stream.complete_feedback(0, 0, &late, FeedbackBusSpeed::High).unwrap();
         assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
 
-        stream.complete_audio_transfer();
+        // Complete the newer transfer first: the older transfer still keeps
+        // the ring non-empty and must prevent a new feedback epoch.
+        stream.complete_audio_transfer(second_audio);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
-        assert_eq!(stream.audio_transfers_in_flight, 1);
-        stream.complete_audio_transfer();
+        assert_eq!(stream.audio_transfers_in_flight, vec![first_audio]);
+        stream.complete_audio_transfer(first_audio);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
         assert_eq!(stream.tracker.estimate_hz(), None);
 
@@ -608,9 +619,9 @@ mod reacquisition_integration_tests {
         stream.complete_feedback(0, 0, &recovered, FeedbackBusSpeed::High).unwrap();
         assert!((stream.tracker.estimate_hz().unwrap() - 48_050.0).abs() < 1.0);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
-        assert!(stream.submit_audio());
+        assert!(stream.submit_audio().is_some());
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
-        assert_eq!(stream.audio_transfers_in_flight, 1);
+        assert_eq!(stream.audio_transfers_in_flight.len(), 1);
     }
 
     #[test]
@@ -618,14 +629,14 @@ mod reacquisition_integration_tests {
         let mut stream = SimulatedFeedbackStream::new();
         let initial = high_speed_feedback(48_000.0);
         stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).unwrap();
-        assert!(stream.submit_audio());
+        let audio_id = stream.submit_audio().unwrap();
 
         stream.observe_feedback_age(
             Some(Duration::from_millis(251)),
             Duration::from_millis(250),
         );
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
-        assert!(!stream.submit_audio());
+        assert!(stream.submit_audio().is_none());
 
         // Simulate libusb reporting a disconnected/cancelled feedback transfer.
         let error = stream.complete_feedback(
@@ -633,12 +644,14 @@ mod reacquisition_integration_tests {
         ).unwrap_err();
         assert!(error.contains("transfer failed"));
         assert!(stream.terminal_error);
-        assert!(!stream.submit_audio());
+        assert!(stream.submit_audio().is_none());
 
         // A later packet cannot revive a terminal stream.
-        stream.complete_audio_transfer();
+        stream.complete_audio_transfer(audio_id);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
-        assert!(!stream.submit_audio());
+        assert!(stream.submit_audio().is_none());
+        assert!(stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).is_err());
+        assert!(stream.tracker.estimate_hz().is_none());
     }
 
     #[test]
@@ -651,7 +664,7 @@ mod reacquisition_integration_tests {
             Duration::from_millis(250),
         );
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Running);
-        assert!(stream.submit_audio());
+        assert!(stream.submit_audio().is_some());
         assert!((stream.tracker.estimate_hz().unwrap() - 44_100.0).abs() < 1.0);
     }
 }
