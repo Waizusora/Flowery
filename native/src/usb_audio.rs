@@ -73,9 +73,8 @@ struct Alternate {
     max_packet_size: Option<u16>,
     interval: Option<u8>,
     synchronization_type: Option<u8>,
-    feedback_endpoint_address: Option<u8>,
-    feedback_max_packet_size: Option<u16>,
-    feedback_interval: Option<u8>,
+    synchronization_address: Option<u8>,
+    feedback_endpoints: Vec<(u8, u16, u8)>,
 }
 
 fn le24(b: &[u8], i: usize) -> Option<u32> {
@@ -122,9 +121,23 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                     max_packet_size: a.max_packet_size,
                     interval: a.interval,
                     synchronization_type: a.synchronization_type,
-                    feedback_endpoint_address: a.feedback_endpoint_address,
-                    feedback_max_packet_size: a.feedback_max_packet_size,
-                    feedback_interval: a.feedback_interval,
+                    // The data endpoint's bSynchAddress is authoritative. Never
+                    // infer feedback pairing merely from alternate-setting proximity.
+                    feedback_endpoint_address: a.synchronization_address.and_then(|address|
+                        a.feedback_endpoints.iter().find(|(candidate, _, _)|
+                            *candidate == address
+                        ).map(|(candidate, _, _)| *candidate)
+                    ),
+                    feedback_max_packet_size: a.synchronization_address.and_then(|address|
+                        a.feedback_endpoints.iter().find(|(candidate, _, _)|
+                            *candidate == address
+                        ).map(|(_, packet, _)| *packet)
+                    ),
+                    feedback_interval: a.synchronization_address.and_then(|address|
+                        a.feedback_endpoints.iter().find(|(candidate, _, _)|
+                            *candidate == address
+                        ).map(|(_, _, interval)| *interval)
+                    ),
                 });
             }
         }
@@ -278,12 +291,11 @@ pub fn parse_configuration_descriptors(bytes: &[u8]) -> UsbAudioParseResult {
                         // isochronous endpoints at both Full- and High-Speed.
                         let packet_size_valid = packet_size & 0xe000 == 0;
                         if is_input && usage == 0x01 && address_valid && packet_size_valid {
-                            a.feedback_endpoint_address = Some(d[2]);
-                            a.feedback_max_packet_size = Some(packet_size);
-                            a.feedback_interval = Some(d[6]);
+                            a.feedback_endpoints.push((d[2], packet_size, d[6]));
                         } else if !is_input && usage == 0 && address_valid && packet_size_valid {
                             a.endpoint_address = Some(d[2]);
                             a.synchronization_type = Some((d[3] >> 2) & 0x03);
+                            a.synchronization_address = d.get(8).copied().filter(|address| *address != 0);
                             a.max_packet_size = Some(packet_size);
                             a.interval = Some(d[6]);
                         } else if is_input || usage == 0 || !address_valid || !packet_size_valid {
