@@ -667,4 +667,54 @@ mod reacquisition_integration_tests {
         assert!(stream.submit_audio().is_some());
         assert!((stream.tracker.estimate_hz().unwrap() - 44_100.0).abs() < 1.0);
     }
+
+    #[test]
+    fn terminal_feedback_failure_cannot_be_revived_after_audio_ring_drains() {
+        let mut stream = SimulatedFeedbackStream::new();
+        let sample = high_speed_feedback(48_000.0);
+        stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).unwrap();
+        let first = stream.submit_audio().unwrap();
+        let second = stream.submit_audio().unwrap();
+
+        stream.observe_feedback_age(Some(Duration::from_millis(251)), Duration::from_millis(250));
+        stream.complete_audio_transfer(second);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
+
+        let error = stream.complete_feedback(-4, 0, &sample, FeedbackBusSpeed::High).unwrap_err();
+        assert!(error.contains("transfer failed"));
+        stream.complete_audio_transfer(first);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert!(stream.submit_audio().is_none());
+
+        // A valid-looking late sample must not clear the terminal error.
+        assert!(stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).is_err());
+        assert!(stream.terminal_error);
+        assert_eq!(stream.tracker.estimate_hz(), None);
+        assert!(stream.submit_audio().is_none());
+    }
+
+    #[test]
+    fn feedback_recovery_waits_for_every_audio_transfer_in_any_completion_order() {
+        let mut stream = SimulatedFeedbackStream::new();
+        let sample = high_speed_feedback(48_000.0);
+        stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).unwrap();
+        let a = stream.submit_audio().unwrap();
+        let b = stream.submit_audio().unwrap();
+        let c = stream.submit_audio().unwrap();
+
+        stream.observe_feedback_age(Some(Duration::from_millis(251)), Duration::from_millis(250));
+        stream.complete_audio_transfer(b);
+        stream.complete_audio_transfer(c);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
+        assert_eq!(stream.audio_transfers_in_flight, vec![a]);
+        assert!(stream.tracker.estimate_hz().is_some());
+
+        stream.complete_audio_transfer(a);
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert_eq!(stream.tracker.estimate_hz(), None);
+        let recovered = high_speed_feedback(48_010.0);
+        stream.complete_feedback(0, 0, &recovered, FeedbackBusSpeed::High).unwrap();
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
+    }
+
 }
