@@ -330,6 +330,7 @@ mod tests {
             supported_data_formats: vec![UsbAudioDataFormat::Pcm],
             sample_rates: vec![rate],
             continuous_rate_range: None,
+            uac1_sampling_frequency_control: None,
             endpoint_address: Some(0x01),
             max_packet_size: Some(196),
             interval: Some(1),
