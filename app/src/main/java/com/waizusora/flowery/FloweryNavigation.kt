@@ -376,6 +376,7 @@ fun FloweryNavigation(
         }
     }
     }
+    FloweryTheme(darkTheme = !lightTheme) {
     if (showLyricsSearch && selectedTrack != null) {
         LyricsSearchDialog(
             initialQuery = listOf(displayTitle, displayArtist).filter { it.isNotBlank() }.joinToString(" "),
@@ -395,6 +396,7 @@ fun FloweryNavigation(
                     }
             }
         )
+    }
     }
 }
 
