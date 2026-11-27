@@ -1824,13 +1824,15 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
     let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
     let map = workers().lock().unwrap_or_else(|e| e.into_inner());
     let worker = map.get(&session).ok_or("USB stream stopped while pausing")?;
-    if !Arc::ptr_eq(&worker.status, &worker_status)
-        || worker.status.load(Ordering::Acquire) != 0
-        || worker.pause_request_generation.load(Ordering::Acquire) != requested_generation
-        || worker.pause_ack_generation.load(Ordering::Acquire) != requested_generation
-        || !worker.paused.load(Ordering::Acquire)
-        || !worker.pause_drained.load(Ordering::Acquire)
-    {
+    if !crate::usb_isochronous::pause_completion_is_current(
+        Arc::ptr_eq(&worker.status, &worker_status),
+        worker.status.load(Ordering::Acquire),
+        requested_generation,
+        worker.pause_request_generation.load(Ordering::Acquire),
+        worker.pause_ack_generation.load(Ordering::Acquire),
+        worker.paused.load(Ordering::Acquire),
+        worker.pause_drained.load(Ordering::Acquire),
+    ) {
         return Err("USB stream changed state before pause completed".into());
     }
     Ok(())
