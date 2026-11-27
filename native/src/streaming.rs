@@ -1,6 +1,7 @@
 use std::fs::File;
 #[cfg(target_os = "android")]
 use std::io::ErrorKind;
+#[cfg(target_os = "android")]
 use std::time::Duration;
 #[cfg(target_os = "android")]
 use std::time::Instant;
@@ -605,10 +606,10 @@ pub(super) fn read_usb_pcm_chunk(
 /// Acquire the decoder without making shutdown wait indefinitely behind another
 /// decoder user. A stop request cancels lock acquisition; once acquired, the
 /// caller still owns the guard until the current decode operation completes.
-fn lock_decoder_while_running<T>(
-    decoder: &Mutex<T>,
+fn lock_decoder_while_running<'a, T>(
+    decoder: &'a Mutex<T>,
     stop: &std::sync::atomic::AtomicBool,
-) -> Option<std::sync::MutexGuard<'_, T>> {
+) -> Option<std::sync::MutexGuard<'a, T>> {
     loop {
         if stop.load(std::sync::atomic::Ordering::Acquire) {
             return None;
