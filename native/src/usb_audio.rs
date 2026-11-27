@@ -544,6 +544,7 @@ mod tests {
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x05, 0x00, 0x04, 1,
             7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.feedback_interval, Some(1));
@@ -562,6 +563,7 @@ mod tests {
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.interval, 1);
@@ -579,6 +581,7 @@ mod tests {
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.interface_number, 2);
@@ -598,6 +601,7 @@ mod tests {
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x05, 0x00, 0x04, 1,
             7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let plan = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap();
         assert_eq!(plan.endpoint_address, 0x01);
@@ -615,6 +619,7 @@ mod tests {
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let error = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap_err();
         assert!(error.contains("no explicit feedback endpoint"));
@@ -647,6 +652,7 @@ mod tests {
             7, 0x24, 1, 1, 1, 3, 0, // wFormatTag = IEEE_FLOAT
             14, 0x24, 2, 1, 2, 4, 32, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
             7, 5, 0x01, 0x01, 0x00, 0x04, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let parsed = parse_configuration_descriptors(&descriptors);
         assert_eq!(parsed.formats[0].data_format, Some(UsbAudioDataFormat::IeeeFloat));
