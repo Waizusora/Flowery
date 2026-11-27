@@ -449,8 +449,8 @@ mod tests {
         assert_eq!(feedback_completion_timeout(1_000), Duration::from_millis(500));
         assert_eq!(feedback_clock_stale_timeout(200_000), Duration::from_millis(400));
         assert_eq!(feedback_completion_timeout(200_000), Duration::from_millis(600));
-        assert_eq!(feedback_clock_stale_timeout(32_768_000), Duration::from_secs(65));
-        assert_eq!(feedback_completion_timeout(32_768_000), Duration::from_secs(98));
+        assert_eq!(feedback_clock_stale_timeout(32_768_000), Duration::from_micros(65_536_000));
+        assert_eq!(feedback_completion_timeout(32_768_000), Duration::from_micros(98_304_000));
     }
 
     #[test]
