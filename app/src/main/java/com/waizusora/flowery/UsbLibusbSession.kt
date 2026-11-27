@@ -827,6 +827,7 @@ internal class UsbLibusbSession internal constructor(
         dataFormat: Int,
         feedbackEndpointAddress: Int,
         feedbackMaxPacketSize: Int,
+        feedbackInterval: Int,
         initialPositionMs: Long = 0L
     ): Result<Unit> {
         if (closed) return Result.failure(IllegalStateException("USB session is closed"))
@@ -835,9 +836,9 @@ internal class UsbLibusbSession internal constructor(
                 nativeHandle, decoderHandle, endpointAddress, rawMaxPacketSize,
                 interval, sampleRate, channels,
                 validBits, subslotBytes, dataFormat, feedbackEndpointAddress,
-                feedbackMaxPacketSize, initialPositionMs
+                feedbackMaxPacketSize, feedbackInterval, initialPositionMs
             )
-            safeUsbLogI("FloweryUsbNative", "NATIVE_START result=$result sampleRate=$sampleRate channels=$channels validBits=$validBits subslotBytes=$subslotBytes dataFormat=$dataFormat endpoint=0x${endpointAddress.toString(16)} rawMaxPacketSize=$rawMaxPacketSize interval=$interval feedbackEndpoint=0x${feedbackEndpointAddress.toString(16)} feedbackPacketBytes=$feedbackMaxPacketSize initialPositionMs=$initialPositionMs")
+            safeUsbLogI("FloweryUsbNative", "NATIVE_START result=$result sampleRate=$sampleRate channels=$channels validBits=$validBits subslotBytes=$subslotBytes dataFormat=$dataFormat endpoint=0x${endpointAddress.toString(16)} rawMaxPacketSize=$rawMaxPacketSize interval=$interval feedbackEndpoint=0x${feedbackEndpointAddress.toString(16)} feedbackPacketBytes=$feedbackMaxPacketSize feedbackInterval=$feedbackInterval initialPositionMs=$initialPositionMs")
             if (result == 0) Result.success(Unit)
             else Result.failure(IllegalStateException("Native USB playback failed to start (result=$result)"))
         } catch (error: Exception) {
