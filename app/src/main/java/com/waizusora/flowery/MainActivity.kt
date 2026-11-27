@@ -369,8 +369,10 @@ class MainActivity : ComponentActivity() {
         restoreLastPlayedTrack()
         refreshOutputVolume()
         setContent {
-            val savedTheme = getSharedPreferences("flowery_preferences", MODE_PRIVATE)
-                .getString("theme", "Auto")
+            var savedTheme by remember {
+                mutableStateOf(getSharedPreferences("flowery_preferences", MODE_PRIVATE)
+                    .getString("theme", "Auto") ?: "Auto")
+            }
             val darkTheme = when (savedTheme) {
                 "Light" -> false
                 "Black", "Dark" -> true
@@ -379,6 +381,9 @@ class MainActivity : ComponentActivity() {
             FloweryTheme(darkTheme = darkTheme) {
             FloweryNavigation(
                 context = this,
+                onThemeChanged = { selected ->
+                    savedTheme = when (selected) { "Dark" -> "Black"; "Light" -> "Light"; else -> "Auto" }
+                },
                 folders = folders,
                 tracks = tracks,
                 status = status,
