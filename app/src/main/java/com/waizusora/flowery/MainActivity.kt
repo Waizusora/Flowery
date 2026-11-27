@@ -428,7 +428,6 @@ class MainActivity : ComponentActivity() {
                             Uri.parse("package:$packageName")))
                     }
                 },
-                onRequestUsbPermission = ::requestUsbPermissionForConnectedAudioDevice,
                 onRemoveFolder = ::removeFolder,
                 onToggleFolder = ::toggleFolder,
                 onScan = ::scanLibrary,
