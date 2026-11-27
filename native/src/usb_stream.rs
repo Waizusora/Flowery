@@ -1768,7 +1768,7 @@ pub(super) fn seek(
 pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
     // Serialize the state transition with stop/close, but never hold the
     // lifecycle gate while waiting for in-flight transfers to drain.
-    let (worker_status, pause_drained, request_generation, ack_generation, requested_generation) = {
+    let (worker_status, request_generation, ack_generation, requested_generation) = {
         let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
         let map = workers().lock().unwrap_or_else(|e| e.into_inner());
         let worker = map.get(&session).ok_or("USB stream worker is not running")?;
@@ -1777,7 +1777,6 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
         }
         let state = (
             Arc::clone(&worker.status),
-            Arc::clone(&worker.pause_drained),
             Arc::clone(&worker.pause_request_generation),
             Arc::clone(&worker.pause_ack_generation),
         );
@@ -1791,7 +1790,7 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
             worker.pause_drained.store(false, Ordering::Release);
             0
         };
-        (state.0, state.1, state.2, state.3, requested_generation)
+        (state.0, state.1, state.2, requested_generation)
     };
     if !paused { return Ok(()); }
 
