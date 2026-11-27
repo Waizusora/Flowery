@@ -1832,6 +1832,14 @@ mod tests {
         let slot_reference = Arc::clone(&session);
         assert_eq!(Arc::strong_count(&session), 2);
 
+        assert_eq!(
+            crate::usb_isochronous::transfer_drain_state(
+                false,
+                std::time::Duration::from_secs(2),
+                std::time::Duration::from_secs(2),
+            ),
+            crate::usb_isochronous::TransferDrainState::TimedOutRetain,
+        );
         let retained = super::retain_submitted_resources(
             vec![DropProbe(Arc::clone(&buffer_drops))],
             Box::new(DropProbe(Arc::clone(&signal_drops))),
