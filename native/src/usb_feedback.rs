@@ -113,6 +113,32 @@ impl FeedbackOutlierGuard {
     }
 }
 
+
+/// Validate one explicit-feedback isochronous packet before decoding its clock value.
+/// A feedback sample is usable only when both transfer and packet completed fully.
+pub fn validate_feedback_completion(
+    transfer_status: i32,
+    packet_status: i32,
+    actual_length: u32,
+    expected_length: u32,
+) -> Result<(), String> {
+    if transfer_status != 0 {
+        return Err(format!("USB feedback transfer failed with status {transfer_status}"));
+    }
+    if packet_status != 0 {
+        return Err(format!("USB feedback packet failed with status {packet_status}"));
+    }
+    if actual_length != expected_length {
+        return Err(format!(
+            "USB feedback packet length mismatch: received {actual_length}, expected {expected_length}"
+        ));
+    }
+    if expected_length == 0 {
+        return Err("USB feedback packet length must be non-zero".into());
+    }
+    Ok(())
+}
+
 /// Missing feedback and feedback older than the timeout are both stale.
 pub fn feedback_clock_is_stale(age: Option<std::time::Duration>, timeout: std::time::Duration) -> bool {
     age.map(|elapsed| elapsed > timeout).unwrap_or(true)
