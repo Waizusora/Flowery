@@ -22,7 +22,7 @@ use std::{
 use rtrb::{Consumer, Producer};
 
 #[cfg(target_os = "android")]
-use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, PacketFrameScheduler};
+use crate::usb_feedback::{FeedbackBusSpeed, FeedbackOutlierGuard, FeedbackRateTracker, FeedbackReacquisitionState, PacketFrameScheduler};
 
 #[cfg(any(target_os = "android", test))]
 fn retain_submitted_resources<B, S, T>(
@@ -71,6 +71,9 @@ const PCM_DECODE_THREAD_NICE: i32 = -16;
 const PACKETS_PER_TRANSFER: usize = 8;
 #[cfg(target_os = "android")]
 const TRANSFER_COMPLETION_TIMEOUT: Duration = Duration::from_millis(500);
+/// Quiesce the audio ring before the longer feedback-transfer timeout expires.
+#[cfg(target_os = "android")]
+const FEEDBACK_CLOCK_STALE_TIMEOUT: Duration = Duration::from_millis(250);
 #[cfg(target_os = "android")]
 const TRANSFER_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "android")]
@@ -990,13 +993,16 @@ fn run_worker(
     let mut zero_padded_frames = 0u64;
     let mut last_diagnostic_at = Instant::now();
     let mut feedback_cancelling = false;
+    let mut feedback_reacquisition = FeedbackReacquisitionState::default();
     let mut packet_scheduler = PacketFrameScheduler::default();
     let mut eof = false;
-    if crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
+    if feedback_reacquisition.audio_submission_allowed()
+        && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz)
+    {
         for slot in &mut slots {
             if eof || paused.load(Ordering::Acquire) { break; }
             match fill_and_submit(slot, config, &pcm_queue, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
-                Ok(true) => {}
+                Ok(true) => feedback_reacquisition.audio_submission_started(),
                 Ok(false) => break,
                 Err(message) => { set_error(&error, &status, message); break; }
             }
@@ -1047,13 +1053,19 @@ fn run_worker(
             } else if feedback_timed_out {
                 set_error(&error, &status, "USB explicit feedback transfer timed out".into());
             }
-            if feedback_rate_hz.is_some()
+            let clock_stale = feedback_rate_hz.is_some()
                 && crate::usb_feedback::feedback_clock_is_stale(
                     last_feedback_at.map(|received| received.elapsed()),
-                    TRANSFER_COMPLETION_TIMEOUT,
-                )
-            {
-                set_error(&error, &status, "USB explicit feedback clock estimate became stale".into());
+                    FEEDBACK_CLOCK_STALE_TIMEOUT,
+                );
+            if feedback_reacquisition.begin_if_stale(clock_stale) {
+                // Do not use the expired estimate while the already-submitted
+                // audio ring drains. The feedback IN transfer remains active.
+                feedback_rate_hz = None;
+                last_feedback_at = None;
+                feedback_tracker.reset();
+                feedback_outlier_guard.record_accepted();
+                log_usb_diagnostic("USB_FEEDBACK_REACQUIRE phase=quiescing reason=clock_stale");
             }
         }
         if stop.load(Ordering::Acquire) || status.load(Ordering::Acquire) < 0 {
@@ -1124,13 +1136,16 @@ fn run_worker(
                 ));
             }
         }
-        if crate::usb_isochronous::audio_submission_allowed(
-            paused.load(Ordering::Acquire), cancelling, eof,
-        ) && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz) {
+        if feedback_reacquisition.audio_submission_allowed()
+            && crate::usb_isochronous::audio_submission_allowed(
+                paused.load(Ordering::Acquire), cancelling, eof,
+            )
+            && crate::usb_feedback::audio_clock_is_ready(feedback_slot.is_some(), feedback_rate_hz)
+        {
             for slot in &mut slots {
                 if !slot.submitted {
                     match fill_and_submit(slot, config, &pcm_queue, &mut packet_scheduler, &mut eof, feedback_rate_hz) {
-                        Ok(true) => {}
+                        Ok(true) => feedback_reacquisition.audio_submission_started(),
                         Ok(false) => break,
                         Err(message) => { set_error(&error, &status, message); break; }
                     }
@@ -1215,6 +1230,11 @@ fn run_worker(
                                 if let Err(message) = crate::usb_feedback::validate_feedback_rate_hz(config.sample_rate, measured) {
                                     feedback_telemetry.record_rejected();
                                     set_error(&error, &status, message);
+                                } else if feedback_reacquisition.ignores_feedback_for_estimation() {
+                                    // Keep the feedback endpoint alive while old
+                                    // audio transfers drain, but do not seed the
+                                    // new clock epoch until the ring is empty.
+                                    feedback_telemetry.record_rejected();
                                 } else {
                                     match feedback_tracker.update_checked(measured, 0.02) {
                                         Ok(Some(estimate)) => {
@@ -1222,6 +1242,12 @@ fn run_worker(
                                             last_feedback_at = Some(Instant::now());
                                             feedback_telemetry.record_accepted(measured, estimate);
                                             feedback_outlier_guard.record_accepted();
+                                            if feedback_reacquisition == FeedbackReacquisitionState::AwaitingFreshFeedback {
+                                                feedback_reacquisition.fresh_sample_accepted();
+                                                log_usb_diagnostic(&format!(
+                                                    "USB_FEEDBACK_REACQUIRE phase=repriming freshRateHz={estimate:.3}"
+                                                ));
+                                            }
                                         }
                                         Ok(None) => {
                                             feedback_telemetry.record_rejected();
@@ -1299,6 +1325,13 @@ fn run_worker(
             }
         }
         let pending_now = slots.iter().filter(|slot| slot.submitted).count();
+        if pending_now == 0 && feedback_reacquisition == FeedbackReacquisitionState::Quiescing {
+            // All packets submitted with the expired clock have completed.
+            // Reset fractional phase before accepting the next feedback sample.
+            packet_scheduler.reset();
+            feedback_reacquisition.audio_ring_drained();
+            log_usb_diagnostic("USB_FEEDBACK_REACQUIRE phase=awaiting_fresh_feedback audioRing=drained");
+        }
         pending_min = pending_min.min(pending_now);
         active_slots_min = active_slots_min.min(pending_now);
         if last_diagnostic_at.elapsed() >= Duration::from_secs(5) {
