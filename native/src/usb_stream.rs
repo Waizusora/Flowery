@@ -635,6 +635,8 @@ struct UsbStreamWorker {
     played_frames: Arc<AtomicU64>,
     paused: Arc<AtomicBool>,
     pause_drained: Arc<AtomicBool>,
+    pause_request_generation: Arc<AtomicU64>,
+    pause_ack_generation: Arc<AtomicU64>,
     error: Arc<Mutex<String>>,
     feedback_telemetry: Arc<FeedbackTelemetry>,
     thread: JoinHandle<()>,
@@ -892,6 +894,8 @@ fn run_worker(
     played_frames: Arc<AtomicU64>,
     paused: Arc<AtomicBool>,
     pause_drained: Arc<AtomicBool>,
+    pause_request_generation: Arc<AtomicU64>,
+    pause_ack_generation: Arc<AtomicU64>,
     error: Arc<Mutex<String>>,
     feedback_telemetry: Arc<FeedbackTelemetry>,
 ) {
@@ -1207,10 +1211,15 @@ fn run_worker(
             }
         }
         let audio_pending = slots.iter().any(|slot| slot.submitted);
-        pause_drained.store(
-            crate::usb_isochronous::pause_is_drained(paused.load(Ordering::Acquire), audio_pending),
-            Ordering::Release,
-        );
+        // Require a stable generation around the paused flag before acknowledging.
+        let generation_before = pause_request_generation.load(Ordering::Acquire);
+        let paused_now = paused.load(Ordering::Acquire);
+        let generation_after = pause_request_generation.load(Ordering::Acquire);
+        let drained = crate::usb_isochronous::pause_is_drained(paused_now, audio_pending);
+        pause_drained.store(drained, Ordering::Release);
+        if drained && generation_before == generation_after {
+            pause_ack_generation.store(generation_after, Ordering::Release);
+        }
         let feedback_pending = feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
         let all_callbacks_observed = crate::usb_isochronous::all_transfer_callbacks_observed(
             slots.iter().map(|slot| slot.submitted),
@@ -1545,12 +1554,17 @@ fn spawn_worker(
     let played_frames = Arc::new(AtomicU64::new(initial_position_frames));
     let paused = Arc::new(AtomicBool::new(initially_paused));
     let pause_drained = Arc::new(AtomicBool::new(initially_paused));
+    let initial_pause_generation = u64::from(initially_paused);
+    let pause_request_generation = Arc::new(AtomicU64::new(initial_pause_generation));
+    let pause_ack_generation = Arc::new(AtomicU64::new(initial_pause_generation));
     let error = Arc::new(Mutex::new(String::new()));
     let thread_stop = Arc::clone(&stop);
     let thread_status = Arc::clone(&status);
     let thread_played_frames = Arc::clone(&played_frames);
     let thread_paused = Arc::clone(&paused);
     let thread_pause_drained = Arc::clone(&pause_drained);
+    let thread_pause_request_generation = Arc::clone(&pause_request_generation);
+    let thread_pause_ack_generation = Arc::clone(&pause_ack_generation);
     let thread_error = Arc::clone(&error);
     let feedback_telemetry = Arc::new(FeedbackTelemetry::default());
     let thread_feedback_telemetry = Arc::clone(&feedback_telemetry);
@@ -1560,7 +1574,8 @@ fn spawn_worker(
             raise_current_thread_priority("flowery-usb-iso-out", USB_WORKER_THREAD_NICE);
             run_worker(
                 session, decoder_handle, config, thread_stop, thread_status,
-                thread_played_frames, thread_paused, thread_pause_drained, thread_error,
+                thread_played_frames, thread_paused, thread_pause_drained,
+                thread_pause_request_generation, thread_pause_ack_generation, thread_error,
                 thread_feedback_telemetry,
             )
         })
@@ -1569,7 +1584,8 @@ fn spawn_worker(
         session_handle,
         UsbStreamWorker {
             session: session_handle, decoder_handle, config,
-            stop, status, played_frames, paused, pause_drained, error,
+            stop, status, played_frames, paused, pause_drained,
+            pause_request_generation, pause_ack_generation, error,
             feedback_telemetry, thread: worker_thread,
         },
     );
