@@ -238,11 +238,16 @@ Pause requests release the lifecycle gate while waiting for submitted audio
 transfers to drain, allowing stop or close to proceed. The waiter observes the
 worker status as well as the drain acknowledgement: a worker that fails or
 stops before acknowledging pause now terminates the wait with an explicit
-error instead of waiting until the pause deadline. After drain acknowledgement,
-the waiter reacquires the lifecycle gate and verifies that the same worker is
-still registered and running before reporting success. This covers the
-pause-versus-stop/close ordering at the state-machine level; device-level
-concurrency stress testing remains outstanding.
+error instead of waiting until the pause deadline. Each pause/resume transition advances a request generation. The worker
+acknowledges only a stable generation observed with the paused flag, and the
+waiter accepts only the acknowledgement for its exact generation. A resume
+therefore invalidates an older pause acknowledgement, including a delayed
+acknowledgement published after resume. After drain acknowledgement, the
+waiter reacquires the lifecycle gate and verifies the same worker, request
+generation, acknowledgement generation, and paused state before reporting
+success. This covers pause/resume supersession and pause-versus-stop/close
+ordering at the state-machine level; device-level concurrency stress testing
+remains outstanding.
 
 ### Transfer allocation ownership and cleanup
 
