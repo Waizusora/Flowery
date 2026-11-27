@@ -505,7 +505,7 @@ struct FeedbackSlot {
 #[cfg(target_os = "android")]
 impl Drop for TransferSlot {
     fn drop(&mut self) {
-        if self.submitted {
+        if crate::usb_isochronous::transfer_allocation_must_be_retained(self.submitted) {
             // libusb may still access the transfer, buffer, and callback state.
             // Retain the session/context as well; leaking is safer than unwinding
             // into a use-after-free if the worker panics before observing a callback.
@@ -533,7 +533,7 @@ impl Drop for TransferSlot {
 #[cfg(target_os = "android")]
 impl Drop for FeedbackSlot {
     fn drop(&mut self) {
-        if self.submitted {
+        if crate::usb_isochronous::transfer_allocation_must_be_retained(self.submitted) {
             // Move every callback-visible allocation out of ManuallyDrop.
             // The submitted transfer itself is a raw pointer and remains
             // allocated; retain its buffer, callback state, and session too.
