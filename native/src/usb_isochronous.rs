@@ -107,6 +107,27 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
     Ok(source.len())
 }
 
+/// A pause waiter must stop waiting if its worker leaves the running state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PauseWaitState {
+    Waiting,
+    Drained,
+    WorkerFailed,
+    WorkerStopped,
+}
+
+pub fn pause_wait_state(worker_status: i32, pause_drained: bool) -> PauseWaitState {
+    if worker_status < 0 {
+        PauseWaitState::WorkerFailed
+    } else if worker_status > 0 {
+        PauseWaitState::WorkerStopped
+    } else if pause_drained {
+        PauseWaitState::Drained
+    } else {
+        PauseWaitState::Waiting
+    }
+}
+
 /// A pause is fully drained only after no audio transfer remains submitted.
 pub fn pause_is_drained(paused: bool, audio_transfers_pending: bool) -> bool {
     paused && !audio_transfers_pending
@@ -384,6 +405,16 @@ mod tests {
         assert!(!session_connection_must_be_retained(false, false, false, false));
     }
 
+
+    #[test]
+    fn pause_waiter_observes_worker_failure_and_shutdown() {
+        assert_eq!(pause_wait_state(0, false), PauseWaitState::Waiting);
+        assert_eq!(pause_wait_state(0, true), PauseWaitState::Drained);
+        assert_eq!(pause_wait_state(-1, false), PauseWaitState::WorkerFailed);
+        assert_eq!(pause_wait_state(-2, true), PauseWaitState::WorkerFailed);
+        assert_eq!(pause_wait_state(1, false), PauseWaitState::WorkerStopped);
+        assert_eq!(pause_wait_state(2, false), PauseWaitState::WorkerStopped);
+    }
 
     #[test]
     fn pause_acknowledgement_waits_for_all_audio_transfers() {
