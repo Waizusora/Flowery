@@ -20,6 +20,20 @@ pub struct IsochronousSchedule {
     pub packets: Vec<IsochronousPacket>,
 }
 
+/// Convert an isochronous endpoint's USB 2.0 bInterval into its service period.
+pub fn isochronous_service_interval_us(b_interval: u8, speed: UsbBusSpeed) -> Result<u32, String> {
+    if !(1..=16).contains(&b_interval) {
+        return Err("Isochronous bInterval must be between 1 and 16".into());
+    }
+    let period = 1u32.checked_shl(u32::from(b_interval - 1))
+        .ok_or("USB service interval overflow")?;
+    let unit_us = match speed {
+        UsbBusSpeed::Full => 1_000,
+        UsbBusSpeed::High => 125,
+    };
+    period.checked_mul(unit_us).ok_or_else(|| "USB service interval overflow".into())
+}
+
 /// Decode wMaxPacketSize into the maximum payload per service interval.
 pub fn max_isochronous_payload(raw: u16, speed: UsbBusSpeed) -> Result<u32, String> {
     let payload = u32::from(raw & 0x07ff);
@@ -216,14 +230,7 @@ pub fn build_isochronous_schedule(
     if service_count > MAX_SCHEDULE_SERVICES {
         return Err(format!("Isochronous schedule exceeds the {MAX_SCHEDULE_SERVICES}-service planning limit"));
     }
-    if !(1..=16).contains(&b_interval) { return Err("Isochronous bInterval must be between 1 and 16".into()); }
-
-    let interval_us = match speed {
-        // Full-speed isochronous bInterval is a linear frame count (1-16 ms).
-        UsbBusSpeed::Full => 1_000u32.checked_mul(u32::from(b_interval)),
-        // High-speed bInterval encodes 2^(bInterval-1) microframes.
-        UsbBusSpeed::High => 125u32.checked_mul(1u32 << (b_interval - 1)),
-    }.ok_or("USB service interval overflow")?;
+    let interval_us = isochronous_service_interval_us(b_interval, speed)?;
     let max_payload = max_isochronous_payload(raw_max_packet_size, speed)?;
     let frame_bytes = u32::from(channels).checked_mul(u32::from(subslot_bytes))
         .ok_or("PCM frame size overflow")?;
@@ -519,7 +526,11 @@ mod tests {
     }
 
     #[test]
-    fn full_speed_interval_is_linear_frame_count() {
+    fn full_speed_isochronous_interval_uses_usb_exponential_encoding() {
+        assert_eq!(isochronous_service_interval_us(1, UsbBusSpeed::Full).unwrap(), 1_000);
+        assert_eq!(isochronous_service_interval_us(2, UsbBusSpeed::Full).unwrap(), 2_000);
+        assert_eq!(isochronous_service_interval_us(3, UsbBusSpeed::Full).unwrap(), 4_000);
+        assert_eq!(isochronous_service_interval_us(16, UsbBusSpeed::Full).unwrap(), 32_768_000);
         let schedule = build_isochronous_schedule(
             48_000, 2, 2, 384, 2, UsbBusSpeed::Full, 1
         ).unwrap();
@@ -529,6 +540,9 @@ mod tests {
 
     #[test]
     fn high_speed_interval_doubles_each_binterval_step() {
+        assert_eq!(isochronous_service_interval_us(1, UsbBusSpeed::High).unwrap(), 125);
+        assert_eq!(isochronous_service_interval_us(2, UsbBusSpeed::High).unwrap(), 250);
+        assert_eq!(isochronous_service_interval_us(3, UsbBusSpeed::High).unwrap(), 500);
         let schedule = build_isochronous_schedule(
             48_000, 2, 2, 0x0400, 2, UsbBusSpeed::High, 4
         ).unwrap();
