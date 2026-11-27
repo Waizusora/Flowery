@@ -1774,9 +1774,19 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
     }
 
     let deadline = Instant::now() + PAUSE_DRAIN_TIMEOUT;
-    while !pause_drained.load(Ordering::Acquire) {
-        if worker_status.load(Ordering::Acquire) < 0 {
-            return Err("USB stream failed while draining transfers for pause".into());
+    loop {
+        match crate::usb_isochronous::pause_wait_state(
+            worker_status.load(Ordering::Acquire),
+            pause_drained.load(Ordering::Acquire),
+        ) {
+            crate::usb_isochronous::PauseWaitState::Drained => break,
+            crate::usb_isochronous::PauseWaitState::WorkerFailed => {
+                return Err("USB stream failed while draining transfers for pause".into());
+            }
+            crate::usb_isochronous::PauseWaitState::WorkerStopped => {
+                return Err("USB stream stopped before pause drain could be acknowledged".into());
+            }
+            crate::usb_isochronous::PauseWaitState::Waiting => {}
         }
         if Instant::now() >= deadline {
             return Err("Timed out waiting for submitted USB audio transfers to drain for pause".into());
