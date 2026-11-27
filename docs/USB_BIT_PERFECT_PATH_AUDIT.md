@@ -119,25 +119,33 @@ analog output.
   resubmits the feedback transfer. Only the worker thread resubmits; callbacks
   publish completion state and do not mutate the estimator.
 - The first valid feedback sample is required before asynchronous audio OUT
-  packets are submitted. A missing initial sample is bounded by the feedback
-  transfer completion timeout.
-- Accepted samples must remain within the selected nominal sample-rate
-  tolerance and within the estimator's per-sample step threshold. Repeated
-  abrupt changes are terminal rather than silently changing packet cadence.
-- A feedback transfer timeout or an expired clock estimate is fail-closed:
-  the worker stops audio submission, requests cancellation, and drains callback
-  ownership before freeing transfer resources. If draining itself times out,
-  callback-visible buffers and the libusb session are retained to prevent
-  use-after-free.
-- Flowery does not resume the same asynchronous stream using a cached clock
-  after feedback becomes stale. A subsequent playback start creates a fresh
-  worker and estimator and must acquire a new valid feedback sample before
-  submitting audio. This is a deliberate safety policy; automatic in-place
-  clock reacquisition would require a separate pause/drain/re-prime state
-  machine and is not claimed as implemented.
-- Pure tests cover packet completion validation, missing/expired feedback
-  detection, estimator bounds, and initial clock readiness. These tests do not
-  replace timing validation with physical DACs and Android host controllers.
+  packets are submitted. The parser carries the associated feedback endpoint's
+  own `bInterval` into the playback plan. Runtime converts it with the USB 2.0
+  isochronous service-interval rule for the negotiated bus speed; it does not
+  substitute the audio OUT endpoint interval or guess from device identity.
+- Feedback clock staleness is evaluated after at least two advertised feedback
+  polling periods (with a 250 ms minimum). The feedback transfer deadline is
+  at least three polling periods (with a 500 ms minimum). This avoids treating
+  a descriptor-advertised slow feedback endpoint as stalled merely because
+  its next legal poll is later than a fixed timeout.
+- If a valid clock sample becomes stale while the feedback transfer itself is
+  still completing normally, the worker enters `Quiescing`: it stops new audio
+  OUT submissions and lets every already-submitted audio transfer complete.
+  Only after the audio ring is empty does it reset the packet scheduler's
+  fractional phase and enter `AwaitingFreshFeedback`.
+- Feedback samples observed during `Quiescing` are validated but not used to
+  seed the new clock epoch. The first valid sample after the ring drains
+  initializes a reset estimator; `Repriming` then allows the audio ring to be
+  filled again. The first successful audio submission returns the lifecycle
+  to `Running`. No stale estimate or old fractional scheduler phase is reused.
+- A failed feedback transfer, invalid sample, repeated abrupt clock outliers,
+  or event-loop failure remains fail-closed. Cancellation/drain ownership
+  rules are unchanged; if draining times out, callback-visible buffers and
+  the libusb session are retained to prevent use-after-free.
+- Pure tests cover the reacquisition transitions, estimator and scheduler
+  reset, interval-derived deadlines, packet completion validation, and
+  feedback sample validation. These tests do not replace timing validation
+  with physical DACs and Android host controllers.
 
 ## Hardware volume (UAC Feature Unit)
 
