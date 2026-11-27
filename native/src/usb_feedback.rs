@@ -727,7 +727,7 @@ mod reacquisition_integration_tests {
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Repriming);
     }
 
-}\n
+
     #[test]
     fn failed_feedback_lifecycle_is_absorbing_across_drain_and_late_samples() {
         let mut state = FeedbackReacquisitionState::Quiescing;
@@ -739,4 +739,4 @@ mod reacquisition_integration_tests {
         assert!(!state.audio_submission_allowed());
         assert!(state.ignores_feedback_for_estimation());
     }
-
+}
