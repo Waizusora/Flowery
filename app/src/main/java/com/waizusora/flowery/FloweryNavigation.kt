@@ -277,9 +277,6 @@ fun FloweryNavigation(
                     batteryOptimizationGranted = batteryOptimizationGranted,
                     onRequestNotificationPermission = onRequestNotificationPermission,
                     onRequestBatteryOptimization = onRequestBatteryOptimization,
-                    usbAudioConnected = connectedUsbAudioDevice != null,
-                    usbAudioPermissionGranted = usbAudioPermissionGranted,
-                    onRequestUsbPermission = onRequestUsbPermission,
                     onContinue = {
                         prefs.edit().putBoolean("welcome_complete", true).apply()
                         destination = Destination.PLAYER
