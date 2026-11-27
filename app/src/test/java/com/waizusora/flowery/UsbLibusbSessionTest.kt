@@ -13,7 +13,7 @@ class UsbLibusbSessionTest {
         assertTrue(isValidUac2ClockMultiplierControls(0x07)) // read-write / read-only
         assertFalse(isValidUac2ClockMultiplierControls(0x00)) // absent / absent
         assertFalse(isValidUac2ClockMultiplierControls(0x06)) // reserved numerator encoding
-        assertFalse(isValidUac2ClockMultiplierControls(0x0D)) // reserved denominator encoding
+        assertFalse(isValidUac2ClockMultiplierControls(0x09)) // reserved denominator encoding
     }
 
     private class FakeUsbControl : UsbControlTransfer {

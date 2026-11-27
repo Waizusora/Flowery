@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn rejects_absent_or_reserved_multiplier_controls() {
-        for controls in [0x00, 0x02, 0x04, 0x08, 0x0A] {
+        for controls in [0x00, 0x02, 0x04, 0x08, 0x09, 0x0A] {
             let mut d = descriptor_prefix();
             d.extend_from_slice(&[7,0x24,0x0C,10,7,controls,0]);
             append_playback_terminal(&mut d, 10);
