@@ -572,6 +572,7 @@ struct StreamConfig {
     interval_us: u32,
     feedback_endpoint: Option<u8>,
     feedback_packet_bytes: Option<u16>,
+    feedback_interval_us: Option<u32>,
     feedback_speed: FeedbackBusSpeed,
 }
 
@@ -1043,9 +1044,12 @@ fn run_worker(
             let audio_timed_out = slots.iter().any(|slot| {
                 slot.submitted_at.map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT).unwrap_or(false)
             });
+            let feedback_timeout = config.feedback_interval_us
+                .map(crate::usb_feedback::feedback_completion_timeout)
+                .unwrap_or(TRANSFER_COMPLETION_TIMEOUT);
             let feedback_timed_out = feedback_slot.as_ref().map(|slot| {
                 slot.submitted && slot.submitted_at
-                    .map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT)
+                    .map(|submitted| submitted.elapsed() > feedback_timeout)
                     .unwrap_or(false)
             }).unwrap_or(false);
             if audio_timed_out {
@@ -1056,7 +1060,9 @@ fn run_worker(
             let clock_stale = feedback_rate_hz.is_some()
                 && crate::usb_feedback::feedback_clock_is_stale(
                     last_feedback_at.map(|received| received.elapsed()),
-                    FEEDBACK_CLOCK_STALE_TIMEOUT,
+                    config.feedback_interval_us
+                        .map(crate::usb_feedback::feedback_clock_stale_timeout)
+                        .unwrap_or(FEEDBACK_CLOCK_STALE_TIMEOUT),
                 );
             if feedback_reacquisition.begin_if_stale(clock_stale) {
                 // Do not use the expired estimate while the already-submitted
@@ -1537,6 +1543,7 @@ pub(super) fn start(
     data_format: u8,
     feedback_endpoint: u8,
     feedback_max_packet_size: u16,
+    feedback_interval: u8,
     initial_position_ms: u64,
 ) -> Result<(), String> {
     use crate::usb_isochronous::{max_isochronous_payload, UsbBusSpeed};
@@ -1610,17 +1617,21 @@ pub(super) fn start(
         return Err("USB feedback endpoint must be a non-zero IN endpoint".into());
     }
     let feedback_endpoint = if feedback_endpoint == 0 { None } else { Some(feedback_endpoint) };
-    let feedback_packet_bytes = if feedback_endpoint.is_some() {
+    let (feedback_packet_bytes, feedback_interval_us) = if feedback_endpoint.is_some() {
         let expected = match speed { UsbBusSpeed::Full => 3, UsbBusSpeed::High => 4 };
         if u32::from(feedback_max_packet_size) != expected {
             return Err(format!("Feedback endpoint packet size must be {expected} bytes for this USB bus speed"));
         }
-        Some(feedback_max_packet_size)
-    } else {
-        if feedback_max_packet_size != 0 {
-            return Err("Feedback packet size was provided without a feedback endpoint".into());
+        if !(1..=16).contains(&feedback_interval) {
+            return Err("Feedback endpoint bInterval must be between 1 and 16".into());
         }
-        None
+        let interval_us = crate::usb_isochronous::isochronous_service_interval_us(feedback_interval, speed)?;
+        (Some(feedback_max_packet_size), Some(interval_us))
+    } else {
+        if feedback_max_packet_size != 0 || feedback_interval != 0 {
+            return Err("Feedback packet size/interval was provided without a feedback endpoint".into());
+        }
+        (None, None)
     };
     let required_packet_bytes = crate::usb_isochronous::required_isochronous_packet_capacity(
         sample_rate,
@@ -1637,6 +1648,7 @@ pub(super) fn start(
     let config = StreamConfig {
         endpoint, sample_rate, channels, valid_bits, subslot_bytes, data_format,
         max_packet_bytes, interval_us, feedback_endpoint, feedback_packet_bytes,
+        feedback_interval_us,
         feedback_speed: match speed {
             UsbBusSpeed::Full => FeedbackBusSpeed::Full,
             UsbBusSpeed::High => FeedbackBusSpeed::High,
