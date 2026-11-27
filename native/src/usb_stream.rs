@@ -1863,6 +1863,8 @@ pub(super) fn status(
 
 #[cfg(test)]
 mod tests {
+    use super::{push_pcm_bytes_with_backpressure, PcmQueue, PCM_QUEUE_CAPACITY_FRAMES};
+
     #[test]
     fn submitted_slot_retains_buffer_callback_state_and_exactly_one_session_reference() {
         use std::sync::{
