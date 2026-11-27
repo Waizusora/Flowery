@@ -1992,7 +1992,7 @@ mod tests {
 
 #[cfg(test)]
 mod pcm_queue_tests {
-    use super::{push_pcm_bytes_with_backpressure, PcmQueue, PCM_QUEUE_CAPACITY_FRAMES};
+    use super::{read_decoder_chunk_if_running, push_pcm_bytes_with_backpressure, PcmQueue, PCM_QUEUE_CAPACITY_FRAMES};
     use std::sync::Arc;
 
     #[test]
