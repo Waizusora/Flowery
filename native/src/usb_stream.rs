@@ -83,7 +83,7 @@ const PAUSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(750);
 
 #[cfg(any(target_os = "android", test))]
 const PCM_QUEUE_CAPACITY_FRAMES: usize = 16_384;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 const PCM_PRODUCER_CHUNK_FRAMES: usize = 2_048;
 
 #[cfg(any(target_os = "android", test))]
@@ -248,7 +248,7 @@ fn raise_current_thread_priority(label: &str, nice: i32) {
     ));
 }
 
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 fn push_pcm_bytes_with_backpressure(
     queue: &PcmQueue,
     bytes: &[u8],
@@ -2030,6 +2030,36 @@ mod pcm_queue_tests {
         }
         producer.join().unwrap();
         assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn pcm_producer_backpressure_exits_promptly_after_stop_request() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Barrier,
+        };
+        use std::time::Duration;
+
+        let queue = Arc::new(PcmQueue::new(1).unwrap());
+        queue.push(&vec![0; PCM_QUEUE_CAPACITY_FRAMES]).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(Barrier::new(2));
+
+        let worker_queue = Arc::clone(&queue);
+        let worker_stop = Arc::clone(&stop);
+        let worker_started = Arc::clone(&started);
+        let worker = std::thread::spawn(move || {
+            worker_started.wait();
+            push_pcm_bytes_with_backpressure(&worker_queue, &[1], &worker_stop)
+        });
+
+        started.wait();
+        std::thread::sleep(Duration::from_millis(10));
+        assert_eq!(queue.occupancy().0, PCM_QUEUE_CAPACITY_FRAMES);
+        stop.store(true, Ordering::Release);
+
+        assert_eq!(worker.join().unwrap().unwrap(), false);
+        assert_eq!(queue.occupancy().0, PCM_QUEUE_CAPACITY_FRAMES);
     }
 
     #[test]
