@@ -554,7 +554,7 @@ mod tests {
             9, 4, 2, 1, 2, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            9, 5, 0x01, 0x05, 0x00, 0x04, 1, 0, 0x81,
             7, 5, 0x81, 0x11, 0x03, 0x00, 1,
             7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
@@ -564,7 +564,7 @@ mod tests {
         // bInterval is reserved when zero for an isochronous endpoint.
         let feedback_descriptor_interval_offset = descriptors
             .windows(7)
-            .position(|d| d[0] == 7 && d[1] == 5 && d[2] == 0x81)
+            .position(|d| d[1] == 5 && d[2] == 0x81)
             .expect("feedback endpoint descriptor")
             + 6;
         descriptors[feedback_descriptor_interval_offset] = 0;
@@ -619,7 +619,7 @@ mod tests {
             9, 4, 2, 1, 2, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            9, 5, 0x01, 0x05, 0x00, 0x04, 1, 0, 0x81,
             7, 5, 0x81, 0x11, 0x03, 0x00, 1,
             7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
@@ -632,13 +632,43 @@ mod tests {
     }
 
     #[test]
+    fn rejects_feedback_endpoint_not_named_by_bsynchaddress() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            9, 5, 0x01, 0x05, 0x00, 0x04, 1, 0, 0x82,
+            7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00,
+        ];
+        let error = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap_err();
+        assert!(error.contains("no explicit feedback endpoint"));
+    }
+
+    #[test]
+    fn rejects_legacy_seven_byte_async_endpoint_without_feedback_association() {
+        let descriptors = [
+            9, 4, 1, 0, 0, 1, 2, 0, 0,
+            9, 4, 2, 1, 2, 1, 2, 0, 0,
+            7, 0x24, 1, 1, 1, 1, 0,
+            14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
+            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            7, 5, 0x81, 0x11, 0x03, 0x00, 1,
+            7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00,
+        ];
+        let error = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap_err();
+        assert!(error.contains("no explicit feedback endpoint"));
+    }
+
+    #[test]
     fn rejects_asynchronous_out_without_explicit_feedback() {
         let descriptors = [
             9, 4, 1, 0, 0, 1, 2, 0, 0,
             9, 4, 2, 1, 1, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            9, 5, 0x01, 0x05, 0x00, 0x04, 1, 0, 0x81,
             7, 0x25, 0x01, 0x01, 0x00, 0x00, 0x00, // Sampling-frequency control is advertised
         ];
         let error = plan_pcm_playback(&descriptors, 44_100, 2, 16).unwrap_err();
@@ -787,7 +817,7 @@ mod tests {
             9, 4, 2, 1, 2, 1, 2, 0, 0,
             7, 0x24, 1, 1, 1, 1, 0,
             14, 0x24, 2, 1, 2, 2, 16, 2, 0x44, 0xac, 0x00, 0x80, 0xbb, 0x00,
-            7, 5, 0x01, 0x05, 0x00, 0x04, 1,
+            9, 5, 0x01, 0x05, 0x00, 0x04, 1, 0, 0x81,
             7, 5, 0x91, 0x11, 0x03, 0x00, 1,
         ];
         assert!(plan_pcm_playback(&descriptors, 44_100, 2, 16).is_err());
