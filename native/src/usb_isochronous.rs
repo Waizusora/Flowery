@@ -439,6 +439,70 @@ mod tests {
     }
 
     #[test]
+    fn delayed_worker_ack_after_resume_cannot_complete_the_old_pause() {
+        use std::sync::{
+            atomic::{AtomicBool, AtomicU64, Ordering},
+            Arc, Barrier,
+        };
+
+        let generation = Arc::new(AtomicU64::new(1));
+        let acknowledged = Arc::new(AtomicU64::new(0));
+        let paused = Arc::new(AtomicBool::new(true));
+        let observed = Arc::new(Barrier::new(2));
+        let release_ack = Arc::new(Barrier::new(2));
+
+        let worker_generation = Arc::clone(&generation);
+        let worker_ack = Arc::clone(&acknowledged);
+        let worker_paused = Arc::clone(&paused);
+        let worker_observed = Arc::clone(&observed);
+        let worker_release = Arc::clone(&release_ack);
+        let worker = std::thread::spawn(move || {
+            // Match the production worker's stable-generation observation.
+            let before = worker_generation.load(Ordering::Acquire);
+            let paused_now = worker_paused.load(Ordering::Acquire);
+            let after = worker_generation.load(Ordering::Acquire);
+            assert!(paused_now);
+            assert_eq!(before, after);
+
+            // Force resume to linearize after observation but before publication.
+            worker_observed.wait();
+            worker_release.wait();
+            worker_ack.store(after, Ordering::Release);
+        });
+
+        observed.wait();
+        paused.store(false, Ordering::Release);
+        let resumed_generation = generation.fetch_add(1, Ordering::AcqRel) + 1;
+        release_ack.wait();
+        worker.join().unwrap();
+
+        assert_eq!(acknowledged.load(Ordering::Acquire), 1);
+        assert_eq!(
+            pause_wait_state(
+                0,
+                1,
+                generation.load(Ordering::Acquire),
+                acknowledged.load(Ordering::Acquire),
+            ),
+            PauseWaitState::Superseded,
+        );
+
+        // A subsequent pause must not consume the delayed acknowledgement.
+        paused.store(true, Ordering::Release);
+        let next_pause = generation.fetch_add(1, Ordering::AcqRel) + 1;
+        assert_eq!(next_pause, resumed_generation + 1);
+        assert_eq!(
+            pause_wait_state(
+                0,
+                next_pause,
+                generation.load(Ordering::Acquire),
+                acknowledged.load(Ordering::Acquire),
+            ),
+            PauseWaitState::Waiting,
+        );
+    }
+
+    #[test]
     fn pause_acknowledgement_waits_for_all_audio_transfers() {
         assert!(!pause_is_drained(true, true));
         assert!(pause_is_drained(true, false));
