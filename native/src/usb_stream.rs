@@ -1198,16 +1198,13 @@ fn run_worker(
                 if !cancelling && !feedback_cancelling {
                     let transfer_status = unsafe { (*feedback.transfer).status };
                     let descriptor = unsafe { &*(*feedback.transfer).iso_packet_desc.as_ptr() };
-                    if transfer_status != 0 || descriptor.status != 0 {
-                        set_error(&error, &status, format!(
-                            "USB feedback transfer failed (transfer status {transfer_status}, packet status {})",
-                            descriptor.status
-                        ));
-                    } else if descriptor.actual_length as usize != feedback.buffer.len() {
-                        set_error(&error, &status, format!(
-                            "USB feedback packet length mismatch: received {}, expected {}",
-                            descriptor.actual_length, feedback.buffer.len()
-                        ));
+                    if let Err(message) = crate::usb_feedback::validate_feedback_completion(
+                        transfer_status as i32,
+                        descriptor.status as i32,
+                        descriptor.actual_length,
+                        feedback.buffer.len() as u32,
+                    ) {
+                        set_error(&error, &status, message);
                     } else {
                         match crate::usb_feedback::decode_feedback_rate_hz(&feedback.buffer, config.feedback_speed) {
                             Ok(measured) => {
