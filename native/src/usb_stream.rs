@@ -1554,7 +1554,7 @@ fn spawn_worker(
     let played_frames = Arc::new(AtomicU64::new(initial_position_frames));
     let paused = Arc::new(AtomicBool::new(initially_paused));
     let pause_drained = Arc::new(AtomicBool::new(initially_paused));
-    let initial_pause_generation = u64::from(initially_paused);
+    let initial_pause_generation = if initially_paused { 1 } else { 0 };
     let pause_request_generation = Arc::new(AtomicU64::new(initial_pause_generation));
     let pause_ack_generation = Arc::new(AtomicU64::new(initial_pause_generation));
     let error = Arc::new(Mutex::new(String::new()));
@@ -1768,7 +1768,7 @@ pub(super) fn seek(
 pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
     // Serialize the state transition with stop/close, but never hold the
     // lifecycle gate while waiting for in-flight transfers to drain.
-    let (worker_status, pause_drained, request_generation, ack_generation) = {
+    let (worker_status, pause_drained, request_generation, ack_generation, requested_generation) = {
         let _gate = lifecycle().lock().unwrap_or_else(|e| e.into_inner());
         let map = workers().lock().unwrap_or_else(|e| e.into_inner());
         let worker = map.get(&session).ok_or("USB stream worker is not running")?;
@@ -1781,18 +1781,19 @@ pub(super) fn set_paused(session: i64, paused: bool) -> Result<(), String> {
             Arc::clone(&worker.pause_request_generation),
             Arc::clone(&worker.pause_ack_generation),
         );
-        if paused {
-            worker.pause_request_generation.fetch_add(1, Ordering::AcqRel);
+        let requested_generation = if paused {
+            let generation = worker.pause_request_generation.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
             worker.paused.store(true, Ordering::Release);
+            generation
         } else {
             worker.paused.store(false, Ordering::Release);
             worker.pause_request_generation.fetch_add(1, Ordering::AcqRel);
             worker.pause_drained.store(false, Ordering::Release);
-        }
-        state
+            0
+        };
+        (state.0, state.1, state.2, state.3, requested_generation)
     };
     if !paused { return Ok(()); }
-    let requested_generation = request_generation.load(Ordering::Acquire);
 
     let deadline = Instant::now() + PAUSE_DRAIN_TIMEOUT;
     loop {
