@@ -232,6 +232,21 @@ A strict bit-perfect claim should be made only for supported integer source
 formats after those software and hardware checks pass.
 
 
+### Transfer allocation ownership and cleanup
+
+`TransferSlot` and `FeedbackSlot` are the single owners of their
+`libusb_transfer` allocations. Their destructors now apply one invariant:
+an unsubmitted transfer is freed together with its slot-owned buffer, callback
+signal, and session reference; a submitted transfer is not freed, and its
+callback-visible buffer, signal, and session reference are deliberately
+retained until callback completion has been observed. Explicit free calls were
+removed from startup-error, normal-shutdown, and timeout cleanup paths so a
+transfer cannot be freed twice or leak merely because a worker unwinds before
+reaching its normal cleanup block. Timeout teardown still intentionally retains
+submitted slots and the session. The pure ownership-policy test covers both
+submitted and unsubmitted states; Android/libusb runtime behavior still
+requires device-level validation.
+
 ### Cancellation callback drain ordering
 
 The runtime now uses one shared `all_transfer_callbacks_observed` gate before treating the audio/feedback transfer set as drained. A successful `libusb_cancel_transfer` request and `LIBUSB_ERROR_NOT_FOUND` are both requests/results, not proof that the callback has been observed. Each slot remains marked submitted until its callback signal is consumed by the worker. The drain gate therefore remains closed while any audio or feedback slot is still submitted, independent of callback completion order. Deterministic unit tests cover out-of-order audio completions, a pending feedback callback after all audio callbacks, and cancellation results that must not be mistaken for completion. This is software-level lifecycle validation, not physical USB hardware validation. The worker now classifies the drain as `Draining`, `Drained`, or `TimedOutRetain`; observing every callback takes precedence even if the deadline has elapsed. A timeout with any callback outstanding enters a distinct terminal status and exits through slot drop guards, which intentionally retain the transfer allocation, callback-visible buffer and signal, and an `Arc` reference to the libusb session. Tests cover the timeout boundary, callback completion at/after the deadline, and drop probes proving those allocations remain alive after the timeout decision. This validates the software ownership policy only; it does not emulate a real libusb host-controller callback that never arrives. The lifecycle guard is sticky: a worker join timeout, worker panic, transfer-drain timeout, or previously unsafe session all classify the Android USB connection as requiring retention. `stop_worker_locked` keeps the libusb registry entry and Java-owned fd in that state; repeated `close_session` calls continue to fail without removing the session, and restart/seek are rejected. Unit tests exercise the sticky classification across initial stop and repeated close conditions. This remains a pure lifecycle-policy test rather than an Android fd or physical-device integration test.
