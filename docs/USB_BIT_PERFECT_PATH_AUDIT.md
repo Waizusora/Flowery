@@ -230,3 +230,8 @@ work includes:
 
 A strict bit-perfect claim should be made only for supported integer source
 formats after those software and hardware checks pass.
+
+
+### Cancellation callback drain ordering
+
+The runtime now uses one shared `all_transfer_callbacks_observed` gate before treating the audio/feedback transfer set as drained. A successful `libusb_cancel_transfer` request and `LIBUSB_ERROR_NOT_FOUND` are both requests/results, not proof that the callback has been observed. Each slot remains marked submitted until its callback signal is consumed by the worker. The drain gate therefore remains closed while any audio or feedback slot is still submitted, independent of callback completion order. Deterministic unit tests cover out-of-order audio completions, a pending feedback callback after all audio callbacks, and cancellation results that must not be mistaken for completion. This is software-level lifecycle validation, not physical USB hardware validation.
