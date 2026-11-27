@@ -597,7 +597,7 @@ mod reacquisition_integration_tests {
         // The feedback clock ages beyond its descriptor-derived stale limit.
         stream.observe_feedback_age(Some(timeout + Duration::from_nanos(1)), timeout);
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Quiescing);
-        assert!(!stream.submit_audio());
+        assert!(stream.submit_audio().is_none());
 
         // A late but otherwise valid sample during quiescing must not seed
         // the next estimator epoch while old audio packets remain in flight.
