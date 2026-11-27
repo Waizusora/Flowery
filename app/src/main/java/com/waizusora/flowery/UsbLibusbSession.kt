@@ -56,7 +56,7 @@ private fun volumeGetRangeRequest(): Int = UAC2_RANGE
  */
 /**
  * UAC2 Clock Multiplier numerator and denominator controls must both support
- * GET_CUR. Read-only (1) and host-programmable (2) controls are readable.
+ * GET_CUR. Read-only (1) and host-programmable (3) controls are readable.
  */
 /**
  * UAC2 bmControls bit-pair semantics: 0b00 absent, 0b01 present and read-only,
@@ -72,7 +72,8 @@ internal fun isUac2ControlPresent(controls: Int): Boolean = (controls and 0x03) 
 internal fun isValidUac2ClockMultiplierControls(controls: Int): Boolean {
     val numeratorControl = controls and 0x03
     val denominatorControl = (controls shr 2) and 0x03
-    return numeratorControl in 1..2 && denominatorControl in 1..2
+    return (numeratorControl == 1 || numeratorControl == 3) &&
+        (denominatorControl == 1 || denominatorControl == 3)
 }
 
 internal fun interface UsbControlTransfer {

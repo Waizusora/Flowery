@@ -6,6 +6,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class UsbLibusbSessionTest {
+    @Test
+    fun acceptsOnlyReadableUac2ClockMultiplierControlEncodings() {
+        assertTrue(isValidUac2ClockMultiplierControls(0x05)) // read-only / read-only
+        assertTrue(isValidUac2ClockMultiplierControls(0x0F)) // read-write / read-write
+        assertTrue(isValidUac2ClockMultiplierControls(0x07)) // read-write / read-only
+        assertFalse(isValidUac2ClockMultiplierControls(0x00)) // absent / absent
+        assertFalse(isValidUac2ClockMultiplierControls(0x06)) // reserved numerator encoding
+        assertFalse(isValidUac2ClockMultiplierControls(0x0D)) // reserved denominator encoding
+    }
+
     private class FakeUsbControl : UsbControlTransfer {
         var selectorPin = 1
         var secondSelectorPin = 1

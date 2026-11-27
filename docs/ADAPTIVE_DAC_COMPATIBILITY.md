@@ -54,6 +54,14 @@ Info Audio reports its actual stream characteristics without displaying a
 bit-perfect status. Android's AudioFlinger, Audio HAL, route DSP, and downstream
 device processing remain outside Flowery's control.
 
+## UAC2 clock multiplier control validation
+
+Clock Multiplier numerator and denominator controls accept only readable UAC2
+encodings: `0b01` (read-only) and `0b11` (read/write). Absent (`0b00`) and
+reserved (`0b10`) encodings are rejected before any `GET_CUR` request. This
+keeps descriptor capability checks aligned between the native topology parser
+and Android control negotiation.
+
 ## Validation and follow-up
 
 Adaptive tuple selection is now connected to the USB Direct startup path. The

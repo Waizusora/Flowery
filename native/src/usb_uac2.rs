@@ -112,8 +112,14 @@ impl AudioControlInterface {
             }
         } else if let Some(&(input_id, controls)) = self.clock_multipliers.get(&entity_id) {
             // bmControls bits 1:0 and 3:2 are numerator and denominator controls.
-            if (controls & 0x03) != 0x01 || (controls & 0x0C) != 0x04 {
-                return Err(format!("UAC2 Clock Multiplier {entity_id} does not expose numerator and denominator controls"));
+            // 0b01 is present/read-only and 0b11 is present/read-write; both
+            // permit GET_CUR. 0b00 is absent and 0b10 is reserved.
+            let numerator_control = controls & 0x03;
+            let denominator_control = (controls >> 2) & 0x03;
+            if !matches!(numerator_control, 0x01 | 0x03)
+                || !matches!(denominator_control, 0x01 | 0x03)
+            {
+                return Err(format!("UAC2 Clock Multiplier {entity_id} does not expose readable numerator and denominator controls"));
             }
             multipliers.push(Uac2MultiplierStep { entity_id, controls, input_clock_id: input_id });
             self.resolve_paths(input_id, selectors, multipliers, clock_entities, visited, output)?;
@@ -352,6 +358,26 @@ mod tests {
         assert_eq!(info.clock_paths[0].source_entity_id, 7);
         assert_eq!(info.clock_paths[1].multipliers[0].entity_id, 11);
         assert_eq!(info.clock_paths[1].source_entity_id, 8);
+    }
+
+    #[test]
+    fn accepts_host_programmable_multiplier_controls() {
+        let mut d = descriptor_prefix();
+        // Numerator and denominator are both present and host-programmable (0b11).
+        d.extend_from_slice(&[7,0x24,0x0C,10,7,0x0F,0]);
+        append_playback_terminal(&mut d, 10);
+        let info = parse_playback_clock_info(&d).unwrap();
+        assert_eq!(info.clock_paths[0].multipliers[0].controls, 0x0F);
+    }
+
+    #[test]
+    fn rejects_absent_or_reserved_multiplier_controls() {
+        for controls in [0x00, 0x02, 0x04, 0x08, 0x0A] {
+            let mut d = descriptor_prefix();
+            d.extend_from_slice(&[7,0x24,0x0C,10,7,controls,0]);
+            append_playback_terminal(&mut d, 10);
+            assert!(parse_playback_clock_info(&d).is_err(), "controls={controls:#04x}");
+        }
     }
 
     #[test]
