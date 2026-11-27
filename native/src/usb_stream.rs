@@ -249,6 +249,18 @@ fn raise_current_thread_priority(label: &str, nice: i32) {
 }
 
 #[cfg(any(target_os = "android", test))]
+fn read_decoder_chunk_if_running<T, E>(
+    stop: &AtomicBool,
+    read: impl FnOnce() -> Result<T, E>,
+) -> Option<Result<T, E>> {
+    if stop.load(Ordering::Acquire) {
+        return None;
+    }
+    let result = read();
+    if stop.load(Ordering::Acquire) { None } else { Some(result) }
+}
+
+#[cfg(any(target_os = "android", test))]
 fn push_pcm_bytes_with_backpressure(
     queue: &PcmQueue,
     bytes: &[u8],
@@ -322,10 +334,15 @@ fn start_pcm_producer(
     let queue = Arc::new(PcmQueue::new(frame_bytes)?);
     let producer_queue = Arc::clone(&queue);
     let producer_stop = Arc::clone(&stop);
+    // Keep the decoder alive for the entire producer lifetime, including a
+    // potentially blocked read. Closing its registry handle cannot invalidate
+    // an in-flight worker's decoder reference.
+    let worker_decoder = Arc::clone(&decoder);
     let worker = thread::Builder::new()
         .name("flowery-usb-pcm-decode".into())
         .spawn(move || {
             raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
+            let decoder = worker_decoder;
             let mut pipeline = pipeline;
             while !producer_stop.load(Ordering::Acquire) {
                 if producer_queue.eof.load(Ordering::Acquire) { break; }
@@ -347,14 +364,17 @@ fn start_pcm_producer(
                     .min(PCM_PRODUCER_CHUNK_FRAMES as u128) as usize;
 
                 let started = Instant::now();
-                let decoded = crate::streaming::read_usb_output_chunk(
-                    decoder_handle, input_budget, &mut pipeline,
-                );
+                let decoded = read_decoder_chunk_if_running(&producer_stop, || {
+                    crate::streaming::read_usb_output_chunk_from_decoder(
+                        &decoder, input_budget, &mut pipeline,
+                    )
+                });
                 let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
                 producer_queue.decoder_read_calls.fetch_add(1, Ordering::Relaxed);
                 producer_queue.decoder_read_total_us.fetch_add(elapsed, Ordering::Relaxed);
                 producer_queue.decoder_read_max_us.fetch_max(elapsed, Ordering::Relaxed);
 
+                let Some(decoded) = decoded else { break; };
                 match decoded {
                     Ok(Some(bytes)) if bytes.is_empty() => continue,
                     Ok(Some(bytes)) => {
@@ -2031,6 +2051,45 @@ mod pcm_queue_tests {
         }
         producer.join().unwrap();
         assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn delayed_decoder_read_observes_stop_and_retains_decoder_until_exit() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc, Barrier,
+        };
+        use std::time::Duration;
+
+        struct DecoderLease;
+        let decoder = Arc::new(std::sync::Mutex::new(DecoderLease));
+        let weak_decoder = Arc::downgrade(&decoder);
+        let worker_decoder = Arc::clone(&decoder);
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let entered_read = Arc::new(Barrier::new(2));
+        let release_read = Arc::new(Barrier::new(2));
+        let worker_entered = Arc::clone(&entered_read);
+        let worker_release = Arc::clone(&release_read);
+
+        let worker = std::thread::spawn(move || {
+            read_decoder_chunk_if_running(&worker_stop, || {
+                let _decoder_guard = worker_decoder.lock().unwrap();
+                worker_entered.wait();
+                worker_release.wait();
+                Ok::<_, ()>(vec![1, 2, 3])
+            })
+        });
+
+        entered_read.wait();
+        stop.store(true, Ordering::Release);
+        drop(decoder);
+        assert!(weak_decoder.upgrade().is_some());
+
+        release_read.wait();
+        assert!(worker.join().unwrap().is_none());
+        assert!(weak_decoder.upgrade().is_none());
+        std::thread::sleep(Duration::from_millis(1));
     }
 
     #[test]
