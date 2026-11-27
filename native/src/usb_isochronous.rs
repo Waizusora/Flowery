@@ -385,10 +385,25 @@ mod tests {
     }
 
     #[test]
-    fn cancellation_drain_timeout_has_a_strict_boundary() {
+    fn cancellation_drain_state_retains_resources_only_when_callback_is_missing_at_deadline() {
         use std::time::Duration;
-        assert!(!transfer_drain_timed_out(Duration::from_millis(1999), Duration::from_secs(2)));
-        assert!(transfer_drain_timed_out(Duration::from_secs(2), Duration::from_secs(2)));
+        assert_eq!(
+            transfer_drain_state(false, Duration::from_millis(1999), Duration::from_secs(2)),
+            TransferDrainState::Draining,
+        );
+        assert_eq!(
+            transfer_drain_state(false, Duration::from_secs(2), Duration::from_secs(2)),
+            TransferDrainState::TimedOutRetain,
+        );
+        // A callback observed at the deadline wins: teardown is now safe.
+        assert_eq!(
+            transfer_drain_state(true, Duration::from_secs(5), Duration::from_secs(2)),
+            TransferDrainState::Drained,
+        );
+        assert_eq!(
+            transfer_drain_state(true, Duration::ZERO, Duration::from_secs(2)),
+            TransferDrainState::Drained,
+        );
     }
 
     #[test]
