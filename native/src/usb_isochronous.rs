@@ -112,16 +112,27 @@ pub fn copy_pcm_into_packet(destination: &mut [u8], source: &[u8], frame_bytes: 
 pub enum PauseWaitState {
     Waiting,
     Drained,
+    Superseded,
     WorkerFailed,
     WorkerStopped,
 }
 
-pub fn pause_wait_state(worker_status: i32, pause_drained: bool) -> PauseWaitState {
+/// Resolve one pause request against the latest request and worker acknowledgement
+/// generations. A stale acknowledgement from an earlier pause cannot satisfy a
+/// later pause after an intervening resume.
+pub fn pause_wait_state(
+    worker_status: i32,
+    requested_generation: u64,
+    current_generation: u64,
+    acknowledged_generation: u64,
+) -> PauseWaitState {
     if worker_status < 0 {
         PauseWaitState::WorkerFailed
     } else if worker_status > 0 {
         PauseWaitState::WorkerStopped
-    } else if pause_drained {
+    } else if current_generation != requested_generation {
+        PauseWaitState::Superseded
+    } else if acknowledged_generation == requested_generation {
         PauseWaitState::Drained
     } else {
         PauseWaitState::Waiting
@@ -407,13 +418,24 @@ mod tests {
 
 
     #[test]
-    fn pause_waiter_observes_worker_failure_and_shutdown() {
-        assert_eq!(pause_wait_state(0, false), PauseWaitState::Waiting);
-        assert_eq!(pause_wait_state(0, true), PauseWaitState::Drained);
-        assert_eq!(pause_wait_state(-1, false), PauseWaitState::WorkerFailed);
-        assert_eq!(pause_wait_state(-2, true), PauseWaitState::WorkerFailed);
-        assert_eq!(pause_wait_state(1, false), PauseWaitState::WorkerStopped);
-        assert_eq!(pause_wait_state(2, false), PauseWaitState::WorkerStopped);
+    fn pause_waiter_observes_worker_failure_shutdown_and_superseding_resume() {
+        assert_eq!(pause_wait_state(0, 4, 4, 3), PauseWaitState::Waiting);
+        assert_eq!(pause_wait_state(0, 4, 4, 4), PauseWaitState::Drained);
+        assert_eq!(pause_wait_state(0, 4, 5, 4), PauseWaitState::Superseded);
+        assert_eq!(pause_wait_state(-1, 4, 4, 4), PauseWaitState::WorkerFailed);
+        assert_eq!(pause_wait_state(-2, 4, 4, 3), PauseWaitState::WorkerFailed);
+        assert_eq!(pause_wait_state(1, 4, 4, 4), PauseWaitState::WorkerStopped);
+        assert_eq!(pause_wait_state(2, 4, 4, 3), PauseWaitState::WorkerStopped);
+    }
+
+    #[test]
+    fn stale_pause_acknowledgement_cannot_complete_a_new_pause_generation() {
+        // Pause #1 drains. Resume invalidates it, then pause #2 begins.
+        assert_eq!(pause_wait_state(0, 2, 3, 2), PauseWaitState::Superseded);
+        // Even if the old worker acknowledgement remains visible, it cannot
+        // satisfy pause #2 until the worker acknowledges generation 4.
+        assert_eq!(pause_wait_state(0, 4, 4, 2), PauseWaitState::Waiting);
+        assert_eq!(pause_wait_state(0, 4, 4, 4), PauseWaitState::Drained);
     }
 
     #[test]
