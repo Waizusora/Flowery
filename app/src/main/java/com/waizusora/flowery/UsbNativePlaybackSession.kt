@@ -100,6 +100,7 @@ internal class UsbNativePlaybackSession private constructor(
     private val dataFormat: Int,
     private val feedbackEndpoint: Int,
     private val feedbackMaxPacketSize: Int,
+    private val feedbackInterval: Int,
     private val uac1SampleRateControlAdvertised: Boolean,
     private val uac2ControlInterface: Int?,
     private val uac2ClockSourceEntity: Int?,
@@ -183,7 +184,7 @@ internal class UsbNativePlaybackSession private constructor(
                 usb.startPlayback(
                     decoderHandle, endpoint, maxPacketSize, interval,
                     sampleRate, channels, validBits, subslotBytes, dataFormat, feedbackEndpoint,
-                    feedbackMaxPacketSize, initialPositionMs
+                    feedbackMaxPacketSize, feedbackInterval, initialPositionMs
                 )
             },
             rollbackClock = { usb.rollbackClockNegotiation() },
@@ -581,6 +582,7 @@ internal class UsbNativePlaybackSession private constructor(
                 }
                 val feedbackEndpoint = plan.optInt("feedback_endpoint_address", 0)
                 val feedbackPacket = plan.optInt("feedback_max_packet_size", 0)
+                val feedbackInterval = plan.optInt("feedback_interval", 0)
                 val synchronizationType = plan.optInt("synchronization_type", -1)
                 val synchronizationName = when (synchronizationType) {
                     1 -> "asynchronous"
@@ -659,12 +661,13 @@ internal class UsbNativePlaybackSession private constructor(
                         clockPaths.isEmpty() ||
                         invalidClockPaths
                     )
-                Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval synchronizationType=$synchronizationType synchronization=$synchronizationName sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
+                Log.i("FloweryUsbNative", "USB_PLAN device=${device.deviceName} interface=$interfaceNumber alternate=$alternate endpoint=0x${endpoint.toString(16)} rawMaxPacketSize=$packet interval=$interval synchronizationType=$synchronizationType synchronization=$synchronizationName sampleRate=$sampleRate channels=$channels validBits=$bits subslotBytes=$subslot dataFormat=$planDataFormat uac2=$isUac2 feedbackEndpoint=0x${feedbackEndpoint.toString(16)} feedbackPacketBytes=$feedbackPacket feedbackInterval=$feedbackInterval clockControlInterface=$clockControlInterface clockSourceEntity=$clockSourceEntity clockControls=$clockControls")
                 if (interfaceNumber !in 0..255 || alternate !in 1..255 ||
                     endpoint !in 1..127 || packet <= 0 || interval !in 1..16 ||
                     subslot !in 1..4 || bits != outputBits || subslot != outputSubslot ||
                     planDataFormat != expectedDataFormat ||
-                    (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4)) ||
+                    (feedbackEndpoint != 0 && (feedbackEndpoint !in 0x81..0x8F || feedbackPacket !in 3..4 || feedbackInterval !in 1..16)) ||
+                    (feedbackEndpoint == 0 && (feedbackPacket != 0 || feedbackInterval != 0)) ||
                     invalidUac2ClockPlan
                 ) {
                     lastError = IllegalStateException("Native USB planner returned invalid endpoint parameters")
@@ -684,7 +687,7 @@ internal class UsbNativePlaybackSession private constructor(
                 return Result.success(
                     UsbNativePlaybackSession(
                         native, decoderHandle, outputRate, endpoint, packet,
-                        interval, channels, bits, subslot, outputDataFormat, feedbackEndpoint, feedbackPacket,
+                        interval, channels, bits, subslot, outputDataFormat, feedbackEndpoint, feedbackPacket, feedbackInterval,
                         uac1SampleRateControlAdvertised,
                         if (isUac2) clockControlInterface else null,
                         if (isUac2) clockSourceEntity else null,
