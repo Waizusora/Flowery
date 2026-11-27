@@ -196,6 +196,20 @@ pub fn validate_feedback_completion(
     Ok(())
 }
 
+/// Allow at least two advertised feedback polling periods before treating
+/// the clock as stale. The floor covers normal host scheduling jitter.
+pub fn feedback_clock_stale_timeout(interval_us: u32) -> std::time::Duration {
+    std::time::Duration::from_micros(u64::from(interval_us).saturating_mul(2))
+        .max(std::time::Duration::from_millis(250))
+}
+
+/// The feedback transfer deadline spans at least three advertised polling
+/// periods so a legal slow endpoint is not mistaken for a failed transfer.
+pub fn feedback_completion_timeout(interval_us: u32) -> std::time::Duration {
+    std::time::Duration::from_micros(u64::from(interval_us).saturating_mul(3))
+        .max(std::time::Duration::from_millis(500))
+}
+
 /// Missing feedback and feedback older than the timeout are both stale.
 pub fn feedback_clock_is_stale(age: Option<std::time::Duration>, timeout: std::time::Duration) -> bool {
     age.map(|elapsed| elapsed > timeout).unwrap_or(true)
@@ -426,6 +440,17 @@ mod tests {
             .unwrap_err().contains("received 4, expected 3"));
         assert!(validate_feedback_completion(0, 0, 0, 0)
             .unwrap_err().contains("must be non-zero"));
+    }
+
+    #[test]
+    fn feedback_timeouts_follow_advertised_polling_interval() {
+        use std::time::Duration;
+        assert_eq!(feedback_clock_stale_timeout(1_000), Duration::from_millis(250));
+        assert_eq!(feedback_completion_timeout(1_000), Duration::from_millis(500));
+        assert_eq!(feedback_clock_stale_timeout(200_000), Duration::from_millis(400));
+        assert_eq!(feedback_completion_timeout(200_000), Duration::from_millis(600));
+        assert_eq!(feedback_clock_stale_timeout(32_768_000), Duration::from_secs(65));
+        assert_eq!(feedback_completion_timeout(32_768_000), Duration::from_secs(98));
     }
 
     #[test]
