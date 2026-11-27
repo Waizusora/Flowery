@@ -1,6 +1,6 @@
 # USB DAC bit-perfect path audit
 
-This audit covers Flowery's native USB Audio playback path on the `trial` branch.
+This audit covers Flowery's native USB Audio playback path on the `try` branch.
 It describes transformations performed by Flowery before submitting isochronous
 USB transfers. It does not certify the DAC hardware, USB host controller, or
 analog output.
@@ -54,12 +54,14 @@ analog output.
   and multiplier paths, verifies `GET_CUR` after `SET_CUR` when the source is
   host-programmable, and restores the previous clock/selector state if native
   stream startup fails.
-- Clock Source frequency control (`bmControls` bits 1:0) follows the UAC2 bit-pair
-  encoding: `0b00` absent, `0b01` present and read-only, `0b11` present and
-  host-programmable. `0b10` is not allowed by the specification; it is treated
-  as writable, matching the Linux USB audio driver, which tests only the high
-  bit of the pair.
-  - Host-programmable (`0b11`, or tolerated `0b10`): `SET_CUR` is issued whenever
+- Clock Source frequency control (`bmControls` bits 1:0) follows the UAC2
+  bit-pair encoding: `0b00` absent, `0b01` present and read-only, and
+  `0b11` present and host-programmable. The specification reserves `0b10`;
+  Flowery deliberately tolerates it as writable for compatibility with the
+  Linux USB audio driver's high-bit test. This compatibility exception applies
+  to Clock Source frequency control only; it must not be generalized to other
+  descriptor controls.
+  - Host-programmable (`0b11`, or compatibility-tolerated `0b10`): `SET_CUR` is issued whenever
     `GET_CUR` differs from the required rate and the result is verified with
     `GET_CUR`. A failed write or verification rejects the clock path and
     triggers rollback. This prevents a DAC from retaining a stale rate (for
@@ -79,6 +81,25 @@ analog output.
   - The same bit-pair rules apply to Clock Selector controls.
 - These control-transfer checks are covered by Kotlin fake-control tests;
   actual DAC behavior and host-controller timing still require hardware tests.
+
+## Asynchronous playback feedback association
+
+- For asynchronous USB Audio OUT endpoints, the parser reads
+  `bSynchAddress` from the standard 9-byte endpoint descriptor. The explicit
+  feedback IN endpoint is accepted only when its endpoint address exactly
+  matches that value and its descriptor is present in the same alternate
+  setting.
+- The feedback endpoint's address, maximum packet size, and service interval
+  are carried into the stream plan only after that association succeeds.
+  Merely finding an IN feedback endpoint in the same alternate setting is not
+  sufficient.
+- An asynchronous OUT endpoint with no usable `bSynchAddress`, no matching
+  feedback endpoint, or invalid feedback parameters is rejected. Implicit
+  feedback is not implemented and is not advertised as supported.
+- Parser/planner regression tests cover a valid association, a mismatched
+  feedback address, and a legacy 7-byte OUT endpoint descriptor that cannot
+  provide the association. These tests validate descriptor handling, not
+  feedback timing on a physical DAC or host controller.
 
 ## Hardware volume (UAC Feature Unit)
 
