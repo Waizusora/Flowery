@@ -139,15 +139,22 @@ analog output.
   filled again. The first successful audio submission returns the lifecycle
   to `Running`. No stale estimate or old fractional scheduler phase is reused.
 - A failed feedback transfer, invalid sample, repeated abrupt clock outliers,
-  or event-loop failure remains fail-closed. Cancellation/drain ownership
+  or event-loop failure remains fail-closed. The reacquisition lifecycle has an
+  absorbing `Failed` state: the worker latches it whenever the stream status
+  becomes terminal, and ring-drain notifications or late feedback cannot move
+  it back to `AwaitingFreshFeedback`, `Repriming`, or `Running`. Audio
+  submission is permitted only in `Running` or `Repriming`, in addition to
+  the worker's independent stop/error/EOF gates. Cancellation/drain ownership
   rules are unchanged; if draining times out, callback-visible buffers and
   the libusb session are retained to prevent use-after-free.
 - Pure tests cover the reacquisition transitions, estimator and scheduler
   reset, interval-derived deadlines, packet completion validation, and
   feedback sample validation. Deterministic integration simulations additionally
   cover a delayed-but-not-stale sample, stale feedback followed by ring drain
-  and successful fresh-clock recovery, and a disconnected feedback transfer
-  that leaves the stream terminal and refuses further audio submissions. The
+  and successful fresh-clock recovery, out-of-order audio transfer completion,
+  and a disconnected feedback transfer that latches the absorbing terminal
+  state and refuses further audio submissions even after ring drain and a
+  late valid-looking feedback sample. The
   simulations inject transfer events without USB hardware; they do not replace
   timing validation with physical DACs and Android host controllers.
 
