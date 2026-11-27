@@ -144,8 +144,12 @@ analog output.
   the libusb session are retained to prevent use-after-free.
 - Pure tests cover the reacquisition transitions, estimator and scheduler
   reset, interval-derived deadlines, packet completion validation, and
-  feedback sample validation. These tests do not replace timing validation
-  with physical DACs and Android host controllers.
+  feedback sample validation. Deterministic integration simulations additionally
+  cover a delayed-but-not-stale sample, stale feedback followed by ring drain
+  and successful fresh-clock recovery, and a disconnected feedback transfer
+  that leaves the stream terminal and refuses further audio submissions. The
+  simulations inject transfer events without USB hardware; they do not replace
+  timing validation with physical DACs and Android host controllers.
 
 ## Hardware volume (UAC Feature Unit)
 
