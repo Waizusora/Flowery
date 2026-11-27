@@ -1030,14 +1030,25 @@ fn run_worker(
             }
         }
         if let Some(started_at) = drain_started_at {
-            let pending = slots.iter().any(|slot| slot.submitted)
-                || feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false);
-            if pending && crate::usb_isochronous::transfer_drain_timed_out(started_at.elapsed(), TRANSFER_DRAIN_TIMEOUT) {
-                set_error(&error, &status, "Timed out draining cancelled USB transfers; retaining transfer buffers and libusb session to prevent use-after-free".into());
-                // Distinct terminal state: this session must not be reused for seek/restart.
-                status.store(-2, Ordering::Release);
-                unsafe_to_free = true;
-                break;
+            let callbacks_observed = crate::usb_isochronous::all_transfer_callbacks_observed(
+                slots.iter().map(|slot| slot.submitted),
+                feedback_slot.as_ref().map(|slot| slot.submitted).unwrap_or(false),
+            );
+            match crate::usb_isochronous::transfer_drain_state(
+                callbacks_observed,
+                started_at.elapsed(),
+                TRANSFER_DRAIN_TIMEOUT,
+            ) {
+                crate::usb_isochronous::TransferDrainState::Draining
+                | crate::usb_isochronous::TransferDrainState::Drained => {}
+                crate::usb_isochronous::TransferDrainState::TimedOutRetain => {
+                    set_error(&error, &status, "Timed out draining cancelled USB transfers; retaining transfer buffers and libusb session to prevent use-after-free".into());
+                    // Distinct terminal state: this session must not be reused for seek/restart.
+                    // Dropping submitted slots below invokes their retention guard.
+                    status.store(-2, Ordering::Release);
+                    unsafe_to_free = true;
+                    break;
+                }
             }
         }
         if status.load(Ordering::Acquire) < 0 {
