@@ -1040,6 +1040,9 @@ fn run_worker(
                 break;
             }
         }
+        if status.load(Ordering::Acquire) < 0 {
+            feedback_reacquisition.fail();
+        }
         if !cancelling {
             let audio_timed_out = slots.iter().any(|slot| {
                 slot.submitted_at.map(|submitted| submitted.elapsed() > TRANSFER_COMPLETION_TIMEOUT).unwrap_or(false)
