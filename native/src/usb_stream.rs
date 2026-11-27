@@ -1549,12 +1549,7 @@ pub(super) fn start(
         other => return Err(format!("Unsupported libusb bus speed value {other}")),
     };
     let max_packet_bytes = max_isochronous_payload(raw_max_packet_size, speed)?;
-    let interval_us = match speed {
-        // Full-speed isochronous bInterval is a linear frame count.
-        UsbBusSpeed::Full => 1_000_u32.checked_mul(u32::from(interval)),
-        // High-speed bInterval encodes an exponential microframe interval.
-        UsbBusSpeed::High => 125_u32.checked_mul(1_u32 << (interval - 1)),
-    }.ok_or("USB service interval overflow")?;
+    let interval_us = crate::usb_isochronous::isochronous_service_interval_us(interval, speed)?;
     let decoder = crate::streaming::decoder_ref(decoder_handle)
         .ok_or("Unknown stream decoder handle")?;
     {
