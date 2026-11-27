@@ -232,6 +232,18 @@ A strict bit-perfect claim should be made only for supported integer source
 formats after those software and hardware checks pass.
 
 
+### Pause/stop concurrency
+
+Pause requests release the lifecycle gate while waiting for submitted audio
+transfers to drain, allowing stop or close to proceed. The waiter observes the
+worker status as well as the drain acknowledgement: a worker that fails or
+stops before acknowledging pause now terminates the wait with an explicit
+error instead of waiting until the pause deadline. After drain acknowledgement,
+the waiter reacquires the lifecycle gate and verifies that the same worker is
+still registered and running before reporting success. This covers the
+pause-versus-stop/close ordering at the state-machine level; device-level
+concurrency stress testing remains outstanding.
+
 ### Transfer allocation ownership and cleanup
 
 `TransferSlot` and `FeedbackSlot` are the single owners of their
