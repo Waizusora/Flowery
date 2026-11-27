@@ -111,6 +111,34 @@ analog output.
   provide the association. These tests validate descriptor handling, not
   feedback timing on a physical DAC or host controller.
 
+## Explicit feedback transfer lifecycle
+
+- The feedback IN transfer is kept in flight independently of the audio OUT
+  ring. The worker consumes its completion signal, validates transfer status,
+  packet status, and exact packet length, decodes one clock sample, then
+  resubmits the feedback transfer. Only the worker thread resubmits; callbacks
+  publish completion state and do not mutate the estimator.
+- The first valid feedback sample is required before asynchronous audio OUT
+  packets are submitted. A missing initial sample is bounded by the feedback
+  transfer completion timeout.
+- Accepted samples must remain within the selected nominal sample-rate
+  tolerance and within the estimator's per-sample step threshold. Repeated
+  abrupt changes are terminal rather than silently changing packet cadence.
+- A feedback transfer timeout or an expired clock estimate is fail-closed:
+  the worker stops audio submission, requests cancellation, and drains callback
+  ownership before freeing transfer resources. If draining itself times out,
+  callback-visible buffers and the libusb session are retained to prevent
+  use-after-free.
+- Flowery does not resume the same asynchronous stream using a cached clock
+  after feedback becomes stale. A subsequent playback start creates a fresh
+  worker and estimator and must acquire a new valid feedback sample before
+  submitting audio. This is a deliberate safety policy; automatic in-place
+  clock reacquisition would require a separate pause/drain/re-prime state
+  machine and is not claimed as implemented.
+- Pure tests cover packet completion validation, missing/expired feedback
+  detection, estimator bounds, and initial clock readiness. These tests do not
+  replace timing validation with physical DACs and Android host controllers.
+
 ## Hardware volume (UAC Feature Unit)
 
 - Volume is read and written only through a descriptor-advertised Feature Unit
