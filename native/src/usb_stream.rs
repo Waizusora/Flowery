@@ -519,6 +519,10 @@ impl Drop for TransferSlot {
             return;
         }
         unsafe {
+            if !self.transfer.is_null() {
+                libusb1_sys::libusb_free_transfer(self.transfer);
+                self.transfer = std::ptr::null_mut();
+            }
             ManuallyDrop::drop(&mut self.buffer);
             ManuallyDrop::drop(&mut self.signal);
             ManuallyDrop::drop(&mut self.session);
@@ -540,6 +544,10 @@ impl Drop for FeedbackSlot {
             return;
         }
         unsafe {
+            if !self.transfer.is_null() {
+                libusb1_sys::libusb_free_transfer(self.transfer);
+                self.transfer = std::ptr::null_mut();
+            }
             ManuallyDrop::drop(&mut self.buffer);
             ManuallyDrop::drop(&mut self.signal);
             ManuallyDrop::drop(&mut self.session);
@@ -931,9 +939,7 @@ fn run_worker(
                 producer_stop.store(true, Ordering::Release);
                 let _ = producer_thread.join();
                 set_error(&error, &status, message);
-                for slot in slots.drain(..) {
-                    unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
-                }
+                slots.clear();
                 return;
             }
         }
@@ -946,10 +952,8 @@ fn run_worker(
                     producer_stop.store(true, Ordering::Release);
                     let _ = producer_thread.join();
                     set_error(&error, &status, message);
-                    unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
-                    for audio_slot in slots.drain(..) {
-                        unsafe { libusb1_sys::libusb_free_transfer(audio_slot.transfer); }
-                    }
+                    drop(slot);
+                    slots.clear();
                     return;
                 }
                 Some(slot)
@@ -1415,27 +1419,28 @@ fn run_worker(
         // preferred over reclaiming resources after a broken libusb event loop.
         if let Some(feedback) = feedback_slot {
             if feedback.submitted {
+                // The Drop guard intentionally retains the submitted transfer and
+                // every allocation that its callback may still access.
                 std::mem::forget(feedback);
             } else {
-                unsafe { libusb1_sys::libusb_free_transfer(feedback.transfer); }
+                drop(feedback);
             }
         }
         for slot in slots {
             if slot.submitted {
+                // Submitted slots are retained by the Drop guard's ownership policy.
                 std::mem::forget(slot);
             } else {
-                unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
+                drop(slot);
             }
         }
         std::mem::forget(session);
         return;
     }
-    if let Some(feedback) = feedback_slot {
-        unsafe { libusb1_sys::libusb_free_transfer(feedback.transfer); }
-    }
-    for slot in slots {
-        unsafe { libusb1_sys::libusb_free_transfer(slot.transfer); }
-    }
+    // TransferSlot and FeedbackSlot own their libusb allocations. Their Drop
+    // implementations free only unsubmitted transfers and retain submitted ones.
+    drop(feedback_slot);
+    drop(slots);
     log_usb_diagnostic(&format!(
         "USB_STREAM_END eof={} stopRequested={} status={} completedTransfers={} playedFrames={}",
         eof, stop.load(Ordering::Acquire), status.load(Ordering::Acquire),
