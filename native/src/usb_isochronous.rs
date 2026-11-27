@@ -139,6 +139,25 @@ pub fn pause_wait_state(
     }
 }
 
+/// Validate that a completed pause still belongs to the current worker and state.
+/// The caller must hold the lifecycle gate while supplying the worker identity result.
+pub fn pause_completion_is_current(
+    same_worker: bool,
+    worker_status: i32,
+    requested_generation: u64,
+    current_generation: u64,
+    acknowledged_generation: u64,
+    paused: bool,
+    transfers_drained: bool,
+) -> bool {
+    same_worker
+        && worker_status == 0
+        && requested_generation == current_generation
+        && requested_generation == acknowledged_generation
+        && paused
+        && transfers_drained
+}
+
 /// A pause is fully drained only after no audio transfer remains submitted.
 pub fn pause_is_drained(paused: bool, audio_transfers_pending: bool) -> bool {
     paused && !audio_transfers_pending
@@ -500,6 +519,26 @@ mod tests {
             ),
             PauseWaitState::Waiting,
         );
+    }
+
+    #[test]
+    fn pause_completion_is_rejected_after_seek_stop_or_close_changes_worker_state() {
+        use super::pause_completion_is_current;
+
+        // The exact worker is still installed and its pause generation drained.
+        assert!(pause_completion_is_current(true, 0, 8, 8, 8, true, true));
+
+        // Seek replaces the worker; stop/close remove it before the waiter returns.
+        assert!(!pause_completion_is_current(false, 0, 8, 8, 8, true, true));
+        // A worker that has begun stopping or failed cannot complete the old pause.
+        assert!(!pause_completion_is_current(true, 1, 8, 8, 8, true, true));
+        assert!(!pause_completion_is_current(true, -1, 8, 8, 8, true, true));
+        // Resume or another pause supersedes the request generation.
+        assert!(!pause_completion_is_current(true, 0, 8, 9, 8, true, true));
+        assert!(!pause_completion_is_current(true, 0, 8, 8, 7, true, true));
+        // A cleared pause or incomplete callback drain is never success.
+        assert!(!pause_completion_is_current(true, 0, 8, 8, 8, false, true));
+        assert!(!pause_completion_is_current(true, 0, 8, 8, 8, true, false));
     }
 
     #[test]
