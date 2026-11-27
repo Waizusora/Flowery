@@ -82,6 +82,16 @@ analog output.
 - These control-transfer checks are covered by Kotlin fake-control tests;
   actual DAC behavior and host-controller timing still require hardware tests.
 
+## Isochronous service interval
+
+- The runtime and pure packet scheduler share one USB 2.0 `bInterval`
+  conversion: the period is `2^(bInterval-1)` bus intervals.
+- Full-Speed uses 1 ms frames; High-Speed uses 125 μs microframes. Therefore,
+  Full-Speed `bInterval=3` is 4 ms, not 3 ms. Values outside 1–16 are rejected.
+- Regression tests cover the Full-Speed exponent (including the upper descriptor
+  value) and the High-Speed microframe period. This is descriptor/scheduler
+  validation; actual controller scheduling still requires hardware testing.
+
 ## Asynchronous playback feedback association
 
 - For asynchronous USB Audio OUT endpoints, the parser reads
