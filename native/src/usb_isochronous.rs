@@ -112,6 +112,16 @@ pub fn pause_is_drained(paused: bool, audio_transfers_pending: bool) -> bool {
     paused && !audio_transfers_pending
 }
 
+/// True only after every submitted audio and feedback transfer has published
+/// its completion callback. A cancellation request (including NOT_FOUND) must
+/// never be treated as callback completion.
+pub fn all_transfer_callbacks_observed(
+    audio_submitted: impl IntoIterator<Item = bool>,
+    feedback_submitted: bool,
+) -> bool {
+    !feedback_submitted && !audio_submitted.into_iter().any(|submitted| submitted)
+}
+
 /// Whether the worker may queue another audio transfer.
 /// Pause drains already submitted transfers but never refills the ring until resumed.
 pub fn audio_submission_allowed(
@@ -330,6 +340,26 @@ mod tests {
         assert!(audio_submission_allowed(false, false, false, false, false));
         assert!(!audio_submission_allowed(false, true, false, false, false));
         assert!(!audio_submission_allowed(false, false, true, false, false));
+    }
+
+    #[test]
+    fn cancellation_drain_waits_for_every_callback_in_any_order() {
+        // Slot booleans represent libusb transfers still awaiting their callback.
+        assert!(!all_transfer_callbacks_observed([false, true, true], false));
+        assert!(!all_transfer_callbacks_observed([false, false, true], false));
+        assert!(all_transfer_callbacks_observed([false, false, false], false));
+        assert!(!all_transfer_callbacks_observed([false, false, false], true));
+        assert!(all_transfer_callbacks_observed([], false));
+    }
+
+    #[test]
+    fn cancellation_request_result_does_not_imply_callback_completion() {
+        for result in [0, -5] {
+            assert_eq!(cancellation_request_error(result), None);
+            // Even an accepted or NOT_FOUND cancellation remains outstanding
+            // until the worker observes the callback and clears submitted.
+            assert!(!all_transfer_callbacks_observed([true], false));
+        }
     }
 
     #[test]
