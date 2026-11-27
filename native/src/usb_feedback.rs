@@ -658,10 +658,14 @@ mod reacquisition_integration_tests {
 
         // A later packet cannot revive a terminal stream.
         stream.complete_audio_transfer(audio_id);
-        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        // Draining the final audio transfer must not move a failed lifecycle
+        // into AwaitingFreshFeedback or reopen the stream.
+        assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Failed);
         assert!(stream.submit_audio().is_none());
         assert!(stream.complete_feedback(0, 0, &initial, FeedbackBusSpeed::High).is_err());
-        assert!(stream.tracker.estimate_hz().is_none());
+        // The last accepted estimate may remain available for diagnostics,
+        // but the terminal lifecycle prevents it from authorizing playback.
+        assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
     }
 
     #[test]
@@ -699,7 +703,9 @@ mod reacquisition_integration_tests {
         // A valid-looking late sample must not clear the terminal error.
         assert!(stream.complete_feedback(0, 0, &sample, FeedbackBusSpeed::High).is_err());
         assert_eq!(stream.lifecycle, FeedbackReacquisitionState::Failed);
-        assert_eq!(stream.tracker.estimate_hz(), None);
+        // Keep the last good estimate as diagnostic history; Failed is the
+        // authoritative gate and must prevent that value from being reused.
+        assert_eq!(stream.tracker.estimate_hz(), Some(48_000.0));
         assert!(stream.submit_audio().is_none());
     }
 
