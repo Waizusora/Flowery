@@ -32,6 +32,11 @@ pub struct PacketFrameScheduler {
 }
 
 impl PacketFrameScheduler {
+    /// Discard fractional phase after the audio ring has been fully drained.
+    pub fn reset(&mut self) {
+        self.phase = 0;
+    }
+
     pub fn next_frames(&mut self, rate_hz: f64, interval_us: u32) -> Result<usize, String> {
         if !rate_hz.is_finite() || !(1_000.0..=768_000.0).contains(&rate_hz) {
             return Err("Packet scheduler rate is outside the supported USB audio range".into());
@@ -48,6 +53,58 @@ impl PacketFrameScheduler {
         let frames = self.phase / 1_000_000_000;
         self.phase %= 1_000_000_000;
         usize::try_from(frames).map_err(|_| "USB packet frame count exceeds platform limits".into())
+    }
+}
+
+/// Worker-owned lifecycle for recovering an expired explicit-feedback clock.
+/// No audio may be submitted while the old ring drains or while a new sample
+/// is being acquired.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedbackReacquisitionState {
+    Running,
+    Quiescing,
+    AwaitingFreshFeedback,
+    Repriming,
+}
+
+impl Default for FeedbackReacquisitionState {
+    fn default() -> Self { Self::Running }
+}
+
+impl FeedbackReacquisitionState {
+    pub fn begin_if_stale(&mut self, stale: bool) -> bool {
+        if stale && *self == Self::Running {
+            *self = Self::Quiescing;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn audio_ring_drained(&mut self) {
+        if *self == Self::Quiescing {
+            *self = Self::AwaitingFreshFeedback;
+        }
+    }
+
+    pub fn fresh_sample_accepted(&mut self) {
+        if *self == Self::AwaitingFreshFeedback {
+            *self = Self::Repriming;
+        }
+    }
+
+    pub fn audio_submission_allowed(self) -> bool {
+        matches!(self, Self::Running | Self::Repriming)
+    }
+
+    pub fn audio_submission_started(&mut self) {
+        if *self == Self::Repriming {
+            *self = Self::Running;
+        }
+    }
+
+    pub fn ignores_feedback_for_estimation(self) -> bool {
+        self == Self::Quiescing
     }
 }
 
@@ -192,12 +249,53 @@ impl FeedbackRateTracker {
         self.update(measured_hz).map(Some)
     }
     pub fn estimate_hz(&self) -> Option<f64> { self.estimate_hz }
+
+    /// Start a new acquisition epoch without carrying the previous clock into it.
+    pub fn reset(&mut self) {
+        self.estimate_hz = None;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn feedback_reacquisition_requires_drain_then_fresh_sample_then_reprime() {
+        let mut state = FeedbackReacquisitionState::default();
+        assert!(state.audio_submission_allowed());
+        assert!(state.begin_if_stale(true));
+        assert_eq!(state, FeedbackReacquisitionState::Quiescing);
+        assert!(!state.audio_submission_allowed());
+        assert!(state.ignores_feedback_for_estimation());
+        state.audio_ring_drained();
+        assert_eq!(state, FeedbackReacquisitionState::AwaitingFreshFeedback);
+        assert!(!state.audio_submission_allowed());
+        state.fresh_sample_accepted();
+        assert_eq!(state, FeedbackReacquisitionState::Repriming);
+        assert!(state.audio_submission_allowed());
+        state.audio_submission_started();
+        assert_eq!(state, FeedbackReacquisitionState::Running);
+        assert!(!state.begin_if_stale(false));
+    }
+
+    #[test]
+    fn feedback_tracker_reset_does_not_reuse_old_clock_estimate() {
+        let mut tracker = FeedbackRateTracker::new(0.25).unwrap();
+        assert_eq!(tracker.update(48_000.0).unwrap(), 48_000.0);
+        tracker.reset();
+        assert_eq!(tracker.estimate_hz(), None);
+        assert_eq!(tracker.update_checked(47_999.0, 0.02).unwrap(), Some(47_999.0));
+    }
+
+    #[test]
+    fn packet_scheduler_reset_discards_fractional_phase() {
+        let mut scheduler = PacketFrameScheduler::default();
+        assert_eq!(scheduler.next_frames(44_100.0, 125).unwrap(), 5);
+        scheduler.reset();
+        assert_eq!(scheduler.next_frames(44_100.0, 125).unwrap(), 5);
+    }
 
     #[test]
     fn schedules_fractional_full_speed_44100_without_long_term_drift() {
