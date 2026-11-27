@@ -366,7 +366,7 @@ fn start_pcm_producer(
                 let started = Instant::now();
                 let decoded = read_decoder_chunk_if_running(&producer_stop, || {
                     crate::streaming::read_usb_output_chunk_from_decoder(
-                        &decoder, input_budget, &mut pipeline,
+                        &decoder, input_budget, &mut pipeline, &producer_stop,
                     )
                 });
                 let elapsed = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
