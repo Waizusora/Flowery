@@ -19,9 +19,6 @@ internal fun WelcomeDestination(
     muted: Color,
     notificationsGranted: Boolean,
     batteryOptimizationGranted: Boolean,
-    usbAudioConnected: Boolean,
-    usbAudioPermissionGranted: Boolean,
-    onRequestUsbPermission: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onRequestBatteryOptimization: () -> Unit,
     onContinue: () -> Unit
@@ -91,17 +88,6 @@ internal fun WelcomeDestination(
                     OutlinedButton(onClick = onRequestBatteryOptimization, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Default.BatteryChargingFull, contentDescription = null)
                         Text("  ALLOW BACKGROUND PLAYBACK")
-                    }
-                }
-                if (usbAudioConnected) {
-                    PermissionStatusRow(Icons.Default.Usb, "USB DAC access",
-                        "Android grants access separately for each connected DAC.",
-                        usbAudioPermissionGranted, foreground, muted)
-                    if (!usbAudioPermissionGranted) {
-                        OutlinedButton(onClick = onRequestUsbPermission, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Default.Usb, contentDescription = null)
-                            Text("  GRANT USB DAC ACCESS")
-                        }
                     }
                 }
             }
