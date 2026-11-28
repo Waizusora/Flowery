@@ -732,8 +732,8 @@ fn lifecycle() -> &'static Mutex<()> {
     LIFECYCLE.get_or_init(|| Mutex::new(()))
 }
 
-#[cfg(target_os = "android")]
-fn set_error(error: &Arc<Mutex<String>>, status: &AtomicI32, message: String) {
+#[cfg(any(target_os = "android", test))]
+fn record_terminal_stream_error(error: &Mutex<String>, status: &AtomicI32, message: String) {
     crate::usb_isochronous::preserve_first_error(
         &mut error.lock().unwrap_or_else(|e| e.into_inner()),
         message,
@@ -741,6 +741,29 @@ fn set_error(error: &Arc<Mutex<String>>, status: &AtomicI32, message: String) {
     // Do not downgrade a terminal unsafe-teardown state or overwrite a
     // completed/stopped state if an asynchronous diagnostic arrives late.
     let _ = status.compare_exchange(0, -1, Ordering::AcqRel, Ordering::Acquire);
+}
+
+#[cfg(any(target_os = "android", test))]
+fn propagate_pcm_producer_error(
+    error: &Mutex<String>,
+    status: &AtomicI32,
+    producer_error: Option<String>,
+) -> bool {
+    if status.load(Ordering::Acquire) < 0 {
+        return false;
+    }
+    let Some(message) = producer_error else { return false; };
+    record_terminal_stream_error(
+        error,
+        status,
+        format!("USB PCM decoder producer failed: {message}"),
+    );
+    true
+}
+
+#[cfg(target_os = "android")]
+fn set_error(error: &Arc<Mutex<String>>, status: &AtomicI32, message: String) {
+    record_terminal_stream_error(error, status, message);
 }
 
 #[cfg(target_os = "android")]
@@ -1093,11 +1116,7 @@ fn run_worker(
     let mut unsafe_to_free = false;
     loop {
         let (_, _, producer_error) = pcm_queue.occupancy();
-        if status.load(Ordering::Acquire) >= 0 {
-            if let Some(message) = producer_error {
-                set_error(&error, &status, format!("USB PCM decoder producer failed: {message}"));
-            }
-        }
+        propagate_pcm_producer_error(&error, &status, producer_error);
         if let Some(started_at) = drain_started_at {
             let callbacks_observed = crate::usb_isochronous::all_transfer_callbacks_observed(
                 slots.iter().map(|slot| slot.submitted),
@@ -2238,5 +2257,40 @@ mod pcm_queue_tests {
         assert_eq!(error.as_deref(), Some("decoder failure"));
         assert_eq!(queue.take_frames(1, true).unwrap(), [1, 2]);
         assert!(queue.is_drained_eof());
+    }
+
+    #[test]
+    fn producer_failure_transitions_stream_to_terminal_cancellation() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+
+        let error = std::sync::Mutex::new(String::new());
+        let status = AtomicI32::new(0);
+        let queue = PcmQueue::new(2).unwrap();
+        queue.finish(Some("USB PCM decoder producer panicked".into()));
+
+        let (_, _, producer_error) = queue.occupancy();
+        assert!(super::propagate_pcm_producer_error(
+            &error,
+            &status,
+            producer_error,
+        ));
+        assert_eq!(status.load(Ordering::Acquire), -1);
+        assert_eq!(
+            error.lock().unwrap().as_str(),
+            "USB PCM decoder producer failed: USB PCM decoder producer panicked",
+        );
+
+        // A terminal stream status prevents the submit worker from refilling
+        // the ring; its normal cancellation path drains submitted callbacks.
+        assert!(status.load(Ordering::Acquire) < 0);
+        assert!(!super::propagate_pcm_producer_error(
+            &error,
+            &status,
+            Some("late secondary producer error".into()),
+        ));
+        assert_eq!(
+            error.lock().unwrap().as_str(),
+            "USB PCM decoder producer failed: USB PCM decoder producer panicked",
+        );
     }
 }
