@@ -705,6 +705,13 @@ static WORKERS: OnceLock<Mutex<HashMap<i64, UsbStreamWorker>>> = OnceLock::new()
 static LIFECYCLE: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(target_os = "android")]
 static UNSAFE_SESSIONS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+#[cfg(target_os = "android")]
+static FAILED_SESSIONS: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+fn failed_sessions() -> &'static Mutex<HashSet<i64>> {
+    FAILED_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 #[cfg(target_os = "android")]
 fn unsafe_sessions() -> &'static Mutex<HashSet<i64>> {
@@ -718,9 +725,17 @@ fn workers() -> &'static Mutex<HashMap<i64, UsbStreamWorker>> {
 
 #[cfg(target_os = "android")]
 fn ensure_session_safe(session: i64) -> Result<(), String> {
-    if unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session) {
+    let unsafe_teardown = unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session);
+    if unsafe_teardown {
         return Err(
             "USB session previously failed to drain outstanding transfers and cannot be restarted; close it while retaining the Android USB connection"
+                .into(),
+        );
+    }
+    let previously_failed = failed_sessions().lock().unwrap_or_else(|e| e.into_inner()).contains(&session);
+    if !crate::usb_isochronous::session_reuse_allowed(previously_failed, unsafe_teardown) {
+        return Err(
+            "USB session has entered a terminal stream-failure state; close it and open a new USB session before playback can resume"
                 .into(),
         );
     }
@@ -1557,6 +1572,7 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
             thread::sleep(Duration::from_millis(1));
         }
         if !worker.thread.is_finished() {
+            failed_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
             // Dropping this JoinHandle detaches the still-running worker. Keep
             // the registry session and Java fd alive permanently: that worker
             // may still access the libusb context or device handle.
@@ -1572,7 +1588,13 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
         }
 
         let worker_panicked = worker.thread.join().is_err();
-        let drain_timed_out = worker.status.load(Ordering::Acquire) == -2;
+        let worker_status = worker.status.load(Ordering::Acquire);
+        let drain_timed_out = worker_status == -2;
+        if crate::usb_isochronous::worker_status_is_failed(worker_status) || worker_panicked {
+            // A terminal stream failure is recoverable only by closing this
+            // fully drained session and opening a new session identity.
+            failed_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+        }
         if crate::usb_isochronous::session_connection_must_be_retained(
             false, worker_panicked, drain_timed_out, false,
         ) {
@@ -1583,6 +1605,7 @@ fn stop_worker_locked(session: i64) -> Result<(), String> {
             // A panic or incomplete cancellation drain leaves native ownership
             // uncertain. Keep the registry session and Java fd alive.
             unsafe_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
+            failed_sessions().lock().unwrap_or_else(|e| e.into_inner()).insert(session);
             return Err(message.into());
         }
     }
@@ -1622,6 +1645,7 @@ pub(super) fn close_session(session: i64) -> Result<(), String> {
         return Err("USB session has outstanding transfers that could not be drained; retain the Android USB connection".into());
     }
     crate::usb_libusb::remove_session(session);
+    failed_sessions().lock().unwrap_or_else(|e| e.into_inner()).remove(&session);
     Ok(())
 }
 
