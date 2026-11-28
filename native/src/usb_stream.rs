@@ -1832,6 +1832,9 @@ pub(super) fn start(
     // Do not interrupt an existing stream until every new stream parameter
     // has passed validation.
     stop_worker_locked(session_handle)?;
+    // The worker may have failed since the first health check. Revalidate
+    // after joining it so this call cannot restart a newly terminal session.
+    ensure_session_safe(session_handle)?;
     spawn_worker(
         session_handle, session, decoder_handle, config, false,
         initial_position_frames,
