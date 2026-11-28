@@ -2293,4 +2293,83 @@ mod pcm_queue_tests {
             "USB PCM decoder producer failed: USB PCM decoder producer panicked",
         );
     }
+
+    #[test]
+    fn producer_failure_cancels_audio_and_feedback_and_waits_for_all_callbacks() {
+        use std::sync::atomic::{AtomicI32, Ordering};
+        use std::sync::Mutex;
+        use std::time::Duration;
+
+        let queue = PcmQueue::new(2).unwrap();
+        queue.finish(Some("USB PCM decoder producer panicked".into()));
+        let error = Mutex::new(String::new());
+        let status = AtomicI32::new(0);
+
+        let (_, _, producer_error) = queue.occupancy();
+        assert!(super::propagate_pcm_producer_error(
+            &error,
+            &status,
+            producer_error,
+        ));
+        assert_eq!(status.load(Ordering::Acquire), -1);
+
+        // A failed stream is a hard barrier against refilling the audio ring.
+        assert!(!crate::usb_isochronous::audio_submission_allowed(
+            false, false, false, false, status.load(Ordering::Acquire) < 0,
+        ));
+
+        // Cancellation requests (including NOT_FOUND) do not complete callbacks.
+        let mut audio_submitted = [true, true, false, true];
+        let mut feedback_submitted = true;
+        for result in [0, -5] {
+            assert_eq!(crate::usb_isochronous::cancellation_request_error(result), None);
+            assert!(!crate::usb_isochronous::all_transfer_callbacks_observed(
+                audio_submitted,
+                feedback_submitted,
+            ));
+        }
+
+        // Out-of-order audio and feedback callbacks are all required before release.
+        audio_submitted[1] = false;
+        assert!(!crate::usb_isochronous::all_transfer_callbacks_observed(
+            audio_submitted,
+            feedback_submitted,
+        ));
+        feedback_submitted = false;
+        assert!(!crate::usb_isochronous::all_transfer_callbacks_observed(
+            audio_submitted,
+            feedback_submitted,
+        ));
+        audio_submitted[0] = false;
+        assert!(!crate::usb_isochronous::all_transfer_callbacks_observed(
+            audio_submitted,
+            feedback_submitted,
+        ));
+        audio_submitted[3] = false;
+        let callbacks_observed = crate::usb_isochronous::all_transfer_callbacks_observed(
+            audio_submitted,
+            feedback_submitted,
+        );
+        assert!(callbacks_observed);
+        assert_eq!(
+            crate::usb_isochronous::transfer_drain_state(
+                callbacks_observed,
+                Duration::from_secs(3),
+                Duration::from_secs(2),
+            ),
+            crate::usb_isochronous::TransferDrainState::Drained,
+        );
+
+        // If any callback is still outstanding at the deadline, resources are retained.
+        assert_eq!(
+            crate::usb_isochronous::transfer_drain_state(
+                false,
+                Duration::from_secs(2),
+                Duration::from_secs(2),
+            ),
+            crate::usb_isochronous::TransferDrainState::TimedOutRetain,
+        );
+        assert!(error.lock().unwrap().contains("")); // error ownership remains independent of callback drain
+    }
+
 }
