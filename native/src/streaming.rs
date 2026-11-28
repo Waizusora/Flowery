@@ -616,7 +616,10 @@ fn lock_decoder_while_running<'a, T>(
         }
         match decoder.try_lock() {
             Ok(guard) => return Some(guard),
-            Err(std::sync::TryLockError::WouldBlock) => std::thread::yield_now(),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                // Bound lock-polling frequency while keeping stop latency low.
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            },
             Err(std::sync::TryLockError::Poisoned(error)) => return Some(error.into_inner()),
         }
     }
