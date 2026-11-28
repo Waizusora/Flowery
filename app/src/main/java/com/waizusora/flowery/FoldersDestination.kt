@@ -24,9 +24,9 @@ import androidx.compose.ui.unit.dp
  * Top level shows a flat list of every folder path that contains at least one
  * indexed audio track, plus the virtual CUE & Playlists entry when present.
  * Selecting a folder lists only the tracks that belong to that exact path;
- * subfolders are not nested further. Track rows show title above a secondary
- * line (format or path segment). Artist metadata is not part of the scan
- * catalog and is therefore not shown until a later catalog extension.
+ * subfolders are not nested further. Track rows show title above artist.
+ * When embedded tags are missing, title falls back to the file stem and
+ * artist falls back to "Unknown artist".
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -146,7 +146,6 @@ internal fun FoldersDestination(
                 Modifier
                     .fillMaxWidth()
                     .clickable {
-                        // Re-use LibraryFolder.name to hold the exact catalog path.
                         onSelectedFolder(LibraryFolder(uri = "", name = path, enabled = true))
                         onVirtualCueFolder(false)
                     }
@@ -228,7 +227,7 @@ internal fun FoldersDestination(
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                         )
                         Text(
-                            name ?: "CUE",
+                            item.artist.ifBlank { name ?: "CUE" },
                             color = muted,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
@@ -277,7 +276,7 @@ internal fun FoldersDestination(
                             modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                         )
                         Text(
-                            name ?: "Playlist",
+                            item.artist.ifBlank { name ?: "Playlist" },
                             color = muted,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
@@ -311,7 +310,6 @@ internal fun FoldersDestination(
                     modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                 )
             }
-            // Refresh the configured root that owns this path.
             val rootFolder = folders.firstOrNull {
                 it.name.equals(rootName, ignoreCase = true)
             } ?: LibraryFolder(uri = "", name = rootName, enabled = true)
@@ -337,10 +335,7 @@ internal fun FoldersDestination(
         )
 
         folderTracks.forEach { track ->
-            val secondary = track.mimeType
-                ?.substringAfterLast('/')
-                ?.uppercase()
-                ?: track.folder.substringAfterLast('/')
+            val displayArtist = track.artist.ifBlank { "Unknown artist" }
             Row(
                 Modifier
                     .fillMaxWidth()
@@ -363,7 +358,7 @@ internal fun FoldersDestination(
                         modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE)
                     )
                     Text(
-                        secondary,
+                        displayArtist,
                         color = muted,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,

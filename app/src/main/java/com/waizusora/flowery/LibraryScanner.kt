@@ -1,15 +1,31 @@
 package com.waizusora.flowery
 
 import android.content.Context
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Indexed audio track from the library catalog.
+ *
+ * [title] and [artist] are filled from embedded tags when available (lossy and
+ * lossless). When tags are missing, [title] falls back to the file stem and
+ * [artist] is empty so the UI can show a neutral placeholder.
+ */
 data class AudioTrackItem(
-    val uri: Uri, val title: String, val folder: String, val mimeType: String?,
-    val sidecarLyricsUri: Uri? = null, val cueStartMs: Long? = null, val cueEndMs: Long? = null,
-    val cuePlaylist: String? = null, val playlistName: String? = null, val playlistOrder: Int? = null
+    val uri: Uri,
+    val title: String,
+    val folder: String,
+    val mimeType: String?,
+    val sidecarLyricsUri: Uri? = null,
+    val cueStartMs: Long? = null,
+    val cueEndMs: Long? = null,
+    val cuePlaylist: String? = null,
+    val playlistName: String? = null,
+    val playlistOrder: Int? = null,
+    val artist: String = ""
 )
 
 /** SAF adapter. Rust owns catalog policy; Kotlin enumerates documents and maps results. */
@@ -39,10 +55,18 @@ class LibraryScanner(private val context: Context) {
         return buildList(tracks.length()) {
             for (index in 0 until tracks.length()) {
                 val item = tracks.getJSONObject(index)
+                val uri = Uri.parse(item.getString("uri"))
+                val catalogTitle = item.getString("title")
+                val isVirtual = !item.isNull("cuePlaylist") || !item.isNull("playlistName")
+                val (title, artist) = if (isVirtual) {
+                    catalogTitle to ""
+                } else {
+                    readDisplayMetadata(uri, catalogTitle)
+                }
                 add(
                     AudioTrackItem(
-                        uri = Uri.parse(item.getString("uri")),
-                        title = item.getString("title"),
+                        uri = uri,
+                        title = title,
                         folder = item.getString("folder"),
                         mimeType = if (item.isNull("mimeType")) null else item.optString("mimeType"),
                         sidecarLyricsUri = if (item.isNull("sidecarLyricsUri")) null else Uri.parse(item.getString("sidecarLyricsUri")),
@@ -50,10 +74,36 @@ class LibraryScanner(private val context: Context) {
                         cueEndMs = item.nullableLong("cueEndMs"),
                         cuePlaylist = if (item.isNull("cuePlaylist")) null else item.getString("cuePlaylist"),
                         playlistName = if (item.isNull("playlistName")) null else item.getString("playlistName"),
-                        playlistOrder = item.nullableInt("playlistOrder")
+                        playlistOrder = item.nullableInt("playlistOrder"),
+                        artist = artist
                     )
                 )
             }
+        }
+    }
+
+    /**
+     * Reads title and artist from the audio document for list display.
+     * Uses MediaMetadataRetriever so both lossy and lossless containers are
+     * covered without staging a full Lofty temp file. Falls back to the
+     * catalog file-stem title when tags are absent.
+     */
+    private fun readDisplayMetadata(uri: Uri, fallbackTitle: String): Pair<String, String> {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(context, uri)
+            val taggedTitle = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)
+                ?.trim()
+                .orEmpty()
+            val taggedArtist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)
+                ?.trim()
+                .orEmpty()
+            val title = taggedTitle.ifBlank { fallbackTitle }
+            title to taggedArtist
+        } catch (_: Exception) {
+            fallbackTitle to ""
+        } finally {
+            runCatching { retriever.release() }
         }
     }
 
