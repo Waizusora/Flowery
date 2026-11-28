@@ -254,6 +254,29 @@ pub fn event_loop_interrupted(code: i32) -> bool {
     code == -10
 }
 
+/// Event-loop result policy. Only INTERRUPTED is recoverable; every other
+/// negative libusb result is terminal and must enter cancellation/drain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventLoopAction {
+    Continue,
+    RetryInterrupted,
+    Fail,
+}
+
+pub fn event_loop_action(code: i32) -> EventLoopAction {
+    if code == 0 {
+        EventLoopAction::Continue
+    } else if event_loop_interrupted(code) {
+        EventLoopAction::RetryInterrupted
+    } else if code < 0 {
+        EventLoopAction::Fail
+    } else {
+        // libusb event handling is specified to return zero or a negative
+        // error code. Treat unexpected positive values as terminal too.
+        EventLoopAction::Fail
+    }
+}
+
 /// Translate libusb event-loop errors into actionable diagnostics.
 pub fn event_error_message(code: i32) -> String {
     match code {
@@ -692,6 +715,15 @@ mod tests {
         assert!(!event_loop_interrupted(-4));
         assert!(!event_loop_interrupted(-1));
         assert!(!event_loop_interrupted(0));
+    }
+
+    #[test]
+    fn event_loop_policy_retries_only_interrupted_and_fails_other_nonzero_results() {
+        assert_eq!(event_loop_action(0), EventLoopAction::Continue);
+        assert_eq!(event_loop_action(-10), EventLoopAction::RetryInterrupted);
+        for code in [-4, -1, -9, 1] {
+            assert_eq!(event_loop_action(code), EventLoopAction::Fail, "code={code}");
+        }
     }
 
     #[test]
