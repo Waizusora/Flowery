@@ -293,12 +293,20 @@ fn start_pcm_producer(
     decoder_handle: i64,
     config: StreamConfig,
     stop: Arc<AtomicBool>,
-) -> Result<(Arc<PcmQueue>, JoinHandle<()>), String> {
+) -> Result<Option<(Arc<PcmQueue>, JoinHandle<()>)>, String> {
     let decoder = crate::streaming::decoder_ref(decoder_handle)
         .ok_or("Unknown stream decoder handle")?;
     let (source_rate, source_channels, source_bits, source_data_format) = {
-        let mut decoder = decoder.lock().unwrap_or_else(|error| error.into_inner());
+        let Some(mut decoder) = crate::streaming::lock_decoder_while_running(&decoder, &stop) else {
+            return Ok(None);
+        };
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         decoder.prime_output_format()?;
+        if stop.load(Ordering::Acquire) {
+            return Ok(None);
+        }
         decoder.playback_metadata()
     };
     if source_channels != usize::from(config.channels) {
@@ -408,7 +416,7 @@ fn start_pcm_producer(
             }
         })
         .map_err(|error| error.to_string())?;
-    Ok((queue, worker))
+    Ok(Some((queue, worker)))
 }
 
 #[cfg(target_os = "android")]
@@ -943,7 +951,13 @@ fn run_worker(
     let (pcm_queue, producer_thread) = match start_pcm_producer(
         decoder_handle, config, Arc::clone(&producer_stop),
     ) {
-        Ok(worker) => worker,
+        Ok(Some(worker)) => worker,
+        Ok(None) => {
+            // Stop may arrive while startup waits for the decoder lock.
+            // Treat this as an orderly worker stop, not a decoder failure.
+            status.store(2, Ordering::Release);
+            return;
+        }
         Err(message) => {
             set_error(&error, &status, format!("Unable to start USB PCM decoder producer: {message}"));
             return;
