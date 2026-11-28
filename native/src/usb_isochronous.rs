@@ -378,6 +378,17 @@ pub fn build_isochronous_schedule(
 }
 
 
+/// A session with a terminal stream failure must be closed and reopened rather
+/// than restarted in place. Unsafe teardown is an independent, stronger barrier.
+pub fn session_reuse_allowed(previously_failed: bool, unsafe_teardown: bool) -> bool {
+    !previously_failed && !unsafe_teardown
+}
+
+/// Negative worker status is terminal failure; positive statuses are clean stop/EOF.
+pub fn worker_status_is_failed(status: i32) -> bool {
+    status < 0
+}
+
 /// Classify worker termination before releasing the USB session and Android fd.
 /// A panic or incomplete transfer drain makes teardown permanently unsafe.
 pub fn worker_teardown_error(
@@ -417,6 +428,19 @@ pub fn transfer_allocation_must_be_retained(submitted: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminally_failed_session_requires_close_and_fresh_open() {
+        assert!(session_reuse_allowed(false, false));
+        assert!(!session_reuse_allowed(true, false));
+        assert!(!session_reuse_allowed(false, true));
+        assert!(!session_reuse_allowed(true, true));
+        assert!(worker_status_is_failed(-1));
+        assert!(worker_status_is_failed(-2));
+        assert!(!worker_status_is_failed(0));
+        assert!(!worker_status_is_failed(1));
+        assert!(!worker_status_is_failed(2));
+    }
 
     #[test]
     fn worker_panic_is_classified_as_unsafe_teardown() {
