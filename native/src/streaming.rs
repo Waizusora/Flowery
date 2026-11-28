@@ -606,7 +606,7 @@ pub(super) fn read_usb_pcm_chunk(
 /// Acquire the decoder without making shutdown wait indefinitely behind another
 /// decoder user. A stop request cancels lock acquisition; once acquired, the
 /// caller still owns the guard until the current decode operation completes.
-fn lock_decoder_while_running<'a, T>(
+pub(super) fn lock_decoder_while_running<'a, T>(
     decoder: &'a Mutex<T>,
     stop: &std::sync::atomic::AtomicBool,
 ) -> Option<std::sync::MutexGuard<'a, T>> {
