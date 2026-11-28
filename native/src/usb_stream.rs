@@ -1327,17 +1327,20 @@ fn run_worker(
         let event_started_at = Instant::now();
         let event_result = unsafe { libusb1_sys::libusb_handle_events_timeout_completed(session.context, &timeout, std::ptr::null_mut()) };
         event_loop_max_us = event_loop_max_us.max(event_started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64);
-        if crate::usb_isochronous::event_loop_interrupted(event_result) {
-            // INTERRUPTED is retryable, but repeated signals must not turn the
-            // event loop into a busy spin while transfers remain outstanding.
-            thread::sleep(Duration::from_millis(1));
-        } else if event_result < 0 {
-            set_error(&error, &status, crate::usb_isochronous::event_error_message(event_result));
-            // Do not skip completion-signal inspection after an event-loop error:
-            // a callback may have completed before libusb returned the error.
-            // The next iteration enters cancellation and keeps pumping events
-            // until every submitted transfer is acknowledged or the drain times out.
-            thread::sleep(Duration::from_millis(1));
+        match crate::usb_isochronous::event_loop_action(event_result) {
+            crate::usb_isochronous::EventLoopAction::Continue => {}
+            crate::usb_isochronous::EventLoopAction::RetryInterrupted => {
+                // INTERRUPTED is retryable, but repeated signals must not turn
+                // the event loop into a busy spin while transfers remain active.
+                thread::sleep(Duration::from_millis(1));
+            }
+            crate::usb_isochronous::EventLoopAction::Fail => {
+                set_error(&error, &status, crate::usb_isochronous::event_error_message(event_result));
+                // Still inspect completion signals after the event error: a
+                // callback may have completed before libusb returned. The
+                // next iteration cancels and drains every outstanding transfer.
+                thread::sleep(Duration::from_millis(1));
+            }
         }
         if let Some(feedback) = feedback_slot.as_mut() {
             if feedback.submitted && feedback.signal.completed.swap(false, Ordering::AcqRel) {
