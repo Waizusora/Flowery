@@ -288,6 +288,18 @@ fn push_pcm_bytes_with_backpressure(
     Ok(true)
 }
 
+#[cfg(any(target_os = "android", test))]
+fn spawn_pcm_producer_worker<F, S>(
+    spawn: S,
+    worker: F,
+) -> std::io::Result<JoinHandle<()>>
+where
+    F: FnOnce() + Send + 'static,
+    S: FnOnce(F) -> std::io::Result<JoinHandle<()>>,
+{
+    spawn(worker)
+}
+
 #[cfg(target_os = "android")]
 fn start_pcm_producer(
     decoder_handle: i64,
@@ -346,9 +358,11 @@ fn start_pcm_producer(
     // potentially blocked read. Closing its registry handle cannot invalidate
     // an in-flight worker's decoder reference.
     let worker_decoder = Arc::clone(&decoder);
-    let worker = thread::Builder::new()
-        .name("flowery-usb-pcm-decode".into())
-        .spawn(move || {
+    let worker = spawn_pcm_producer_worker(
+        |worker| thread::Builder::new()
+            .name("flowery-usb-pcm-decode".into())
+            .spawn(worker),
+        move || {
             raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
             let decoder = worker_decoder;
             let mut pipeline = pipeline;
@@ -414,8 +428,9 @@ fn start_pcm_producer(
                     }
                 }
             }
-        })
-        .map_err(|error| error.to_string())?;
+        },
+    )
+    .map_err(|error| error.to_string())?;
     Ok(Some((queue, worker)))
 }
 
@@ -2134,6 +2149,36 @@ mod pcm_queue_tests {
 
         assert_eq!(worker.join().unwrap().unwrap(), false);
         assert_eq!(queue.occupancy().0, PCM_QUEUE_CAPACITY_FRAMES);
+    }
+
+    #[test]
+    fn producer_spawn_failure_drops_unstarted_worker_captures() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+
+        struct DropFlag(Arc<AtomicBool>);
+        impl Drop for DropFlag {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let capture = DropFlag(Arc::clone(&dropped));
+        let result = super::spawn_pcm_producer_worker(
+            |worker| {
+                // Model Builder::spawn returning an OS thread-creation error.
+                drop(worker);
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "simulated thread creation failure",
+                ))
+            },
+            move || drop(capture),
+        );
+
+        assert!(result.is_err());
+        assert!(dropped.load(Ordering::Acquire));
     }
 
     #[test]
