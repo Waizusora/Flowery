@@ -2369,7 +2369,7 @@ mod pcm_queue_tests {
             ),
             crate::usb_isochronous::TransferDrainState::TimedOutRetain,
         );
-        assert!(error.lock().unwrap().contains("")); // error ownership remains independent of callback drain
+        assert_eq!(error.lock().unwrap().as_str(), "USB PCM decoder producer failed: USB PCM decoder producer panicked");
     }
 
 }
