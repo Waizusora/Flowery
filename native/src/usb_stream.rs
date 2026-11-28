@@ -300,6 +300,18 @@ where
     spawn(worker)
 }
 
+#[cfg(any(target_os = "android", test))]
+fn run_pcm_producer_worker<F>(queue: &PcmQueue, worker: F)
+where
+    F: FnOnce(),
+{
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(worker)).is_err()
+        && !queue.eof.load(Ordering::Acquire)
+    {
+        queue.finish(Some("USB PCM decoder producer panicked".into()));
+    }
+}
+
 #[cfg(target_os = "android")]
 fn start_pcm_producer(
     decoder_handle: i64,
@@ -363,6 +375,7 @@ fn start_pcm_producer(
             .name("flowery-usb-pcm-decode".into())
             .spawn(worker),
         move || {
+            run_pcm_producer_worker(&producer_queue, || {
             raise_current_thread_priority("flowery-usb-pcm-decode", PCM_DECODE_THREAD_NICE);
             let decoder = worker_decoder;
             let mut pipeline = pipeline;
@@ -428,6 +441,7 @@ fn start_pcm_producer(
                     }
                 }
             }
+            });
         },
     )
     .map_err(|error| error.to_string())?;
@@ -2179,6 +2193,28 @@ mod pcm_queue_tests {
 
         assert!(result.is_err());
         assert!(dropped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn producer_panic_publishes_terminal_error_and_preserves_queued_pcm() {
+        use std::sync::Arc;
+
+        let queue = Arc::new(PcmQueue::new(2).unwrap());
+        queue.push(&[1, 2, 3, 4]).unwrap();
+        let worker_queue = Arc::clone(&queue);
+        let worker = std::thread::spawn(move || {
+            super::run_pcm_producer_worker(&worker_queue, || {
+                panic!("simulated decoder producer panic");
+            });
+        });
+
+        worker.join().expect("panic must be contained by producer boundary");
+        let (queued, eof, error) = queue.occupancy();
+        assert_eq!(queued, 2);
+        assert!(eof);
+        assert_eq!(error.as_deref(), Some("USB PCM decoder producer panicked"));
+        assert_eq!(queue.take_frames(2, true).unwrap(), [1, 2, 3, 4]);
+        assert!(queue.is_drained_eof());
     }
 
     #[test]
